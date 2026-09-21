@@ -15,7 +15,7 @@ import { CitationHealthBanner } from './citation-health';
 const apiMock = vi.hoisted(() => ({
   listDanglingCitations: vi.fn(),
   deleteDocCitation: vi.fn(),
-  deleteDanglingCitation: vi.fn(),
+  removeDanglingCitation: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({ api: apiMock }));
 
@@ -39,26 +39,66 @@ describe('#1081 悬挂引用可视化与清理', () => {
     expect(screen.getByTestId('citation-dangling-item').getAttribute('data-citation-id')).toBe('cite_ghostA');
   });
 
-  test('复审 #2 — 点击「删除该引用」→ 调用悬挂端点清除正文标记 + 条目移除 + 新正文同步', async () => {
+  test('复审 #2 — 点击「删除该引用」→ 以客户端基线调用清除端点 + 新正文同步', async () => {
     apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A], citations: [] });
-    apiMock.deleteDanglingCitation.mockResolvedValue({ ok: true, body: '正文已无标记', removed: 2 });
-    const onBodyReplaced = vi.fn();
+    apiMock.removeDanglingCitation.mockResolvedValue({ ok: true, body: '正文已无标记', deck: null, removed: 2 });
+    const onCleanupApplied = vi.fn();
     const onNotice = vi.fn();
-    render(<CitationHealthBanner docId={DOC} onBodyReplaced={onBodyReplaced} onNotice={onNotice} />);
+    render(
+      <CitationHealthBanner
+        docId={DOC}
+        currentBody="用户正在编辑的未保存正文 [cite:cite_ghostA]"
+        serverBase="服务端基线"
+        onCleanupApplied={onCleanupApplied}
+        onNotice={onNotice}
+      />,
+    );
     await waitFor(() => expect(screen.getByTestId('citation-dangling-item')).toBeTruthy());
     fireEvent.click(screen.getByTestId('citation-dangling-delete-cite_ghostA'));
-    // 面向真实记录的 DELETE（旧实现）对悬挂引用必然 404 — 专用端点替代
-    await waitFor(() => expect(apiMock.deleteDanglingCitation).toHaveBeenCalledWith(DOC, 'cite_ghostA'));
+    // 复审 #2: 客户端当前正文作为 base_body 随请求传输 — 用户未保存编辑参与
+    // 清除计算，服务端旧版本不覆盖未保存修改
+    await waitFor(() =>
+      expect(apiMock.removeDanglingCitation).toHaveBeenCalledWith(DOC, 'cite_ghostA', {
+        base_body: '用户正在编辑的未保存正文 [cite:cite_ghostA]',
+        server_base: '服务端基线',
+        base_deck: undefined,
+      }),
+    );
     expect(apiMock.deleteDocCitation).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByTestId('citation-dangling-item')).toBeNull());
     // 新正文同步到编辑器 + 成功提示可见（空 catch 静默退役）
-    await waitFor(() => expect(onBodyReplaced).toHaveBeenCalledWith('正文已无标记'));
+    await waitFor(() => expect(onCleanupApplied).toHaveBeenCalledWith({ body: '正文已无标记', deck: null }));
     expect(onNotice).toHaveBeenCalled();
   });
 
-  test('删除失败 → 可见提示（不再空 catch 静默），条目保留可重试', async () => {
+  test('复审 #3 — currentDeck 基线随请求传给服务端（deck 内悬挂同帧清除）', async () => {
     apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A], citations: [] });
-    apiMock.deleteDanglingCitation.mockRejectedValue(new Error('500'));
+    apiMock.removeDanglingCitation.mockResolvedValue({ ok: true, body: '正文', deck: '{"slides":[]}', removed: 1 });
+    const onCleanupApplied = vi.fn();
+    render(
+      <CitationHealthBanner
+        docId={DOC}
+        currentBody="B [cite:cite_ghostA]"
+        serverBase="B [cite:cite_ghostA]"
+        currentDeck={'{"slides":[{"title":"页 [cite:cite_ghostA]"}]}'}
+        onCleanupApplied={onCleanupApplied}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('citation-dangling-item')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('citation-dangling-delete-cite_ghostA'));
+    await waitFor(() =>
+      expect(apiMock.removeDanglingCitation).toHaveBeenCalledWith(DOC, 'cite_ghostA', {
+        base_body: 'B [cite:cite_ghostA]',
+        server_base: 'B [cite:cite_ghostA]',
+        base_deck: '{"slides":[{"title":"页 [cite:cite_ghostA]"}]}',
+      }),
+    );
+    await waitFor(() => expect(onCleanupApplied).toHaveBeenCalledWith({ body: '正文', deck: '{"slides":[]}' }));
+  });
+
+  test('删除失败（含 409 并发冲突）→ 可见提示（不再空 catch 静默），条目保留可重试', async () => {
+    apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A], citations: [] });
+    apiMock.removeDanglingCitation.mockRejectedValue(new Error('409'));
     const onNotice = vi.fn();
     render(<CitationHealthBanner docId={DOC} onNotice={onNotice} />);
     await waitFor(() => expect(screen.getByTestId('citation-dangling-item')).toBeTruthy());
@@ -82,7 +122,7 @@ describe('#1081 悬挂引用可视化与清理', () => {
 
   test('多个悬挂引用各自独立处理，互不影响', async () => {
     apiMock.listDanglingCitations.mockResolvedValue({ dangling: [ITEM_A, ITEM_B], citations: [] });
-    apiMock.deleteDanglingCitation.mockResolvedValue({ ok: true, body: 'x', removed: 1 });
+    apiMock.removeDanglingCitation.mockResolvedValue({ ok: true, body: 'x', deck: null, removed: 1 });
     render(<CitationHealthBanner docId={DOC} />);
     await waitFor(() => {
       const items = screen.getAllByTestId('citation-dangling-item');

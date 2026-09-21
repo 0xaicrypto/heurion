@@ -443,6 +443,13 @@ describe('#1095 复审 #5/#6 — 交互 replace-last + 撤回 + 评论并发上�
     // replace-last 再次覆盖最后一条非评论槽（Y）— 评论槽保持不受牵连
     await store.sendMessageQueued('s1', { sessionId: 's1', text: '再来一条', attachments: [], skills: [], queuePolicy: 'replace-last' });
     expect((useChatStore.getState().sessions.s1.pendingQueue ?? []).map((s) => s.text)).toEqual(['再来一条', '评论指令']);
+
+    // 复审 #4: pendingQueue 引用身份更新 — 覆盖路径不得原地改写数组
+    // （按引用比较的订阅方依赖新数组引用触发重渲染）
+    const refBefore = useChatStore.getState().sessions.s1.pendingQueue;
+    await store.sendMessageQueued('s1', { sessionId: 's1', text: '又一条', attachments: [], skills: [], queuePolicy: 'replace-last' });
+    const refAfter = useChatStore.getState().sessions.s1.pendingQueue;
+    expect(refAfter).not.toBe(refBefore);
     void tY;
     await p1;
   });

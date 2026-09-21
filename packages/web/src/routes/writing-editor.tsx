@@ -1742,14 +1742,27 @@ export function WritingEditorPage() {
                   docId={docId}
                   sendChatText={chat.sendChatText}
                   onNotice={showNotice}
-                  onBodyReplaced={(md) => {
-                    // 复审 #2: 悬挂标记清理由服务端写回（返回新正文）— 同步
-                    // 编辑器与服务端基线（写回已落库，本地不再标 dirty）。
+                  // 复审 #2: 客户端基线（含未保存编辑）随请求传给服务端 —
+                  // 清除计算以用户当前内容为底稿，服务端旧版本不覆盖未保存修改。
+                  currentBody={body}
+                  serverBase={lastSavedBody.current}
+                  currentDeck={lastSavedDeck.current || null}
+                  onCleanupApplied={({ body: md, deck: nextDeck }) => {
+                    // 悬挂标记清理已由服务端写回单点落库 — 同步编辑器/基线。
+                    // deck 返回非空 = deck 侧标记同帧清除（复审 #3），画布与
+                    // lastSavedDeck/appliedDocDeck 一并对齐（同 #773 写回语义）。
                     setBody(md);
                     lastSavedBody.current = md;
                     serverBodyRef.current = md;
                     appliedDocBody.current = md;
                     setDoc((prev) => (prev ? { ...prev, body: md, updated_at: new Date().toISOString() } : prev));
+                    if (nextDeck) {
+                      lastSavedDeck.current = nextDeck;
+                      appliedDocDeck.current = nextDeck;
+                      try {
+                        setDeckAsset(JSON.parse(nextDeck) as import('@/lib/types').DeckWire);
+                      } catch { /* 损坏 deck 不灌画布 — 导出路径已有降级语义 */ }
+                    }
                     dirtyRef.current = false;
                     setDirty(false);
                   }}

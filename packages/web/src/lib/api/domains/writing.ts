@@ -218,11 +218,17 @@ export class WritingApi extends ApiCore {
     return this.fetch(`/api/v1/docs/${docId}/citations/${citationId}`, { method: 'DELETE' });
   }
 
-  // 复审 #2 修复: 悬挂引用的「删除」= 清除正文中的 [cite:id] 标记本身
+  // 复审 #2 修复: 悬挂引用的「删除」= 清除正文/deck 中的 [cite:id] 标记本身
   // （悬挂引用按定义无 DocCitation 记录 — 复用面向真实记录的 DELETE 必然 404）。
-  // 服务端经写回单点改写 body（同帧快照+投影+乐观锁），返回新正文供前端同步。
-  async deleteDanglingCitation(docId: string, citationId: string): Promise<{ ok: boolean; body: string; removed: number }> {
-    return this.fetch(`/api/v1/docs/${docId}/citations/dangling/${citationId}`, { method: 'DELETE' });
+  // base_body/base_deck = 客户端当前内容基线（用户未保存编辑参与计算，不
+  // 被服务端旧版本静默覆盖；deck 基线不符 → 409）；body 基线由服务端写回
+  // 单点乐观锁继续保护。deck 非空 = deck 侧标记同帧清除（复审 #3 对齐扫描范围）。
+  async removeDanglingCitation(docId: string, citationId: string, opts: { base_body?: string; server_base?: string; base_deck?: string } = {}): Promise<{ ok: boolean; body: string; deck: string | null; removed: number }> {
+    return this.fetch(`/api/v1/docs/${docId}/citations/dangling/${citationId}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
   }
 }
 

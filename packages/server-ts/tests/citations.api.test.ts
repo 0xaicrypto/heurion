@@ -94,28 +94,88 @@ describe('#1083/#1081 citations API', () => {
     expect(resAgain.statusCode).toBe(404)
   })
 
-  test('复审 #2 — 悬挂引用删除端点：清除正文标记（写回单点），真实记录 DELETE 仍走原语义', async () => {
+  test('复审 #2/#3 — 悬挂引用清除端点：body+deck 同帧清除，客户端基线保护未保存修改', async () => {
     const app = await getApp()
     const docId = await createDoc('A [cite:cite_ghostX] B [cite:cite_ghostX]')
     // 面向真实记录的 DELETE 对悬挂引用 → 404（无记录可删）
     const resOld = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docId}/citations/cite_ghostX`, headers: await authHeader() })
     expect(resOld.statusCode).toBe(404)
-    // 专用悬挂端点 → 标记从正文移除（返回新正文 + 移除数）
-    const res = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX`, headers: await authHeader() })
+    // 专用清除端点（base_body = 客户端未保存内容；server_base = 客户端所知
+    // 服务端基线 = 当前服务端值）→ 标记移除 + 未保存编辑一并落库
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: {
+        base_body: 'A [cite:cite_ghostX] B [cite:cite_ghostX] 用户未保存的编辑',
+        server_base: 'A [cite:cite_ghostX] B [cite:cite_ghostX]',
+      },
+    })
     expect(res.statusCode).toBe(200)
     const data = JSON.parse(res.payload)
     expect(data.ok).toBe(true)
     expect(data.removed).toBe(2)
+    expect(data.deck).toBeNull()
     const updated = await getPrisma().then((p) => p.doc.findUnique({ where: { id: docId } }))
-    expect(updated!.body).toBe('A B') // 标记及前导空格一并清除
+    expect(updated!.body).toContain('用户未保存的编辑') // 未保存编辑保留并落库
+    expect(updated!.body).not.toContain('[cite:cite_ghostX]')
+
+    // 复审 #2: server_base 过期（服务端已被其他窗口推进）→ 409 不覆盖
+    const stale = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { server_base: '过期版本' },
+    })
+    expect(stale.statusCode).toBe(409)
+    // deck 内悬挂同帧清除（复审 #3）
+    const prisma = await getPrisma()
+    await prisma.doc.update({ where: { id: docId }, data: { deck: JSON.stringify({ title: 'D', slides: [{ title: '页 [cite:cite_ghostX]' }] }) } })
+    const resDeck = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: {},
+    })
+    expect(resDeck.statusCode).toBe(200)
+    const deckData = JSON.parse(resDeck.payload)
+    expect(deckData.deck).toContain('页') // 标记被剥，其余内容保留
+    expect(deckData.deck).not.toContain('[cite:cite_ghostX]')
     // 标记已不存在 → 重复清理 → 404
-    const resAgain = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX`, headers: await authHeader() })
+    const resAgain = await app.inject({ method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`, headers: await authHeader() })
     expect(resAgain.statusCode).toBe(404)
     // 他人文档 → 404 防枚举
     const otherDoc = await createDoc('X [cite:cite_ghostY]')
     const other = await registerSecondUser()
-    const resOther2 = await app.inject({ method: 'DELETE', url: `/api/v1/docs/${otherDoc}/citations/dangling/cite_ghostY`, headers: { authorization: `Bearer ${other.token}` } })
+    const resOther2 = await app.inject({ method: 'POST', url: `/api/v1/docs/${otherDoc}/citations/dangling/cite_ghostY/remove`, headers: { authorization: `Bearer ${other.token}` } })
     expect(resOther2.statusCode).toBe(404)
+  })
+
+  test('复审安全 #1 — citationId 正则注入被白名单拒绝（400，不触发 RegExp 构造）', async () => {
+    const app = await getApp()
+    const docId = await createDoc('X')
+    // ReDoS 形态（嵌套量词）与不闭合括号形态均被字符集白名单拦截
+    for (const evil of ['a+)+$', '((a+)+', '(a|b)+$']) {
+      const res = await app.inject({ method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/${encodeURIComponent(evil)}/remove`, headers: await authHeader() })
+      expect(res.statusCode).toBe(400)
+    }
+    // 同文档内合法 id 不受影响
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ok_1/remove`,
+      headers: await authHeader(),
+    })
+    expect(res.statusCode).toBe(404) // 无标记 → 404（而非 400/500）
+  })
+
+  test('复审 #2 — deck 基线不符 → 409（用户未保存 deck 编辑不被覆盖）', async () => {
+    const app = await getApp()
+    const docId = await createDoc('A [cite:cite_ghostZ]')
+    const prisma = await getPrisma()
+    await prisma.doc.update({ where: { id: docId }, data: { deck: JSON.stringify({ title: 'D', slides: [{ title: '页 [cite:cite_ghostZ]' }] }) } })
+    const staleDeck = JSON.stringify({ title: 'D', slides: [{ title: '旧版本' }] })
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostZ/remove`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { base_deck: staleDeck },
+    })
+    expect(res.statusCode).toBe(409)
   })
 
   test('复审 #8 — 悬挂诊断扫描 deck 内容 + occurrences 计数', async () => {

@@ -20,14 +20,25 @@ export function CitationHealthBanner(input: {
   pollMs?: number;
   /** 指令发送通道 — 「重新检索绑定」走 AI 工具循环（与 #770 导出同哲学）。 */
   sendChatText?: (text: string) => Promise<unknown>;
-  /** 复审 #2 修复: 删除悬挂标记后服务端返回新正文 — 路由同步编辑器/基线
-   *  refs（对齐 onApplyExternalBody 语义），否则用户看到的还是旧正文。 */
-  onBodyReplaced?: (body: string) => void;
+  /**
+   * 复审 #2 修复: 清除悬挂标记后服务端基于客户端基线（base_body/base_deck）
+   * 计算，返回改写后的正文/deck — 路由据此同步编辑器与服务端基线（用户
+   * 未保存编辑不会被服务端旧版本静默覆盖：基线由调用方传入而非服务端旧值）。
+   */
+  onCleanupApplied?: (next: { body: string; deck: string | null }) => void;
   /** 统一轻提示通道（删除失败等可见反馈 — 此前空 catch 静默）。 */
   onNotice?: (text: string, ttlMs?: number) => void;
+  /** 复审 #2: 客户端当前正文基线（用户正在编辑的未保存内容）— 清除以它为底稿
+   *  （标记清除 + 未保存编辑一并落库）。 */
+  currentBody?: string;
+  /** 复审 #2: 客户端所知的**服务端**基线（lastSavedBody）— 服务端已被其他
+   *  窗口推进时 409 明示，不静默覆盖任一侧。 */
+  serverBase?: string | null;
+  /** 复审 #3: 客户端当前 deck 基线（JSON 字符串或 null）— deck 内悬挂标记同帧清除。 */
+  currentDeck?: string | null;
 }) {
   const { t } = useTranslation();
-  const { docId, pollMs = 30_000, sendChatText, onBodyReplaced, onNotice } = input;
+  const { docId, pollMs = 30_000, sendChatText, onCleanupApplied, onNotice, currentBody, serverBase, currentDeck } = input;
   const [dangling, setDangling] = useState<Array<{ id: string; occurrences: number }>>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -50,18 +61,26 @@ export function CitationHealthBanner(input: {
 
   if (!docId || dangling.length === 0) return null;
 
-  // 复审 #2 修复: 悬挂引用「删除」= 清除正文标记本身（新端点 dangling/:id —
+  // 复审 #2 修复: 悬挂引用「删除」= 清除正文标记本身（POST dangling/:id/remove —
   // 悬挂引用按定义无记录可删，旧实现复用面向真实记录的 DELETE 必然 404 且
-  // 空 catch 静默失效）。服务端返回新正文 → onBodyReplaced 同步编辑器。
+  // 空 catch 静默失效）。以客户端当前正文/deck 为基线（base_body/base_deck）—
+  // 用户未保存的编辑参与清除计算，不会被服务端旧版本静默覆盖；
+  // 复审 #3: deck 内的悬挂标记同帧清除（与 GET /dangling 扫描范围对齐）。
   const onDelete = async (id: string) => {
     setBusyId(id);
     try {
-      const res = await api.deleteDanglingCitation(docId, id);
+      const res = await api.removeDanglingCitation(docId, id, {
+        base_body: currentBody,
+        server_base: serverBase ?? undefined,
+        base_deck: currentDeck ?? undefined,
+      });
       setDangling((prev) => prev.filter((x) => x.id !== id));
-      onBodyReplaced?.(res.body);
-      onNotice?.(t('writing.citationDanglingDeleted', '已从正文移除该悬挂引用标记（{{n}} 处）', { n: res.removed }), 3000);
-    } catch {
-      onNotice?.(t('writing.citationDanglingDeleteFail', '悬挂引用清理失败 — 请刷新后重试'), 4000);
+      onCleanupApplied?.({ body: res.body, deck: res.deck });
+      onNotice?.(t('writing.citationDanglingDeleted', '已移除该悬挂引用标记（{{n}} 处）', { n: res.removed }), 3000);
+    } catch (err) {
+      // 复审 #2: 409（服务端内容已被并发修改）等失败必须可见，不静默吞错。
+      const msg = err instanceof Error ? err.message : String(err);
+      onNotice?.(t('writing.citationDanglingDeleteFail', '悬挂引用清理失败：{{msg}} — 请刷新后重试', { msg }), 4000);
     } finally {
       setBusyId(null);
     }

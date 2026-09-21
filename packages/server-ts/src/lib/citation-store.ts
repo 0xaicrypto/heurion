@@ -10,8 +10,9 @@
  */
 import { createHash } from 'crypto'
 import prisma from '../common/prisma.js'
-import { isValidDoi, resolveCitationShortcodes } from '@heurion/contracts'
+import { isValidDoi, resolveCitationShortcodes, assignCitationNumbers } from '@heurion/contracts'
 import { makeLogger } from '../common/logger.js'
+import { stripLegacyReferencesSection } from './asset-content.js'
 
 const log = makeLogger('citations')
 
@@ -112,7 +113,6 @@ export async function deleteDocCitation(docId: string, citationId: string): Prom
 
 /** 正文里出现的 [cite:id] 集合中，哪些找不到 DocCitation 记录（悬挂引用，#1081）。 */
 export async function findDanglingCitationIds(docId: string, body: string): Promise<string[]> {
-  const { assignCitationNumbers } = await import('@heurion/contracts')
   const ids = [...assignCitationNumbers(body).keys()]
   if (ids.length === 0) return []
   const rows = await prisma.docCitation.findMany({ where: { docId, id: { in: ids } } })
@@ -148,9 +148,43 @@ export function deckCitationText(deckJson: string | null | undefined): string {
   }
 }
 
+/**
+ * 复审 #3 修复 — deck JSON 内全部文本字段（title/bullets/paragraph.text，
+ * 与 deckCitationText 消费面同口径）的悬挂标记移除（字符串语义，零 RegExp）。
+ * 返回序列化后的 deck JSON 字符串；deck 损坏时原样返回（导出路径已有降级）。
+ */
+export function stripDeckCitationMarkers(deckJson: string, citationId: string): string {
+  const marker = `[cite:${citationId}]`
+  const stripText = (t: string) => {
+    const parts = t.split(marker)
+    if (parts.length === 1) return t
+    return parts
+      .map((seg, i, arr) => (i === arr.length - 1 ? seg : seg.replace(/[ \t]+$/, '')))
+      .join('')
+  }
+  try {
+    const deck = JSON.parse(deckJson) as { slides?: Array<{ title?: string; bullets?: unknown[]; content?: unknown }> }
+    for (const slide of deck.slides ?? []) {
+      if (typeof slide?.title === 'string') slide.title = stripText(slide.title)
+      if (Array.isArray(slide?.bullets)) {
+        slide.bullets = slide.bullets.map((b) => (typeof b === 'string' ? stripText(b) : b))
+      }
+      if (Array.isArray(slide?.content)) {
+        for (const block of slide.content) {
+          if (block && typeof block === 'object' && (block as { type?: string }).type === 'paragraph' && typeof (block as { text?: unknown }).text === 'string') {
+            ;(block as { text: string }).text = stripText((block as { text: string }).text)
+          }
+        }
+      }
+    }
+    return JSON.stringify(deck)
+  } catch {
+    return deckJson
+  }
+}
+
 /** 悬挂引用完整诊断 — 正文 + deck 文本合并扫描（单一实现，端点直接复用）。 */
 export async function findDanglingCitations(docId: string, body: string, deckJson?: string | null): Promise<Array<{ id: string; occurrences: number }>> {
-  const { assignCitationNumbers } = await import('@heurion/contracts')
   const combined = deckJson ? `${body}\n${deckCitationText(deckJson)}` : body
   const ids = [...assignCitationNumbers(combined).keys()]
   if (ids.length === 0) return []
@@ -158,7 +192,7 @@ export async function findDanglingCitations(docId: string, body: string, deckJso
   const known = new Set(rows.map((r) => r.id))
   return ids
     .filter((id) => !known.has(id))
-    .map((id) => ({ id, occurrences: [...combined.matchAll(new RegExp(`\\[cite:${id}\\]`, 'g'))].length }))
+    .map((id) => ({ id, occurrences: combined.split(`[cite:${id}]`).length - 1 }))
 }
 
 /**
@@ -173,11 +207,9 @@ export async function findDanglingCitations(docId: string, body: string, deckJso
  *      （无标记的存量文档原样直通 — 不剥遗留内容）。
  */
 export async function composeExportBody(docId: string, body: string): Promise<string> {
-  const { assignCitationNumbers } = await import('@heurion/contracts')
   const citationNumbers = assignCitationNumbers(body)
   const resolved = await resolveBodyCitations(docId, body)
   if (citationNumbers.size === 0) return resolved
-  const { stripLegacyReferencesSection } = await import('./asset-content.js')
   const citations = await listDocCitations(docId)
   const references = buildReferencesSection(citations.map(serializeDocCitation), citationNumbers)
   if (!references) return resolved

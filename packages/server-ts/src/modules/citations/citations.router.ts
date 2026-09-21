@@ -3,12 +3,17 @@
  *
  * - GET    /api/v1/docs/:docId/citations              → 结构化引用列表（唯一事实源）
  * - GET    /api/v1/docs/:docId/citations/dangling     → 悬挂引用诊断（正文 + deck 内容合并
- *   扫描，复用 citation-store.findDanglingCitations 单一实现 — 复审 #8 修复）
+ *   扫描，复用 citation-store.findDanglingCitations 单一实现）
  * - DELETE /api/v1/docs/:docId/citations/:citationId   → 删除引用记录（真实记录场景）
- * - DELETE /api/v1/docs/:docId/citations/dangling/:citationId → 清除正文中的悬挂引用标记
- *   （悬挂引用按定义无记录可删 — 复审 #2 修复：此前复用面向真实记录的 DELETE
- *   必然 404，前端 catch 静默吞错，UI 永远清不掉。本端点经 writeDocVersion
- *   单点改写 body（同帧快照 + 投影 + 乐观锁），把 `[cite:<id>]` 标记从正文移除）
+ * - POST   /api/v1/docs/:docId/citations/dangling/:citationId/remove → 清除悬挂引用标记
+ *   （悬挂引用按定义无记录可删；正文 + deck 内容同帧清理 — 与 GET /dangling
+ *   的扫描范围一致；body 基于客户端 base_body 计算 + writeDocVersion 乐观锁，
+ *   deck 侧以 base_deck 显式比对，避免覆盖用户未保存的编辑）
+ *
+ * 安全（复审安全漏洞 #1 修复）：citationId 路由参数在进入任何字符串拼接/
+ * 正则构造前必须过 `CITE_ID_SAFE` 白名单（contracts shortcode 字符集
+ * [A-Za-z0-9_-]+）；标记定位/计数/移除全部用字符串 split 语义（零 RegExp
+ * 构造）— 正则注入/ReDoS 攻击面整类消除。
  *
  * 归属校验跟随现有 doc 路由口径：findFirst({ id, userId }) → 404（防枚举）。
  */
@@ -16,18 +21,36 @@ import type { FastifyInstance } from 'fastify'
 import type { FastifyRequest } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
+import { CITE_SHORTCODE_SINGLE } from '@heurion/contracts'
 import {
   listDocCitations,
   getDocCitation,
   deleteDocCitation,
   serializeDocCitation,
   findDanglingCitations,
+  deckCitationText,
+  stripDeckCitationMarkers,
 } from '../../lib/citation-store.js'
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
 
 async function ownedDoc(request: FastifyRequest<{ Params: { docId: string } }>) {
   const userId = request.user!.userId
   return prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+}
+
+/** 悬挂标记计数（字符串语义，零 RegExp — citationId 攻击面隔离）。 */
+function countMarkers(text: string, citationId: string): number {
+  const marker = `[cite:${citationId}]`
+  return text.split(marker).length - 1
+}
+
+/** 从文本移除全部悬挂标记（含紧邻前导空白，避免残留双空格）。 */
+function stripMarkers(text: string, citationId: string): string {
+  const marker = `[cite:${citationId}]`
+  return text
+    .split(marker)
+    .map((seg, i, arr) => (i === arr.length - 1 ? seg : seg.replace(/[ \t]+$/, '')))
+    .join('')
 }
 
 export async function citationsRouter(app: FastifyInstance): Promise<void> {
@@ -44,9 +67,8 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
     const doc = await ownedDoc(request as never)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     // #1081: 悬挂引用 = shortcode 有编号位但无 DocCitation 记录。
-    // 复审 #8 修复: 正文 + deck 内容合并扫描（此前只扫 body，deck 内悬挂
-    // 只能等导出时 [?] + warn 暴露），且复用 citation-store 单一实现
-    // （端点内联手写副本退役 — 规范扩展时单一同步点）。
+    // 复审 #8 修复: 正文 + deck 内容合并扫描（deck 内悬挂在健康横幅同样可见），
+    // 复用 citation-store 单一实现（规范扩展时单一同步点）。
     const dangling = await findDanglingCitations(doc.id, String(doc.body || ''), doc.deck)
     const citations = await listDocCitations(doc.id)
     return { dangling, citations: citations.map(serializeDocCitation) }
@@ -62,29 +84,64 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
     return { ok: true }
   })
 
-  // 复审 #2 修复 — 悬挂引用的「删除」语义 = 清除正文中的标记本身
+  // 复审 #2 修复 — 悬挂引用的「删除」语义 = 清除正文/deck 中的标记本身
   // （悬挂引用按定义没有 DocCitation 记录，复用面向真实记录的 DELETE 必然 404）。
-  app.delete('/api/v1/docs/:docId/citations/dangling/:citationId', async (request, reply) => {
+  // 复审 #3 修复 — 与 GET /dangling 扫描范围对齐：deck 内的悬挂标记同帧清除
+  // （此前只处理 body，deck-only 悬挂点击删除必然 404）。
+  // 复审 #1 修复 — citationId 白名单强校验（400）+ 全程字符串语义（零 RegExp 构造）。
+  app.post('/api/v1/docs/:docId/citations/dangling/:citationId/remove', async (request, reply) => {
     const doc = await ownedDoc(request as never)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     const { citationId } = request.params as { citationId: string }
-    const body = String(doc.body || '')
-    const re = new RegExp(`\\[cite:${citationId}\\]`, 'g')
-    if (!re.test(body)) {
-      return reply.status(404).send({ error: 'No dangling marker for this citation id in document body' })
+    if (!CITE_SHORTCODE_SINGLE.test(citationId)) {
+      return reply.status(400).send({ error: 'Invalid citation id format' })
     }
-    const nextBody = body.replace(new RegExp(`\\s*\\[cite:${citationId}\\]`, 'g'), '')
-    // 写回单点 — 同帧快照 + 块投影维护 + 乐观锁（并发修改 → 409 可重试）。
-    const outcome = await writeDocVersion({
+    const payload = (request.body ?? {}) as { base_body?: unknown; server_base?: unknown; base_deck?: unknown }
+    const clientBody = typeof payload.base_body === 'string' ? payload.base_body : null
+    const serverBase = typeof payload.server_base === 'string' ? payload.server_base : null
+    const clientDeck = typeof payload.base_deck === 'string' ? payload.base_deck : null
+    // 复审 #2 修复: 服务端已被其他窗口推进（客户端视图过期）→ 409 明示，
+    // 绝不静默覆盖任一侧内容（与手动保存 base_sha 语义对齐）。
+    if (serverBase !== null && String(doc.body || '') !== serverBase) {
+      return reply.status(409).send({ error: '文档已被其他窗口修改，请刷新后重试' })
+    }
+    // deck 显式 base 比对（writer 的 baseBody 只保护 body — deck 侧手动对账）。
+    if (clientDeck !== null && String(doc.deck ?? '') !== clientDeck) {
+      return reply.status(409).send({ error: '幻灯片内容已被其他窗口修改，请刷新后重试' })
+    }
+    const serverBody = String(doc.body || '')
+    const serverDeck = String(doc.deck ?? '')
+    // 复审 #2 修复: 客户端当前正文（含未保存编辑）作为清除底稿 —
+    // 标记清除 + 未保存编辑一并落库（客户端内容即最新意图）；服务端基线
+    // 已由上方 server_base 对账，写回单点乐观锁继续覆盖读-写窗口。
+    const effectiveBody = clientBody ?? serverBody
+
+    const bodyRemoved = countMarkers(effectiveBody, citationId)
+    const deckRemoved = countMarkers(deckCitationText(serverDeck), citationId)
+    if (bodyRemoved === 0 && deckRemoved === 0) {
+      return reply.status(404).send({ error: 'No dangling marker for this citation id in document content' })
+    }
+
+    const writeInput: Parameters<typeof writeDocVersion>[0] = {
       userId: request.user!.userId,
       docId: doc.id,
-      body: nextBody,
-      baseBody: body,
       snapshotLabel: '悬挂引用清理',
       writeSource: 'human',
-    })
+      baseBody: serverBody,
+    }
+    if (bodyRemoved > 0) {
+      writeInput.body = stripMarkers(effectiveBody, citationId)
+    }
+    let deckOut: string | null = null
+    if (deckRemoved > 0) {
+      const nextDeck = stripDeckCitationMarkers(serverDeck, citationId)
+      writeInput.deck = JSON.parse(nextDeck) as Record<string, unknown>
+      deckOut = nextDeck
+    }
+    // 写回单点 — 同帧快照（body+deck）+ 块投影维护 + 乐观锁（并发修改 → 409）。
+    const outcome = await writeDocVersion(writeInput)
     if (outcome.conflict) return reply.status(409).send({ error: '文档已被其他窗口修改，请刷新后重试' })
     if (outcome.error) return reply.status(500).send({ error: outcome.error })
-    return { ok: true, body: outcome.body, removed: (body.match(new RegExp(`\\[cite:${citationId}\\]`, 'g')) ?? []).length }
+    return { ok: true, body: outcome.body, deck: deckOut, removed: bodyRemoved + deckRemoved }
   })
 }

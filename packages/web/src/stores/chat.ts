@@ -325,7 +325,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const droppedHolder: { slot: PendingChatSlot | null; idx: number } = { slot: null, idx: -1 };
       set((state) => {
         const cur = state.sessions[sessionId] ?? emptySession();
-        const queue = queueOf(cur.pendingQueue);
+        // 复审 #4 修复: queueOf 不拷贝 — replace-last 的 queue[i] = slot 会
+        // 原地改写数组（引用不变，按引用比较的订阅方跳过重渲染）。防御性拷贝。
+        const queue = [...queueOf(cur.pendingQueue)];
         if (opts.queuePolicy === 'replace-last') {
           // 覆盖最后一条**非评论**槽（可位于评论槽之前 — 用户的交互改主意
           // 语义只作用于交互槽；评论/一键指令槽永远保留，逐条独立执行）。
