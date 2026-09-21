@@ -29,6 +29,7 @@ import {
   serializeDocCitation,
   findDanglingCitations,
   deckCitationText,
+  stripCitationMarkers,
   stripDeckCitationMarkers,
 } from '../../lib/citation-store.js'
 import { writeDocVersion } from '../../tools/doc-version-writer.js'
@@ -42,15 +43,6 @@ async function ownedDoc(request: FastifyRequest<{ Params: { docId: string } }>) 
 function countMarkers(text: string, citationId: string): number {
   const marker = `[cite:${citationId}]`
   return text.split(marker).length - 1
-}
-
-/** 从文本移除全部悬挂标记（含紧邻前导空白，避免残留双空格）。 */
-function stripMarkers(text: string, citationId: string): string {
-  const marker = `[cite:${citationId}]`
-  return text
-    .split(marker)
-    .map((seg, i, arr) => (i === arr.length - 1 ? seg : seg.replace(/[ \t]+$/, '')))
-    .join('')
 }
 
 export async function citationsRouter(app: FastifyInstance): Promise<void> {
@@ -96,28 +88,34 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
     if (!CITE_SHORTCODE_SINGLE.test(citationId)) {
       return reply.status(400).send({ error: 'Invalid citation id format' })
     }
-    const payload = (request.body ?? {}) as { base_body?: unknown; server_base?: unknown; base_deck?: unknown }
+    // 复审轮 4（P0/P1）— body/deck **对称**基线协议：
+    //   base_body / base_deck = 客户端当前内容（含未保存编辑）→ 计算底稿；
+    //   server_base / server_deck_base = 客户端所知服务端基线 → 过期 409；
+    //   baseBody / baseDeck = 服务端读值 → writer 读-写窗口乐观锁。
+    // （第二轮只把 body 侧接了这套链路，deck 侧 clientDeck 仅用于比对、
+    // 计算仍用 serverDeck，且前端传的是保存基线而非实时值 — 未保存的
+    // 画布编辑被静默丢弃。现在两条路径完全同构。）
+    const payload = (request.body ?? {}) as { base_body?: unknown; server_base?: unknown; base_deck?: unknown; server_deck_base?: unknown }
     const clientBody = typeof payload.base_body === 'string' ? payload.base_body : null
     const serverBase = typeof payload.server_base === 'string' ? payload.server_base : null
     const clientDeck = typeof payload.base_deck === 'string' ? payload.base_deck : null
-    // 复审 #2 修复: 服务端已被其他窗口推进（客户端视图过期）→ 409 明示，
-    // 绝不静默覆盖任一侧内容（与手动保存 base_sha 语义对齐）。
+    const serverDeckBase = typeof payload.server_deck_base === 'string' ? payload.server_deck_base : null
     if (serverBase !== null && String(doc.body || '') !== serverBase) {
       return reply.status(409).send({ error: '文档已被其他窗口修改，请刷新后重试' })
     }
-    // deck 显式 base 比对（writer 的 baseBody 只保护 body — deck 侧手动对账）。
-    if (clientDeck !== null && String(doc.deck ?? '') !== clientDeck) {
+    if (serverDeckBase !== null && String(doc.deck ?? '') !== serverDeckBase) {
       return reply.status(409).send({ error: '幻灯片内容已被其他窗口修改，请刷新后重试' })
     }
     const serverBody = String(doc.body || '')
     const serverDeck = String(doc.deck ?? '')
-    // 复审 #2 修复: 客户端当前正文（含未保存编辑）作为清除底稿 —
-    // 标记清除 + 未保存编辑一并落库（客户端内容即最新意图）；服务端基线
-    // 已由上方 server_base 对账，写回单点乐观锁继续覆盖读-写窗口。
+    // 客户端当前内容（含未保存编辑）作为清除底稿 — 标记清除与未保存编辑
+    // 一并落库（客户端内容即最新意图）；body/deck 的「调用方读 → writer 读」
+    // 窗口由写回单点的 baseBody/baseDeck 乐观锁双轨保护。
     const effectiveBody = clientBody ?? serverBody
+    const effectiveDeck = clientDeck ?? serverDeck
 
     const bodyRemoved = countMarkers(effectiveBody, citationId)
-    const deckRemoved = countMarkers(deckCitationText(serverDeck), citationId)
+    const deckRemoved = countMarkers(deckCitationText(effectiveDeck), citationId)
     if (bodyRemoved === 0 && deckRemoved === 0) {
       return reply.status(404).send({ error: 'No dangling marker for this citation id in document content' })
     }
@@ -127,14 +125,16 @@ export async function citationsRouter(app: FastifyInstance): Promise<void> {
       docId: doc.id,
       snapshotLabel: '悬挂引用清理',
       writeSource: 'human',
+      // 输入级乐观锁双轨：body 与 deck 同强度（复审轮 4）。
       baseBody: serverBody,
+      baseDeck: doc.deck,
     }
     if (bodyRemoved > 0) {
-      writeInput.body = stripMarkers(effectiveBody, citationId)
+      writeInput.body = stripCitationMarkers(effectiveBody, citationId)
     }
     let deckOut: string | null = null
     if (deckRemoved > 0) {
-      const nextDeck = stripDeckCitationMarkers(serverDeck, citationId)
+      const nextDeck = stripDeckCitationMarkers(effectiveDeck, citationId)
       writeInput.deck = JSON.parse(nextDeck) as Record<string, unknown>
       deckOut = nextDeck
     }

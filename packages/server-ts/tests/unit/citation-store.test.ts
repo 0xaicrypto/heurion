@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from 'vitest'
 import prisma from '../../src/common/prisma.js'
 import {
   resolveOrCreateDocCitation,
+  stripCitationMarkers,
   listDocCitations,
   getDocCitation,
   deleteDocCitation,
@@ -137,4 +138,22 @@ describe('#1081 悬挂引用检测（citation-store.findDanglingCitationIds）',
     expect(dangling).toEqual(['cite_ghost'])
     expect(await findDanglingCitationIds(DOC, 'no shortcode here')).toEqual([])
   })
+})
+
+describe('复审轮 4 P2 — stripCitationMarkers 边界语义（与旧正则 \\s*\\[cite:id\\] 等价）', () => {
+  const cases: Array<{ in: string; want: string; note: string }> = [
+    { in: 'A [cite:g] B', want: 'A B', note: '行中标记 — 吸收前置空格' },
+    { in: 'A\n[cite:g]\nB', want: 'A\nB', note: '独占一行 — 不留空行（回归：split 只 trim [ \\t] 的 P2 缺陷）' },
+    { in: '[cite:g] 开头', want: ' 开头', note: '行首标记（无前置空白）' },
+    { in: '结尾 [cite:g]', want: '结尾', note: '行尾标记' },
+    { in: 'A [cite:g][cite:g] B', want: 'A B', note: '相邻连续标记逐位吸收' },
+    { in: 'A  \n  [cite:g] B', want: 'A B', note: '多行前置空白吸收' },
+    { in: 'A\n\n[cite:g]\nB', want: 'A\nB', note: '前置空行吸收（不留双空行）' },
+    { in: '无标记文本', want: '无标记文本', note: '无标记直通' },
+  ]
+  for (const c of cases) {
+    test(c.note, () => {
+      expect(stripCitationMarkers(c.in, 'g')).toBe(c.want)
+    })
+  }
 })

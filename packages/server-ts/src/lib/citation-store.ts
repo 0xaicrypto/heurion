@@ -154,14 +154,8 @@ export function deckCitationText(deckJson: string | null | undefined): string {
  * 返回序列化后的 deck JSON 字符串；deck 损坏时原样返回（导出路径已有降级）。
  */
 export function stripDeckCitationMarkers(deckJson: string, citationId: string): string {
-  const marker = `[cite:${citationId}]`
-  const stripText = (t: string) => {
-    const parts = t.split(marker)
-    if (parts.length === 1) return t
-    return parts
-      .map((seg, i, arr) => (i === arr.length - 1 ? seg : seg.replace(/[ \t]+$/, '')))
-      .join('')
-  }
+  // 与 stripCitationMarkers 同一边界语义（独占一行的标记不留空行）
+  const stripText = (t: string) => stripCitationMarkers(t, citationId)
   try {
     const deck = JSON.parse(deckJson) as { slides?: Array<{ title?: string; bullets?: unknown[]; content?: unknown }> }
     for (const slide of deck.slides ?? []) {
@@ -181,6 +175,30 @@ export function stripDeckCitationMarkers(deckJson: string, citationId: string): 
   } catch {
     return deckJson
   }
+}
+
+/**
+ * 复审轮 4（P2 修复）— 悬挂标记移除（单一实现，router 与 deck 侧共用）。
+ *
+ * 边界语义与旧正则 `\s*\[cite:id\]`（吸收任意前置空白**含换行**）逐位等价：
+ * - 行中标记：吸收紧邻前置空白（空格/制表符）→ "A [cite:x] B" → "A B"
+ * - 独占一行标记：吸收前置换行，不留空行 — "A\n[cite:x]\nB" → "A\nB"
+ * - 行首标记（无前置空白）：仅移除标记本身 — "[cite:x] 开头" → " 开头"
+ * - 相邻连续标记：逐位吸收各自前置空白 — "A [cite:x][cite:x] B" → "A B"
+ * （实现：split 后逐边界 trimEnd 全部空白（含换行）再拼接 — 与全局正则
+ * 替换的吸收行为一致；split 语义保持零 RegExp 构造，白名单 id 前提下
+ * 正则注入攻击面仍为零。）
+ */
+export function stripCitationMarkers(text: string, citationId: string): string {
+  const marker = `[cite:${citationId}]`
+  const parts = text.split(marker)
+  if (parts.length === 1) return text
+  let out = parts[0]
+  for (let i = 1; i < parts.length; i++) {
+    // 每个被移除标记的前置空白（含换行）吸收 — 等价旧正则 \s* 前缀
+    out = out.replace(/[ \t\n]+$/, '') + parts[i]
+  }
+  return out
 }
 
 /** 悬挂引用完整诊断 — 正文 + deck 文本合并扫描（单一实现，端点直接复用）。 */

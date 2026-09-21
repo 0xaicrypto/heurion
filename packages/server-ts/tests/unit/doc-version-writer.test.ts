@@ -130,6 +130,35 @@ describe('#904 writeDocVersion 乐观锁条件更新', () => {
     expect(args.where.body).toBe('A')
   })
 
+  // 复审轮 4 P1 — deck 侧与 body 同强度的输入级基线
+  test('baseDeck 与当前 deck 不一致 → 冲突拒绝（调用方读-算-写窗口受保护，零写入）', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: '{"v":2}' })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, deck: { v: 3 }, baseDeck: '{"v":1}', snapshotLabel: 't' })
+    expect(res.conflict).toBe(true)
+    expect(res.changed).toBe(false)
+    expect(res.projection).toBeNull()
+    expect(mocks.txDocUpdateMany).not.toHaveBeenCalled()
+    expect(mocks.txDocSnapshotCreate).not.toHaveBeenCalled()
+    expect(mocks.docUpdateMany).not.toHaveBeenCalled()
+  })
+
+  test('baseDeck 与当前 deck 一致 → 正常落库', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: '{"v":1}' })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, deck: { v: 2 }, baseDeck: '{"v":1}', snapshotLabel: 't' })
+    expect(res.conflict).toBeUndefined()
+    expect(res.changed).toBe(true)
+    expect(res.deck).toEqual({ v: 2 })
+  })
+
+  test('baseDeck null 与无 deck 行一致 → 不冲突；与有 deck 行不一致 → 冲突', async () => {
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: null })
+    const ok = await writeDocVersion({ userId: USER, docId: DOC, deck: { v: 1 }, baseDeck: null, snapshotLabel: 't' })
+    expect(ok.conflict).toBeUndefined()
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', deck: '{"v":9}' })
+    const conflict = await writeDocVersion({ userId: USER, docId: DOC, deck: { v: 1 }, baseDeck: null, snapshotLabel: 't' })
+    expect(conflict.conflict).toBe(true)
+  })
+
   test('文档不存在 — error 返回且无任何写', async () => {
     mocks.docFindFirst.mockResolvedValue(null)
     const res = await writeDocVersion({ userId: USER, docId: DOC, body: 'B', snapshotLabel: 't' })

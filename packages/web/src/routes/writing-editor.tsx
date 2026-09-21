@@ -1744,9 +1744,12 @@ export function WritingEditorPage() {
                   onNotice={showNotice}
                   // 复审 #2: 客户端基线（含未保存编辑）随请求传给服务端 —
                   // 清除计算以用户当前内容为底稿，服务端旧版本不覆盖未保存修改。
+                  // 复审轮 4: deck 基线对称 body — base_deck = 实时画布值
+                  // （含未保存编辑），server_deck_base = 保存基线（lastSavedDeck）。
                   currentBody={body}
                   serverBase={lastSavedBody.current}
-                  currentDeck={lastSavedDeck.current || null}
+                  currentDeck={deckJson || null}
+                  serverDeckBase={lastSavedDeck.current || null}
                   onCleanupApplied={({ body: md, deck: nextDeck }) => {
                     // 悬挂标记清理已由服务端写回单点落库 — 同步编辑器/基线。
                     // deck 返回非空 = deck 侧标记同帧清除（复审 #3），画布与

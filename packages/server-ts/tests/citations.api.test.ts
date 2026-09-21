@@ -120,23 +120,39 @@ describe('#1083/#1081 citations API', () => {
     expect(updated!.body).not.toContain('[cite:cite_ghostX]')
 
     // 复审 #2: server_base 过期（服务端已被其他窗口推进）→ 409 不覆盖
+    // （serverDeck/server_deck_base 复审轮 4 断言需要 deck 基线 — 前置定义）
+    const serverDeck = JSON.stringify({ title: 'D', slides: [{ title: '页 [cite:cite_ghostX]' }] })
     const stale = await app.inject({
       method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`,
       headers: { ...await authHeader(), 'content-type': 'application/json' },
       payload: { server_base: '过期版本' },
     })
     expect(stale.statusCode).toBe(409)
-    // deck 内悬挂同帧清除（复审 #3）
+    // 复审轮 4: server_deck_base 过期 → 409（deck 侧同强度）
+    await getPrisma().then((db) => db.doc.update({ where: { id: docId }, data: { deck: serverDeck } }))
+    const staleDeck = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { server_deck_base: '过期 deck' },
+    })
+    expect(staleDeck.statusCode).toBe(409)
+    // deck 内悬挂同帧清除（复审 #3 + 复审轮 4 P0：客户端实时 deck 基线
+    // 参与计算 — 未保存的画布编辑保留，标记从客户端版本剥除）
     const prisma = await getPrisma()
-    await prisma.doc.update({ where: { id: docId }, data: { deck: JSON.stringify({ title: 'D', slides: [{ title: '页 [cite:cite_ghostX]' }] }) } })
+    await prisma.doc.update({ where: { id: docId }, data: { deck: serverDeck } })
+    const clientDeckUnsaved = JSON.stringify({ title: 'D', slides: [{ title: '用户未保存的标题 [cite:cite_ghostX]' }] })
     const resDeck = await app.inject({
       method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`,
       headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: {},
+      payload: {
+        base_deck: clientDeckUnsaved,
+        server_deck_base: serverDeck, // 客户端所知服务端基线 = 当前值 → 不冲突
+      },
     })
     expect(resDeck.statusCode).toBe(200)
     const deckData = JSON.parse(resDeck.payload)
-    expect(deckData.deck).toContain('页') // 标记被剥，其余内容保留
+    // 未保存的画布编辑保留（复审轮 4 P0：此前 serverDeck 参与计算 → 编辑被静默丢弃）
+    expect(deckData.deck).toContain('用户未保存的标题')
     expect(deckData.deck).not.toContain('[cite:cite_ghostX]')
     // 标记已不存在 → 重复清理 → 404
     const resAgain = await app.inject({ method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostX/remove`, headers: await authHeader() })
@@ -164,16 +180,17 @@ describe('#1083/#1081 citations API', () => {
     expect(res.statusCode).toBe(404) // 无标记 → 404（而非 400/500）
   })
 
-  test('复审 #2 — deck 基线不符 → 409（用户未保存 deck 编辑不被覆盖）', async () => {
+  test('复审轮 4 — server_deck_base 过期 → 409（deck 侧乐观链路对齐 body）', async () => {
     const app = await getApp()
     const docId = await createDoc('A [cite:cite_ghostZ]')
     const prisma = await getPrisma()
     await prisma.doc.update({ where: { id: docId }, data: { deck: JSON.stringify({ title: 'D', slides: [{ title: '页 [cite:cite_ghostZ]' }] }) } })
-    const staleDeck = JSON.stringify({ title: 'D', slides: [{ title: '旧版本' }] })
+    // server_deck_base 过期（服务端 deck 已被其他窗口推进）→ 409；
+    // base_deck 是计算底稿（客户端未保存内容）— 与 body 侧 server_base 同语义。
     const res = await app.inject({
       method: 'POST', url: `/api/v1/docs/${docId}/citations/dangling/cite_ghostZ/remove`,
       headers: { ...await authHeader(), 'content-type': 'application/json' },
-      payload: { base_deck: staleDeck },
+      payload: { server_deck_base: '过期 deck' },
     })
     expect(res.statusCode).toBe(409)
   })

@@ -34,11 +34,17 @@ export function CitationHealthBanner(input: {
   /** 复审 #2: 客户端所知的**服务端**基线（lastSavedBody）— 服务端已被其他
    *  窗口推进时 409 明示，不静默覆盖任一侧。 */
   serverBase?: string | null;
-  /** 复审 #3: 客户端当前 deck 基线（JSON 字符串或 null）— deck 内悬挂标记同帧清除。 */
+  /**
+   * 复审轮 4（P0 修复）: 客户端**实时** deck 基线（deckJson 画布值，含未保存
+   * 编辑）— 清除以它为底稿（第二轮误传 lastSavedDeck 保存基线，未保存的
+   * 画布编辑被静默丢弃）。
+   */
   currentDeck?: string | null;
+  /** 复审轮 4: 客户端所知的服务端 deck 基线（lastSavedDeck）— 过期 → 409 明示。 */
+  serverDeckBase?: string | null;
 }) {
   const { t } = useTranslation();
-  const { docId, pollMs = 30_000, sendChatText, onCleanupApplied, onNotice, currentBody, serverBase, currentDeck } = input;
+  const { docId, pollMs = 30_000, sendChatText, onCleanupApplied, onNotice, currentBody, serverBase, currentDeck, serverDeckBase } = input;
   const [dangling, setDangling] = useState<Array<{ id: string; occurrences: number }>>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -73,6 +79,7 @@ export function CitationHealthBanner(input: {
         base_body: currentBody,
         server_base: serverBase ?? undefined,
         base_deck: currentDeck ?? undefined,
+        server_deck_base: serverDeckBase ?? undefined,
       });
       setDangling((prev) => prev.filter((x) => x.id !== id));
       onCleanupApplied?.({ body: res.body, deck: res.deck });

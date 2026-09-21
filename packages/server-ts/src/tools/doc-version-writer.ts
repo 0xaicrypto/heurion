@@ -52,6 +52,14 @@ export interface DocVersionWrite {
    * 「writer 读 → 落库」窗口 — 两段窗口合并后读-算-写全程受保护。
    */
   baseBody?: string
+  /**
+   * 复审轮 4（deck/doc 对等）— baseBody 的 deck 对称面：调用方计算新 deck
+   * 时所基于的旧 deck 快照（原始存储字符串，可为 null = 无 deck）。提供时与
+   * 本函数读到的当前 deck 比对，不一致同语义按冲突拒绝 — 「调用方读 →
+   * writer 读」窗口对 deck 与 body 同强度保护（此前 deck 只有 #904 的
+   * 条件更新覆盖「writer 读 → 落库」窗口，输入级基线缺失）。
+   */
+  baseDeck?: string | null
   snapshotLabel: string
   /**
    * #996/#999: 写回来源 — 节级元数据作者轴。'ai' = 工具/AI 写回路径
@@ -217,6 +225,16 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
       conflict: true,
       projection: null,
       error: '文档已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
+    }
+  }
+  // 复审轮 4: deck 侧与 body 同强度的输入级基线 — 「调用方读 → writer 读」
+  // 窗口的并发修改直接冲突拒绝（null 感知：prevDeckRaw 可空列按原值比对）。
+  if (input.baseDeck !== undefined && input.baseDeck !== prevDeckRaw) {
+    return {
+      body: '', deck: null, changed: false,
+      conflict: true,
+      projection: null,
+      error: '幻灯片内容已被并发修改，本次写回基于过期内容被拒绝，请重新读取文档后重试',
     }
   }
   const nextBody = input.body ?? prevBody
