@@ -5,7 +5,7 @@
 > **对应代码**：Heurion（`packages/server-ts`，memory / retrieval / knowledge / chat）
 > **策略**：专利组合第二案（姊妹案）——以「双形态知识分层（原子事实=写入格式 / 合成文章=读取格式）+ 溯源快照绑定 + 失效传播 + 人工审核式知识合成」为独立权利要求，与第一案《记忆生命周期与锚定压缩》互补、互不重复授权
 > **状态**：草稿 v1（2026-09-02）。其中「可引用性契约、分层注入、JIT 惰性合成、覆盖率调度」为设计定稿阶段（issue #813–#816），其余特征均已实现并有测试锁定
-> **关联文档**：第一案 `docs/patent/CN-申请草稿-记忆生命周期与锚定压缩.md`；产品设计 `docs/design/knowledge-base-design.md`；记忆生命周期 `docs/design/BRAIN2_MEMORY_LIFECYCLE.md`
+> **关联文档**：第一案 `docs/patent/CN-申请草稿-记忆生命周期与锚定压缩.md`；产品设计 `docs/design/SECOND_BRAIN_DESIGN.md`；记忆生命周期 `docs/design/BRAIN2_MEMORY_LIFECYCLE.md`
 
 ---
 

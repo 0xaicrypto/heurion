@@ -2,8 +2,7 @@
 
 > **状态**：设计稿 v1（2026-08-02）
 > **范围**：`packages/server-ts`（memory / chat / approvals / retrieval）+ `packages/web`
-> **关联**：`docs/design/brain.md`（Brain 2.0 总体设计）、
-> `PRODUCT_DESIGN_REVIEW_OPENCODE.md`（对照 opencode 的评审）、`knowledge-base-design.md`（KB v2.2）
+> **关联**：`docs/design/SECOND_BRAIN_DESIGN.md`（第二大脑当前设计，取代早期 brain.md/KB v2.2 提案）
 > **本文档整合并取代**：`CHAT_CONTEXT_COMPACTION.md`（会话压缩设计，已并入 §5–§6）、
 > `MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`（记忆重构设计，重构已完成，生命周期见本文档）
 > **本文档整合并修订**：记忆提取时机（K1–K6）、长会话压缩（R2）、审批闭环、患者隔离

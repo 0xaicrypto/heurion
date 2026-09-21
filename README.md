@@ -49,7 +49,14 @@ Key ideas:
   detected and warned about.
 - **Conversational writing** — a TipTap document canvas edits in place via
   `edit_document`; chat can insert generated SVG charts (`render_chart`) and
-  inline images through the writing pipeline.
+  inline images through the writing pipeline. Deck (slide) editing shares the
+  same tool-gated discipline as document editing. Formal references are
+  structured (`DocCitation`, DOI-required, PubMed/Crossref-backed) — no
+  hand-written citation lists; numbering and the References section are
+  derived, never hand-edited. Every write-back, save conflict, generated
+  Methods draft, and stats-result insertion renders through one shared
+  `ProposalCard` confirmation flow. Comments never auto-resolve — only an
+  explicit "mark resolved" closes one.
 - **Reliability** — LLM calls have timeouts + 429/5xx retries with friendly
   errors; SSE aborts on client disconnect with messages persisted upfront;
   dual-store writes are atomic (graph commits last, failures roll back).
@@ -171,11 +178,20 @@ src/
 │   ├── medical-records/ Patient record entries (pending_review flow)
 │   ├── patients/        Patient CRUD + DICOM
 │   ├── research/        Studies, roster, eligibility
-│   ├── documents/       Writing studio (TipTap canvas), AI polish, PHI scanner
+│   ├── documents/       Writing studio (TipTap canvas), AI polish, PHI scanner,
+│   │                    proposal contract (409 conflict payload, injectResults)
+│   ├── citations/       Structured references (DocCitation, DOI-required),
+│   │                    dangling-citation health checks
+│   ├── comments/        Doc/deck comment lifecycle (AI never auto-resolves)
+│   ├── figures/         Chart/mermaid/LaTeX render pipeline (figurePipeline port)
+│   ├── references/      Reference-material pool (background sources, distinct
+│   │                    from formal citations — architecturally isolated)
+│   ├── workflows/       Deck import/export orchestration
 │   ├── files/           Upload + tokenized download (chart/image rendering)
 │   ├── knowledge/       KB commands, knowledge gaps (K6), telemetry
 │   ├── memorization/    Memory health panel (/api/v1/memory/health)
-│   └── ...              skills, settings, admin, calendar, execution, plugins
+│   └── ...              skills, settings, admin, calendar, execution, plugins,
+│                        submission, evolution, practitioner, report, brain
 ├── memory/
 │   ├── memory-gateway.ts     single facade: propose/applyApproved/reject/read
 │   ├── memory.service.ts     versioned graph (supersede + audit, dual-store
@@ -219,12 +235,15 @@ All responses use `snake_case`. Key endpoints:
 | POST | `/api/v1/files/upload` | File upload (paste/clipboard) |
 | GET | `/api/v1/files/download/:fileId` | File/chart download (tokenized, <img>-friendly) |
 | POST | `/api/v1/docs/:docId/chat` | Deprecated (410) — writing chat runs via `/agent/chat` with `session_id: doc-<docId>` |
+| GET/DELETE/POST | `/api/v1/docs/:docId/citations` · `/citations/dangling` · `/citations/dangling/:id/remove` | Structured references + dangling-citation health/cleanup |
+| GET/POST | `/api/v1/docs/:docId/comments` | Doc/deck comment lifecycle |
 | GET | `/api/v1/skills/search` | Skills |
 | GET | `/api/v1/admin/users` | Admin |
 | POST | `/api/v1/execution/render` · GET `/api/v1/execution/jobs/:id` | Sidecar jobs |
 
 Design docs: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md) ·
-[`docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md`](docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md)
+[`docs/design/WRITING_MODULE_REDESIGN.md`](docs/design/WRITING_MODULE_REDESIGN.md) ·
+[`docs/design/CITATION_SYSTEM.md`](docs/design/CITATION_SYSTEM.md)
 
 ---
 
@@ -277,7 +296,7 @@ Deployment details: [`DEPLOY.md`](DEPLOY.md)
 - **待审治理** — 提案按类别分组并带提取质量反馈；低重要性项 7 天后自动归档（高重要性置顶），收件箱不堆积
 - **上下文预算透明** — 聊天界面显示历史 token 用量百分比，压缩时机可预期
 - **工具调用可观测** — 每次工具调用落库为状态机（pending → running → completed/error）可回放；输出超限自动截断并落盘；检测死循环调用
-- **对话驱动写作** — TipTap 文档画布通过 `edit_document` 就地编辑；聊天可生成 SVG 图表（`render_chart`）并内联渲染图片
+- **对话驱动写作** — TipTap 文档画布通过 `edit_document` 就地编辑；幻灯片（deck）编辑与正文共用同一套工具门控纪律；聊天可生成 SVG 图表（`render_chart`）并内联渲染图片。正式参考文献结构化（`DocCitation`，DOI 必填，来自 PubMed/Crossref 检索），禁止手写引用列表，编号与 References 列表均为派生态。AI 写回/保存冲突/Methods 草稿/统计结果插入统一走同一张 `ProposalCard` 确认卡片；评论永不自动关闭，只有手动"标记已解决"才会关闭
 - **可靠性** — LLM 调用带超时 + 429/5xx 重试与友好错误文案；SSE 断开即中止请求且消息先落库；双存储写入原子化（graph 最后提交，失败回滚）
 
 ## 架构
@@ -325,11 +344,12 @@ npx prisma db push && npx tsx src/main.ts       # → http://localhost:8001
 cd ../web && pnpm install && pnpm exec vite --host   # → http://localhost:5173
 ```
 
-测试：`packages/server-ts`（72 文件 / 474 用例，AI 全 mock 无网络依赖）、`packages/web`（14 文件 / 93 用例）、`scripts/regression-test.sh`（96 项，LLM 依赖项自动重试）。
+测试：`packages/server-ts`（AI 全 mock 无网络依赖）、`packages/web`（单测）、`scripts/regression-test.sh`（96 项，LLM 依赖项自动重试）——规模见 CI 统计，不在此写死（历史数字容易过期漂移）。
 
 ## CI/CD
 
 推送 `main`：类型检查 → 单测 → 构建 Web → 预发 + 回归 → Cloudflare SSL → 生产部署（Docker Compose）→ 清理 Cloudflare 缓存。`main` 受保护，变更走 PR + 必检项。
 
 设计文档：[`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMORY_LIFECYCLE.md) ·
-[`docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md`](docs/design/PRODUCT_DESIGN_REVIEW_OPENCODE.md)
+[`docs/design/WRITING_MODULE_REDESIGN.md`](docs/design/WRITING_MODULE_REDESIGN.md) ·
+[`docs/design/CITATION_SYSTEM.md`](docs/design/CITATION_SYSTEM.md)

@@ -2,7 +2,7 @@
 
 > **状态**：设计稿 v1（2026-08-08）
 > **范围**：`packages/server-ts`（chat / execution / plugins / tools）、`packages/worker`（执行层）、`packages/web`（工作台 UI）
-> **关联**：`docs/design/RESEARCH_WORKSPACE_DESIGN.md`（研究空间总体设计）、`PLUGIN_MANIFEST_SPEC.md`（插件清单规范）、`SIDECAR_TO_PLUGINS_REFACTOR.md`（sidecar→插件重构）
+> **关联**：`docs/design/RESEARCH_WORKSPACE_DESIGN.md`（研究空间总体设计）、`PLUGIN_MANIFEST_SPEC.md`（插件清单规范）
 > **本文档解决**：论文工作台内"AI 交互式生成复杂科学图表"——统计分析（对标 GraphPad Prism）与分子生物/机制示意图（对标 BioRender）
 
 ---

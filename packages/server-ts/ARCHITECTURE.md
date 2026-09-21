@@ -27,6 +27,11 @@ src/
 │   ├── auth/  patients/  chat/  ingestion/  knowledge/  documents/
 │   ├── research/  submission/  skills/  plugins/  approvals/
 │   ├── memorization/  practitioner/  external/  evolution/  stubs/  report/
+│   ├── citations/          # 结构化参考文献（DocCitation，DOI 必填）+ 悬挂引用体检
+│   ├── comments/           # 文档/幻灯片评论生命周期（AI 永不自动关闭）
+│   ├── figures/            # 图表/mermaid/LaTeX 渲染管线（figurePipeline port）
+│   ├── references/         # 参考材料池（写作背景素材，与正式引用架构隔离）
+│   ├── workflows/          # deck 导入/导出编排
 │   └── brain/  files/  settings/  admin/  ...
 ├── patients/ → 已并入 modules/patients（graph-extractor 已删）
 ├── retrieval/              # 检索层：query-router、intent-router（#557/#562）、
@@ -49,6 +54,8 @@ src/
 | 上下文组装（#630/#637/#635 预算分层） | `modules/chat/context-assembler.ts`、`chat-context.ts` |
 | 记忆（graph + legacy 双写，补偿式原子性 #439） | `memory/memory.service.ts`、`memory-gateway.ts` |
 | 异步进化任务（BullMQ/Redis） | `modules/evolution/` |
+| 结构化参考文献（DocCitation，DOI 必填，epic #1084） | `modules/citations/`、`lib/citation-store.ts`、`tools/insert-citation-tool.ts`，详见 [`docs/design/CITATION_SYSTEM.md`](../../docs/design/CITATION_SYSTEM.md) |
+| 变更提议契约（409 双版本 payload + injectResults，epic #996） | `modules/documents/documents.router.ts`（`buildConflictCurrent`）、`tools/doc-version-writer.ts` |
 
 ## 已知债务（详见根 ARCHITECTURE.md）
 

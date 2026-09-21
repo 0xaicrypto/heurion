@@ -1,7 +1,7 @@
 # Journal Selection Design — 选刊能力升级
 
 **Status:** Approved v1.0(2026-09-04,基于 #639-r5 会话评审)
-**关联:** #382(写作↔投稿联动,已闭环)/ epic #834(Tier J3 OpenAlex)/ ARCHITECTURE_OPTIMIZATION §19(投稿工作流)/ #839(引用对账 — 信任哲学同源)
+**关联:** #382(写作↔投稿联动,已闭环)/ epic #834(Tier J3 OpenAlex)/ §19(投稿工作流,优化建议稿已清理)/ #839(引用对账 — 信任哲学同源)
 
 ## 0. 现状盘点(2026-09-04 代码核查)
 

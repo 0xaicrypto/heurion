@@ -3,7 +3,7 @@
 **Status:** Approved v1.0（2026-09-04 评审通过，D1-D6 决策记录见 §6）
 **更新:** 2026-09-04
 **Deciders:** JZ (architect)
-**关联:** epic #841（本设计的跟踪 epic）；#839 写入闸门统一（skill 提案复用 propose）；#840 双存储收敛（读路径切换清单包含 skills）；#817 brain2.0 治理先例（设计先行 + 回归锁定）；TURN_INTENT_DESIGN §3（TurnIntent 动作信号）；现有零件 #298（capture）/ #24（experience-synthesis）/ #106（load_skill）/ #737（episodes）。
+**关联:** epic #841（本设计的跟踪 epic）；#839 写入闸门统一（skill 提案复用 propose）；#840 双存储收敛（读路径切换清单包含 skills）；#817 brain2.0 治理先例（设计先行 + 回归锁定）；TurnIntent 动作信号设计（§3，设计文档已清理）；现有零件 #298（capture）/ #24（experience-synthesis）/ #106（load_skill）/ #737（episodes）。
 
 ---
 
@@ -74,7 +74,7 @@ interface SkillNode extends MemoryNodeBase {
 ```
 
 设计要点：
-- **`taskKind` 对齐 TurnIntent**（TURN_INTENT_DESIGN §3）而非自造动作集——激活匹配直接复用 intent-router 的判定信号，零额外 LLM。
+- **`taskKind` 对齐 TurnIntent**（§3）而非自造动作集——激活匹配直接复用 intent-router 的判定信号，零额外 LLM。
 - **evidence 与统计分离**：evidence 是"诞生证据"（不可变，审批时看），统计是"运行证据"（持续演化，降级判定看）。
 - **`status: 'suspended'` 是一等状态**：降级不删除（§3.5），医生重审后可恢复。
 

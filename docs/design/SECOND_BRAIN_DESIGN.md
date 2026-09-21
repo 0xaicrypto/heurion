@@ -301,7 +301,7 @@ SuggestedReference {         // 待用户确认的建议，新增
 
 `docId` 绑定换成 `sessionId` 绑定后，写作会话和主 chat 会话在这一层完全对称——
 项目里 `doc-<docId>` 本来就只是 `sessionId` 的一种前缀约定（参见
-`TURN_INTENT_DESIGN.md` §2 对 scene 的定义），不需要为主 chat 另建一套模型。
+TurnIntent 设计 §2 对 scene 的定义），不需要为主 chat 另建一套模型。
 
 `SuggestedReference` 被采纳时，创建一条 `source='suggestion_accepted'` 的
 `SessionReference`，`SuggestedReference.status` 同步置 `accepted`；被划走则
