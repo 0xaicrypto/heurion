@@ -239,25 +239,45 @@ describe('#1101 putDeckArtifact（FileIndex 工件 + 投影重建 + 乐观锁）
     expect(putA1.conflict).toBeFalsy()
 
     // 模拟并发时序：B（相同字节）去重命中 R 并成功指认 → Doc.deckArtifactId(R)。
+    // v2 修正：交错用 rollbackArtifactUpload **直接调用**构造（评审推荐 —
+    // 此前靠两个不同字节的 putDeckArtifact 侧面绕过，从未命中 R 的回滚路径）。
     const putB = await putDeckArtifact({ userId: USER, docId: docB, bytes })
     expect(putB.conflict).toBeFalsy()
     await prisma.doc.update({ where: { id: docB }, data: { deckArtifactId: putB.artifactId } })
 
-    // A 的下一次保存因 baseline 被并发推进而冲突 → 走回滚。
-    await prisma.doc.update({ where: { id: docA }, data: { deck: '{"title":"并发写","slides":[]}' } })
-    const bytesA2 = await serializeDeckWireToPptx({ ...sampleDeckWire(), title: 'A2' })
-    const putA2 = await putDeckArtifact({ userId: USER, docId: docA, bytes: bytesA2, baseDeck: putA1.projection })
-    expect(putA2.conflict).toBe(true)
+    // 直调 rollbackArtifactUpload（评审推荐的确定性构造）：
+    // rollback 目标 = R（createdHere=true、无任何其他引用之外的交错已就位）。
+    // 预期：行 + 物理文件都跳过删除（B 的成功不丢）。
+    const { rollbackArtifactUpload } = await import('../../src/lib/deck-bytes.js')
+    await rollbackArtifactUpload({ userId: USER, artifactId: putB.artifactId, createdHere: true })
 
-    // 回滚后 R 仍存在（B 的指认保护生效）— B 报的成功不会变成读 null。
     const rowR = await prisma.fileIndex.findUnique({ where: { id: putB.artifactId } })
     expect(rowR).not.toBeNull()
+    const artifactPathB = path.join(uploadsBaseDir(USER), putB.artifactId)
+    expect(fs.existsSync(artifactPathB)).toBe(true)
     const docBAfter = await prisma.doc.findUnique({ where: { id: docB } })
     expect(docBAfter!.deckArtifactId).toBe(putB.artifactId)
     // R 的字节仍完整可读。
     const still = await getDeckArtifact(docB)
     expect(still?.artifactId).toBe(putB.artifactId)
     expect(still!.bytes.equals(bytes)).toBe(true)
+  })
+
+  test('#1101 复审轮 2 — 并发保护对照组：无引用时回滚删行+删文件（单一决策点）', async () => {
+    const docId = await createDoc()
+    const bytes = await serializeDeckWireToPptx({ ...sampleDeckWire(), title: 'no-ref-delete' })
+    const put = await putDeckArtifact({ userId: USER, docId, bytes })
+    expect(put.conflict).toBeFalsy()
+
+    // 清掉指针（模拟 putDeckArtifact 内部 rollback 触发时指针未移动）→
+    // 直调 rollbackArtifactUpload → 行 + 物理文件都应删除。
+    await prisma.doc.update({ where: { id: docId }, data: { deckArtifactId: null } })
+    const { rollbackArtifactUpload } = await import('../../src/lib/deck-bytes.js')
+    await rollbackArtifactUpload({ userId: USER, artifactId: put.artifactId, createdHere: true })
+
+    const row = await prisma.fileIndex.findUnique({ where: { id: put.artifactId } })
+    expect(row).toBeNull()
+    expect(fs.existsSync(path.join(uploadsBaseDir(USER), put.artifactId))).toBe(false)
   })
 
   test('Fix 4/5: sha256 去重复用行 + 冲突 → 复用的既有工件绝不回滚删除', async () => {

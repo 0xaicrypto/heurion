@@ -348,31 +348,36 @@ export interface PutDeckArtifactResult {
  * 保留 — 投影是可重建缓存（设计 §3.1），真相源未推进即无一致性破坏；
  * 并发窗口内另一写者可能已合法接管，删行反而会悬空对方的指针。
  */
-async function rollbackArtifactUpload(args: { userId: string; artifactId: string; createdHere: boolean }): Promise<void> {
+export async function rollbackArtifactUpload(args: { userId: string; artifactId: string; createdHere: boolean }): Promise<void> {
   if (!args.createdHere) return
-  // #1101 复审轮 2（并发指认保护）: 删除前复查 — 任何 doc 仍把
-  // Doc.deckArtifactId 指向该工件 → 不删。并发场景：A 创建工件行 R →
-  // B（相同字节）sha256 去重命中 R 并成功指认 → A 的 writeDocVersion 因
-  // baseline 被改而冲突走回滚 → 无条件删 R 会连带删掉 B 刚指向的工件
-  // （B 报成功、读回 null）。事务内复查+删除最小化 TOCTOU 窗口（SQLite
-  // connection_limit=1 下写本就串行，复查是双保险）。
+
+  // #1101 复审轮 2（并发指认保护，v2 修正）: 「行是否真被删除」是唯一决策点，
+  // 物理文件删除严格依赖它 — 此前两个独立 try 块各自为政：事务内 `if (c>0)`
+  // 的 return 只跳出箭头函数，外层不知道行没删，物理文件仍被无条件 rmSync
+  // （删行保护拦住了，删文件没拦住）。
+  //
+  // 单一决策事务：任何 doc 仍把 Doc.deckArtifactId 指向该工件 → 返回 false
+  // 不删行（B 并发指认保护）。事务异常（DB 故障）→ 保守返回 — 宁可留孤儿
+  // 行/文件（sha256 去重 + 清理扫描可兜），不可误删被引用的活工件。
+  let rowDeleted = false
   try {
-    const refs = await prisma.doc.count({ where: { deckArtifactId: args.artifactId } })
-    if (refs > 0) {
-      log.warn('deck artifact rollback: skipped — artifact still referenced by concurrent doc pointer', {
-        artifactId: args.artifactId, refs,
-      })
-      return
-    }
-    await prisma.$transaction(async (tx) => {
+    rowDeleted = await prisma.$transaction(async (tx) => {
       const c = await (tx as typeof prisma).doc.count({ where: { deckArtifactId: args.artifactId } })
-      if (c > 0) return
+      if (c > 0) return false
       await (tx as typeof prisma).fileIndex.delete({ where: { id: args.artifactId } })
+      return true
     })
   } catch (err) {
-    log.warn('deck artifact rollback: file_index delete failed (orphan row left)', {
+    log.warn('deck artifact rollback: row delete failed — skipping physical unlink (prefer orphan over clobbering a referenced artifact)', {
       artifactId: args.artifactId, reason: (err as Error).message.slice(0, 120),
     })
+    return
+  }
+  if (!rowDeleted) {
+    log.warn('deck artifact rollback: skipped — artifact still referenced by concurrent doc pointer', {
+      artifactId: args.artifactId,
+    })
+    return
   }
   try {
     const filepath = safeUploadPath(args.userId, args.artifactId)
