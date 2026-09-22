@@ -13,7 +13,10 @@ import { deepseekChatWithMeta, deepseekChatWithToolsStream } from '../../common/
 import { detectDoomLoop, classifyToolFailure, detectFailureStreak, failureStreakCorrection, type ToolFailureEntry } from '../../tools/doom-loop.js'
 import { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from '../../tools/tool-registry.js'
 import { TurnBudget, type TurnBudgetExhaustReason, type TurnBudgetSnapshot } from './turn-budget.js'
-import { twinsRoot } from '../../lib/upload-path.js'
+// #1106: 回合生命周期状态机 — 可变闭包标志收口为显式状态对象 + 类型化转移。
+import { TurnState } from './turn-state.js'
+// #1106: 工具事件留痕通道（write-time truncation/溢写）提取自本文件。
+import { createToolEventAppender } from './tool-event-log.js'
 import { makeLogger } from '../../common/logger.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 // #1033: <tool_call> 清理（终态 + 推理流式通道）。
@@ -27,18 +30,22 @@ import { deckWireSchema, blockProjectionSchema, sectionMetaMapSchema } from '@he
 // P0 hotfix 2026-09: 原对话内纠偏重试已移除(毒上下文里重试无效),
 // 重试职责移交 doc-executor;tool-loop 只负责留痕与警示。
 // #985: 三套对账实现合并单一模块(双语 — 英文回复的对账安全网)。
-import { detectUnbackedEditClaim, countClaimedEditItems, detectTextOnlyPlan } from './edit-reconciliation.js'
+// #1106: 收尾对账守卫段提取至 edit-claim-reconciliation.ts — 此处仅
+// 保留纯函数 re-export 供既有 import 路径兼容(edit-claim-guard.test.ts)。
+import { countClaimedEditItems } from './edit-reconciliation.js'
+import { runEditClaimReconciliation } from './edit-claim-reconciliation.js'
+export { countClaimedEditItems }
 // #979 方案 D: 进度问答识别仍属 prompt 纪律(writing-prompts)。
 import { PLAN_PROGRESS_QUERY_RE } from './writing-prompts.js'
 import type { TaskPlan } from '@heurion/contracts'
 // #976: 任务清单状态与上下文注入（common 层,tools/modules 共用）。
+// #1106: renderPendingSteps 随收尾对账迁至 edit-claim-reconciliation。
 import {
   loadActivePlan,
   autoAdvanceWriteStep,
   markWriteStepFailed,
   planBacklog,
   backlogExceedsRounds,
-  renderPendingSteps,
 } from '../../common/plan-store.js'
 
 const log = makeLogger('chat.tool-loop')
@@ -329,75 +336,16 @@ export async function runToolCallLoop(params: {
   // compaction) stays bounded without a separate prune pass. Oversized
   // outputs spill to the per-user truncation dir; the event keeps a preview
   // plus the disk path so a future "view full output" flow can recover it.
-  const TRUNCATE_CHARS = 500
-  const appendToolEvent = async (eventType: string, content: string, metadata: Record<string, unknown>) => {
-    let body = content
-    if (eventType === 'tool_result' && body.length > TRUNCATE_CHARS) {
-      try {
-        const { mkdir, writeFile } = await import('fs/promises')
-        const { join } = await import('path')
-        const baseDir = twinsRoot()
-        const dir = join(baseDir, userId, 'truncation')
-        await mkdir(dir, { recursive: true })
-        const name = `tool_${sessionId.replace(/[^\w-]/g, '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`
-        await writeFile(join(dir, name), content, 'utf-8')
-        body = `[Tool output truncated to ${TRUNCATE_CHARS} chars — full output spilled to ${name}]\n${content.slice(0, TRUNCATE_CHARS)}`
-        metadata = { ...metadata, truncatedTo: TRUNCATE_CHARS, spillFile: name }
-      } catch {
-        body = content.slice(0, TRUNCATE_CHARS)
-      }
-    }
-    ctx.eventLog.append({
-      timestamp: Date.now() / 1000,
-      eventType,
-      content: body,
-      metadata,
-      agentId: userId,
-      sessionId,
-    })
-  }
+  // #1106: 提取至 tool-event-log.ts（截断/溢写策略独立可测）。
+  const appendToolEvent = createToolEventAppender({ ctx, userId, sessionId })
 
   let messages = [...currentMessages]
   const MAX_TOOL_ROUNDS = params.maxRounds ?? 5
-  let toolRound = 0
+  // #1106: 生命周期标志收口 — docWriteExecuted/exitedByRoundCap/exitedByBudget/
+  // writeFailStreakExit/lastRoundHadFailure/reasoningOverBudget 等全部迁入
+  // TurnState（行为零变更，见 turn-state.ts 退出语义注释）。
+  const state = new TurnState()
   let finalContent = ''
-  // #1019: 回合级预算耗尽退出（区别于局部轮次上限）。
-  let exitedByBudget = false
-  // #1023: 上一轮是否有工具失败 → 下一轮按"修正性重试"收紧完成预算。
-  let lastRoundHadFailure = false
-  // #1026: reasoning 已越过回合预算（非流式回退路径的事后兜底判定）。
-  let reasoningOverBudget = false
-
-  // #892: 声明-执行对账守卫 — 统计本轮写回工具(DOC_WRITE_TOOLS)实际执行
-  // 次数(成功或失败都算「已执行」);doc- 会话零执行且回复声称完成编辑时
-  // 留痕警示(原对话内纠偏重试已移交 doc-executor)。
-  let docWriteExecuted = 0
-  // #977: 成功写回单独计数 — 失败执行不算「写回」（空参 edit_document
-  // 连败后,失败执行曾把零写回守卫与部分对账的口径带偏:文档未被修改
-  // 却有 executed 计数）。守卫判定一律用 succeeded 口径。
-  let docWriteSucceeded = 0
-  // P0 hotfix 2026-09: 本轮实际执行过的写回工具名单 — 供调用方
-  // (conversation-turn → doc-executor)判断"声称完成但零写回"并触发
-  // 精简上下文兜底重试。去重,顺序为首次执行顺序。
-  const executedWriteToolNames: string[] = []
-  // #893: 轮次上限提示 — doc- 会话按轮次耗尽退出(而非模型主动收尾)且
-  // 本轮执行过工具时,告知用户可回复「继续」接力完成剩余编辑。
-  let anyToolExecuted = false
-  // while 自然结束(轮次耗尽)保持 true;break 出口(模型主动收尾/空回复/
-  // 守卫后续 break)置 false。
-  let exitedByRoundCap = true
-  // #967: 部分执行对账缺口 — 守卫检出「声称 > 实际写回」时记录 claimed 数。
-  let unbackedClaimCount = 0
-  // #972: 活跃清单收尾对账 — backlog > 0 且收尾声称完成时警示并透出接力材料。
-  let planBacklogCount = 0
-  let planPendingText = ''
-  // #978: 写回连败早退标志（finishCall 内置位,walker 检查后 break）。
-  let writeFailStreakExit = false
-  // #979: 本轮是否执行过 set_task_plan（文本计划表守卫的豁免依据）。
-  let planWasManaged = false
-  // 方案 A: 回合内已执行工具调用总数（任意工具）+ nudge 注入标志。
-  let executedToolCallsTotal = 0
-  let planNudgeInjected = false
 
   // #835: 尽最大努力检索(best-effort retrieval) — 检索工具连续失败 ≥2 次
   // 即从后续轮次移除这些工具(模型物理上无法再重试),配合注入指引让模型
@@ -438,19 +386,17 @@ export async function runToolCallLoop(params: {
     }
   }
 
-  while (toolRound < MAX_TOOL_ROUNDS) {
+  while (state.toolRound < MAX_TOOL_ROUNDS) {
     // #1019: 回合级预算（main + rescue 共享）— 任何维度超限立即停止本回合
     // 的后续 LLM 调用，不再进入下一轮。
     if (params.budget && !params.budget.tryStartRound()) {
-      exitedByBudget = true
-      exitedByRoundCap = false
+      state.exitByBudget()
       break
     }
-    toolRound++
+    state.toolRound++
     // #1023: 本轮是否为修正性重试（消费上一轮的失败标记）— 是则收紧
     // 完成预算（RETRY_MAX_TOKENS），修正已知错误不必重新全局推理。
-    const correctiveRetry = lastRoundHadFailure
-    lastRoundHadFailure = false
+    const correctiveRetry = state.consumeCorrectiveRetry()
     let roundReasoningChars = 0
     // #1033: 本轮推理流的 <tool_call> 过滤器（跨 chunk / 未闭合块）。
     const roundReasonFilter = createToolCallStreamFilter()
@@ -479,7 +425,7 @@ export async function runToolCallLoop(params: {
     const onTurnReasoning = (reasoning: string) => {
       // #1019: 累计回合级推理字数（跨 main/rescue），供预算熔断与提示文案。
       roundReasoningChars += reasoning.length
-      if (params.budget?.countReasoning(reasoning.length)) reasoningOverBudget = true
+      if (params.budget?.countReasoning(reasoning.length)) state.markReasoningOverBudget()
       // #1033: 推理通道同样过滤 <tool_call> 块（GLM 偶尔把调用写进思考流）。
       const clean = roundReasonFilter.push(reasoning)
       if (clean) io.send({ type: 'reasoning_chunk', text: clean })
@@ -492,8 +438,7 @@ export async function runToolCallLoop(params: {
       // 直接结束回合由 conversation-turn 发熔断提示。
       if (streamErr instanceof LlmReasoningBudgetExceededError) {
         params.budget?.forceExhaust('reasoning')
-        exitedByBudget = true
-        exitedByRoundCap = false
+        state.exitByBudget()
         break
       }
       log.warn(`[tool-loop] tools-stream failed → non-streaming fallback: ${(streamErr as Error).message.slice(0, 120)}`)
@@ -503,19 +448,18 @@ export async function runToolCallLoop(params: {
     const reasonTail = roundReasonFilter.flush()
     if (reasonTail) io.send({ type: 'reasoning_chunk', text: reasonTail })
     // #1023: 每轮推理量 + 是否修正性重试 — 为"重试轮推理下降"提供可验证埋点。
-    log.info(`[tool-loop] round=${toolRound} correctiveRetry=${correctiveRetry} reasoningChars=${roundReasoningChars} maxTokens=${(turnCallOptions as { maxTokens?: number }).maxTokens ?? 'default'}`)
+    log.info(`[tool-loop] round=${state.toolRound} correctiveRetry=${correctiveRetry} reasoningChars=${roundReasoningChars} maxTokens=${(turnCallOptions as { maxTokens?: number }).maxTokens ?? 'default'}`)
     // #1026: 非流式回退路径没有流内中止 — 事后判定，越线即结束回合。
-    if (reasoningOverBudget) {
+    if (state.reasoningOverBudget) {
       params.budget?.forceExhaust('reasoning')
-      exitedByBudget = true
-      exitedByRoundCap = false
+      state.exitByBudget()
       break
     }
     const callResult = call.text
 
     if (!callResult) {
       finalContent = ''
-      exitedByRoundCap = false
+      state.exitWithoutRoundCap()
       break
     }
 
@@ -601,7 +545,7 @@ export async function runToolCallLoop(params: {
             tool: c.toolName, args: c.argsPreview, status: 'warning', seq: c.seq,
           })
         }
-        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq, round: toolRound, loop: loopName })
+        io.send({ type: 'tool_call', tool: c.toolName, args: c.toolArgs, seq: c.seq, round: state.toolRound, loop: loopName })
         // #927: 拦截 — 不发 running/子代理事件,不执行(调用方注入纠偏)。
         if (blocked) return blocked
         await appendToolEvent('tool_call', `${c.toolName}(${c.argsPreview})`, {
@@ -639,7 +583,7 @@ export async function runToolCallLoop(params: {
           success: false,
           elapsed_ms: 0,
           preview,
-          round: toolRound,
+          round: state.toolRound,
           loop: loopName,
         })
         await appendToolEvent('tool_result', correction, {
@@ -655,7 +599,7 @@ export async function runToolCallLoop(params: {
       const finishCall = async (c: ExecutableCall, result: Awaited<ReturnType<typeof toolRegistry.execute>>) => {
         // #892: 写回工具每次真实执行(成功或失败)都计入 — 对账守卫的
         // "文档是否被修改过"事实依据。
-        executedToolCallsTotal++
+        state.bumpToolCall()
         // #1019: 回合级工具调用计数（拦截调用不经过 finishCall，天然不计）。
         params.budget?.countToolCall()
         // #1024: 失败语义分类 + 同工具同分类连续失败熔断（成功清空历史）。
@@ -663,7 +607,7 @@ export async function runToolCallLoop(params: {
         // startCall 直接拦截，不再消耗工具执行与后续轮次。
         if (!result.success) {
           // #1023: 标记下一轮为修正性重试（收紧完成预算）。
-          lastRoundHadFailure = true
+          state.markRoundFailed()
           const failureClass = classifyToolFailure(result.error)
           const history = failureHistory.get(c.toolName) ?? []
           history.push({ tool: c.toolName, failureClass })
@@ -683,10 +627,7 @@ export async function runToolCallLoop(params: {
           failureHistory.delete(c.toolName)
         }
         if (DOC_WRITE_TOOLS.has(c.toolName)) {
-          docWriteExecuted++
-          if (result.success) docWriteSucceeded++
-          // P0 hotfix 2026-09: 写回工具名单(去重)。
-          if (!executedWriteToolNames.includes(c.toolName)) executedWriteToolNames.push(c.toolName)
+          state.markDocWriteExecuted(c.toolName, result.success)
           // #976 闸门 3 — 写回步骤系统自动推进/失败标注（反编造核心）：
           // 活跃清单中第一个 pending 且 tool 匹配的步骤,系统在真实执行后
           // 推进/标失败,模型无法自行声称写回步骤完成。同步 await（一次
@@ -713,14 +654,13 @@ export async function runToolCallLoop(params: {
           // #978: 写回连败早退 — doc- 会话写回尝试 ≥2 且成功 0 时,毒上下文
           // 内的继续重试已被证伪(#892/doom-loop 拦截后模型仍空参连发),
           // 立即结束循环,转入 doc-executor 精简兜底（连败直通条件接手）。
-          if (sessionId.startsWith('doc-') && docWriteSucceeded === 0 && docWriteExecuted - docWriteSucceeded >= 2) {
+          if (state.shouldEarlyExitOnWriteStreak(sessionId)) {
             io.send({
               type: 'context_info',
               text: '写回连续失败 — 转入精简上下文自动重试',
               kind: 'warning',
             })
-            exitedByRoundCap = false
-            writeFailStreakExit = true
+            state.markWriteFailStreak()
           }
         }
         // #789③/#694: parse the tool output ONCE per result —此前
@@ -732,7 +672,7 @@ export async function runToolCallLoop(params: {
           ? parseLlmJson<Record<string, unknown>>(result.output)
           : null
 
-        planWasManaged = true
+        state.planWasManaged = true
         // #976 账本纪律执行化 — create 成功后立即注入强指令：下一轮必须
         // 真实调用第一个写回工具（防「建完清单停下等确认」——#806 打太极
         // 在清单流程里的复发形态，用户生产实例 2026-09-10）。
@@ -832,7 +772,7 @@ export async function runToolCallLoop(params: {
           success: result.success,
           elapsed_ms: Date.now() - c.startedAt,
           preview: preview || undefined,
-          round: toolRound,
+          round: state.toolRound,
           loop: loopName,
         })
 
@@ -916,22 +856,21 @@ export async function runToolCallLoop(params: {
       // 方案 A: 行为观察 nudge — 已执行 ≥3 个工具调用（或轮次过半）且
       // 无活跃清单 → 一次性中性提醒（判断权在模型，无意图词表）。
       // #978: 写回连败早退 — finishCall 内置位，直接结束轮次循环转兜底。
-      if (writeFailStreakExit) {
-        exitedByRoundCap = false
+      if (state.shouldExit() === 'writeStreak') {
         break
       }
       if (executedAny) {
-        anyToolExecuted = true
+        state.anyToolExecuted = true
         if (
-          !planNudgeInjected
+          !state.planNudgeInjected
           && sessionId.startsWith('doc-')
           && !activePlanAtStart
-          && (executedToolCallsTotal >= 3 || toolRound >= Math.ceil(MAX_TOOL_ROUNDS / 2))
+          && (state.executedToolCallsTotal >= 3 || state.toolRound >= Math.ceil(MAX_TOOL_ROUNDS / 2))
         ) {
-          planNudgeInjected = true
+          state.planNudgeInjected = true
           messages.push({
             role: 'user',
-            content: `【系统】本回合已执行 ${executedToolCallsTotal} 个工具调用（第 ${toolRound}/${MAX_TOOL_ROUNDS} 轮）。如果这是可拆解为 ≥3 个独立步骤的任务，建议先调用 set_task_plan 建立任务清单——用户可见进度、失败可重试、轮次耗尽可接力。是否建立由你根据任务性质判断；简单任务（1-2 步）直接继续执行即可。`,
+            content: `【系统】本回合已执行 ${state.executedToolCallsTotal} 个工具调用（第 ${state.toolRound}/${MAX_TOOL_ROUNDS} 轮）。如果这是可拆解为 ≥3 个独立步骤的任务，建议先调用 set_task_plan 建立任务清单——用户可见进度、失败可重试、轮次耗尽可接力。是否建立由你根据任务性质判断；简单任务（1-2 步）直接继续执行即可。`,
           })
         }
         continue
@@ -944,108 +883,21 @@ export async function runToolCallLoop(params: {
     const cleaned = stripToolCallBlocks(callResult)
     finalContent = cleaned || '抱歉，我未能完成这个操作，请再试一次或换一种说法描述需求。'
 
-    // #892: 声明-执行对账守卫(生产事故根因①) — doc- 会话对话正常结束,
-    // 没有任何写回工具执行,回复却声称已完成编辑:事件留痕 + 用户可见警示。
-    // P0 hotfix 2026-09: 原「注入纠偏消息后重试一轮」已移除 — 纠偏重试
-    // 仍跑在同一份 27k+ 毒上下文里,实测无效(模型继续输出计划文本);
-    // 重试职责移交 doc-executor(精简上下文 + 仅写回工具面重跑,见
-    // conversation-turn 的接线)。此处只留痕,不动 finalContent。
-    // #967: 部分执行对账 — 写回次数 ≥1 但回复(对照表/进度话术)声称完成
-    // 的条目数超过实际写回数(生产实例:长文档逐段协议下只写了第 1 节,
-    // 对照表给其余 7 节编造「实际改动」),同样留痕 + 警示 + 暴露缺口数
-    // 供 doc-executor 接力。
-    if (sessionId.startsWith('doc-')) {
-      // #972: 活跃任务清单收尾对账 — backlog（pending+failed 步）> 0 且
-      // 收尾命中完成声明 → 警示 + 事件 + 接力材料（替代文本解析启发式）。
-      const activePlan = await loadActivePlan(userId, sessionId).catch(() => null)
-      const backlog = planBacklog(activePlan)
-      planBacklogCount = backlog
-      planPendingText = renderPendingSteps(activePlan)
-      const claimedCount = countClaimedEditItems(finalContent)
-      // #977: 守卫口径统一为「成功写回」——失败执行不算写回（文档未被
-      // 修改的事实依据）。
-      // #979 文本计划表守卫(#985 提取为 edit-reconciliation 纯函数)— 收尾
-      // 输出 ≥3 个编号步骤的文本计划/对照表且本轮无 set_task_plan 调用 →
-      // 模型在用纯文本管理进度(用户生产实例:两次问进度给出互不一致的口头
-      // 清单)。逼向结构化账本。
-      if (!planWasManaged) {
-        const textPlan = detectTextOnlyPlan(finalContent)
-        if (process.env.DEBUG_GUARD) console.log('GUARD_DBG numbered=' + textPlan.numberedStepLines + ' tableLike=' + textPlan.tableLike + ' len=' + finalContent.length + ' sess=' + sessionId)
-        if (textPlan.hit) {
-          await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
-            kind: 'text_plan',
-            numberedStepLines: textPlan.numberedStepLines,
-            note: 'text-only plan table without set_task_plan',
-          })
-          io.send({
-            type: 'context_info',
-            text: '⚠️ 检测到文本版计划表 — 文本清单无法自动推进与进度追踪，请让 AI 用 set_task_plan 建立正式清单（回复「开始」即可）',
-            kind: 'warning',
-          })
-        }
-      }
+    // #892/#967/#972/#979: 声明-执行对账守卫 — #1106 提取至
+    // edit-claim-reconciliation.ts（行为零变更：留痕/警示/缺口口径不变）。
+    const reconciliation = await runEditClaimReconciliation({
+      sessionId, userId, finalContent,
+      planWasManaged: state.planWasManaged,
+      docWriteExecuted: state.docWriteExecuted,
+      docWriteSucceeded: state.docWriteSucceeded,
+      io,
+      appendEvent: appendToolEvent,
+    })
+    state.unbackedClaimCount = reconciliation.unbackedClaimCount
+    state.planBacklogCount = reconciliation.planBacklogCount
+    state.planPendingText = reconciliation.planPendingText
 
-      // 分支序：零写回（最严重）→ 清单 backlog → 文本计数部分执行。
-      // #976 补丁：backlog > 0 且零成功写回 → 无条件警示（建了清单没执行的
-      // 空转形态——收尾文本是「回复开始」类等待确认话术，不命中声明词）。
-      if (docWriteSucceeded === 0 && backlog > 0 && !detectUnbackedEditClaim(finalContent)) {
-        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
-          kind: 'plan_backlog',
-          planId: activePlan?.plan_id,
-          backlog,
-          docWriteSucceeded,
-          note: 'plan created but no write executed this turn',
-        })
-        io.send({
-          type: 'context_info',
-          text: `⚠️ 任务清单已建立但本轮尚未执行任何写回（${backlog} 步待办）— 可回复「开始」或「继续」让 AI 接力执行`,
-          kind: 'warning',
-        })
-        unbackedClaimCount = Math.max(unbackedClaimCount, backlog)
-      } else if (docWriteSucceeded === 0 && detectUnbackedEditClaim(finalContent)) {
-        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
-          claimedEdit: true,
-          docWriteExecuted,
-          docWriteSucceeded,
-          ...(backlog > 0 ? { planBacklog: backlog } : {}),
-        })
-        io.send({
-          type: 'context_info',
-          text: backlog > 0
-            ? `⚠️ 上面的回复声称已完成文档编辑，但本轮无成功写回，且任务清单仍有 ${backlog} 步未完成 — 文档未被修改`
-            : '⚠️ 上面的回复声称已完成文档编辑，但本轮未产生任何成功写回，文档未被修改',
-          kind: 'warning',
-        })
-        unbackedClaimCount = Math.max(claimedCount, backlog)
-      } else if (backlog > 0 && detectUnbackedEditClaim(finalContent)) {
-        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
-          kind: 'plan_backlog',
-          planId: activePlan?.plan_id,
-          backlog,
-          docWriteSucceeded,
-        })
-        io.send({
-          type: 'context_info',
-          text: `⚠️ 上面的回复声称已完成文档编辑，但任务清单仍有 ${backlog} 步未完成 — 可回复「继续」从剩余步骤接着执行`,
-          kind: 'warning',
-        })
-        unbackedClaimCount = Math.max(unbackedClaimCount, backlog)
-      } else if (claimedCount > docWriteSucceeded) {
-        await appendToolEvent('edit_claim_unbacked', finalContent.slice(0, 200), {
-          claimedCount,
-          docWriteSucceeded,
-          kind: 'partial',
-        })
-        io.send({
-          type: 'context_info',
-          text: `⚠️ 上面的回复声称已完成 ${claimedCount} 处编辑，但本轮实际写回 ${docWriteSucceeded} 处 — 其余条目未写入文档。可回复「继续」让 AI 执行剩余部分`,
-          kind: 'warning',
-        })
-        unbackedClaimCount = claimedCount
-      }
-    }
-
-    exitedByRoundCap = false
+    state.exitWithoutRoundCap()
     break
   }
 
@@ -1053,7 +905,7 @@ export async function runToolCallLoop(params: {
   // 告知用户剩余编辑可回复「继续」接力,不再静默截断(事故根因②)。
   // #1019: 预算耗尽（exitedByBudget）时 exitedByRoundCap 已置 false,由
   // conversation-turn 统一发可行动的熔断提示。
-  if (exitedByRoundCap && sessionId.startsWith('doc-') && anyToolExecuted) {
+  if (state.exitedByRoundCap && sessionId.startsWith('doc-') && state.anyToolExecuted) {
     io.send({
       type: 'context_info',
       text: `本轮编辑轮次已达上限（${MAX_TOOL_ROUNDS} 轮），若回复中尚有未执行的编辑，请回复“继续”让 AI 完成剩余部分`,
@@ -1065,10 +917,11 @@ export async function runToolCallLoop(params: {
   // deepseekStream 流式 fallback(511-517 行的 if(finalContent) 分支)。
   // 硬编码兜底文案会截胡流式路径。
   return {
-    finalContent, messages, executedWriteTools: executedWriteToolNames,
-    unbackedClaimCount, writeAttempts: docWriteExecuted, writeSuccesses: docWriteSucceeded,
-    planBacklogCount, planPendingText,
-    ...(exitedByBudget ? { exhaustedReason: params.budget?.exhausted() ?? 'rounds' } : {}),
+    finalContent, messages, executedWriteTools: state.executedWriteToolNames,
+    unbackedClaimCount: state.unbackedClaimCount,
+    writeAttempts: state.docWriteExecuted, writeSuccesses: state.docWriteSucceeded,
+    planBacklogCount: state.planBacklogCount, planPendingText: state.planPendingText,
+    ...(state.exitedByBudget ? { exhaustedReason: params.budget?.exhausted() ?? 'rounds' } : {}),
     ...(params.budget ? { budget: params.budget.snapshot() } : {}),
   }
 }

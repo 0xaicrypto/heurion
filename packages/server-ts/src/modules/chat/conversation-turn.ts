@@ -3,9 +3,12 @@
  *
  * The turn pipeline split into testable stages (#437, updated #544):
  *   chat-handler:  SSE setup / routing / sidecar+plugin dispatch
- *   tool-loop.ts:  tool-calling loop
+ *   tool-loop.ts:  tool-calling loop (+ turn-state.ts / tool-event-log.ts /
+ *                  edit-claim-reconciliation.ts extracted units #1106)
  *   compaction.ts: compaction scheduling + history budget
  *   this file:     context assembly → messages → stream → persistence
+ *                  (#1106: 段定义注册表 → turn-assembler-specs.ts;
+ *                  时间线/图表收集 → turn-timeline.ts)
  *
  * Writing/document/patient scenes all land here after the generate-dispatch;
  * the caller decides which intents reach this path.
@@ -17,20 +20,17 @@ import { deepseekStream, LlmTruncatedError, resolveTurnTimeoutMs } from '../../c
 import { resolveActiveModel, type ChatContentPart } from '../../common/llm-gateway.js'
 import type { EvolutionQueue } from '../evolution/evolution.queue.js'
 import { getUserContext, buildCachedPersona, buildFileContext } from '../shared/user-context.js'
-import { buildAttachmentParts, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, isResearchIntent, docSessionFactGraphView, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
-// #1006: 主 chat 会话引用材料段（与写作会话共用注入实现）。
-import { buildSessionReferencesBlock } from './session-refs-builder.js'
+import { buildAttachmentParts, detectImageAttachments, pickVisionTurnModel, enforceTotalBudget, selectProjectionInputs, shouldInjectPatientRoster, MAX_TOTAL_TOKENS, ContextBudget, estimateMessagesTokens } from '../shared/chat-context.js'
 import { estimateTokens } from '../../common/token-estimate.js'
-import { buildKnowledgeInjection } from '../../modules/knowledge/knowledge-inject.js'
-import { maybeJitSynthesize } from '../../modules/knowledge/jit-synthesis.service.js' // #815 JIT 兜底
-import { EmbeddingService } from '../../memory/embedding/embedding.service.js' // #731 向量路接线
-import { describeSummaryForInjection } from '../../memory/staleness.js' // #813 总结溯源/stale 单一判定入口
 import { ContextAssembler, RequiredSegmentError, type AssemblyResult } from './context-assembler.js'
 // #905: doc- 会话 docId 解析/格式校验(工具面门控与 document_context 注入共用)。
-import { ToolRegistry, parseDocSessionId, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
+import { ToolRegistry, type ToolContext, type EditHint } from '../../tools/tool-registry.js'
 import { listInstalledPlugins, getPluginConfig } from '../plugins/plugin-installation.service.js'
 import { createExecutionPlaneService } from '../execution/execution-plane.service.js'
 import { runToolCallLoop, type TurnIO } from './tool-loop.js'
+// #1106: 时间线/图表收集器与段定义注册表提取自本文件。
+import { TurnTimelineCollector } from './turn-timeline.js'
+import { buildTurnSegmentBuilders, type KbCitation } from './turn-assembler-specs.js'
 // #1033: fallback 流式通道的 <tool_call> 过滤（历史里带原始调用时模型会复读）。
 import { createToolCallStreamFilter, stripToolCallBlocks } from './tool-call-text.js'
 import { TurnBudget, turnBudgetExhaustedNotice, type TurnBudgetExhaustReason } from './turn-budget.js'
@@ -38,7 +38,7 @@ import { TurnBudget, turnBudgetExhaustedNotice, type TurnBudgetExhaustReason } f
 // 精简上下文重跑(治 glm 27k+ 上下文工具调用可靠性坍塌)。
 import { runDocExecutorFallback, shouldRunDocExecutor, PLAN_RELAY_RE } from './doc-executor.js'
 // #976: 任务清单状态与接力方案渲染（common 层）。
-import { loadActivePlan, planBacklog, renderPendingSteps, renderPlanBlock } from '../../common/plan-store.js'
+import { loadActivePlan, planBacklog, renderPendingSteps } from '../../common/plan-store.js'
 import {
   loadHistoryBudget,
   maybeTriggerCompaction,
@@ -46,9 +46,6 @@ import {
   upsertSessionRow,
 } from './history-budget.js'
 import type { TurnIntent } from './turn-intent.js'
-// #921/#927: document_context builder 已拆至 doc-context-builder.ts —
-// 场景规则组装(FORMAT/CHART/REVISION/CITATION/CONFIRM)随 builder 迁移。
-import { buildDocumentContext } from './doc-context-builder.js'
 import { factContentHash } from '../../common/fact-render.js'
 import { CONTEXT_CONFIG } from '../../common/context-config.js'
 import type { SendEvent } from './chat-sse.js'
@@ -266,30 +263,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // builder(不再往 runConversationTurn 中间插代码),装配器负责排段
   // (稳定段前置/动态段尾部 #631)、预算刷新(#630)、快照渲染(#98)、
   // 出口断言与段级回退(#635)。
+  // #1106: 段定义注册表提取至 turn-assembler-specs.ts — 本处仅保留装配
+  // 编排（预算对象/层3 hash/citations 数组/editHint 共享引用不变）。
   const budget = new ContextBudget()
   const layer3FactHashes = new Set((projectionInputs.facts as any[]).map((f) => factContentHash(f)))
-  // #756: 注入透明化 — 本轮实际进入 system 的 kb 条目(自动注入 + 用户钉选),
-  // 装配完成后作为 citations 事件发给前端(去重)。
-  type KbCitation = { kind: 'fact' | 'knowledge' | 'document'; label: string; sourceId: string }
   const kbCitations: KbCitation[] = []
-  /** 由图谱解析用户可读标签;失败时回退原始 id。 */
-  const resolveKbLabel = (c: ReturnType<typeof getUserContext> extends never ? never : any, it: { kind: string; label: string; stableId?: string }): string => {
-    try {
-      if (it.kind === 'document' && it.stableId) {
-        const docId = it.stableId.split('::')[0]
-        const node = c.memory.graph.getLatestByStableId(docId) as { name?: string } | undefined
-        return `📄 ${node?.name || docId}`
-      }
-      if (it.kind === 'knowledge' && it.stableId) {
-        const summaryId = it.label.replace(/^knowledge:/, '')
-        const node = c.memory.graph.getLatestByStableId(summaryId) as { title?: string } | undefined
-        return `📖 ${node?.title || summaryId}`
-      }
-      return `🧠 相关事实`
-    } catch {
-      return it.label || it.kind
-    }
-  }
   // #868: 编辑定位提示 — document_context builder 组装期间回填焦点段/
   // 选中文本,工具执行期(edit_document rangeEdit)读取做焦点优先匹配。
   const editHint: EditHint = {
@@ -298,167 +276,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     focusTitle: null,
     selectionText: null,
   }
-  const assembler = new ContextAssembler([
-    {
-      // #971: 任务清单稳定段 — activePlan 在所有段之前注入（最高注意力
-      // 位置）;无清单时空串。普通 chat 与 doc 会话通用（账本机制统一）。
-      key: 'task_plan',
-      fallbackOrder: 1,
-      build: async () => {
-        const plan = await loadActivePlan(userId, sid).catch(() => null)
-        return renderPlanBlock(plan)
-      },
-    },
-    {
-      // #5/#631: 研究上下文 — shortCode 排序保证不更新时字节稳定。
-      key: 'study_context',
-      fallbackOrder: 3,
-      stageLabel: '正在载入研究上下文…',
-      build: async (input) => {
-        // #894: 研究上下文按需注入 — 仅消息命中研究相关意图(研究/study/
-        // protocol/试验/随访/入组/方案)时注入;写作与闲聊轮次不再每轮
-        // 携带研究清单(上下文预算与注意力治理)。
-        if (!isResearchIntent(input.body.text)) return ''
-        const studies = await prisma.researchStudy.findMany({
-          where: { userId },
-          take: CONTEXT_CONFIG.scene.studiesMax,
-        })
-        studies.sort((a: any, b: any) => String(a.shortCode || '').localeCompare(String(b.shortCode || '')))
-        if (studies.length === 0) return ''
-        let text = '\n## Active Research Studies (ALWAYS use the short_code below to refer to a study when the user mentions it)\n'
-        for (const s of studies) {
-          text += `- **${s.shortCode}**: ${s.name}\n`
-          if (s.protocol) {
-            text += `  Protocol: ${s.protocol.slice(0, CONTEXT_CONFIG.scene.protocolChars).replace(/\n/g, ' ')}\n`
-          }
-        }
-        text += '\nIMPORTANT: When the user asks about a specific study (e.g. "NSCLC001" or any short_code), you MUST reference that short_code in your reply. When asked about details not in the protocol snippet above, suggest importing the full protocol.\n'
-        return text
-      },
-    },
-    {
-      // §15.4: 写作会话注入当前文档 + 引用。
-      // #905: doc- 会话 required 段 — builder 抛错(参考材料提取/查库
-      // 崩溃等)不再被装配器吞成空段,而是硬失败中断本回合(错误 SSE),
-      // 杜绝模型在无文档上下文状态下继续"编辑"。非 doc 会话/无效
-      // sessionId 返回空串(合法降级,不算失败)。
-      key: 'document_context',
-      fallbackOrder: 2,
-      required: true,
-      stageLabel: '正在解析文档与参考材料…',
-      build: async (input) => {
-        // #905: docId 格式校验(对齐 documents.router 的 doc_+16hex)—
-        // 此前 slice(4) 盲取,不匹配的会话按 general 处理:不注入文档段。
-        const docId = parseDocSessionId(sid)
-        if (!docId) return ''
-        // #921/#927 拆分:builder 主体移至 doc-context-builder.ts
-        // (依赖显式入参)。required 段语义/段级回退(P1)保持不变。
-        // 焦点记忆:上一条 assistant 回复(模糊指令沿用上一回合焦点段)。
-        const lastAssistant = ctx.eventLog
-          .query({ sessionId: sid })
-          .reverse()
-          .find((e: any) => e.eventType === 'assistant_response')
-        return buildDocumentContext({
-          userId,
-          docId,
-          messageText: body.text,
-          rawSelection: body.selection,
-          editHint,
-          lastAssistantContent: lastAssistant?.content ?? null,
-          stage: input.stage,
-        })
-      },
-    },
-    {
-      // #1006: 会话引用材料（主 chat 对称化）— 与写作会话共用注入实现。
-      key: 'session_references',
-      fallbackOrder: 2,
-      stageLabel: '正在载入引用材料…',
-      build: (input) => buildSessionReferencesBlock({
-        userId,
-        sessionId: sid,
-        messageText: input.body.text,
-        stage: input.stage,
-      }),
-    },
-    {
-      // #621/#629/#630/#627/#731: 知识库语义自动注入 — 患者过滤 + 预算自适应
-      // + 跨层去重 + 向量路接线(embedding 缺省时 unified-search 自动回落词法)。
-      key: 'knowledge_inject',
-      // #814: 让位顺序 layer3 > knowledge_inject > picked_kb — 自动注入
-      // 先于用户钉选让位(见 context-assembler.segmentFallback)。
-      fallbackOrder: 0,
-      stageLabel: '正在检索知识库…',
-      build: (input) => buildKnowledgeInjection(input.body.text, ctx.facts, ctx.knowledge, {
-        remainingBudget: input.budget.remaining(),
-        excludeFactHashes: input.layer3FactHashes,
-        patientHash: input.patientHash ?? undefined,
-        embedding: new EmbeddingService(userId, ctx.memory),
-        // #840: keyword 读路径切 graph — facts/summaries 从单一事实源取。
-        // #894: doc- 会话(无患者上下文)换用过滤视图 — 患者范围的 fact
-        // 节点不进入知识注入(与 roster/layer3 治理同口径,JD 隐私分心)。
-        graph: sid.startsWith('doc-') && !patientHash
-          ? docSessionFactGraphView(ctx.memory?.graph)
-          : ctx.memory?.graph,
-        // #756: 自动注入条目进入 citations 上报清单。
-        onItems: (items) => items.forEach((it) => kbCitations.push({
-          kind: it.kind,
-          label: resolveKbLabel(ctx, it),
-          sourceId: it.stableId ?? it.label,
-        })),
-        // #813: 总结条目附溯源增强 — 标题/源 facts 置信度摘要/stale 失效标注
-        // (判定走 memory/staleness.ts 单一入口,与 curation 传播同源)。
-        resolveSummary: (summaryStableId) => describeSummaryForInjection(ctx.memory.graph, summaryStableId),
-        // #815: JIT 惰性合成 — 无总结覆盖的 facts 簇读时综合,异步沉淀待审。
-        jitSynthesize: (q, factHits) => maybeJitSynthesize({
-          userId, query: q, patientHash: input.patientHash, memory: ctx.memory, facts: factHits,
-        }),
-      }),
-    },
-    {
-      // #620/#633: 用户显式选定的总结/文档(用户强制保留,不入稳定段)。
-      key: 'picked_kb',
-      // #814: 用户钉选最后让位。
-      fallbackOrder: 1,
-      stageLabel: '正在载入钉选参考…',
-      build: async (input) => {
-        const pickedIds: string[] = Array.isArray(input.body.picked_kb_ids) ? input.body.picked_kb_ids.map(String) : []
-        if (pickedIds.length === 0 || input.scene.startsWith('patient')) return ''
-        // #628: 选择器同时返回合成总结(summary)与上传文件(document)。
-        const summaries = (ctx.memory.graph.getCurrentNodesByType('summary') as any[])
-          .filter((n: any) => n.type === 'summary' && pickedIds.includes(n.stableId))
-          .slice(0, CONTEXT_CONFIG.injection.pickedMax)
-        const docs = (ctx.memory.graph.getCurrentNodesByType('document') as any[])
-          .filter((n: any) => n.type === 'document' && pickedIds.includes(n.stableId))
-          .slice(0, CONTEXT_CONFIG.injection.pickedMax)
-        // #914: 提取走缓存版 — 钉选文件每轮重复提取(PDF 解析分钟级),
-        // uploads 文件不可变,进程内 LRU 缓存直接命中(与参考材料注入
-        // 同一缓存面)。缓存 key 含文件 mtime — 同名 fileId 被覆盖重写
-        // 后旧提取不再命中。
-        const { cachedExtractTextFromUpload } = await import('../../lib/document-extractor.js')
-        const docBlocks: string[] = []
-        // #fix 2026-09: 逐文件子进度 — 钉选 PDF 提取(解析+图片+公式 OCR)
-        // 单文件可达数分钟,整段此前零事件,用户面对 9 分钟黑盒。
-        for (let i = 0; i < docs.length; i++) {
-          const d = docs[i]
-          input.stage?.(`正在读取钉选文档 ${i + 1}/${docs.length}：${String(d.name || d.stableId).slice(0, 40)}`)
-          const text = await cachedExtractTextFromUpload(userId, d.stableId, { maxChars: CONTEXT_CONFIG.injection.pickedCharsPerItem })
-          docBlocks.push(`- [document] (${d.stableId}) ${d.name}: ${(text || d.name).slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`)
-        }
-        const summaryBlocks = summaries.map((a) => {
-          // #813: 钉选文章同样带 stale 失效标注(判定单一入口)。
-          const meta = describeSummaryForInjection(ctx.memory.graph, a.stableId)
-          const staleTag = meta?.stale ? ` ⚠️已过时(${meta.staleSummary || '依据已失效'}) — 引用前注意时效` : ''
-          return `- [summary] (${a.stableId}) ${a.title}:${staleTag} ${String(a.content || '').slice(0, CONTEXT_CONFIG.injection.pickedCharsPerItem)}`
-        })
-        if (docBlocks.length === 0 && summaryBlocks.length === 0) return ''
-        // #756: 钉选条目进入 citations — 📌 前缀与自动注入区分。
-        summaries.forEach((a: any) => kbCitations.push({ kind: 'knowledge', label: `📌 ${a.title}`, sourceId: a.stableId }))
-        docs.forEach((d: any) => kbCitations.push({ kind: 'document', label: `📌 ${d.name}`, sourceId: d.stableId }))
-        return '\n## 用户选定知识库参考\n' + [...summaryBlocks, ...docBlocks].join('\n')
-      },
-    },
-  ])
+  const assembler = new ContextAssembler(buildTurnSegmentBuilders({
+    userId, sid, patientHash, scene, body, ctx, editHint, kbCitations,
+  }))
   // #fix: 上下文组装(文档分段/参考材料提取)可能耗时数秒 — 等待期给
   // 用户可见的进度提示(前端 context_info 过滤后展示)。
   if (sid.startsWith('doc-')) {
@@ -644,79 +464,14 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // #832-缺3: 同管道收集 tool_call/tool_result/subagent_* 事件 — 折叠成
   // 有界 timeline 快照随 assistant_response 落库,前端刷新后重建时间线
   // (工具芯片/子代理结果卡不再蒸发)。
-  const chartMeta: Array<{ url: string; chartType?: string }> = []
-  const timelineTools: Array<{
-    tool: string; seq: number; round?: number; argsPreview: string
-    /** #1025: 循环身份（main/rescue）— 刷新后前端仍能按尝试分组。 */
-    loop?: 'main' | 'rescue'
-    status: 'running' | 'completed' | 'error'
-    resultPreview?: string; elapsedMs?: number
-  }> = []
-  const timelineSubs: Array<{
-    id: string; task: string; status: 'running' | 'done' | 'failed'
-    summaryPreview?: string; turns?: number; costTokens?: number
-  }> = []
   // #996/#1003: 本轮文档写回的节集合 — 写回单点随 doc_updated 下发的
   // changed_sections(实际变更节,覆盖 range-edit/full_text/insert_asset/
   // fix_document_images 全路径);随 assistant_response metadata 持久化,
   // 聊天记录成为可回溯的改动日志(刷新后"已改动"卡片仍可重建)。失败的
   // 工具调用不产生 doc_updated,因此不会假称"改了这节"。
-  const turnDocSections = new Map<string, string>()
-  const ioWithChart: TurnIO = {
-    ...io,
-    send: (chunk) => {
-      // #790: TurnIO 已类型化 — 直接窄化,不再手工嗅探。
-      if (chunk.type === 'chart_created') {
-        chartMeta.push({ url: chunk.url, chartType: chunk.chart_type })
-      } else if (chunk.type === 'tool_call' && chunk.seq !== undefined) {
-        if (timelineTools.length < 40) {
-          timelineTools.push({
-            tool: chunk.tool,
-            seq: chunk.seq,
-            ...(chunk.round !== undefined ? { round: chunk.round } : {}),
-            ...(chunk.loop !== undefined ? { loop: chunk.loop } : {}),
-            argsPreview: String(JSON.stringify(chunk.args) || '').slice(0, 120),
-            status: 'running',
-          })
-        }
-      } else if (chunk.type === 'tool_result' && chunk.seq !== undefined) {
-        const entry = timelineTools.find((t) => t.seq === chunk.seq)
-        if (entry) {
-          entry.status = chunk.success ? 'completed' : 'error'
-          if (chunk.preview) entry.resultPreview = chunk.preview.slice(0, 80)
-          if (chunk.elapsed_ms !== undefined) entry.elapsedMs = chunk.elapsed_ms
-        }
-      } else if (chunk.type === 'doc_updated') {
-        // #996/#1003: 实际变更节(写回单点按新旧投影 hash diff 派生)回填
-        // 标题;这是唯一记录点,target_section 预记已移除(失败调用曾残留)。
-        for (const s of chunk.changed_sections ?? []) {
-          if (s.id) turnDocSections.set(s.id, s.heading || turnDocSections.get(s.id) || '')
-        }
-      } else if (chunk.type === 'subagent_started') {
-        if (timelineSubs.length < 12) {
-          timelineSubs.push({ id: chunk.id, task: chunk.task.slice(0, 200), status: 'running' })
-        }
-      } else if (chunk.type === 'subagent_done') {
-        const entry = timelineSubs.find((s) => s.id === chunk.id)
-        if (entry) {
-          entry.status = chunk.success ? 'done' : 'failed'
-          if (chunk.summary_preview) entry.summaryPreview = chunk.summary_preview.slice(0, 200)
-          if (chunk.turns !== undefined) entry.turns = chunk.turns
-          if (chunk.cost_tokens !== undefined) entry.costTokens = chunk.cost_tokens
-        } else if (timelineSubs.length < 12) {
-          timelineSubs.push({
-            id: chunk.id,
-            task: chunk.task.slice(0, 200),
-            status: chunk.success ? 'done' : 'failed',
-            ...(chunk.summary_preview ? { summaryPreview: chunk.summary_preview.slice(0, 200) } : {}),
-            ...(chunk.turns !== undefined ? { turns: chunk.turns } : {}),
-            ...(chunk.cost_tokens !== undefined ? { costTokens: chunk.cost_tokens } : {}),
-          })
-        }
-      }
-      io.send(chunk)
-    },
-  }
+  // #1106: 收集器提取至 turn-timeline.ts（收集策略/透传顺序零变更）。
+  const timeline = new TurnTimelineCollector()
+  const ioWithChart: TurnIO = timeline.wrap(io)
   // #1019: 回合级共享预算 — main 与 doc-executor rescue 使用同一个实例，
   // rescue 消费主循环剩余额度（不再各领 5 轮），推理字数/工具调用数/墙钟
   // 也是全回合口径。
@@ -872,11 +627,11 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
     fullResponse,
     responseForLog: fullResponse,
     kbCitations,
-    timelineTools,
-    timelineSubs,
-    chartMeta,
+    timelineTools: timeline.timelineTools,
+    timelineSubs: timeline.timelineSubs,
+    chartMeta: timeline.chartMeta,
     // #996/#1003: 本轮文档写回的节 → assistant metadata(聊天改动日志)。
-    turnDocSections,
+    turnDocSections: timeline.turnDocSections,
     skillCards,
     attachmentText,
     patientHash: patientHash || null,
