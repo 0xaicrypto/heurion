@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import { registerPatientSchema } from '../shared/chat.dto.js'
 import prisma from '../../common/prisma.js'
+import { findOwnedByHash } from '../../common/ownership.js'
 import crypto from 'crypto'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { appendChiefComplaint, recordScanFindingsAsFacts } from './patient-record.service.js'
@@ -37,7 +38,7 @@ export async function patientsRouter(app: FastifyInstance) {
   // ── Patient detail ──
   app.get('/api/v1/dicom/patients/:hash/detail', async (request, reply) => {
     const { hash } = request.params as any
-    const r = await prisma.patientRecord.findFirst({ where: { hash, userId: request.user!.userId } })
+    const r = await findOwnedByHash(prisma.patientRecord, hash, request.user!.userId)
     if (!r) return reply.status(404).send({ error: 'Patient not found' })
     return {
       patient_hash: r.hash, initials: r.initials || r.name || '',
@@ -85,7 +86,7 @@ export async function patientsRouter(app: FastifyInstance) {
     // 边界审计（#253）: ownership must be verified BEFORE any cascade —
     // otherwise user B could delete user A's research assessments by using
     // A's patient hash.
-    const owned = await prisma.patientRecord.findFirst({ where: { hash, userId } })
+    const owned = await findOwnedByHash(prisma.patientRecord, hash, userId)
     if (!owned) {
       return reply.status(404).send({ error: 'Patient not found' })
     }

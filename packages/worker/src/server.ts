@@ -10,6 +10,7 @@ import { renderFigure } from './handlers/figure.js'
 import { getDownloadUrl, getLocalFile, localDownloadUrl, downloadUrlTtlSeconds } from './storage.js'
 import { PersistentJobStore, type JobRecord } from './job-store.js'
 import { runJob } from './job-runner.js'
+import { startArtifactCleanup } from './cleanup.js'
 import { createReadStream, existsSync } from 'fs'
 import { renderJobType, type RenderJobType } from '@heurion/contracts'
 import { enqueueJobRequestSchema, previewPayloadSchema, figurePayloadSchema } from '@heurion/contracts'
@@ -47,6 +48,9 @@ function isAuthorized(token: string | undefined): boolean {
 }
 
 async function main() {
+  // #1108: rendered artifacts had no TTL — unbounded disk growth. Startup
+  // sweep + daily interval (env-tunable; see cleanup.ts).
+  startArtifactCleanup()
   // #791: fail-closed auth means an unset token bricks the API — warn loudly
   // at boot so the operator knows it is a configuration problem, not a bug.
   if (!process.env.WORKER_API_TOKEN) {

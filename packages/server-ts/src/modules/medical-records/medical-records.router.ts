@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
+import { findOwned, findOwnedByHash } from '../../common/ownership.js'
 import crypto from 'crypto'
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
@@ -26,9 +27,7 @@ export async function medicalRecordsRouter(app: FastifyInstance) {
     const { patient_hash, title, sections } = request.body as any
     if (!patient_hash) return reply.status(400).send({ error: 'patient_hash required' })
 
-    const patient = await prisma.patientRecord.findFirst({
-      where: { hash: patient_hash, userId },
-    })
+    const patient = await findOwnedByHash(prisma.patientRecord, patient_hash, userId)
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
 
     const id = `mr_${uid()}`
@@ -85,7 +84,7 @@ export async function medicalRecordsRouter(app: FastifyInstance) {
   app.get('/api/v1/medical-records/:id', async (request, reply) => {
     const userId = request.user!.userId
     const { id } = request.params as any
-    const r = await prisma.medicalRecord.findFirst({ where: { id, userId } })
+    const r = await findOwned(prisma.medicalRecord, id, userId)
     if (!r) return reply.status(404).send({ error: 'Medical record not found' })
 
     return {
@@ -104,7 +103,7 @@ export async function medicalRecordsRouter(app: FastifyInstance) {
     const { id } = request.params as any
     const { title, sections } = request.body as any
 
-    const existing = await prisma.medicalRecord.findFirst({ where: { id, userId } })
+    const existing = await findOwned(prisma.medicalRecord, id, userId)
     if (!existing) return reply.status(404).send({ error: 'Medical record not found' })
 
     const data: any = { updatedAt: new Date().toISOString() }
@@ -112,7 +111,7 @@ export async function medicalRecordsRouter(app: FastifyInstance) {
     if (sections !== undefined) data.sections = JSON.stringify(sections)
 
     await prisma.medicalRecord.update({ where: { id }, data })
-    const r = await prisma.medicalRecord.findFirst({ where: { id, userId: request.user!.userId } })
+    const r = await findOwned(prisma.medicalRecord, id, request.user!.userId)
     if (!r) return reply.status(404).send({ error: 'Record not found' })
 
     return {
@@ -129,7 +128,7 @@ export async function medicalRecordsRouter(app: FastifyInstance) {
   app.delete('/api/v1/medical-records/:id', async (request, reply) => {
     const userId = request.user!.userId
     const { id } = request.params as any
-    const existing = await prisma.medicalRecord.findFirst({ where: { id, userId } })
+    const existing = await findOwned(prisma.medicalRecord, id, userId)
     if (!existing) return reply.status(404).send({ error: 'Medical record not found' })
     await prisma.medicalRecord.delete({ where: { id } })
     return { deleted: true }

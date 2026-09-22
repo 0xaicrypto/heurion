@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
+import { findOwnedByHash } from '../../common/ownership.js'
 import { createMedicalRecordEntry, serializeEntry } from './medical-record-entry.service.js'
 import crypto from 'crypto'
 
@@ -66,9 +67,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
       return reply.status(400).send({ error: body.error.format() })
     }
 
-    const patient = await prisma.patientRecord.findFirst({
-      where: { hash, userId },
-    })
+    const patient = await findOwnedByHash(prisma.patientRecord, hash, userId)
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
 
     const data = await createMedicalRecordEntry(userId, hash, body.data)
@@ -81,9 +80,7 @@ export async function medicalRecordEntriesRouter(app: FastifyInstance) {
     const { hash } = request.params as any
     const { type, status } = request.query as any
 
-    const patient = await prisma.patientRecord.findFirst({
-      where: { hash, userId },
-    })
+    const patient = await findOwnedByHash(prisma.patientRecord, hash, userId)
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
 
     const where: any = { patientHash: hash, userId }

@@ -5,6 +5,7 @@ import prisma from '../common/prisma.js'
 import { extractDocumentMarkdownWithImagesFromUpload, type ExtractedPdfImage } from '../lib/document-extractor.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { writeDocVersion } from './doc-version-writer.js'
+import { abortedWriteResult } from './base-tool.js'
 import { sanitizeFilename, uploadsBaseDir } from '../lib/upload-path.js'
 import { downloadPdfFromUrl, UrlDownloadError } from '../lib/url-download.js'
 import { isOaUrlForDoi } from './oa-pdf-tool.js'
@@ -74,8 +75,12 @@ export async function extractRefText(userId: string, docId: string, ref: any, la
   return { text }
 }
 
-/** 把正文写入文档(#789: 经 DocVersionWriter — 差异时同帧快照旧 body+deck),返回新正文。 */
-export async function writeDocBody(userId: string, docId: string, text: string, snapshotLabel: string): Promise<{ body: string; error?: string }> {
+/** 把正文写入文档(#789: 经 DocVersionWriter — 差异时同帧快照旧 body+deck),返回新正文。
+ *  #1103: 可选 abort signal — 写回点前检查,超时/中止后不落库(迟到写入治理)。 */
+export async function writeDocBody(userId: string, docId: string, text: string, snapshotLabel: string, signal?: AbortSignal): Promise<{ body: string; error?: string }> {
+  // #1103: 写回点中止检查 — 超时/中止后不落库。
+  const aborted = abortedWriteResult(signal)
+  if (aborted) return { body: '', error: aborted.error }
   const result = await writeDocVersion({ userId, docId, body: text, snapshotLabel })
   if (result.error) return { body: '', error: result.error }
   return { body: result.body }
@@ -94,6 +99,7 @@ export async function executeImportFromUrl(
   rawUrl: string,
   summary: string,
   doi?: string,
+  signal?: AbortSignal,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   try {
     // 1) 受控下载(SSRF/大小/超时/重定向逐跳校验/%PDF- magic)
@@ -162,7 +168,7 @@ export async function executeImportFromUrl(
     if (error || !text) {
       return { success: false, error: error || `PDF 已入库(「${filename}」),但无法提取正文 — 可稍后用 import_reference「${filename}」重试` }
     }
-    const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import')
+    const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import', signal)
     if (writeError) return { success: false, error: writeError }
     return {
       success: true,
@@ -216,6 +222,7 @@ export async function ensureDraftBody(
   userId: string,
   docId: string,
   opts: EnsureDraftBodyOptions,
+  signal?: AbortSignal,
 ): Promise<{ body: string; note?: string; error?: string }> {
   const existing = await prisma.doc.findFirst({ where: { id: docId, userId } })
   if (!existing) return { body: '', error: `Document not found: ${docId}` }
@@ -241,7 +248,7 @@ export async function ensureDraftBody(
   const { text, error } = await extractRefText(userId, docId, hit.r, hit.label)
   if (error) return { body: currentBody, error }
   if (!text) return { body: currentBody, error: `参考材料「${hit.label}」提取结果为空` }
-  const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import')
+  const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import', signal)
   if (writeError) return { body: currentBody, error: writeError }
   return { body, note: `已自动导入参考材料「${hit.label}」` }
 }

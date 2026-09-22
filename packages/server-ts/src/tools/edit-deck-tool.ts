@@ -1,4 +1,4 @@
-import { BaseTool, ToolResult } from './base-tool.js'
+import { BaseTool, ToolResult, abortedWriteResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
 import { writeDocVersion } from './doc-version-writer.js'
@@ -82,11 +82,14 @@ export class EditDeckTool extends BaseTool {
     }
   }
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const sessionId = this.ctx.sessionId || ''
     if (!sessionId.startsWith('doc-')) {
       return { success: false, error: 'edit_deck is only available in a document writing session' }
     }
+    // #1103: 超时/中止后拒绝进入任何写回路径。
+    const preAborted = abortedWriteResult(signal)
+    if (preAborted) return preAborted
     const docId = sessionId.slice(4)
     // #1101 复审轮 1（双写收敛）：文档已迁移为 pptx 字节工件（DeckWire 降级为
     // 只读投影，设计 §3.1）→ edit_deck 退役，整次拒绝并引导到 edit_deck_bytes。
@@ -199,6 +202,9 @@ export class EditDeckTool extends BaseTool {
 
       // #789: 写回走 DocVersionWriter 单点(快照同帧带旧 body+deck + 事务;
       // deck 无实际变化时不再产生空快照 — 旧代码无条件写版本)。
+      // #1103: 写回点中止检查 — 超时/中止后不落库（迟到写入治理）。
+      const aborted = abortedWriteResult(signal)
+      if (aborted) return aborted
       const written = await writeDocVersion({
         userId: this.ctx.userId, docId, deck: nextDeck, snapshotLabel: 'AI deck edit',
       })

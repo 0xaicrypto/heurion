@@ -8,6 +8,7 @@
 import { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { findOwned } from '../../common/ownership.js'
 import { encryptSettingValue, decryptSettingValue } from '../../common/settings-encryption.js'
 import { McpClient } from '../../tools/mcp-client.js'
 
@@ -59,7 +60,7 @@ export async function mcpAdminRouter(app: FastifyInstance) {
 
   app.delete('/api/v1/settings/mcp-servers/:id', async (request, reply) => {
     const { id } = request.params as any
-    const row = await prisma.mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
+    const row = await findOwned(prisma.mcpServer, id, request.user!.userId)
     if (!row) return reply.status(404).send({ error: 'server not found' })
     await prisma.mcpServer.delete({ where: { id } })
     return { deleted: true }
@@ -68,7 +69,7 @@ export async function mcpAdminRouter(app: FastifyInstance) {
   // ── Test connection + list tools ───────────────────────────────────
   app.post('/api/v1/settings/mcp-servers/:id/test', async (request, reply) => {
     const { id } = request.params as any
-    const row = await prisma.mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
+    const row = await findOwned(prisma.mcpServer, id, request.user!.userId)
     if (!row) return reply.status(404).send({ error: 'server not found' })
     try {
       const client = new McpClient({ url: row.url, capabilities: parseCaps(row.capabilities), token: row.tokenEnc ? decryptSettingValue(row.tokenEnc) : undefined })
@@ -85,7 +86,7 @@ export async function mcpAdminRouter(app: FastifyInstance) {
     const { id } = request.params as any
     const { tool, arguments: toolArgs } = request.body as any
     // Own-server access only — the write-gate lives in the tool layer (#105).
-    const row = await prisma.mcpServer.findFirst({ where: { id, userId: request.user!.userId } })
+    const row = await findOwned(prisma.mcpServer, id, request.user!.userId)
     if (!row) return reply.status(404).send({ error: 'server not found' })
     if (!tool) return reply.status(400).send({ error: 'tool required' })
     try {

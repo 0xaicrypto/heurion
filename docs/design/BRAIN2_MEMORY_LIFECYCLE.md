@@ -1,8 +1,17 @@
 # Brain 2.0 记忆生命周期设计 — MemoryGraph 门面 + 人工审核闭环 + 长会话压缩
 
-> **状态**：设计稿 v1（2026-08-02）
+> **状态**：已交付（G.1–G.7 审核闭环上线；K1–K6 全部落地；§13 简化模型 S1–S3
+> 与 §14 写作模块整合均已交付）。本文档 2026-09-22 逐条对照代码重写为
+> as-built（参照 `CITATION_SYSTEM.md` 补记式写法）：**§3/§4 的
+> `MemoryGraphGateway.readContext` API 已不存在**——门面现在的实际方法见 §3，
+> 会话上下文组装走 `selectProjectionInputs` + Memory Projection + 段装配管线
+> （`modules/chat/context-assembler.ts`），设计文档里"`readContext` 成为其
+> 数据源"的方案被取代；**"article" 概念已全仓库改名 "summary"**（#1011，
+> `common/kb-rename-migration.ts`，文档旧文的 `article`/`addArticle` 一律按
+> `summary`/`addSummary` 理解）；**K4 合成的"近 7 天确认 ≥3"硬性时间门禁已被
+> 移除**（#816 覆盖率驱动调度取代，时间窗降级为可观测信号）。
 > **范围**：`packages/server-ts`（memory / chat / approvals / retrieval）+ `packages/web`
-> **关联**：`docs/design/SECOND_BRAIN_DESIGN.md`（第二大脑当前设计，取代早期 brain.md/KB v2.2 提案）
+> **关联**：`docs/design/SECOND_BRAIN_DESIGN.md`（引用材料统一，as-built 已重写）
 > **本文档整合并取代**：`CHAT_CONTEXT_COMPACTION.md`（会话压缩设计，已并入 §5–§6）、
 > `MEMORY_KNOWLEDGE_EVOLUTION_REFACTOR.md`（记忆重构设计，重构已完成，生命周期见本文档）
 > **本文档整合并修订**：记忆提取时机（K1–K6）、长会话压缩（R2）、审批闭环、患者隔离
@@ -11,748 +20,538 @@
 
 ## 1. 背景与目标
 
-### 1.1 现状问题
+### 1.1 设计时的现状问题（2026-08-02 基线，问题均已处置）
 
-| # | 问题 | 影响 |
-|---|---|---|
-| P0 | 记忆写入无人工审核：facts 每 5 轮直接落库（`chat.orchestrator.postTurn`），提取错误不可撤销 | 临床事实可靠性风险 |
-| P0 | 层3 facts 注入不分患者（`selectProjectionInputs` 传 `ctx.facts.all()`） | 患者 A 问诊可能注入患者 B 的事实，模型可能混淆归属 |
-| P1 | 记忆分散：facts/articles/episodes 三个 VersionedStore + MemoryGraph 双写，无统一读取接口 | 上下文组装逻辑散落（projection / buildPersona / orchestrator 各读各的） |
-| P1 | 提取时机固定"每 5 轮"（短会话永不提取，长会话重复提取） | 知识沉淀不完整 |
-| P1 | 压缩是硬裁剪（#96），设计稿 R2（anchored compaction）未实现；压缩丢的旧信息无人工兜底 | 长会话早期关键信息信任度低 |
-| P2 | gaps 无自动检测；persona 每轮全量重建 | 上下文浪费 |
+| # | 问题 | 影响 | 现状 |
+|---|---|---|---|
+| P0 | 记忆写入无人工审核：facts 直接落库，提取错误不可撤销 | 临床事实可靠性风险 | ✅ 全部走 pending 审核（唯一例外：用户显式命令 fastTrack，见 §7.2） |
+| P0 | 层3 facts 注入不分患者 | 患者 A 问诊可能注入患者 B 的事实 | ✅ `isolateFactsByScope`（`modules/shared/chat-context.ts`） |
+| P1 | 记忆分散：facts/articles/episodes 双写无统一读取接口 | 上下文组装逻辑散落 | 部分 ✅——graph 为单一事实源（#840 读路径分批切换），legacy 投影保留为兼容回落（#840 epic 尚未关闭） |
+| P1 | 提取时机固定"每 5 轮" | 知识沉淀不完整 | ✅ K1 游标 + 压缩/关闭两触发点（§5.1；Tier 1 实时提取已按 §13 S1 移除） |
+| P1 | 压缩是硬裁剪；压缩丢的旧信息无人工兜底 | 长会话早期关键信息信任度低 | ✅ R2 锚定压缩 + 压缩提取进 pending（§6.3） |
+| P2 | gaps 无自动检测；persona 每轮全量重建 | 上下文浪费 | ✅ K6 + K5（persona LRU 版本缓存，`modules/shared/user-context.ts buildCachedPersona`） |
 
-### 1.2 目标
+### 1.2 目标（全部达成）
 
-1. **单一事实源**：所有记忆通过 MemoryGraph 门面读写（会话上下文、提取、审核、注入同一接口）。
-2. **人工审核闭环**：高影响记忆写入走"待审核队列 → 人工确认 → 版本化落库"，压缩/会话结束是主要触发点。
+1. **单一事实源**：记忆读写收敛（graph 门面 + 审核闭环；读路径的完全收敛见 §11 的 #840 尾巴）。
+2. **人工审核闭环**：待审核队列 → 人工确认 → 版本化落库。
 3. **会话/记忆分离**：session 是对话窗口；记忆按患者/全局/study 聚合，跨会话持久。
 4. **患者隔离**：任何 scope 的上下文组装只注入本 scope 的记忆（+ 受控的跨 scope 补充）。
-5. **有界且可追溯**：长会话压缩产出锚定摘要 + 待审核记忆，无静默丢失。
+5. **有界且可追溯**：长会话压缩产出锚定摘要（Session Memory）+ 待审核记忆，无静默丢失。
 
 ---
 
-## 2. 总体架构
+## 2. 总体架构（as-built 接线）
+
+> 原设计的 `MemoryGraph.readContext(scope)` / `extract` 方法不存在——门面
+> 提案与压缩职责分离，上下文组装走注入管线。下图为实际接线：
 
 ```
 ┌────────────────────────── 会话运行时 ──────────────────────────┐
 │                                                               │
-│  会话开始                                                      │
-│    └─► MemoryGraph.readContext(scope) ──► systemPrompt       │
-│          （层0 persona / 层0b 患者 / 层2 摘要 / 层3 facts）      │
+│  会话开始/每轮                                                 │
+│    └─► selectProjectionInputs（modules/shared/chat-context.ts）│
+│          按 router intent 选层 → MemoryProjection（retrieval/）│
+│          → systemPrompt 稳定段（persona/patient/层2/层3）       │
+│          → context-assembler.ts 逐段装配 + 预算/段级回退        │
 │                                                               │
-│  会话进行                                                      │
-│    └─► 事件落库 → 增量提取（K1 游标 + K2 事件驱动）              │
-│          └─ 全部提取结果 → pending 待审核队列（人工审核）        │
+│  压缩 / 会话关闭                                               │
+│    └─► memory/compaction/runner.ts（R2 + S3）                  │
+│          ├─ episodeUpdate → 更新 Session Memory（episodes，草稿）│
+│          └─ facts → gateway.propose() → pending 待审核队列      │
 │                                                               │
-│  压缩 / 会话结束                                               │
-│    └─► MemoryGraph.summarize(sinceIdx)                        │
-│          ├─ 锚定摘要（更新旧摘要，R2）→ 注入后续轮次             │
-│          └─ MemoryProposal[] → pending 待审核队列              │
-│                                                               │
-│  审核（Today / Brain inbox，复用 #48/#49 UI）                   │
-│    └─► applyApproved(id) → graph 新版本（可回滚）               │
-│          └─► 下次 readContext 读到新内容                        │
+│  审核（Brain inbox / approvals）                                │
+│    └─► approval.service.applyTargetUpdate(MemoryProposal)      │
+│          └─► defaultProposalApplier（memory/registry.ts）       │
+│              → graph 新版本（可回滚）                           │
+│              → embedding.indexApproved → EmbeddingIndex.upsert │
+│              → 下轮 selectProjectionInputs 读到新内容            │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-**核心原则**：`readContext`（读）、`extract`（提）、`summarize`（总）、`applyApproved`（写）四个能力收敛在 MemoryGraph 门面上；会话只持有事件日志，不直接写记忆。
+**核心原则修订**：`propose`（提）、`summarize`（总）、`applyApproved`（写）、
+`retrieve`（语义检索）四个能力收敛在 `MemoryGraphGateway`（§3）上；会话只持有
+事件日志，不直接写记忆；**读取不经过门面**——上下文组装是 chat 模块的
+projection 管线（#637 装配器），数据源已切 graph（#840）。
 
 ---
 
-## 3. MemoryGraph 门面接口
+## 3. MemoryGraph 门面接口（as-built）
 
 ```ts
 // packages/server-ts/src/memory/memory-gateway.ts
 export type MemoryScope = { patientHash?: string; studyId?: string; global?: boolean }
+// 提案 kind：'fact' | 'summary' | 'episode_summary' | 'compaction_summary' | 'skill'
+//   （memory/contracts.ts ProposalKind；'episode_summary'/旧 'article' 行为差异见 §5.3/§5.4）
 
-export interface ContextBundle {
-  persona: string                 // 层0：偏好/目标/文章标题（K5 缓存）
-  patient?: PatientContext        // 层0b：本患者图谱 findings
-  episodes: EpisodeSummary[]      // 层2：本 scope 的摘要（K3 增量摘要）
-  facts: FactView[]               // 层3：本 scope 的 facts（注意力排序）
-  skills: SkillView[]             // 层4：技能指引
+export class MemoryGraphGateway {
+  // ── 提案生命周期（propose → pending → applyApproved/rejectProposal）──
+  propose(input: ProposalInput): Promise<MemoryProposalRow>   // 唯一写入入口
+  listPending(scope?: MemoryScope)
+  applyApproved(proposal)                                     // 版本化写 graph + 建向量
+  rejectProposal(proposalId, reason, actorId): Promise<boolean>
+  markApproved(proposalId, actorId)                           // 只改状态不落图
+
+  // ── 检索 ──
+  embedOrNull(text)                                           // 测试可注入
+  retrieve(query, scope, { topK?, minScore?, includeCrossPatient? })   // 余弦 top-k
+  embeddingIndex()                                            // 测试注入向量用
+
+  // ── 会话摘要（Session Memory，草稿层）──
+  summarize({ conversation, sessionId, patientHash?, sinceIdx? }): Promise<{ summary, proposals }>
 }
-
-export interface MemoryProposal {
-  id: string
-  scope: MemoryScope
-  kind: 'fact' | 'article' | 'episode_summary' | 'compaction_summary'
-  content: string
-  importance: number              // 1-5
-  sourceEventRange?: { fromIdx: number; toIdx: number }
-  confidence: 'high' | 'medium' | 'low'
-  reason: string                  // 提取依据/摘要依据
-  status: 'pending' | 'approved' | 'rejected'
-  createdAt: string
-}
-
-export interface MemoryGraphGateway {
-  // 会话开始：按 scope 组装上下文（数据源=graph，替代/增强现有 projection）
-  readContext(scope: MemoryScope, opts?: { routes?: Intent }): Promise<ContextBundle>
-
-  // 压缩或会话结束：总结增量事件 → 锚定摘要 + 待审核记忆
-  summarize(scope: MemoryScope, sinceIdx: number): Promise<{
-    summary: EpisodeSummary
-    proposals: MemoryProposal[]
-  }>
-
-  // 待审核队列
-  listPending(scope?: MemoryScope): Promise<MemoryProposal[]>
-
-  // 审核通过：版本化更新 graph（走 approval 状态机）
-  applyApproved(proposalId: string, actorId: string): Promise<MemoryNode>
-
-  // 审核拒绝：记录原因，不落库
-  rejectProposal(proposalId: string, reason: string): Promise<void>
-
-}
-// 注：所有记忆写入（fact/article/episode_summary/compaction_summary）
-// 一律经 propose → pending → applyApproved，不设直写路径。
 ```
 
-### 3.1 现有基础设施映射
+与原设计的差异：
 
-| 能力 | 现有 | 变更 |
-|---|---|---|
-| 版本化节点 | `MemoryGraph`（version/status/snapshot/restore） | 直接复用，`applyApproved` 写新版本 |
-| 封装层 | `MemoryService.addFact/addArticle` | 保留为内部实现，门面统一暴露 |
-| 提取 | `ChatIngester.ingestEncounter`（只写事件） | 改为写 pending（分流见 §5） |
-| 审批 | `approval_requests`（targetType 声明支持 'Fact'，`applyTargetUpdate` 未实现） | 实现 Fact/Article target（§7） |
-| 上下文组装 | `MemoryProjection.project()` + `buildPersona` | `readContext` 成为其数据源（§4） |
-| 待审核 UI | Today widget（#49）+ Brain inbox（#48） | 复用，展示 MemoryProposal |
+- **`readContext` 已删除**（上下文组装不在门面上，见 §4）。
+- **`extract` 独立成 `memory/compaction/runner.ts` 的 `extractSegment`**（S3）。
+- `rejectProposal` 签名带 `actorId`（审计）。
+- `summarize` 产出**只更新 Session Memory（episodes），不再产生待审摘要提案**
+  （`memory/summary/session-summarizer.ts`："the episode_summary proposal
+  was a no-op"）。
+
+### 3.1 现有基础设施映射（as-built）
+
+| 能力 | 现状 |
+|---|---|
+| 版本化节点 | `MemoryGraph`（version/status/snapshot/restore，`memory/memory.graph.ts`） |
+| 封装层 | `MemoryService.addFact/addSummary/editSummary/supersedeFact`（`memory/memory.service.ts`）——注意是 `addSummary` 不是 `addArticle`（#1011 更名） |
+| 提取 | `memory/compaction/runner.ts`：压缩时（Tier 2）+ 会话关闭 flush（Tier 3），全部走 `propose` |
+| 审批 | `approval_requests`，`targetType='MemoryProposal'`（`modules/approvals/approval.service.ts`），确认走 `applyTargetUpdate` → registry `defaultProposalApplier` |
+| 上下文组装 | `selectProjectionInputs`（`modules/shared/chat-context.ts`）+ `retrieval/memory-projection.ts` + `modules/chat/context-assembler.ts`（#637 段装配管线） |
+| 待审核 UI | Brain inbox（#48）+ 审批流（MemoryProposal 分组按会话聚合） |
 
 ---
 
-## 4. 会话上下文组装（readContext）
+## 4. 会话上下文组装（readContext 已被取代 — as-built 方案）
 
-### 4.1 三种 scope
+> 原 §4 的设计是"`readContext` 成为其数据源"。实现走的是另一条路（R1 typed
+> Context Source + 段装配器），数据源切 graph（#840）。本节按现状描述；
+> 设计原则（层选择/患者隔离）保留且已实现，只是宿主不在门面上。
 
-| scope | 触发 | 注入内容 |
-|---|---|---|
-| `{ patientHash }` | 患者问诊 chat | 本患者 facts（**预算内全给本患者**）+ 图谱 findings + 本患者 episodes + persona |
-| `{ global }` | 全局 chat | 全用户 facts（按患者分组标注）+ 全局 episodes + persona + roster |
-| `{ studyId }` | 科研 chat（未来） | 本 study facts（`fact.studyId` 匹配）+ 协议上下文 |
+### 4.1 层选择（`selectProjectionInputs`，chat-context.ts）
 
-### 4.2 患者隔离（P0 修复）
+按 router intent（`retrieval/query-router.ts`）选层：
 
-层3 facts 注入规则：
+| intent | 注入 |
+|---|---|
+| `sql` / `file` | 不注入积累记忆（SQL/附件承载） |
+| `vector` | facts（患者隔离 + graph 优先） |
+| `mixed`（默认） | facts + 当前 session 的 episodes + 技能（经 conversation-turn 激活匹配，#841） |
 
-```
-scope.patientHash 存在时:
-  1. 本患者 facts（patientHash 匹配）→ 优先，预算内全量
-  2. 跨患者 facts → 仅 importance ≥ 4 且预算剩余 > 30% 时少量补充
-     （支持"医生对比患者"场景），渲染带 [patient: 名称] 标记
-scope.global 时:
-  全部 facts 按 patientHash 分组渲染: [patient: ZQ] ... / [general] ...
-scope.studyId 时:
-  仅 studyId 匹配 + 关联患者 facts（经入组关系）
-```
+数据源：graph 存在时走 `GraphFactProvider`（`memory/fact-provider.ts`，#840
+单一事实源），否则回落 legacy store。#814 层3 降级：仅 `importance ≥ 4`
+或近 14 天的 facts 进碎片投影（`CONTEXT_CONFIG.projection.layer3ImportanceMin`
+/ `layer3RecentDays`），其余交给 summary/JIT 合成覆盖（#815）。
 
-**渲染格式**（`formatFact` 升级）：
+### 4.2 患者隔离（P0 修复 ✅）
 
 ```
-[lab ★★★] [patient: ZQ] WBC 11.2 偏高 (3d ago)
-[fact ★★] [general] 患者偏好避免阿片类 (10d ago)
+isolateFactsByScope(allFacts, patientHash)     // chat-context.ts
+  本患者 facts → 预算内全量
+  跨患者 facts → 仅 importance ≥ 4 且带 [patient: hash] 标记，
+                上限 CONTEXT_CONFIG.retrieval.crossPatientMax
 ```
 
-### 4.3 与 R1（#98 增量更新）的关系
+- 渲染 `[patient: 名称]` 标记、`[lab ★★★]` 格式见 `common/fact-render.ts`
+  （#627 统一事实渲染）。
+- doc- 写作会话（无患者上下文）额外治理（#894）：不注入患者范围 facts
+  （`projectionFacts` 的 `excludePatientScope`）+ facts 封顶
+  `CONTEXT_CONFIG.retrieval.docFactsCap=10`（P0 hotfix 2026-09）+ 患者名单/
+  study_context 按需注入（`shouldInjectPatientRoster`/`isResearchIntent`）。
 
-`readContext` 的每个组成部分（persona/patient/episodes/facts）即 R1 的 typed Context Source：
-- 首轮：`readContext` 全量 baseline（快照落库）
-- 后续轮：hash 对比 → 变更源以增量 system 消息追加（无变更完全复用）
-- **提取管道（§5）是变更生产者**：facts 落库 → source 版本号变化 → 下一轮增量更新
+### 4.3 R1 — typed Context Source（#98 ✅ 已实现）
 
+实现文件 `memory/context-sources.ts`（非门面方法）：system prompt 拆成带
+内容 hash 的稳定段，per-user 快照（`<TWIN_BASE_DIR>/<user>/context-snapshot.json`）
+对比出 changed/removed；首轮全量，后续轮仅变更源以增量 system 消息追加。
+字节稳定 → provider prompt-cache 命中；persona 段独立更新（13.5H）。
 
 ### 4.4 会话管理（多会话 + 开启/关闭）
 
-会话是对话窗口，记忆按 scope 聚合跨会话持久。**多会话仅用于跨患者全局 chat
-（scope='global'）；患者问诊 chat 保持单会话（每个患者一个固定会话）。**
+> 与原设计一致，两处细节修正：①提取游标不在 Session 行上——独立
+> `kbExtractCursor` 表（per-session 键，`memory/extraction-cursor.ts`，#181；
+> 交错会话不得互相跳过事件）；②Session 行上的游标是 `compactedUptoIdx`
+> （压缩防重，S2）。
 
 ```
-Session 实体（扩展现有 nexus_sessions 表）:
-  id / userId / scope ('global' | 'patient')
-  patientHash?                    // scope 为 patient 时（固定一个/患者）
-  title                           // 全局会话可命名（如"肺癌研究讨论"）
-  status ('open' | 'closed')
-  extractedUptoIdx                // 提取游标（§5.1），随会话推进
+Session 实体（prisma Session → nexus_sessions）:
+  id / userId / scope ('global' | 'patient') / patientHash?
+  title / status ('open' | 'closed') / compactedUptoIdx?
   createdAt / closedAt / lastMessageAt
 
 scope 规则:
-  global: 一个用户可有多个会话，显式开启/关闭/切换
-  patient: 每患者一个固定会话（现有 patient-{hash} 语义保留），
-           关闭患者会话 = 结束问诊（仍触发 summarize，但不可新建多会话）
-  study:  暂不开放（科研 chat 落地后再评估）
+  global: 多会话，显式开启/关闭/切换
+  patient: 每患者一个固定会话（patient-{hash} 语义保留）
+  study:  暂不开放
 
-生命周期（global 会话）:
-  开启: "新建会话" → POST /api/v1/sessions（title, scope=global, status=open）
-  进行: 消息写入该 session 的事件日志；提取游标按 session 推进
-  关闭: "关闭会话" → status=closed（不可再写）
-        → 触发 summarize(sinceIdx) → proposals 进 pending（§6 闭环）
-        → 记忆沉淀到 scope（不依赖会话存在）
-
-兼容: 未选择会话时回退默认全局会话（global-{userId}），行为与现状一致
+生命周期:
+  开启: "新建会话" → POST /api/v1/sessions
+  关闭: status=closed（不可再写）→ 会话关闭 flush（Tier 3 提取）→ 记忆沉淀到 scope
 ```
 
-**关键点**：关闭会话是"会话结束"的明确信号——它触发 summarize → pending 审核，
-取代现在"压缩时才总结"的隐式时机。压缩（长会话中途）与关闭（会话终点）走同一条
-summarize 路径。患者会话的"关闭"仅作为问诊结束的总结时机，不引入多会话管理。
+**关键点**：压缩（长会话中途）与关闭（会话终点）都走
+`memory/compaction/runner.ts` 同一条路径；压缩产物 = Session Memory 更新 +
+fact 提案进 pending（§6.3）。
 
-### 4.5 写入时 embedding + 读取时语义检索（与 gateway 的关系）
+### 4.5 写入时 embedding + 读取时语义检索（as-built，存储形态修正）
 
-embedding **不是平行系统，而是 MemoryGraphGateway 的内部实现细节**——对上层透明。
+embedding 不是平行系统——审核生效时建向量（`proposal.service.ts` 的
+`applyApproved` → `EmbeddingService.indexApproved`），检索只覆盖可信记忆
+（§3 `retrieve`，propose 不建向量）。与原设计差异：**存储是 per-user JSONL
+索引（`memory/embedding-index.ts`，逐用户 brute-force 余弦扫描），不是
+vector_index 表/sqlite-vec**——per-user 规模下（#23）暴力扫描足够，无需
+向量库。模型 bge-m3（`EMBEDDING_MODEL` 可配，`embedding/`，
+本地 ONNX 服务 embedding-server :8003）。
 
 ```
 写入（审核通过后）:
-  applyApproved(proposal)
-    → MemoryService.addFact()            → graph 节点 v1（版本化）
-    → EmbeddingIndex.upsert(nodeId, embed(content))   ← 写入时 embedding
-  - 模型: bge-m3（本地服务，1024 维）
-  - 存储: vector_index 表（sqlite-vec，per-user 分区）
-  - 版本联动: fact 编辑 → contentHash 变化 → embedding 重算（旧版本保留审计）
-  - 只给 facts/articles 建向量；documents 走文件引用
+  applyApproved → defaultProposalApplier → memory.addFact/addSummary
+              → embedding.indexApproved() — 只给 facts/summaries 建向量；
+                document 走文件引用（chunk 正文内嵌 record，#749）；
+                引用材料走 reference-embedding（type='reference'，#1009）
 
-读取（按需语义检索，Tier 2）:
-  retrieve(scope, query)
-    → embed(query)                        ← 查询实时 embed（同模型）
-    → 与 scope 内向量余弦相似度 top-k（患者隔离: 默认只搜本 scope）
-  - search_node 工具升级: substring → 余弦相似度
-  - 基线 readContext（Tier 1）不经过 embedding
+读取（按需语义检索）:
+  retrieve(scope, query) → embed(query) → cosine top-k
+  - search_node 工具已升级为语义/混合检索（#25 graph 遍历扩展 + RRF #748）
+  - 患者隔离: 检索默认只搜本 scope（includeCrossPatient 显式放行）
 
 维护:
-  删除 → embedding 标记 superseded
-  语义去重（写入前）: propose 时 embed(content) 与 scope 内已有
-    事实相似度 > 0.95 → 标记重复，跳过审核队列
+  删除/取代 → graph 事件驱动（curation.engine 失效传播），索引随 stableId 失效
+  语义去重（写入前）: propose 时 embed(content) 与 scope 内已有记忆
+    相似度 ≥ 0.95 → 自动拒绝（rejected, resolvedBy=system），不进审核队列
 ```
 
-**embedding 解决什么**：语义等价召回（"药物过敏史"↔"对磺胺过敏"、同义表达）、
-相关度排序（top-k 截断）、无分词依赖。**不替代**：attention 基线（重要性/新近度）、
-患者 scope 过滤、压缩摘要——互补不冲突。
-
-**与统一接口的关系**：
-
-```
-MemoryGraphGateway（唯一接口）
-├── readContext(scope)        → 基线，无 embedding
-├── retrieve(scope, query)    → 内部: embed(query) + cosine top-k   ← 新增（或升级 search_node）
-├── propose() → pending → 审核
-├── applyApproved(proposal)   → 内部: 写 graph 节点 + upsert embedding（同一次操作）
-├── listPending / rejectProposal
-```
-
-关键约束：**没审核过的事实不会进入语义检索**（propose 不建向量，applyApproved 才建）——
-保证 RAG 只检索可信记忆。R1（hash 增量）与 R2（压缩摘要）不依赖 embedding。
+关键约束不变：**没审核过的内容不进语义检索**；R1（hash 增量）与 R2
+（Session Memory）不依赖 embedding。
 
 ---
 
-## 5. 记忆提取管道（K1–K6 修订版）
+## 5. 记忆提取管道（K1–K6 修订版 — as-built）
 
-### 5.1 增量游标 + 事件驱动（K1+K2，#109 保持不变）
+### 5.1 增量游标 + 事件驱动（K1+K2，#109）✅（两处修订）
 
-- 每个 scope 持久化 `extractedUptoIdx`；每次只提取新增事件段
-- 触发：增量内容 ≥ 300 字符，或含关键信号（记住/诊断/方案）；2s 去抖合并
+- **游标是 per-session 的**（`kbExtractCursor` 表，`memory/extraction-cursor.ts`，
+  #181）：交错会话不能让一个会话的 flush 跳过另一个会话的事件；scope 级
+  legacy key 保留兼容。原设计的"每个 scope 一个游标"已被取代。
+- **Tier 1 实时提取已移除**（§13 S1，同文件头注释 "S1: real-time extraction
+  is removed"）：信号正则 + 2s 去抖 + shouldExtractIncrement 触发链路删除；
+  显式指令由 `kb_remember` 命令直写承接（fastTrack，§7.2）；所有事实性提取
+  统一走批量路径（压缩时/会话关闭时）。
 
-### 5.2 全部人工审核（修订 #109）
+### 5.2 全部人工审核（修订 #109）✅
 
 ```
-提取结果（extractClinicalEntities / deepseek 提取），无论置信度高低:
-  → MemoryProposal → pending 队列（人工审核）
-审核通过 → applyApproved → graph 版本化更新
+提取结果（extractClinicalEntities / deepseek 提取）:
+  → gateway.propose() → pending 队列（人工审核）
+审核通过 → applyApproved → graph 版本化更新（+ embedding 索引）
+唯一例外：用户显式命令（kb_remember 等）带 fastTrack —— 走与人审相同的
+applier 落库，提案行保留作审计记录（#839 收口）
 ```
 
-**理由**：记忆是长期临床事实，任何自动写入（即使高置信度）都存在不可逆风险；
-审核成本通过批量确认 UI（Brain inbox）控制。
+### 5.3 Session Memory（K3 修订版，取代原"摘要进 pending"）
 
-### 5.3 Episodes 增量摘要（K3，#110）
+会话摘要是**草稿层，不进审核**：
 
-- 会话进行中：每轮以增量段 + 旧摘要 → flash 模型更新 scope 级摘要（替换 `slice(0,150)` 占位）
-- 会话级摘要（`episode_summary`）与压缩摘要（`compaction_summary`）**均进 pending**；
-  不确认的摘要仅用于本轮上下文，不写入长期记忆
+- 每轮压缩时：LLM 一次调用同时产出 episodeUpdate（更新 Session Memory）与
+  未沉淀事实提案——`memory/summary/session-summarizer.ts` 明确
+  "Summaries are Session Memory (draft layer, un-reviewed)…the
+  episode_summary proposal was a no-op"。
+- 注入只查当前 session 的 episodes（会话隔离在 `selectProjectionInputs`
+  实现：`episodes.all().filter(e => e.sessionId === sessionId)`）。
+- 新会话绝不继承其它会话的未审摘要（模块注释显式锁定该约束）。
+- 旧版 `episode_summary` 提案的审批仍兼容（确认只记 verdict，不落图，
+  `approval.service.ts`）。
 
-### 5.4 Article 合成（K4，#110）
+### 5.4 Summary 合成（K4 修订版 — 覆盖率驱动，#816）
 
-- 同类别新增 facts ≥ 3（以 `sourceFactStableIds` 为增量键）
-- 合成结果 **一律进 pending**（文章是陈述性知识，误合成影响大）
+原设计的"同类别新增 facts ≥ 3（以 sourceFactStableIds 为增量键）+ §13.3C
+的**近 7 天确认 ≥3 硬性时间门禁**"已被取代：
 
-### 5.5 Persona 缓存（K5，#111）
+- 触发改为**覆盖率驱动**（`memory/knowledge-synthesis.ts` + `memory/coverage.ts`）：
+  按类目聚合"未被任何 current summary 覆盖（且未被 pending 提案占用）"的
+  facts，最大簇 ≥3（`MemoryGranularityController.shouldConsolidate` 的
+  `SUMMARY_MIN_CLUSTER`）即合成；长尾陈旧 facts 从此有覆盖路径。
+- **7 天硬门禁已移除**：时间窗降级为可观测信号（新鲜度画像入日志，
+  `recentConfirmations`，不阻塞调度）；原门槛防的噪声（同批 facts 反复触发）
+  由"pending 占用即算覆盖"根治。
+- 合成结果**一律进 pending**（answer-ready 契约：结论/依据/caveat +
+  factId 白名单过滤，`summary-contract.ts` #813——编造 ID 的合成物直接
+  丢弃本轮，宁缺毋滥）；源 facts 以 `relatedFacts` 字段回指（增量为键）。
 
-- facts/articles commit 版本变化才重建；无变化复用
+### 5.5 Persona 缓存（K5，#111）✅
 
-### 5.6 Gap 自动检测（K6，#111）
+facts/knowledge store 版本变化才重建；无变化复用（`buildCachedPersona`，
+有界 LRU + scene 维度 #510；#840 起 graph 渲染源 `memory/persona-source.ts`）。
 
-- 问题形态消息未被 facts 覆盖 → 自动创建 gap（7 天去重）
+### 5.6 Gap 自动检测（K6，#111）✅
 
-### 5.7 矛盾检测与取代（fact 非孤立原则 + 同 scope 规则）
+- 问题形态消息未被 facts 覆盖 → 自动创建 gap（7 天去重窗口仍有效，
+  `modules/knowledge/knowledge-gap.service.ts`）；纯逻辑在
+  `modules/knowledge/gap-detect.ts`，触发判定经
+  `MemoryGranularityController.shouldPromote`（#1013 收口）。
 
-**Fact 不是孤立的：每条 fact 必须携带 scope 标识（patientHash / studyId /
-global），一切"相关/冲突/取代"判定都只在同一 scope 内进行。**
+### 5.7 矛盾检测与取代（fact 非孤立原则 + 同 scope 规则）✅（未漂移）
 
-- 跨患者永不构成矛盾：患者 A「青霉素过敏」与患者 B「青霉素可用」是两条独立
-  事实；提取注入、冲突检测、审批取代均以 scope 为边界
-- 提取时（Tier 1/2/3 共用）：注入的"已有 facts"上下文仅含同 scope facts
-  （跨患者 facts 一律排除）；LLM 输出每 fact 可带 `conflictsWith`（指向
-  context 中同 scope 的已确认 fact）
-- propose 时：`conflictsWith` 必须通过 scope 校验，跨 scope 标记丢弃
-- 审批时（applyApproved）：批准带 `conflictsWith` 的 proposal → 对同 scope
-  冲突旧 fact 执行 supersede（版本机制保留历史，`supersedes` 关系 + 审计）；
-  **批准即人工裁决**——只有用户批准，新 fact 才取代旧 fact
-- 语义去重（≥0.95）只挡重复，不挡矛盾；矛盾检测由 LLM + 审批闭环完成
+**Fact 携带 scope 标识，一切"相关/冲突/取代"判定只在同一 scope 内进行。**
+
+- 提取时注入的"已有 facts"上下文仅含同 scope facts（`compaction/budget.ts`
+  `buildContextBlock`；跨患者 facts 一律排除——"永不构成矛盾"）。
+- propose 时：`conflictsWith` 必须通过 same-scope 校验
+  （`proposal.service.ts` `filterSameScopeConflicts`），跨 scope 标记丢弃。
+- 审批时（`applyApproved` → `defaultProposalApplier`）：批准带 `conflictsWith`
+  的提案 → 对同 scope 冲突旧 fact 执行 supersede（版本机制保留历史）；
+  **批准即人工裁决**。
+- 语义去重（≥0.95）只挡重复，不挡矛盾；矛盾检测由 LLM + 审批闭环完成。
 
 ---
 
-## 6. 长会话压缩（R2 修订版 — 对接审核闭环）
+## 6. 长会话压缩（R2 修订版 — as-built）
 
-### 6.1 触发
+### 6.1 触发（公式已修订）
 
-```
-estimate(system + messages + tools) > MODEL_CONTEXT_WINDOW - max(output, buffer)
-  buffer 默认 20k；MODEL_CONTEXT_WINDOW 默认 32768（env 可配）
-```
-
-### 6.2 锚定摘要（保留 opencode 模式）
-
-- 摘要消息带 `summary + recent` 两字段；下次压缩**更新旧摘要**而非重建
-- 保留最近 `HISTORY_KEEP_TOKENS`（默认 8k）原文逐字，更早部分进摘要；中间消息可拆分（prefix 进摘要 / suffix 保留）
-- 模板（临床版）：
+原设计的 `estimate(...) > MODEL_CONTEXT_WINDOW − max(output, buffer)`
+已被集中配置取代（`common/context-config.ts`）：
 
 ```
-## Objective
-## 患者重要信息        （标识、诊断、关键数值）
-## 决策与理由
-## 已完成
-## 进行中
-## 阻塞
-## 下一步
-## 相关文件与检查
+主触发: 真实消息轮数超窗（history ≥ historyTurns×2，默认 20 轮×2）或
+       有被裁剪的 omittedTurns —— 且非 doc- 会话（doc- 走独立历史预算，
+       docHistoryTurns=6/docHistoryTokens=1500，P0 hotfix 2026-09）
+次触发: 知识库注入后历史被裁剪超总预算 → 异步压缩（triggerCompactionAfterTrim）
+预算:  maxTotalTokens=128000 / maxHistoryTokens=32000（env 可配, #637 集中）
 ```
 
-### 6.3 压缩产物（修订核心）
+### 6.2 锚定摘要 → Session Memory（S2 合并后形态）
+
+- **一次 LLM 调用同时产出** anchoredSummary（摘要）与 episodeUpdate（增量
+  摘要）与未沉淀事实——三者中 episodeUpdate 直接并入 Session Memory，
+  anchoredSummary 不再另存独立结构（§13 S2）。
+- 保留最近窗口原文逐字（`buildHistoryMessages`，`retrieval/context-compressor.ts`），
+  更早部分进摘要；中间消息可拆分。
+- 压缩对用户可见（#display：`compaction_started`/`completed`/`summary` SSE
+  + event log 通知文本，失败不再静默——`buildCompactionNotice`）。
+
+### 6.3 压缩产物（修订核心，as-built）
 
 ```
-压缩 = 锚定摘要（注入后续轮次）
-     + MemoryProposal[]（进 pending，人工审核）
+压缩 = Session Memory 更新（episodeUpdate 并入 episodes，草稿层，仅当前会话注入）
+     + facts[] → gateway.propose() → pending 人工审核（被裁剪段中未沉淀的事实）
+     + 游标推进（compactedUptoIdx + kbExtractCursor，防重复压缩/重复提取）
 ```
 
-- 压缩时从被裁剪的旧轮次中提取**未沉淀过的事实**（以 extractedUptoIdx 为基准，取已提取之外的部分）→ 生成 proposals
-- 摘要本身作为 `compaction_summary` proposal 进入 pending（医生可确认"此摘要可信"；不确认则仅用于本轮上下文，不污染长期记忆）
-- 工具结果序列化截断 2000 字符（T1 同款）
+- `kbCompaction` 表**保留写入但只承担游标 + 展示**（摘要列落本次
+  episodeUpdate 供 #display 兜底）；注入不再走 kbCompaction
+  （`history-budget.ts` 仅作向后兼容的游标读取），即"不再有独立的
+  anchored-summary 存储"。
+- 工具结果序列化截断等预算卫生见 `compaction/budget.ts`（MAX_EVENT_CHARS=500）。
 
-### 6.4 失败兜底
+### 6.4 失败兜底（as-built）
 
-- 摘要 LLM 失败 → 静默跳过，保留硬裁剪（#96 现有行为）
-- pending 写入失败 → 仅记录，不影响会话
+- 摘要 LLM 失败/解析失败 → **游标不推进**（下轮重试同段），结果如实上抛
+  并向用户展示失败通知（原"静默跳过"已按 #display 修订）。
+- pending 写入失败 → 仅日志降级，不影响会话。
 
 ---
 
-## 7. 待审核队列与审批
+## 7. 待审核队列与审批（as-built）
 
-### 7.1 数据模型
+### 7.1 数据模型（实际列）
 
 ```prisma
-model MemoryProposal {
-  id            String   @id
-  userId        String
-  scopeType     String   // 'patient' | 'global' | 'study'
-  patientHash   String?
-  studyId       String?
-  kind          String   // fact | article | episode_summary | compaction_summary
-  content       String
-  importance    Int      @default(3)
-  confidence    String   // high | medium | low
-  reason        String?
-  sourceRange   String?  // "fromIdx..toIdx"
-  status        String   @default("pending") // pending | approved | rejected
-  rejectedReason String?
-  createdAt     String
-  resolvedAt    String?
-  resolvedBy    String?
+model MemoryProposal {        // prisma/schema.prisma:660
+  id / userId
+  scopeType ('patient'|'global'|'study') / patientHash / studyId
+  kind      // fact | summary | episode_summary | compaction_summary | skill（旧 'article' 行启动时迁移）
+  content / importance / confidence / reason
+  sourceRange    // "session:<id>" / "file:<id>#w" 溯源（#46c910c1/#836）
+  conflictsWith  // JSON [{"stableId","content"}] — §5.7
+  status ('pending'|'approved'|'rejected') / rejectedReason
+  resolvedAt / resolvedBy
+  archivedAt     // 13.4D 超期归档
+  category       // 13.4F 提取类别（质量反馈统计维度）
+  relatedFacts   // JSON stableId[]（合成占用/回指）
+  payload        // #844 skill 提案候选（其他 kind 为 null）
 }
 ```
 
-### 7.2 审批状态机
+### 7.2 审批状态机（as-built）
 
-- 复用 `approval_requests` 的语义（pending → approved/rejected + audit log），
-  `applyTargetUpdate` 增加 `Fact` / `Article` 分支：
-  - Fact：`memoryGraph.updateNode`（新版本，`sourceProposalId` 溯源）
-  - Article：`addArticle`（sources 记录）
-- 审计：`writeAuditLog`（action `memory.approved` / `memory.rejected`）
-- 权限：复用 #105（T2 规则集）的能力——默认"本人可审自己 scope 的记忆"，admin 可审全部
+- 复用 `approval_requests` 状态机；**审批 target 是 `MemoryProposal`**
+  （原设计的 "Fact/Article target 分支" 未采用——skill/persona 等审批同走
+  此单表）；`applyTargetUpdate` 分派：
+  - fact/summary → `defaultProposalApplier`（`memory/registry.ts`）版本化落图
+    + 语义 supersede（§5.7）+ embedding 索引（§4.5）
+  - episode_summary/compaction_summary → 只记 verdict，不落图（草稿层语义）
+  - skill → 机构 scope 需 admin 确认（#845）
+- 审计：`writeAuditLog`（action `approval.confirmed` / `approval.rejected`）
+- 权限：审批写入永远 owner-scoped（#794——收件箱绝不跨租户；跨用户可见性
+  是显式 admin opt-in `?scope=all`）；拒绝原因可选（#149）
+- pending 超期治理（13.4D）：低重要性 facts（≤2）与非 fact 摘要超 7 天自动
+  归档（`archiveStaleProposals`，惰性执行，可手动恢复）；高重要性（≥4）
+  保持 pending 置顶。
+- 提取质量反馈（13.4F）：7 天按 category 统计接受率注入提取 prompt
+  （`memory/extraction-quality.ts`）。
 
-### 7.3 UI
+### 7.3 UI ✅
 
-- Today widget（#49）与 Brain inbox（#48）扩展一个 tab/筛选："记忆待审核"（kind 徽标 + 置信度 + 来源轮次）
-- 拒绝原因**可选**（#149 后放开：空原因允许拒绝，审计留痕为 null）
-- 审批后 memory-graph 页（`memory-graph.tsx`）可见新版本（现有版本化展示直接受益）
+- Brain inbox 扩展"记忆待审核"（kind 徽标 + 会话聚合 + 置信度 + 来源轮次，
+  #46c910c1 溯源）。
+- 审批后 memory-graph 页可见新版本。
 
 ---
 
-## 8. 与既有 issues 的映射
+## 8. 与既有 issues 的映射（全部关闭）
 
-### 8.1 需修订的 issue
-
-| Issue | 修订内容 |
-|---|---|
-| #99（R2 锚定压缩） | 压缩产物增加 MemoryProposal 审核出口（§6.3）；摘要模板改临床版 |
-| #109（K1+K2） | 提取结果一律进 pending（§5.2 全部人工审核），无直写路径 |
-| #110（K3+K4） | Article 合成结果进 pending（§5.4）；摘要改为 scope 级（§5.3） |
-| #98（R1） | 数据源明确为 `readContext`（§4.3）；patient/context source 支持按提及动态加载（全局会话） |
-
-### 8.2 新建 issue
-
-| Issue | 内容 | 优先级 |
+| Issue | 内容 | 状态 |
 |---|---|---|
-| #112 | MemoryGraph 门面：`readContext/summarize/listPending/applyApproved/rejectProposal` + 层3 患者隔离（§3+§4） | ✅ 已完成 |
-| #113 | 审批系统补 Fact/Article target + MemoryProposal 表 + 审计（§7） | ✅ 已完成 |
-| #114 | 压缩/会话结束 → summarize → pending 闭环（§6，与 #99/#109 联动） | ✅ 已完成 |
-| #115 | 多会话管理：Session scope/status 扩展 + 前端会话列表/切换/新建/关闭（§4.4） | ✅ 已完成 |
-
-### 8.3 会话运行时/UI 项（正交）
-
-#100–#108（U1/U2/U3/T1/T2/T4/S1/U4U5O3）为纯会话运行时/UI 项，与本设计正交。
-已完成：#99 R2 锚定压缩、#100 U1 流式渲染、#101 T1 工具输出限量、#102 R3 工具持久化、
-#103 U3 上下文用量 UI、#109–#111 K1–K6。剩余：#98 R1、#104 U2、#105 T2、#106 S1、#107 T4、#108 U4U5O3。
+| #112 门面 + 隔离 | ✅ 已完成（readContext 后被 §4 方案取代） |
+| #113 审批闭环 | ✅ 已完成（target 收敛为 MemoryProposal） |
+| #114 压缩/关闭 → summarize → pending | ✅ 已完成（摘要侧修订为 Session Memory 直更） |
+| #115 多会话管理 | ✅ 已完成（Session.scope/status） |
+| #98 R1 typed Context Source | ✅ 已完成（`memory/context-sources.ts`） |
+| #104–#108（U2/T2/S1/T4/U4U5O3） | ✅ 全部已完成 |
 
 ---
 
-## 9. 实施计划
+## 9. 实施计划（G.1–G.7）✅ 全部完成
 
-| 阶段 | 内容 | 依赖 | 预估 |
-|---|---|---|---|
-| G.1 | MemoryProposal 表 + 门面接口骨架（readContext 先接现有 stores） | — | ✅ |
-| G.2 | 审批系统 Fact/Article target（`applyTargetUpdate` + 审计） | G.1 | ✅ |
-| G.3 | 层3 患者隔离 + readContext 接入 chat（替换 selectProjectionInputs 数据源） | G.1 | ✅ |
-| G.4 | 提取管道改造：全部提取结果进 pending（#109 修订） | G.1–G.2 | ✅ |
-| G.5 | 压缩闭环：summarize → pending（#99/#114） | G.2, #99 | ✅ |
-| G.6 | UI：Brain inbox 记忆 tab + Today 入口（复用 #48/#49） | G.2–G.5 | ✅ |
-| G.7 | 多会话管理：后端 scope/status + 前端列表/切换/关闭（#115） | G.5 | ✅ |
-
-总计约 13 个工作日。G.1–G.3 为 P0（门面 + 隔离 + 审批），可先于压缩落地。
+G.1 门面骨架 / G.2 审批 target / G.3 患者隔离接入 / G.4 提取全进 pending /
+G.5 压缩闭环 / G.6 Brain inbox UI / G.7 多会话管理 —— 全部交付（细节见
+各节 as-built 注记；G.2 的 target 语义收敛见 §7.2）。
 
 ---
 
-## 10. 测试计划
+## 10. 测试计划（as-built 对账）
 
-| 层 | 用例 |
-|---|---|
-| 单测 | 门面接口各方法；提取结果全部进 pending（无直写）；患者隔离过滤（本患者全量/跨患者限量/标记）；审批 Fact target 状态流转 + 审计；proposal 幂等（同范围不重复） |
-| 集成 | 模拟 60 轮会话 → 压缩触发 → 断言：锚定摘要注入 + proposals 进 pending + graph 未直接变更；审核通过 → graph 新版本 + 下次 readContext 可见 |
-| 隔离测试 | 患者 A 会话中注入的 facts 集合与患者 B 无交集（跨患者仅限 importance≥4 且带标记） |
-| 会话管理 | 同 scope 多会话并行；关闭后不可写；关闭触发 summarize→pending；默认会话兼容 |
-| 回归 | 现有 364+ 用例；`/api/v1/agent/chat` SSE 兼容性 |
+| 层 | 用例 | 状态 |
+|---|---|---|
+| 单测 | 门面接口；提取全进 pending（无直写）；患者隔离过滤；proposal 幂等；per-session 游标；S1 无实时提取路径；S2 压缩只更新 episodes；§13.3B 排序；S3 两触发点 | ✅（`tests/unit/` memory 系列） |
+| 集成 | 压缩触发 → Session Memory 更新 + proposals 进 pending；审批 → graph 新版本 + 下轮注入可见 | ✅ |
+| 隔离测试 | 患者 A 注入 facts 与患者 B 无交集（跨患者仅限 importance≥4 带标记） | ✅ |
+| 会话管理 | 多会话并行；关闭后不可写；关闭触发 flush；默认会话兼容 | ✅ |
+| 回归 | `/api/v1/agent/chat` SSE 兼容 | ✅ |
 
 ---
 
-## 11. 风险与缓解
+## 11. 风险与缓解（回顾）
 
-| 风险 | 缓解 |
-|---|---|
-| 审核负担过重 | 全部记忆进审核是设计决策（临床合规优先）；通过 Brain inbox 批量确认 + 优先级排序（importance 降序）控制负担 |
-| 压缩摘要进入 pending 但医生长期不审 | 摘要不审仅影响长期记忆，不影响本轮上下文；Brain inbox 提供批量确认 |
-| 门面改造破坏现有注入 | G.3 先做"数据源替换"（readContext 内部仍调现有 stores），行为差异用测试锁定 |
-| 患者隔离误伤"对比患者"场景 | 显式放行：importance≥4 + 预算余量 + 患者标记渲染 |
-| 双写（graph + stores）过渡期不一致 | readContext 为唯一读路径后，stores 降级为 graph 的兼容视图（#21 迁移时收敛） |
+| 风险 | 缓解 | 实际 |
+|---|---|---|
+| 审核负担过重 | Brain inbox 批量确认 + importance 排序 + 13.4D 超期归档 | ✅ |
+| 压缩摘要长期不审 | 摘要改为草稿层（不阻塞长期记忆），仅 facts 待审 | 语义变更（§5.3） |
+| 门面改造破坏现有注入 | G.3 数据源替换行为差异用测试锁定；#840 起读路径分批切 graph，legacy 投影回落保留 | #840 收敛中 |
+| 患者隔离误伤"对比患者"场景 | importance≥4 + 上限 + 患者标记渲染（isolateFactsByScope） | ✅ |
+| 双写过渡期不一致 | graph 为真相源 + LegacyProjection reconcile（`memory/legacy-projection.ts`） | #840 收敛中 |
 
 ---
 
 ## 12. 与 KB v2.2 设计的关系
 
-- KB 的 T+0s/T+1s/T+30s 管道（takeaway/facts/articles）在本设计中对应：
-  takeaway = 即时 UI（不变）；facts = §5 提取管道；articles = §5.4（进 pending）
-- KB 的"分层加载 expand()"（§4.3）与 S1 合并为按需加载工具族（#106 已修订）
-- 本设计补齐了 KB v2.2 缺失的**审核环节**——知识从"自动沉淀"升级为"自动建议 + 人工确认"
+- KB 管道（takeaway/facts/summaries——原 "articles" 已随 #1011 更名 summary）
+  对应：takeaway = 即时 UI；facts = §5 提取管道；summaries = §5.4 覆盖率驱动
+  合成（进 pending）。
+- 本设计补齐了 KB v2.2 缺失的**审核环节**——知识从"自动沉淀"升级为
+  "自动建议 + 人工确认"。
 
 ---
 
-## 13. 记忆系统优化设计（Phase 3 — v3.0 简化模型）
+## 13. 记忆系统优化设计（Phase 3 — v3.0 简化模型）✅ S1–S3 已交付
 
-> 在 G.1–G.7（审核闭环已上线）基础上，针对运行中暴露的**冗余与缺陷**，
-> 收敛为一个可维护的简化模型。**核心原则：未审核信息永不跨会话/跨范围
-> 泄漏；已确认信息的选择逻辑可控、可量化、可反馈。**
-
-### 13.0 简化模型：两形态 + 一路径 + 一闸门
-
-**设计目标是让记忆系统的概念模型足够简单：**
+> 在 G.1–G.7 基础上收敛的简化模型（两形态 + 一路径 + 一闸门）。**2026-09-22
+> 核对**：S1/S3 按设计落地；S2 落地形态与原表述有一处偏差（见 13.2）。
 
 ```
-对话
-  │
-  ▼
-EventLog（真相源）
-  │
-  ├─► Session Memory（草稿层：一份 per-session 渐进摘要）
-  │     不审核 · 仅当前会话注入 · 压缩时更新同一份
-  │
-  ├─► 批量提取"未覆盖段"（唯一提取路径，两个触发点）
-  │     ① 压缩时  ② 会话关闭时
-  │     （提取输入 = 对话段 + Session Memory）
-  │
-  ▼
-pending（唯一审核闸门）──► confirm ──► Facts（档案层）
-                        └──► reject ──► 丢弃+审计
-
+对话 → EventLog（真相源）
+   ├─► Session Memory（草稿层：per-session 渐进摘要，episodes）
+   │     不审核 · 仅当前会话注入 · 压缩时更新同一份
+   ├─► 批量提取"未覆盖段"（唯一提取路径，两个触发点：压缩时 / 会话关闭时）
+   ▼
+pending（唯一审核闸门）── confirm → Facts（档案层）
+                        └ reject → 丢弃+审计
 Facts：结构化 · 版本化 · 可 supersede · 跨会话注入（患者隔离）
 ```
 
-**三个简化项：**
+### 13.1 现状缺陷（原表 — F1/F2 已修，F3 已被 #816 重新定义）
 
-| # | 简化 | 现状 → 目标 | 理由 |
-|---|------|------------|------|
-| S1 | 砍 Tier 1 实时提取 | 三级提取（信号/压缩/关闭）→ **一条批量路径**（压缩/关闭两触发点） | Tier 1 只认"记住/过敏/禁忌"边际价值低；显式指令已由 `kb_remember` 命令直写承接；省一套触发+去抖+游标交互 |
-| S2 | 合并双份摘要 | episodes（K3）+ kbCompaction（R2 anchored）→ **一份 Session Memory** | 压缩一次 LLM 调用已同时产出 episodeUpdate 与 anchoredSummary——同一记忆两处存储、两处注入，纯冗余 |
-| S3 | 提取来源含草稿 | 提取只喂对话段 → 对话段 + Session Memory | 让"摘要审计"天然嵌入提取（C1 需求无需单独机制） |
-
-**必须保留的复杂度（临床正确性的必要投资）：**
-
-- 全部人工审核（唯一闸门）——合规底线
-- 患者隔离（fact 携带 scope）——隐私底线
-- 语义去重（≥0.95）+ 矛盾 supersede——防重复防冲突
-- 压缩防重（游标/锁）——工程机制，用户无感
-
-### 13.1 现状缺陷（核对代码确认）
-
-| # | 缺陷 | 位置 | 影响 |
-|---|------|------|------|
-| F1 | **全局 persona 混入患者 facts**：`buildPersona` 用 `facts.all()` 无 scope 过滤 | `user-context.ts buildPersona` | 患者 A 的偏好进入全局 persona，影响所有会话（正确性 + 隐私） |
-| F2 | **topFacts 按 `count`（旧注意力计数）排序**，非 importance × recency | 同上 | 关键事实可能被挤出 persona，陈旧事实滞留 |
-| F3 | **Article 触发粗糙**：同类目 ≥3 未使用即合成，无时间窗口/聚类 | `knowledge-synthesis.ts maybeSynthesizeArticle` | 频繁合成低质量文章，pending 噪声 |
-| F4 | **审计缺口**：pending 无超期治理；无接受率/引用率/矛盾率指标反馈 | 审批系统 | 无法量化记忆质量，无法驱动提取优化 |
-| F5 | **persona 整体缓存**：任一 fact 变化全量重建 | `buildCachedPersona` | 与 R1（#98 增量更新）目标冲突的中间态 |
-
-### 13.2 简化实施（S1–S3）
-
-**S1 · 砍 Tier 1 实时提取**
-
-```
-移除 shouldExtractIncrement 触发链路（信号正则 + 2s 去抖 + 提取游标交互）。
-显式指令承接：
-  "记住：xxx" / kb_remember → 命令直写（现有，createdBy=user，无需审核）
-所有事实性提取统一走批量路径（S3 的 extractSegment）。
-```
-
-**S2 · Session Memory 合并**
-
-```
-episodes 升级为唯一 Session Memory（summary + recent 结构，opencode 模式）：
-  - 每轮：K3 渐进更新（现状）
-  - 压缩时：episodeUpdate 更新同一份（现状 compaction.ts 已在做），
-    anchoredSummary 不再另存
-  - 注入：只查当前 session 的 episodes（会话隔离已有），
-    删除 chat.router 的 kbCompaction 注入查询
-  - kbCompaction 表停止写入（保留历史，不迁移）
-  - 压缩防重游标 coveredUptoIdx 改为基于事件 idx 的独立游标（语义不变）
-```
-
-**S3 · 归一提取路径**
-
-```
-统一入口 extractSegment(userId, scope, fromIdx, toIdx, ctx)：
-  - 输入：未覆盖事件段 + 当前 session 的 Session Memory
-  - 输出：facts[] → propose pending；episodeUpdate → 更新 Session Memory
-  - 触发点：① 压缩时（溢出段）② 会话关闭时（未覆盖段）
-  - 现有 extractAndProposeFacts / flushUnextracted / 压缩提取合并实现
-```
-
-### 13.3 正确性修复（原第一层）
-
-**A. Persona 患者隔离（修 F1）**
-
-```
-全局 persona 只取无 patientHash 的 facts：
-  prefs/goals/topFacts ⊆ facts.all().filter(f => !f.patientHash && !f.studyId)
-
-患者相关 facts 仅经 isolateFactsByScope（§4.2）在患者会话注入，
-全局会话不注入任何患者 facts（含"对比患者"场景的显式放行规则不变）。
-```
-
-- 患者级偏好（如"患者 A 拒绝某方案"）不进全局 persona；医生级偏好（"该医生先看 CT"）正常保留
-- 变更点：`buildPersona` 增加 scope 过滤 + 单测锁定
-
-**B. topFacts 排序改 importance × recency（修 F2）**
-
-```
-score(f) = importance(f) × e^(-0.3 × daysAgo(f))
-取 top 5；依赖 facts 的 lastSeenAt/createdAt（已存在）
-```
-
-- 复用 `context-compressor.ts` 的 `attentionScore` 语义，抽为共享函数
-- 效果：近期高重要性事实优先，陈旧低价值事实自然退出
-
-**C. Article 触发加时间窗口与聚类（修 F3）**
-
-```
-触发条件（AND）：
-  1. 同 scope 同类目未使用 facts ≥ 3
-  2. 其中 ≥3 条为最近 7 天确认（createdAt ≥ now-7d）
-  3. 可选：embedding 相似度 ≥ 0.7 聚类（同主题才合成，避免拼盘文章）
-
-触发后：合成 → pending（§5.4 不变）
-```
-
-- 变更点：`maybeSynthesizeArticle` 增加时间窗口过滤；聚类为可选增强（Phase 3 后期）
-
-### 13.4 审核体验（原第二层）
-
-**D. Pending 超期治理**
-
-```
-生命周期：
-  pending 超 7 天：
-    importance ≥ 4 → 保持 pending，Brain inbox 置顶 + 高亮"待关注"
-    importance ≤ 2 → 自动归档为 'stale'（不删除，可手动恢复）
-    （摘要是 'episode_summary' 的 → 7 天未审自动归档）
-```
-
-- 变更点：MemoryProposal 增加 `archivedAt` 字段（或复用 status），
-  每日定时任务（复用 evolution worker）执行归档
-
-**E. Brain inbox 分组与批量确认**
-
-```
-pending 按 scope 分组展示：
-  患者视图：同一患者的所有 pending（facts + 摘要）归组
-  全局视图：医生偏好/知识类归组
-组内批量确认（复用现有 confirmIds 批量能力）
-```
-
-**F. 提取质量反馈（闭环）**
-
-```
-按 category × sourceType 统计 7 天接受率：
-  接受率 < 30% 的类别 → 提取 prompt 注入"近期该类别误报较多，请更严格"提示
-  接受率 > 90% 且数量多 → 提示"可适当增加该类别输出"
-```
-
-- 变更点：`extractSegment` 的 prompt 增加动态规则段；
-  统计数据来自 auditLog（已存在，需增加 category 维度）
-
-### 13.5 审计治理（原第三层，与 R1 联动）
-
-**G. 记忆健康仪表盘**
-
-```
-指标（全部来自现有 telemetry + auditLog）：
-  接受率     approved / (approved + rejected)    （按类别/来源）
-  引用率     graph facts 在 chat 上下文注入中的命中次数 / 事实总数
-  矛盾率     7 天内 conflictsWith 标记数
-  超期数     当前 stale/超期 pending 数
-展示：Admin 或 Brain 页新增"记忆健康" tab
-```
-
-**H. Persona 分段缓存（修 F5，R1 的前置）**
-
-```
-persona 拆为独立段，每段独立版本指纹：
-  prefs / goals / topFacts / knowledge
-任一版本变化 → 仅重建对应段（§4.3 R1 的增量注入的雏形）
-```
-
-### 13.6 数据模型变更
-
-```prisma
-// MemoryProposal 增加：
-archivedAt     String?   // 超期归档时间（13.4 D）
-category       String?   // 提取类别（质量反馈 F 的统计维度，propose 时已带 reason 可解析）
-
-// kbCompaction 停止写入（S2），保留历史表不迁移；
-// episodes 升级：summary 字段内嵌 recent（或加 recent 列），压缩更新同一行
-```
-
-### 13.7 测试计划
-
-| 层 | 用例 |
-|---|---|
-| 单测 | S1：移除触发后无实时提取路径（shouldExtractIncrement 删除）；S2：压缩只更新 episodes、不写 kbCompaction、注入只查 episodes；S3：extractSegment 覆盖两触发点；persona 隔离（患者 fact 不进全局 persona）；topFacts 排序；article 7 天窗口 |
-| 集成 | 60 轮会话 → 压缩 → 断言：Session Memory 更新一份 + proposals 进 pending + kbCompaction 无新行；审核通过 → graph 新版本 + 下次注入可见 |
-| 回归 | 现有 434+ 用例；SSE 兼容性；会话关闭 flush 不回归 |
-
-### 13.8 实施计划
-
-| 项 | 内容 | 优先级 | 预估 |
-|---|---|---|---|
-| S2 | Session Memory 合并（episodes 升级 + kbCompaction 停写 + 注入收敛） | P0 | 1d |
-| S1 | 砍 Tier 1 实时提取（kb_remember 承接） | P0 | 0.5d |
-| S3 | 归一提取路径 extractSegment | P0 | 1d |
-| 13.3A | Persona 患者隔离 | P1 | 0.5d |
-| 13.3B | topFacts 排序优化 | P1 | 0.5d |
-| 13.3C | Article 时间窗口 | P1 | 1d |
-| 13.4D | Pending 超期治理 | P2 | 1.5d |
-| 13.4E | Inbox 分组批量 | P2 | 1d |
-| 13.4F | 提取质量反馈 | P2 | 1.5d |
-| 13.5G | 记忆健康仪表盘 | P3 | 2d |
-| 13.5H | Persona 分段缓存（并入 R1 #98） | P2 | 与 R1 合并 |
-
-## 15. 写作模块整合升级设计（对话驱动写作）
-
-> **目标：改变写作模式**——从"人工直接编辑 markdown"变为"通过跟 AI 对话完成
-> 写作"。写作页聊天并入统一管道（记忆 + 工具 + 审核闭环），编辑器升级为
-> Lark 式所见即所得画布（TipTap）。
-
-### 15.1 现状问题
-
-| # | 问题 | 位置 |
+| # | 缺陷 | 处置 |
 |---|------|------|
-| W1 | 写作页 chat 是孤岛：独立端点 `/docs/:id/chat`，单轮、无记忆、无工具、无审核 | documents.router |
-| W2 | 编辑器是 markdown 源码 Textarea，无实时渲染（表格"全是乱的"的根源之一） | writing-editor.tsx |
-| W3 | 写作与记忆系统零整合（不引用已确认 Facts / Session Memory） | — |
-| W4 | LLM 改文档靠 `REPLY + UPDATED_DOCUMENT:` 文本解析（脆弱） | parseDocChatResponse |
+| F1 | 全局 persona 混入患者 facts | ✅ 修复（`common/persona.ts` buildPersona 只取无 patientHash/studyId 的 facts；constraint 类目 #814 补进 persona） |
+| F2 | topFacts 按 count 排序 | ✅ 修复（importance × recency 衰减，`user-context.ts` §13.3B 注释） |
+| F3 | Article 触发粗糙 | ✅ 由 #816 重新定义：覆盖率驱动（coverage.ts）替代时间窗口；"pending 占用"根治重复触发 |
+| F4 | 审计缺口（超期治理/质量指标） | ✅ 13.4D/F 落地（archivedAt 惰性归档 + extraction-quality + memorization.router 健康面板） |
+| F5 | persona 整体缓存 | ✅ 并入 R1——context-sources.ts 稳定段 + persona 段独立 hash 更新 |
 
-### 15.2 目标
+### 13.2 简化实施（S1–S3）✅（S2 有一处与原方案的偏差）
 
-1. **写作 = 对话**：用户通过聊天驱动 AI 写/改文档，人工审阅迭代
-2. **三个 chat 统一**（§13 的延续）：写作页聊天 = `/api/v1/agent/chat` 主管道
-3. **Lark 式画布**：TipTap（ProseMirror）WYSIWYG，表格可视化编辑
+- **S1 · 砍 Tier 1 实时提取** ✅——`memory/extraction-cursor.ts`：游标只在
+  压缩时与会话关闭时推进；`kb_remember` 等显式命令直写承接（fastTrack）。
+- **S2 · Session Memory 合并** ✅（落地形态差异）——anchoredSummary 确实不再
+  另存（runner.ts 注释 "S2: no anchored-summary store"），注入只查
+  episodes；**但 `kbCompaction` 表仍在压缩时写入一行**，只承担两件事：
+  压缩防重游标（`coveredUptoIdx`，`history-budget.ts` 向后兼容读取）与
+  #display 的摘要通知兜底——"停止写入"的原方案改为"降级为游标/展示记录"，
+  注入面（草稿层语义）按原方案收敛。
+- **S3 · 归一提取路径** ✅——`extractSegment(userId, scope, sessionId,
+  fromIdx, toIdx, ctx)` 统一入口（`compaction/runner.ts`），压缩溢出段与
+  会话关闭 flush 两触发点；边界判定走
+  `MemoryGranularityController.shouldConsolidate`（#1013）。
 
-### 15.3 架构
+### 13.3 正确性修复
 
-```
-写作页 = 左：文档画布（TipTap WYSIWYG）｜右：聊天（主管道，默认打开）
+- **A. Persona 患者隔离** ✅（见 13.1 F1）。
+- **B. topFacts 排序** ✅——score = importance × e^(−0.3×daysAgo)
+  （`user-context.ts` 注释即决策记录）。
+- **C. Summary 触发时间窗口** —— **已被取代**：#816 覆盖率驱动调度上线，
+  "≥3 条为最近 7 天确认"的硬性 AND 条件移除（时间窗降级为日志观测信号）。
+  原本 7 天窗口防的噪声由 pending 占用根治。此为本重写的关键修正之一。
 
-数据流：
-  用户消息 → /api/v1/agent/chat（Session Memory + Facts + 工具 + 审核闭环）
-    ├─ docs/current 上下文源（R1 源模型扩展，hash 变化才重发）
-    └─ edit_document 工具（markdown 全文 → 写回 + 自动快照）
-  → 前端 markdown→HTML 转换 → 编辑器实时应用（保留滚动）
-  → 用户审阅（TipTap 表格/格式）→ 继续对话迭代
+### 13.4 审核体验（✅ D 超期归档 / E 批量确认；F 质量反馈）
 
-存储：保持 markdown（AI 友好）
-  加载 / LLM 输出：markdown → HTML（marked）
-  保存：HTML → markdown（turndown，表格/标题/列表基本无损）
-  快照 / PHI 扫描 / DOCX 导出：基于 markdown 文本（现有端点不变）
-```
+- **D. Pending 超期治理** ✅ `archiveStaleProposals`（pending 列表惰性执行，
+  非 fact 一律归档、fact 仅 importance≤2）。
+- **E. Brain inbox 分组与批量确认** ✅（按会话聚合 + confirmIds 批量）。
+- **F. 提取质量反馈** ✅ `memory/extraction-quality.ts`（7 天接受率 → 动态
+  提取 prompt 规则段；数据源 = MemoryProposal 的 `category` 字段）。
 
-### 15.4 组件拆解
+### 13.5 审计治理
 
-| 组件 | 说明 | Issue |
-|---|---|---|
-| **DocEditor** | TipTap + StarterKit + Table 扩展；md 导入导出；工具栏（标题/表格/列表/撤销重做）；`setContentFromMarkdown`（AI 更新入口） | #169 |
-| **docs/current 源** | R1 源模型新源：文档标题 + 正文（截断上限）+ 引用材料快照 | #170 |
-| **统一聊天接入** | writing-editor chat → `sendChatFull` + `sessionId=doc-{docId}`（useChatStore）；复用主 chat 渲染组件（streaming / thinking 默认展开 / tool calls） | #170 |
-| **edit_document 工具** | ToolRegistry 注册：LLM 输出完整 markdown → 写回 doc.body（版本化）+ 自动快照 | #171 |
-| **旧端点** | `/docs/:id/chat` 废弃（返回明确提示） | #170 |
+- **G. 记忆健康仪表盘** ✅（`modules/memorization/memorization.router.ts`：
+  接受率/矛盾率/pending 超期/归档数/规模 + `13.5G` UI）。
+- **H. Persona 分段缓存** ✅（R1 typed Context Source 的 persona 段独立 hash，
+  `memory/context-sources.ts`）。
 
-### 15.5 测试计划
+### 13.6 数据模型变更 ✅
 
-| 层 | 用例 |
-|---|---|
-| 单测 | DocEditor：md→HTML 渲染（标题/列表/表格）、HTML→md 往返、表格增删行列保存正确、AI 更新不重置滚动；docs/current：hash 变化才重发、截断、引用快照 |
-| 集成 | 写作会话化（两轮上下文连贯）；记忆注入（引用已确认 Facts）；edit_document 写回 + 快照 + 前端应用；压缩/审核闭环 |
-| 回归 | 文档 CRUD / PHI / 快照 / 导出端点不破坏；主 chat 无回归 |
-
-### 15.6 实施计划
-
-| 步骤 | 内容 | 依赖 | 预估 |
-|---|---|---|---|
-| #169 | DocEditor TipTap 画布（md 导入导出 + 表格） | — | 1.5d |
-| #170 | 写作页聊天接入主管道 + docs/current 源 | #169 | 1d |
-| #171 | edit_document 工具 + AI 更新流 | #170 | 1d |
+`archivedAt` / `category` / `relatedFacts` / `payload` / `conflictsWith` 列
+均已建表（见 §7.1）；episodes 升级为唯一 Session Memory（S2）。
 
 ---
-## 14. 修订历史
+
+## 14. 写作模块整合升级设计（对话驱动写作）✅ 已交付
+
+> 目标：从"人工直接编辑 markdown"变为"通过跟 AI 对话完成写作"。已全部落地。
+
+- **W1 写作页 chat 孤岛** ✅ 解除——`/docs/:id/chat` 410 废弃端点已删除
+  （`documents.router.ts`），写作聊天统一走 `/agent/chat`
+  （sessionId `doc-<docId>`，§13 的统一管道）。
+- **W2 编辑器** ✅ TipTap（ProseMirror）WYSIWYG 画布（`components/DocEditor.tsx`
+  + @tiptap 全家桶）；**W3 记忆整合** ✅ doc- 会话上下文治理
+  （#894）+ facts 封顶；**W4 结构化写回** ✅ `edit_document` 工具
+  （`tools/edit-document-tool.ts`，#171——原设计 §15.4 组件拆解）+
+  失败结构化诊断（#1022）。
+- 后续演进见 `WRITING_MODULE_REDESIGN.md` / `CITATION_SYSTEM.md`
+  （DocCitation 结构化引用为写作模块的第二个 as-built 子系统）。
+
+---
+
+## 15. 修订历史
 
 | 版本 | 内容 |
 |---|---|
 | v2.0 | 初始设计（G.1–G.7） |
 | v2.1 | 矛盾检测与取代（§5.7）；Tier 1 信号收缩；压缩 delayed-sync；episodes 会话隔离 |
 | v2.2 | §13 记忆系统优化设计（Phase 3 治理）；修订 §7.3 拒绝原因可选、§8/§9 完成状态 |
-| v3.0 | §13 重写为简化模型：两形态 + 一路径 + 一闸门（S1 砍 Tier 1、S2 合并 Session Memory、S3 归一提取） |
-| v3.1 | §15 写作模块整合升级（对话驱动写作 + TipTap 画布 + 统一聊天管道）；issues #169–#171 |
+| v3.0 | §13 重写为简化模型：两形态 + 一路径 + 一闸门 |
+| v3.1 | §14 写作模块整合升级（对话驱动写作 + TipTap 画布 + 统一聊天管道） |
+| v3.2 | **2026-09-22 as-built 重写（#1105）**：`MemoryGraphGateway.readContext` 已不存在，门面 API 按实际方法重录（§2/§3/§4）；"article"→"summary" 全仓更名落地（#1011）；K4 "近 7 天确认 ≥3" 硬性门禁已移除（#816 覆盖率驱动）；§13 S1–S3 交付状态核定（S2 的 kbCompaction 降级为游标/展示记录）；提取游标 per-session 化；§14/§15 编号乱序修正 |

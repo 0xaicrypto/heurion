@@ -7,12 +7,15 @@
 import type { ToolResult } from './base-tool.js'
 import { resolveImportTargets, extractRefText, writeDocBody } from './doc-import.js'
 
-/** 导入模式:按 label 定位参考材料,把提取的正文写入文档。 */
+/** 导入模式:按 label 定位参考材料,把提取的正文写入文档。
+ *  #1103: 可选 abort signal — 写回点(writeDocBody → writeDocVersion)前检查,
+ *  超时/中止后不落库。 */
 export async function executeImportReference(
   userId: string,
   docId: string,
   reference: string,
   summary: string,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   try {
     const labels = await resolveImportTargets(userId, docId)
@@ -24,7 +27,7 @@ export async function executeImportReference(
 
     const { text, error } = await extractRefText(userId, docId, hit.r, hit.label)
     if (error) return { success: false, error }
-    const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import')
+    const { body, error: writeError } = await writeDocBody(userId, docId, text, 'AI import', signal)
     if (writeError) return { success: false, error: writeError }
     return { success: true, output: JSON.stringify({ body, summary: `已导入参考材料「${hit.label}」(${text.length} 字符)` }) }
   } catch (err) {

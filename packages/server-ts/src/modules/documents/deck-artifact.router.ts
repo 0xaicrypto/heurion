@@ -17,6 +17,7 @@ import type { FastifyInstance } from 'fastify'
 import type { FastifyRequest } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
+import { findOwned } from '../../common/ownership.js'
 import { issueChartToken } from '../../common/chart-token.js'
 import { parsePptx, PPTX_MIME_TYPE } from '../../lib/pptx-extractor.js'
 import { DeckBytesError, getDeckArtifact, putDeckArtifact } from '../../lib/deck-bytes.js'
@@ -27,7 +28,7 @@ const DECK_BODY_LIMIT = 50 * 1024 * 1024
 
 async function ownedDoc(request: FastifyRequest<{ Params: { docId: string } }>) {
   const userId = request.user!.userId
-  return prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+  return findOwned(prisma.doc, request.params.docId, userId)
 }
 
 export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {

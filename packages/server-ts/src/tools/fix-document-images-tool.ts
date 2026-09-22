@@ -1,5 +1,5 @@
 import fs from 'fs'
-import { BaseTool, ToolResult } from './base-tool.js'
+import { BaseTool, ToolResult, abortedWriteResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { issueChartToken, verifyChartToken } from '../common/chart-token.js'
 import { safeUploadPath } from '../lib/upload-path.js'
@@ -143,7 +143,7 @@ export class FixDocumentImagesTool extends BaseTool {
     }
   }
 
-  async execute(_args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(_args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const sessionId = this.ctx.sessionId || ''
     if (!sessionId.startsWith('doc-')) {
       return { success: false, error: 'fix_document_images is only available in a document writing session' }
@@ -221,6 +221,9 @@ export class FixDocumentImagesTool extends BaseTool {
           : '全部图片文件均在库，无需重新生成。',
       ].join(' ')
 
+      // #1103: 写回点中止检查 — 超时/中止后不落库（迟到写入治理）。
+      const aborted = abortedWriteResult(signal)
+      if (aborted) return aborted
       const written = await writeDocVersion({
         userId: this.ctx.userId,
         docId,

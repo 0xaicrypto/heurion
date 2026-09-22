@@ -190,11 +190,15 @@ export async function chatWithToolsStreamImpl(
     // → 非流式重取完整 tool_calls。非流式通道完好（doc-executor 兜底实证）。
     if (argFragCount === 0 && toolAcc.size > 0) {
       log.warn(`[LLM] tools-stream degenerate: deltas=${toolDeltaCount} argsFrags=0 — retrying non-streaming for complete tool_calls`)
+      // #1104: 降级重取失败 → 明确错误上抛（本模块错误约定：失败即 throw），
+      // 绝不把参数为空的"退化结果"放行给下游 — 工具循环对抛错按失败处理
+      // (回退非流式/上报)，拿到 tool_call 才执行；空参写类工具调用
+      // (edit_document({}) 等)是比明确失败更坏的损坏结果。
       try {
-        const retry = await degenerateNonStreamRetry(messages, options, tools, onReasoning)
-        return retry
+        return await degenerateNonStreamRetry(messages, options, tools, onReasoning)
       } catch (err) {
-        log.warn(`[LLM] degenerate non-stream retry failed — returning degenerate stream result: ${(err as Error).message.slice(0, 120)}`, { model })
+        log.warn(`[LLM] degenerate non-stream retry failed — raising explicit error instead of returning empty-args degraded result: ${(err as Error).message.slice(0, 120)}`, { model })
+        throw new Error(`LLM 流式工具调用参数丢失，非流式重取失败: ${(err as Error).message.slice(0, 200)}`)
       }
     }
   }

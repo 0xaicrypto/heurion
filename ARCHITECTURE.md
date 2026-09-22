@@ -20,7 +20,7 @@ worker ──S3/MinIO──▶ rendered files                        presigned U
 
 | Package | Role |
 |---|---|
-| `contracts` | **Single source of truth**: render-content schemas (zod), SSE chat event union, wire message shapes (incl. `UserProfile`, #668), retrieval tool names (#438) |
+| `contracts` | **Single source of truth**: render-content schemas (zod), SSE chat event union, wire message shapes (incl. `UserProfile`, #668), retrieval tool names (#438), stats request/report wire contract (#689 — report shape is a closed `method`-discriminated union, #1109), structured citations (DOI 必填, #1084) |
 | `server-ts` | Control plane: chat pipeline, tools (BaseTool + registry), plugins (catalog/install/capability/audit), memory (graph/facts/proposals), files, execution-plane client |
 | `worker` | Execution plane: document/office rendering (docx/pptx/pdf/table/plot), job store (persistent JSONL, #446), honest download URLs (#447), completion webhook (#449) |
 | `python-stats-worker` | Authoritative statistics (scipy/statsmodels/lifelines) behind the `StatsEngine` strategy (#445) |

@@ -21,6 +21,7 @@ import type { FastifyInstance } from 'fastify'
 import type { FastifyRequest } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
+import { findOwned } from '../../common/ownership.js'
 import { CITE_SHORTCODE_SINGLE } from '@heurion/contracts'
 import {
   listDocCitations,
@@ -36,7 +37,7 @@ import { writeDocVersion } from '../../tools/doc-version-writer.js'
 
 async function ownedDoc(request: FastifyRequest<{ Params: { docId: string } }>) {
   const userId = request.user!.userId
-  return prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+  return findOwned(prisma.doc, request.params.docId, userId)
 }
 
 /** 悬挂标记计数（字符串语义，零 RegExp — citationId 攻击面隔离）。 */

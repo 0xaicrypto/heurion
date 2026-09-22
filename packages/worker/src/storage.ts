@@ -33,6 +33,16 @@ export interface StorageResult {
   downloadUrl?: string
 }
 
+// #1108: cleanup.ts needs the same S3 handle + output dir — expose read-only
+// accessors instead of duplicating env parsing (single source of truth).
+export function getS3(): { client: S3Client; bucket: string } | null {
+  return s3 ? { client: s3, bucket } : null
+}
+
+export function getOutputDir(): string {
+  return outputDir
+}
+
 /**
  * #795: fileId → local path is durable, not a plain Map. Every save appends
  * to local-files.jsonl in the worker data dir; on boot the manifest is

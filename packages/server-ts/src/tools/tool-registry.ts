@@ -64,26 +64,43 @@ const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
   ocr_image: 300_000,
 }
 
-/** #828: race a tool execution against its timeout / abort signal. */
+/**
+ * #828: race a tool execution against its timeout / abort signal.
+ * #1103: the guard owns an AbortController — the timeout path and the
+ * caller-abort path abort it so the tool's in-flight internals (LLM calls,
+ * execution-plane polling, write-backs) observe the cancellation instead of
+ * silently running to completion after the failure was already reported.
+ */
 async function executeWithGuard(
   name: string,
   run: () => Promise<ToolResult>,
-  opts: { timeoutMs: number; signal?: AbortSignal },
+  opts: { timeoutMs: number; signal?: AbortSignal; controller: AbortController },
 ): Promise<ToolResult> {
   const signal = opts.signal
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   const timeoutP = new Promise<ToolResult>((resolve) => {
-    timer = setTimeout(() => resolve({
-      success: false,
-      error: `工具 ${name} 执行超过 ${Math.round(opts.timeoutMs / 1000)}s 被中止（可在重试中让模型换一种做法）`,
-    }), opts.timeoutMs)
+    timer = setTimeout(() => {
+      // #1103: cancel the tool's internals — a timed-out write-class tool
+      // must not perform its write after this failure is reported.
+      opts.controller.abort()
+      resolve({
+        success: false,
+        error: `工具 ${name} 执行超过 ${Math.round(opts.timeoutMs / 1000)}s 被中止（可在重试中让模型换一种做法）`,
+      })
+    }, opts.timeoutMs)
     timer.unref?.()
   })
   const abortP = signal
     ? new Promise<ToolResult>((resolve) => {
-        if (signal.aborted) return resolve({ success: false, error: `Tool ${name} aborted: client disconnected` })
-        onAbort = () => resolve({ success: false, error: `Tool ${name} aborted: client disconnected` })
+        if (signal.aborted) {
+          opts.controller.abort()
+          return resolve({ success: false, error: `Tool ${name} aborted: client disconnected` })
+        }
+        onAbort = () => {
+          opts.controller.abort()
+          resolve({ success: false, error: `Tool ${name} aborted: client disconnected` })
+        }
         signal.addEventListener('abort', onAbort, { once: true })
       })
     : null
@@ -460,9 +477,15 @@ export class ToolRegistry {
     let result: ToolResult
     try {
       const timeoutMs = tool.timeoutMs ?? TOOL_TIMEOUT_OVERRIDES[name] ?? DEFAULT_TOOL_TIMEOUT_MS
-      result = await executeWithGuard(name, () => tool.execute(this.sanitizeArgs(tool, args)), {
+      // #1103: per-execution AbortController — the guard aborts it on
+      // timeout/turn-abort; the signal is threaded into tool.execute so
+      // long-running tools (and write-class tools at their write points)
+      // can observe the cancellation.
+      const controller = new AbortController()
+      result = await executeWithGuard(name, () => tool.execute(this.sanitizeArgs(tool, args), controller.signal), {
         timeoutMs,
         signal: this.ctx.signal,
+        controller,
       })
     } catch (err) {
       return { success: false, error: `Tool ${name} failed: ${(err as Error).message.slice(0, 300)}` }

@@ -210,3 +210,54 @@ describe('#979 流式退化检测 — argsFrags=0 → 非流式重取完整 tool
     expect(r.text).not.toContain('"arguments":{}')
   })
 })
+
+describe('#1104 — 流式退化重试失败 → 明确错误上抛(不放行空参退化结果)', () => {
+  beforeEach(() => {
+    process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    process.env.OPENCODE_API_KEY = 'test-key'
+    process.env.DEFAULT_LLM_MODEL = 'glm-5.3-flash'
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  test('流式 0 参数字节 + 非流式重取抛错 → 调用方收到明确错误(而非 edit_document({}) 空参 tool_call)', async () => {
+    // 第 1 次 fetch:流式增量只有 name,参数字节为 0（生产实锤形态）
+    // 第 2 次 fetch（非流式降级）:直接抛错（模拟重取超时/上游故障）
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => sseChunks([
+        { choices: [{ delta: { tool_calls: [{ id: 'call_x', function: { name: 'edit_document', arguments: '' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: 'stop' }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+      ]))
+      // AbortError 形态错误 — fetchWithRetry 对其立即上抛(无重试退避,测试快)
+      .mockImplementation(async () => {
+        throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getLlmGateway().chatWithToolsStream(
+      [{ role: 'user', content: '继续第三步' }], { sessionId: 'doc-x' }, TOOLS,
+    )).rejects.toThrow(/非流式重取失败/)
+
+    // 两次尝试都发生了(流式 + 降级重取),但结果不是退化 tool_call 块
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('流式空参 + 非流式重取 HTTP 5xx 耗尽 → 明确错误(非空参退化结果)', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => sseChunks([
+        { choices: [{ delta: { tool_calls: [{ id: 'call_x', function: { name: 'edit_document', arguments: '' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: 'stop' }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+      ]))
+      .mockImplementation(async () => new Response('upstream exploded', { status: 500 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getLlmGateway().chatWithToolsStream(
+      [{ role: 'user', content: '继续第三步' }], { sessionId: 'doc-x' }, TOOLS,
+    )).rejects.toThrow(/非流式重取失败/)
+  })
+})

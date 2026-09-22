@@ -1,4 +1,4 @@
-import { BaseTool, ToolResult } from './base-tool.js'
+import { BaseTool, ToolResult, abortedWriteResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { deckEditActionsSchema, type DeckEditAction } from '@heurion/contracts'
 import { parseDocSessionId } from './tool-registry.js'
@@ -87,7 +87,7 @@ export class EditDeckBytesTool extends BaseTool {
     }
   }
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const docId = parseDocSessionId(this.ctx.sessionId || '')
     if (!docId) {
       return { success: false, error: 'edit_deck_bytes is only available in a document writing session' }
@@ -126,6 +126,9 @@ export class EditDeckBytesTool extends BaseTool {
           return { success: false, error: 'deck 数据损坏（无法解析），且没有 pptx 工件可编辑。请重新编排生成 deck。' }
         }
         const bytes = await serializeDeckWireToPptx(deckWire)
+        // #1103: 写回点中止检查 — 超时/中止后不落库（bootstrap 同帧改写 deck）。
+        const abortedBootstrap = abortedWriteResult(signal)
+        if (abortedBootstrap) return abortedBootstrap
         const put = await putDeckArtifact({
           userId: this.ctx.userId, docId, bytes,
           baseDeck: doc.deck, writeSource: 'ai',
@@ -235,6 +238,9 @@ export class EditDeckBytesTool extends BaseTool {
         const bytes = Buffer.from(await pres.save())
 
         // 新工件 + 投影重建 + writeDocVersion（AI 路径）— 冲突向上传模型自纠。
+        // #1103: 写回点中止检查 — 超时/中止后不落库（迟到写入治理）。
+        const aborted = abortedWriteResult(signal)
+        if (aborted) return aborted
         const put = await putDeckArtifact({
           userId: this.ctx.userId, docId, bytes,
           baseDeck: baseDeckForWrite, writeSource: 'ai',

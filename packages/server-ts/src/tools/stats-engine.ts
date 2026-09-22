@@ -18,13 +18,24 @@
  *
  * Wire contract lives in @heurion/contracts (stats.ts, #689) and is
  * mirrored by python-stats-worker/main.py (pydantic).
+ *
+ * #1109: both engine boundaries now parse the report through
+ * `statsReportSchema` (discriminated union on `method`) — shape drift in
+ * either engine fails loudly instead of propagating unvalidated JSON.
  */
-import type { StatsRequest } from '@heurion/contracts'
+import { statsReportSchema, statsResponseSchema, type StatsRequest } from '@heurion/contracts'
 
 export type StatsInput = StatsRequest
 
 export interface StatsEngine {
   analyze(input: StatsInput): Promise<Record<string, unknown>>
+}
+
+function formatSchemaError(err: { issues: Array<{ path: Array<string | number | symbol>; message: string }> }): string {
+  return err.issues
+    .slice(0, 3)
+    .map((i) => `${i.path.join('.')}: ${i.message}`)
+    .join('；')
 }
 
 /** Python stats worker (scipy authoritative) — HTTP /analyze. */
@@ -41,11 +52,12 @@ class PythonStatsEngine implements StatsEngine {
       const text = await res.text().catch(() => '')
       throw new Error(`stats worker HTTP ${res.status}: ${text.slice(0, 200)}`)
     }
-    const json = (await res.json()) as { report?: Record<string, unknown> }
-    if (!json?.report || typeof json.report !== 'object') {
-      throw new Error('stats worker returned no report')
+    const json = (await res.json()) as unknown
+    const parsed = statsResponseSchema.safeParse(json)
+    if (!parsed.success) {
+      throw new Error(`stats worker report schema mismatch: ${formatSchemaError(parsed.error)}`)
     }
-    return json.report
+    return parsed.data.report
   }
 }
 
@@ -76,7 +88,12 @@ class TypeScriptStatsEngine implements StatsEngine {
         throw new Error(`Unsupported test: ${input.test}`)
     }
     if (!res.success) throw new Error(res.error || 'stats analysis failed')
-    return JSON.parse(res.output!) as Record<string, unknown>
+    const report = JSON.parse(res.output!) as unknown
+    const parsed = statsReportSchema.safeParse(report)
+    if (!parsed.success) {
+      throw new Error(`TS stats report schema mismatch: ${formatSchemaError(parsed.error)}`)
+    }
+    return parsed.data
   }
 }
 

@@ -1,4 +1,4 @@
-import { BaseTool, ToolResult } from './base-tool.js'
+import { BaseTool, ToolResult, abortedWriteResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 // #697: 匹配算法族下沉 lib。
 import { findNormalizedSpan, findFuzzySpan } from '../lib/document-span-match.js'
@@ -122,7 +122,7 @@ export class InsertAssetTool extends BaseTool {
     }
   }
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     // #905 同款(review 复核补漏):裸 slice(4) 改走 parseDocSessionId 格式
     // 校验 — 与 edit-document-tool 同口径,任意 `doc-<x>` 会话不再拼出无效
     // docId 去查库。
@@ -130,10 +130,13 @@ export class InsertAssetTool extends BaseTool {
     if (!docId) {
       return { success: false, error: 'insert_asset is only available in a document writing session' }
     }
+    // #1103: 超时/中止后拒绝进入任何写回路径。
+    const preAborted = abortedWriteResult(signal)
+    if (preAborted) return preAborted
     const assetType = String(args.asset_type || 'table')
 
     try {
-      if (assetType === 'table') return await this.insertTable(docId, args)
+      if (assetType === 'table') return await this.insertTable(docId, args, signal)
       if (assetType === 'plot') {
         if (!this.ctx.executionPlane) {
           return { success: false, error: '执行平面（execution plane）未配置，无法渲染图表。请联系管理员检查 EXECUTION_PLANE_URL / WORKER_API_TOKEN。' }
@@ -144,7 +147,7 @@ export class InsertAssetTool extends BaseTool {
           args,
           plane: this.ctx.executionPlane,
           isPluginInstalled: this.ctx.isPluginInstalled,
-          writeBlock: (d, block, a, s) => this.writeBlock(d, block, a, s),
+          writeBlock: (d, block, a, s) => this.writeBlock(d, block, a, s, {}, signal),
         })
       }
       if (assetType === 'export') {
@@ -156,7 +159,7 @@ export class InsertAssetTool extends BaseTool {
           plane: this.ctx.executionPlane,
           isPluginInstalled: this.ctx.isPluginInstalled,
           figurePipeline: this.ctx.figurePipeline,
-          writeBlock: (d, block, a, s, opts) => this.writeBlock(d, block, a, s, opts),
+          writeBlock: (d, block, a, s, opts) => this.writeBlock(d, block, a, s, opts, signal),
         }, docId, args)
       }
       return { success: false, error: `Unsupported asset_type: ${assetType}（当前支持 table / plot / export）` }
@@ -167,7 +170,7 @@ export class InsertAssetTool extends BaseTool {
 
   // ── table（#765）────────────────────────────────────────────────
 
-  private async insertTable(docId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async insertTable(docId: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const headers = Array.isArray(args.headers) ? args.headers.map((h) => String(h)) : []
     const rows = Array.isArray(args.rows) ? args.rows.map((r) => (Array.isArray(r) ? r.map((c) => String(c)) : [String(r)])) : []
     if (headers.length === 0) return { success: false, error: 'headers 不能为空' }
@@ -175,14 +178,14 @@ export class InsertAssetTool extends BaseTool {
     const caption = typeof args.caption === 'string' ? args.caption.trim() : ''
     const table = buildMarkdownTable(headers, rows)
     const block = caption ? `**${caption}**\n\n${table}` : table
-    return this.writeBlock(docId, block, args, `已插入表格（${rows.length} 行 × ${headers.length} 列）`)
+    return this.writeBlock(docId, block, args, `已插入表格（${rows.length} 行 × ${headers.length} 列）`, {}, signal)
   }
 
   // ── 共用写回（#765 管道：快照 + doc_updated）──────────────────
   // #773: opts.deckJson 传入时同帧写入 Doc.deck（快照旧行同帧带旧 deck，
   // body+deck 一致回滚）；opts.snapshotLabel 覆盖快照 label（organize 落
   // deck 用 'AI deck'）。
-  private async writeBlock(docId: string, block: string, args: Record<string, unknown>, summaryBase: string, opts: { deckJson?: string | null; snapshotLabel?: string } = {}): Promise<ToolResult> {
+  private async writeBlock(docId: string, block: string, args: Record<string, unknown>, summaryBase: string, opts: { deckJson?: string | null; snapshotLabel?: string } = {}, signal?: AbortSignal): Promise<ToolResult> {
     const anchor = typeof args.anchor === 'string' ? args.anchor.trim() : ''
     const existing = await prisma.doc.findFirst({ where: { id: docId, userId: this.ctx.userId } })
     if (!existing) return { success: false, error: `Document not found: ${docId}` }
@@ -217,8 +220,11 @@ export class InsertAssetTool extends BaseTool {
 
     // #789: 写回走 DocVersionWriter 单点 — 快照同帧带旧 body+deck 且包
     // 事务(旧代码两段写,快照仅在 deckChanged 时才带旧 deck)。
+    // #1103: 写回点中止检查 — 超时/中止后不落库（迟到写入治理）。
     let written: Awaited<ReturnType<typeof writeDocVersion>> | null = null
     if (newBody !== body || deckChanged) {
+      const aborted = abortedWriteResult(signal)
+      if (aborted) return aborted
       written = await writeDocVersion({
         userId: this.ctx.userId,
         docId,

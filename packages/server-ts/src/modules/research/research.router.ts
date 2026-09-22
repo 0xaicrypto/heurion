@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { findOwnedByHash } from '../../common/ownership.js'
 import type { MedicalRecordEntry, PatientRecord, ResearchAssessment, ResearchEnrollment, ResearchObservation, ResearchScreening, ResearchStudy } from '@prisma/client'
 import { generateResearchSummary } from './research-summary.service.js'
 import { ResearchService } from './research.service'
@@ -497,7 +498,7 @@ export async function researchRouter(app: FastifyInstance) {
   app.get<{ Params: PatientHashParams }>('/api/v1/patients/:patientHash/research-suggestions', async (request, reply) => {
     const { patientHash } = request.params
     const userId = request.user!.userId
-    const patient = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
+    const patient = await findOwnedByHash(prisma.patientRecord, patientHash, userId)
     if (!patient) return reply.status(404).send({ error: 'Patient not found' })
 
     const myStudies = await prisma.researchStudy.findMany({

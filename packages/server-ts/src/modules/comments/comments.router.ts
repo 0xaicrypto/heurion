@@ -22,6 +22,7 @@ import { authGuard } from '../../common/auth.guard.js'
 // #1090-5: 内部调用凭证（brand 类型 + 运行时断言，见 common/internal.ts）
 import { assertInternalCaller, internalCaller, type InternalCaller } from '../../common/internal.js'
 import prisma from '../../common/prisma.js'
+import { findOwned } from '../../common/ownership.js'
 import { makeLogger } from '../../common/logger.js'
 import { EventLog } from '../../core/event-log.js'
 import { twinsBaseDir } from '../../lib/upload-path.js'
@@ -289,7 +290,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
   app.post<{ Params: DocParams; Body: unknown }>('/api/v1/docs/:docId/comments', async (request, reply) => {
     const userId = request.user!.userId
     // 归属校验 — 与 GET/PUT /docs/:docId 同口径（不属于调用者一律 404）
-    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    const doc = await findOwned(prisma.doc, request.params.docId, userId)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     const parsed = createCommentSchema.safeParse(request.body)
     if (!parsed.success) {
@@ -330,8 +331,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
     // doc.body/deck 大字段；默认列表只取 id 做归属校验，「懒计算」真正
     // 省 DB I/O，不再无条件拖大字段。
     const withAnchor = parsedQuery.success && parsedQuery.data.with_anchor === '1'
-    const doc = await prisma.doc.findFirst({
-      where: { id: request.params.docId, userId },
+    const doc = await findOwned(prisma.doc, request.params.docId, userId, {
       // #1051: deck 评论锚点诊断需要 Doc.deck（仅 with_anchor=1 时）。
       // #1101 复审轮 1（Fix 6）：updatedAt 也带上 — deck_slide 的 shapeId
       // 精确判定须先过投影 staleness 闸门（create/PATCH 同口径），过期投影
@@ -450,7 +450,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
   // ── 追加回复（role 区分 user/ai，按时间序追加进线程）──
   app.post<{ Params: CommentParams; Body: unknown }>('/api/v1/docs/:docId/comments/:commentId/replies', async (request, reply) => {
     const userId = request.user!.userId
-    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    const doc = await findOwned(prisma.doc, request.params.docId, userId)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     // 双重过滤（id + docId）— 防跨文档枚举评论 id，与快照端点同纪律
     const comment = await prisma.docComment.findFirst({ where: { id: request.params.commentId, docId: doc.id } })
@@ -475,7 +475,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
   // 校验同 replies 端点,role 服务端固定 'ai',客户端不可自封其他角色。
   app.post<{ Params: CommentParams; Body: unknown }>('/api/v1/docs/:docId/comments/:commentId/ai-replies', async (request, reply) => {
     const userId = request.user!.userId
-    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    const doc = await findOwned(prisma.doc, request.params.docId, userId)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     const comment = await prisma.docComment.findFirst({ where: { id: request.params.commentId, docId: doc.id } })
     if (!comment) return reply.status(404).send({ error: 'Comment not found' })
@@ -509,7 +509,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
   // ── 切换 status（resolved ↔ reopen；resolvedAt 随之写入/置空）──
   app.patch<{ Params: CommentParams; Body: unknown }>('/api/v1/docs/:docId/comments/:commentId', async (request, reply) => {
     const userId = request.user!.userId
-    const doc = await prisma.doc.findFirst({ where: { id: request.params.docId, userId } })
+    const doc = await findOwned(prisma.doc, request.params.docId, userId)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     const comment = await prisma.docComment.findFirst({ where: { id: request.params.commentId, docId: doc.id } })
     if (!comment) return reply.status(404).send({ error: 'Comment not found' })

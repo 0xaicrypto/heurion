@@ -28,6 +28,7 @@ import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
 import { ReferenceTierStore } from '../../memory/memory-tier-store.js'
 // #1010: 引用材料池（选择器隐式排序）— 关键词重叠做"当前场景相关"。
 import prisma from '../../common/prisma.js'
+import { findOwned } from '../../common/ownership.js'
 import { extractKeywords, overlapScore } from '../../retrieval/text-overlap.js'
 // #1034: 写作会话（doc-<docId>）的 doc 专属副作用（自动导入/pptx 后台解析）。
 import { runDocReferenceSideEffects } from '../shared/doc-reference-effects.js'
@@ -178,7 +179,7 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
     // 也避免按截断内容重新哈希造成重复条目）。
     const existingRefId = String(body.reference_id || '').trim()
     if (existingRefId) {
-      const item = await prisma.referenceItem.findFirst({ where: { id: existingRefId, userId } })
+      const item = await findOwned(prisma.referenceItem, existingRefId, userId)
       if (!item) return reply.status(404).send({ error: 'reference item not found' })
       const itemKind = normalizeLegacyRefType(item.kind)
       const mounted = await addSessionReference({
