@@ -10,6 +10,10 @@
  *   writeDocVersion 单点落库（deck 侧 baseDeck 乐观锁）→ 条件更新
  *   deckArtifactId。投影过期规则：工件比 Doc 行新 = 投影写未发生 → 按未
  *   投影处理（blockProjection 先例语义，#989）。
+ *   复审轮 1（Fix 4+5）：工件行/物理文件落盘后任何一步失败（投影异常/
+ *   writeDocVersion 冲突/指针 0 行）→ rollbackArtifactUpload 补偿（只删本次
+ *   创建的行+文件，去重复用的行不动）→ 冲突/错误上返调用方映射 409/404，
+ *   不再留孤儿工件、指针 0 行不再假成功。
  *
  * 分层说明：lib 层直写 FileIndex（复刻 files.service claimFileIndex 最小
  * 认领逻辑，不 import modules/*，分层 #672/#940）— deck 工件不走
@@ -328,11 +332,53 @@ export interface PutDeckArtifactResult {
   error?: string
 }
 
+/* ── 上传补偿（#1101 复审轮 1 Fix 4+5）────────────────────────────── */
+
+/**
+ * putDeckArtifact 失败回滚（补偿，非事务）：删掉**本次调用创建**的 FileIndex
+ * 行 + unlink 本次落盘的物理文件（best-effort，逐项 try/catch 只记 warn）。
+ *
+ * 修复的孤儿文件问题：原实现中投影重建/writeDocVersion/指针更新任一失败
+ * 或冲突时直接早退，已落库的 FileIndex 行 + uploads 物理文件永久悬挂 —
+ * 无任何 Doc 指针指向它们，却占存储且（同 sha 去重语义下）可能被后续
+ * 上传误复用。回滚只针对「本次创建」的行（createdHere=true）：sha256 去重
+ * 复用的既有行是别人的资产，绝不能删。
+ *
+ * 不补偿（刻意）：writeDocVersion 已提交的快照/投影变更在指针更新失败时
+ * 保留 — 投影是可重建缓存（设计 §3.1），真相源未推进即无一致性破坏；
+ * 并发窗口内另一写者可能已合法接管，删行反而会悬空对方的指针。
+ */
+async function rollbackArtifactUpload(args: { userId: string; artifactId: string; createdHere: boolean }): Promise<void> {
+  if (!args.createdHere) return
+  try {
+    await prisma.fileIndex.delete({ where: { id: args.artifactId } }).catch((err: unknown) => {
+      log.warn('deck artifact rollback: file_index delete failed (orphan row left)', {
+        artifactId: args.artifactId, reason: (err as Error).message.slice(0, 120),
+      })
+    })
+  } catch {
+    // 上面 catch 内已记日志 — 双保险，绝不让回滚抛错掩盖原始失败。
+  }
+  try {
+    const filepath = safeUploadPath(args.userId, args.artifactId)
+    if (filepath) fs.rmSync(filepath, { force: true })
+  } catch (err) {
+    log.warn('deck artifact rollback: physical file unlink failed (orphan file left)', {
+      artifactId: args.artifactId, reason: (err as Error).message.slice(0, 120),
+    })
+  }
+}
+
 /**
  * pptx 字节 → FileIndex 工件 + 投影重建 + writeDocVersion + 指针更新。
  * 归属校验由调用方负责（HTTP 归属读 / 工具 doc 会话门控）；本函数内
  * writeDocVersion 仍带 userId 条件（二道防线），冲突/文档缺失经 result
  * 返回（调用方映射 409/404），不混用异常通道。
+ *
+ * #1101 复审轮 1（Fix 4+5）原子性协议：工件行/物理文件（步骤①）之后任何
+ * 一步失败（投影异常/writeDocVersion 冲突或错误/指针 updateMany 0 行）→
+ * rollbackArtifactUpload 补偿（仅删本次创建的行 + 文件）→ 向上返回冲突/
+ * 错误，不再留孤儿、不再假成功。
  */
 export async function putDeckArtifact(input: PutDeckArtifactInput): Promise<PutDeckArtifactResult> {
   const { userId, docId, bytes } = input
@@ -348,58 +394,102 @@ export async function putDeckArtifact(input: PutDeckArtifactInput): Promise<PutD
   const prevDeckRaw = doc.deck ?? null
 
   // 1) 字节落 FileIndex 工件（唯一持久真相源）。
-  const { artifactId } = await storeDeckFile(userId, docId, bytes)
+  const stored = await storeDeckFile(userId, docId, bytes)
+  const { artifactId, dedup } = stored
+  // createdHere=false（sha256 去重复用既有行）→ 回滚绝不删别人的行/文件。
+  const rollback = (): Promise<void> => rollbackArtifactUpload({ userId, artifactId, createdHere: !dedup })
 
-  // 2) 投影重建（extractor 单一实现；标题跟随文档）。
-  const projectionObject = rebuildDeckProjectionObject(bytes, doc.title)
-  const projection = projectionObject ? JSON.stringify(projectionObject) : null
+  // 2) 投影重建（extractor 单一实现；标题跟随文档）。重建函数内部对不可解析
+  //    字节已容错（返回 null，设计 §3.1 允许投影缺省）— 走不到 throw；此处
+  //    仍包一层：任何意外异常同样补偿回滚（工件已落盘 = 已产生副作用）。
+  let projectionObject: unknown
+  try {
+    projectionObject = rebuildDeckProjectionObject(bytes, doc.title)
+    // 3) writeDocVersion 单点（同帧快照 + baseDeck 乐观锁）。字节无法解析时
+    //    不触碰 deck 列 — 工件已落盘（真相源成立），投影缺省可重建。
+    if (projectionObject) {
+      const projection = JSON.stringify(projectionObject)
+      const written = await writeDocVersion({
+        userId,
+        docId,
+        deck: projectionObject as Record<string, unknown>,
+        // 调用方显式基线优先（最宽的「调用方读 → writer 读」窗口保护）；
+        // 未提供时回退本函数读值（仍保护「本函数读 → writer 读」窗口）。
+        baseDeck: input.baseDeck !== undefined ? input.baseDeck : prevDeckRaw,
+        snapshotLabel: input.snapshotLabel || 'deck bytes',
+        writeSource: input.writeSource ?? 'human',
+      })
+      if (written.error) {
+        // Fix 4/5: 冲突/错误 → 补偿回滚本次创建的工件（不留孤儿）再返回。
+        await rollback()
+        return {
+          artifactId: '', version: '', changed: false, projection: null,
+          conflict: Boolean(written.conflict), error: written.error,
+        }
+      }
 
-  // 3) writeDocVersion 单点（同帧快照 + baseDeck 乐观锁）。字节无法解析时
-  //    不触碰 deck 列 — 工件已落盘（真相源成立），投影缺省可重建。
-  let written: Awaited<ReturnType<typeof writeDocVersion>> | null = null
-  if (projection && projectionObject) {
-    written = await writeDocVersion({
-      userId,
-      docId,
-      deck: projectionObject as Record<string, unknown>,
-      // 调用方显式基线优先（最宽的「调用方读 → writer 读」窗口保护）；
-      // 未提供时回退本函数读值（仍保护「本函数读 → writer 读」窗口）。
-      baseDeck: input.baseDeck !== undefined ? input.baseDeck : prevDeckRaw,
-      snapshotLabel: input.snapshotLabel || 'deck bytes',
-      writeSource: input.writeSource ?? 'human',
-    })
-    if (written.error) {
+      // 4) deckArtifactId 指针 — 存储层关注点，writeDocVersion 形状之外的条件
+      //    更新：where 带写回后的 body+deck 值（写回单点刚确认过的行态），并发
+      //    写者推进行后本写自动落空（0 行）。Fix 4/5：0 行 = 指针未落 → 报告
+      //    成功是错的（真相源字节与 Doc 脱钩）→ 按冲突收场：回滚 + 返回冲突
+      //    （调用方映射 409，模型/前端重读重试）。幂等：指针已相等时跳过。
+      if (doc.deckArtifactId !== artifactId) {
+        const res = await prisma.doc.updateMany({
+          where: {
+            id: docId,
+            userId,
+            body: String(written.body),
+            deck: projection,
+          },
+          data: { deckArtifactId: artifactId },
+        }).catch(() => null)
+        if (!res || res.count === 0) {
+          log.warn('deck artifact pointer write lost (row moved under us) — rolling back', { docId, artifactId })
+          await rollback()
+          return {
+            artifactId: '', version: '', changed: false, projection: null,
+            conflict: true,
+            error: 'deck 工件写入与并发修改冲突（指针未落库），请重读文档后重试',
+          }
+        }
+      }
+
       return {
-        artifactId, version: artifactId, changed: false, projection,
-        conflict: Boolean(written.conflict), error: written.error,
+        artifactId,
+        version: artifactId,
+        changed: written.deckChanged,
+        projection,
       }
     }
-  }
 
-  // 4) deckArtifactId 指针 — 存储层关注点，writeDocVersion 形状之外的条件
-  //    更新：where 带写回后的 body+deck 值（写回单点刚确认过的行态），并发
-  //    写者推进行后本写自动落空（0 行），指针由新写者接管，不产生悬挂指针。
-  //    幂等：指针已相等时跳过。
-  if (doc.deckArtifactId !== artifactId) {
-    const res = await prisma.doc.updateMany({
-      where: {
-        id: docId,
-        userId,
-        body: String(written ? written.body : doc.body),
-        ...(projection ? { deck: projection } : {}),
-      },
-      data: { deckArtifactId: artifactId },
-    }).catch(() => null)
-    if (!res || res.count === 0) {
-      log.warn('deck artifact pointer write skipped (row moved under us)', { docId, artifactId })
+    // 投影缺省（字节不可解析）— 工件保留（真相源成立），指针条件更新按
+    // 调用前读值守卫（写回单点未触碰行，无写回单点确认过的行态可用）。
+    if (doc.deckArtifactId !== artifactId) {
+      const res = await prisma.doc.updateMany({
+        where: { id: docId, userId, body: String(doc.body), deck: prevDeckRaw },
+        data: { deckArtifactId: artifactId },
+      }).catch(() => null)
+      if (!res || res.count === 0) {
+        log.warn('deck artifact pointer write lost (row moved under us) — rolling back', { docId, artifactId })
+        await rollback()
+        return {
+          artifactId: '', version: '', changed: false, projection: null,
+          conflict: true,
+          error: 'deck 工件写入与并发修改冲突（指针未落库），请重读文档后重试',
+        }
+      }
     }
-  }
 
-  return {
-    artifactId,
-    version: artifactId,
-    changed: written ? written.deckChanged : doc.deckArtifactId !== artifactId,
-    projection,
+    return {
+      artifactId,
+      version: artifactId,
+      changed: doc.deckArtifactId !== artifactId,
+      projection: null,
+    }
+  } catch (err) {
+    // 投影重建/writeDocVersion 意外异常 — 已有工件副作用 → 补偿后上抛。
+    await rollback()
+    throw err
   }
 }
 

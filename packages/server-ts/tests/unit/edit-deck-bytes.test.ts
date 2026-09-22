@@ -173,6 +173,35 @@ describe('#1101 edit_deck_bytes 工具', () => {
     expect(rmLast.error).toContain('至少保留 1 页')
   })
 
+  // #1101 复审轮 1（Fix 10）：afterIndex=0 的真实语义 = 插在原第一页之前
+  // （insertSlide(0) splice 到下标 0）— 成功文案必须与实际落点一致。
+  test('add_slide afterIndex=0 → 插入为第 1 页（原第一页之前），文案如实', async () => {
+    const docId = await createDoc()
+    await putDeckArtifact({ userId: USER, docId, bytes: await fixtureBytes() })
+    const t = tool(docId)
+
+    const out = expectSuccess(await t.execute({
+      actions: [{ op: 'add_slide', afterIndex: 0, title: '置顶页' }],
+    }))
+    expect(out.results[0].detail).toContain('原第一页之前')
+    expect(out.results[0].detail).not.toContain('页后插入')
+
+    // 实际落点 = 新页成为第 1 页。
+    const artifact = await getDeckArtifact(docId)
+    const parsed = parsePptx(artifact!.bytes)
+    expect(parsed.slides).toHaveLength(3)
+    expect(JSON.stringify(parsed.slides[0].paragraphs)).toContain('置顶页')
+
+    // 对照：afterIndex ≥ 1 → 维持「已在第 N 页后插入」文案。
+    const out2 = expectSuccess(await t.execute({
+      actions: [{ op: 'add_slide', afterIndex: 2, title: '中插页' }],
+    }))
+    expect(out2.results[0].detail).toContain('已在第 2 页后插入')
+    const artifact2 = await getDeckArtifact(docId)
+    const parsed2 = parsePptx(artifact2!.bytes)
+    expect(JSON.stringify(parsed2.slides[2].paragraphs)).toContain('中插页')
+  })
+
   test('契约校验：scope=slide 缺 slideIndex / 页界越界 → 拒绝', async () => {
     const docId = await createDoc()
     await putDeckArtifact({ userId: USER, docId, bytes: await fixtureBytes() })

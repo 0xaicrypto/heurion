@@ -1,8 +1,11 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import fs from 'fs'
+import path from 'path'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { EditDeckTool } from '../../src/tools/edit-deck-tool.js'
+import { uploadsBaseDir } from '../../src/lib/upload-path.js'
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 
@@ -106,6 +109,41 @@ describe('#773 edit_deck 工具', () => {
       .execute({ action: 'delete', slide_index: 1 })
     expect(nonDoc.success).toBe(false)
     expect(nonDoc.error).toContain('document writing session')
+  }, 30000)
+
+  // #1101 复审轮 1（Fix 1 双写收敛）：文档已迁移为 pptx 字节工件 → edit_deck
+  // 退役拒绝并引导 edit_deck_bytes；无工件存量文档 legacy 行为不变。
+  test('Fix 1: deck 已有 pptx 工件 → edit_deck 拒绝并引导 edit_deck_bytes；无工件 → legacy 不变', async () => {
+    const app = await getApp()
+    const userId = await getAuthUserId()
+    // 对照组：仅投影、无工件 → legacy 路径照常工作。
+    const legacyDocId = await createDocWithDeck(app, DECK)
+    const legacy = await new EditDeckTool({ userId, sessionId: `doc-${legacyDocId}` })
+      .execute({ action: 'update', slide_index: 1, title: 'legacy 背景', bullets: ['legacy 要点'] })
+    expect(legacy.success).toBe(true)
+
+    // 迁移组：同款 deck 落 pptx 工件（putDeckArtifact 同帧重建投影）。
+    const docId = await createDocWithDeck(app, DECK)
+    const { serializeDeckWireToPptx, putDeckArtifact } = await import('../../src/lib/deck-bytes.js')
+    const bytes = await serializeDeckWireToPptx(DECK)
+    const put = await putDeckArtifact({ userId, docId, bytes })
+    expect(put.conflict).toBeFalsy()
+
+    const refused = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+      .execute({ action: 'update', slide_index: 1, title: '不该生效', bullets: ['不该生效'] })
+    expect(refused.success).toBe(false)
+    expect(refused.error).toContain('edit_deck 已退役')
+    expect(refused.error).toContain('edit_deck_bytes')
+
+    // 拒绝路径零写入 — deck 投影（putDeckArtifact 重建）未被 edit_deck 改动。
+    const doc = await prisma.doc.findUnique({ where: { id: docId } })
+    const deckAfter = JSON.parse(doc!.deck!)
+    expect(JSON.stringify(deckAfter.slides[1].content)).toContain('中位 PFS 5.2 个月')
+    expect(JSON.stringify(deckAfter)).not.toContain('不该生效')
+
+    // 清理工件（本测试自有资源，用后即删）。
+    await prisma.fileIndex.deleteMany({ where: { userId, id: put.artifactId } })
+    fs.rmSync(path.join(uploadsBaseDir(userId), put.artifactId), { force: true })
   }, 30000)
 
   test('#773 edit_deck 仅 doc- 会话暴露（工具面门控）', async () => {

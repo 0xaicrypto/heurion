@@ -192,7 +192,15 @@ export class EditDeckBytesTool extends BaseTool {
                 }
                 sb.build()
                 appliedCount += 1
-                results.push({ index: i + 1, op: 'add_slide', applied: true, detail: `已在第 ${Math.max(at, 1)} 页后插入新页「${title.slice(0, 40)}」` })
+                // 复审轮 1（Fix 10）: afterIndex=0 的真实语义 = 插到原第一页
+                // 之前（insertSlide(0) splice 到下标 0，新页成为第 1 页）—
+                // 旧文案「已在第 1 页后插入」与实际位置不符，按实际落点报告。
+                results.push({
+                  index: i + 1, op: 'add_slide', applied: true,
+                  detail: at === 0
+                    ? `已插入为第 1 页（原第一页之前）「${title.slice(0, 40)}」`
+                    : `已在第 ${at} 页后插入新页「${title.slice(0, 40)}」`,
+                })
                 break
               }
               case 'remove_slide': {

@@ -6,7 +6,7 @@
  * TWIN_BASE_DIR 测试目录，afterAll 清理。引擎面（pptx-viewer-core）走
  * 真实序列化/加载 round-trip（spike #1102 已验证 headless 可用）。
  */
-import { describe, test, expect, afterAll } from 'vitest'
+import { describe, test, expect, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import prisma from '../../src/common/prisma.js'
@@ -194,6 +194,84 @@ describe('#1101 putDeckArtifact（FileIndex 工件 + 投影重建 + 乐观锁）
     const put2 = await putDeckArtifact({ userId: USER, docId, bytes: bytesV2, baseDeck: put1.projection })
     expect(put2.conflict).toBe(true)
     expect(put2.error).toContain('并发修改')
+  })
+
+  // #1101 复审轮 1（Fix 4/5）：冲突/失败路径必须补偿回滚 — FileIndex 行 +
+  // 物理文件不留孤儿；sha256 去重复用的行绝不能删（那是既有工件的资产）。
+
+  test('Fix 4/5: writeDocVersion 冲突 → 本次创建的工件回滚（行+文件删除，无孤儿）', async () => {
+    const docId = await createDoc()
+    const bytesV1 = await serializeDeckWireToPptx(sampleDeckWire())
+    const put1 = await putDeckArtifact({ userId: USER, docId, bytes: bytesV1 })
+    expect(put1.conflict).toBeFalsy()
+
+    const rowsBefore = await prisma.fileIndex.count({ where: { userId: USER, id: { startsWith: 'deck-' } } })
+    const filesBefore = fs.readdirSync(uploadsBaseDir(USER)).filter((f) => f.startsWith('deck-'))
+
+    // 并发写者推进 deck → baseDeck 失配 → 冲突。
+    await prisma.doc.update({ where: { id: docId }, data: { deck: '{"title":"并发写","slides":[]}' } })
+    const bytesV2 = await serializeDeckWireToPptx({ ...sampleDeckWire(), title: 'v2-rollback' })
+    const put2 = await putDeckArtifact({ userId: USER, docId, bytes: bytesV2, baseDeck: put1.projection })
+    expect(put2.conflict).toBe(true)
+
+    // 回滚：行数/文件数回到冲突前（新建工件已补偿删除，put1 完好保留）。
+    const rowsAfter = await prisma.fileIndex.count({ where: { userId: USER, id: { startsWith: 'deck-' } } })
+    expect(rowsAfter).toBe(rowsBefore)
+    const filesAfter = fs.readdirSync(uploadsBaseDir(USER)).filter((f) => f.startsWith('deck-'))
+    expect(filesAfter.sort()).toEqual(filesBefore.sort())
+    expect(filesAfter).toContain(put1.artifactId)
+
+    // put1 的工件仍完整可读（回滚没误伤既有工件，指针仍在）。
+    const still = await getDeckArtifact(docId)
+    expect(still?.artifactId).toBe(put1.artifactId)
+    expect(still!.bytes.equals(bytesV1)).toBe(true)
+    const row = await prisma.fileIndex.findFirst({ where: { id: put1.artifactId, userId: USER } })
+    expect(row).not.toBeNull()
+  })
+
+  test('Fix 4/5: sha256 去重复用行 + 冲突 → 复用的既有工件绝不回滚删除', async () => {
+    const docId = await createDoc()
+    const bytes = await serializeDeckWireToPptx(sampleDeckWire())
+    const put1 = await putDeckArtifact({ userId: USER, docId, bytes })
+    expect(put1.conflict).toBeFalsy()
+
+    // 并发写者推进 deck；随后同字节再传 → storeDeckFile 复用 put1 的行。
+    await prisma.doc.update({ where: { id: docId }, data: { deck: '{"title":"并发写2","slides":[]}' } })
+    const again = await putDeckArtifact({ userId: USER, docId, bytes, baseDeck: put1.projection })
+    expect(again.conflict).toBe(true)
+
+    // 复用行不属于本次调用 — 回滚必须跳过（行 + 物理文件均完好）。
+    const row = await prisma.fileIndex.findUnique({ where: { id: put1.artifactId } })
+    expect(row).not.toBeNull()
+    expect(fs.existsSync(path.join(uploadsBaseDir(USER), put1.artifactId))).toBe(true)
+  })
+
+  test('Fix 4/5: 指针 updateMany 0 行 → 按冲突收场并回滚（不再 warn+假成功）', async () => {
+    const docId = await createDoc()
+    const rowsBefore = await prisma.fileIndex.count({ where: { userId: USER, id: { startsWith: 'deck-' } } })
+    const filesBefore = fs.readdirSync(uploadsBaseDir(USER)).filter((f) => f.startsWith('deck-'))
+    const bytes = await serializeDeckWireToPptx({ ...sampleDeckWire(), title: 'pointer-rollback' })
+
+    // 拦截指针条件更新 → 0 行（并发写者接管行态的确定性等价模拟）。
+    // writeDocVersion 走事务客户端（tx.doc），不受该 spy 影响。
+    const spy = vi.spyOn(prisma.doc, 'updateMany').mockResolvedValue({ count: 0 } as never)
+    try {
+      const put = await putDeckArtifact({ userId: USER, docId, bytes })
+      expect(put.conflict).toBe(true)
+      expect(put.error).toContain('并发修改')
+      expect(put.artifactId).toBe('')
+    } finally {
+      spy.mockRestore()
+    }
+
+    // 无孤儿：行/文件数与调用前一致。
+    const rowsAfter = await prisma.fileIndex.count({ where: { userId: USER, id: { startsWith: 'deck-' } } })
+    expect(rowsAfter).toBe(rowsBefore)
+    const filesAfter = fs.readdirSync(uploadsBaseDir(USER)).filter((f) => f.startsWith('deck-'))
+    expect(filesAfter.sort()).toEqual(filesBefore.sort())
+    // doc 指针未落（conflict 收场）。
+    const doc = await prisma.doc.findUnique({ where: { id: docId } })
+    expect(doc!.deckArtifactId).toBeNull()
   })
 
   test('DeckWire → 字节 → 投影重建（extractor 单一实现）', async () => {

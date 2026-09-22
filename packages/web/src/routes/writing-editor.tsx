@@ -143,6 +143,10 @@ export function WritingEditorPage() {
   // #1101: 富编辑（pptx 画布）会话态 — 仅进入时挂载 DeckRichEditor（懒拉
   // deck 工件字节,文档常规加载不取数）；保存语义内聚在富编辑器内。
   const [deckRichEditOpen, setDeckRichEditOpen] = useState(false);
+  // #review-fix: 富编辑器 dirty 镜像 — DeckRichEditor 经 onDirtyChange 如实
+  // 上报（编辑检出/保存完成/冲突/会话结束）。此前画布内未保存编辑对页头
+  // 返回键与 beforeunload 不可见（dirtyRef 只看正文）→ 静默丢编辑。
+  const deckRichDirtyRef = useRef(false);
   const { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson } = deckCtl;
 
   // #705: 自动保存（debounce）+ 未保存离开保护 + Cmd/Ctrl+S。
@@ -211,7 +215,8 @@ export function WritingEditorPage() {
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!dirtyRef.current || leaveConfirmed.current) return;
+      // #review-fix: 富编辑 dirty 一并纳入卸载守护。
+      if ((!dirtyRef.current && !deckRichDirtyRef.current) || leaveConfirmed.current) return;
       e.preventDefault();
       e.returnValue = '';
     };
@@ -231,13 +236,16 @@ export function WritingEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
 
-  /** #705: 有未保存修改时拦截返回，确认后再离开。 */
+  /** #705: 有未保存修改时拦截返回，确认后再离开。#review-fix: 富编辑器
+   * dirty（画布未保存字节）同入确认门 — 组件侧 onClose 已先走自带保存,
+   * 这里是页头返回箭头路径的安全网。 */
   const leaveEditor = () => {
-    if (!dirtyRef.current) { navigate('/app/writing'); return; }
+    if (!dirtyRef.current && !deckRichDirtyRef.current) { navigate('/app/writing'); return; }
     const ok = window.confirm(t('writing.unsavedLeave', '文档有未保存的修改，确定离开吗？'));
     if (ok) {
       leaveConfirmed.current = true;
       dirtyRef.current = false;
+      deckRichDirtyRef.current = false;
       navigate('/app/writing');
     }
   };
@@ -1717,7 +1725,17 @@ export function WritingEditorPage() {
           {deckRichEditOpen ? (
             <div className="flex h-full min-h-[70vh] flex-1 flex-col" data-testid="deck-rich-edit-root">
               <Suspense fallback={<Skeleton className="h-full w-full rounded-xl" />}>
-                <DeckRichEditor docId={docId ?? ''} onNotice={showNotice} onClose={() => setDeckRichEditOpen(false)} />
+                <DeckRichEditor
+                  docId={docId ?? ''}
+                  onNotice={showNotice}
+                  onClose={() => {
+                    // 组件自身 onClose 只在「无 dirty 或保存成功」路径触发 —
+                    // 镜像随会话关闭复位,不影响下一次富编辑会话。
+                    deckRichDirtyRef.current = false;
+                    setDeckRichEditOpen(false);
+                  }}
+                  onDirtyChange={(next) => { deckRichDirtyRef.current = next; }}
+                />
               </Suspense>
             </div>
           ) : (

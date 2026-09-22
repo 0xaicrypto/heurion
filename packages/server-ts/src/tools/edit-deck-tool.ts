@@ -3,6 +3,8 @@ import prisma from '../common/prisma.js'
 import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
 import { writeDocVersion } from './doc-version-writer.js'
 import { looksLikeHandwrittenReferences, HANDWRITTEN_REFERENCES_GUIDANCE } from './citation-guard.js'
+// #1101 复审轮 1: 双写收敛 — 文档已迁移 pptx 字节工件时 edit_deck 退役。
+import { getDeckArtifact } from '../lib/deck-bytes.js'
 
 /**
  * #773 — edit_deck: deck 资产（Doc.deck）的 AI 编辑工具。
@@ -23,6 +25,11 @@ import { looksLikeHandwrittenReferences, HANDWRITTEN_REFERENCES_GUIDANCE } from 
  * 与 edit_document 同管道：快照（label 'AI deck edit'，同帧带旧 deck）+
  * doc_updated（deck 字段随帧推画布）。模型注入面只保留摘要（tool-loop
  * DOC_WRITE_TOOLS），deck JSON 不进上下文。
+ *
+ * #1101 复审轮 1（双写收敛）：文档已迁移为 pptx 字节工件（deckArtifactId
+ * 在场且可读）→ 本工具整体退役拒绝并引导 edit_deck_bytes — DeckWire 是
+ * 只读投影（设计 §3.1），绝不给旧 index-based 路径对真相源的残余写入口。
+ * 仅存量「无工件纯投影」文档保持 legacy 行为。
  */
 export class EditDeckTool extends BaseTool {
   constructor(private ctx: { userId: string; sessionId?: string }) {
@@ -33,12 +40,12 @@ export class EditDeckTool extends BaseTool {
 
   get description(): string {
     return [
-      'Edit the AI-organized deck (PPT asset) of the current writing session — the deck is separate from the document body (editing it never touches the summary text).',
-      'Requires an existing deck (generated via insert_asset export organize=true, or uploaded PPT).',
+      'LEGACY (only for docs without a pptx artifact): edit the AI-organized deck (DeckWire JSON projection) of the current writing session — the deck is separate from the document body.',
+      'Refuses when the deck has been migrated to a pptx artifact (rich editing) — use edit_deck_bytes instead (structured actions: set_text/set_chart_data/set_table_data/add_slide etc.).',
       "Actions: 'update' = replace slide N's title/bullets; 'delete' = remove slide N; 'insert_after' = insert a new slide after slide N.",
       '#960 v2 actions: set_layout (slide_index + layout enum) sets the slide layout master; set_theme (theme: clinical|warm-paper) sets the deck-wide theme; move (slide_index = from, to = target position) reorders slides; insert_chart (slide_index + chart spec {chart_type: line|bar|dose_curve, data: [{label, value}], errors?, sig?, title?, x_label?, y_label?}) inserts a structured chart slide rendered deterministically (never fabricate data — cite the source numbers in the spec).',
       'slide_index is 1-based. See ## Current Deck in the context for the current deck content.',
-      'Use when the user asks to modify/reorder/remove slides or adjust slide layout/theme of the organized deck (把第 3 页拆成两页 / 删掉结论页 / 改第 2 页标题 / 给第 2 页换布局 / 整体换成暖色纸面主题 / 插一页柱状图对比两组 PFS). Do NOT use edit_document for deck changes.',
+      'Use when the user asks to modify/reorder/remove slides or adjust slide layout/theme of the organized deck (把第 3 页拆成两页 / 删掉结论页 / 改第 2 页标题 / 给第 2 页换布局 / 整体换成暖色纸面主题 / 插一页柱状图对比两组 PFS). Do NOT use edit_document for deck changes; prefer edit_deck_bytes when available.',
     ].join(' ')
   }
 
@@ -49,9 +56,9 @@ export class EditDeckTool extends BaseTool {
         action: {
           type: 'string',
           enum: ['update', 'delete', 'insert_after', 'set_layout', 'set_theme', 'move', 'insert_chart'],
-          description: 'Deck edit action.',
+          description: 'Deck edit action (legacy: refuses when the deck has a pptx artifact — use edit_deck_bytes).',
         },
-        slide_index: { type: 'number', description: '1-based slide number. Required for update/delete/insert_after/set_layout/move(from)/insert_chart; not required for set_theme.' },
+        slide_index: { type: 'number', description: '1-based slide number. Required for update/delete/insert_after/set_layout/move(from)/insert_chart; not required for set_theme. Legacy path only — refused when the deck has a pptx artifact (use edit_deck_bytes).' },
         to: { type: 'number', description: "move: target 1-based position." },
         title: { type: 'string', description: 'update/insert_after: new slide title.' },
         bullets: { type: 'array', items: { type: 'string' }, description: 'update/insert_after: new bullet lines (may embed ![caption](hosted URL) images). insert_chart: optional bullets appended after the chart.' },
@@ -82,6 +89,26 @@ export class EditDeckTool extends BaseTool {
       return { success: false, error: 'edit_deck is only available in a document writing session' }
     }
     const docId = sessionId.slice(4)
+    // #1101 复审轮 1（双写收敛）：文档已迁移为 pptx 字节工件（DeckWire 降级为
+    // 只读投影，设计 §3.1）→ edit_deck 退役，整次拒绝并引导到 edit_deck_bytes。
+    // 刻意在任何参数校验/写回之前 — 不给旧路径对真相源的残余写入口。
+    try {
+      const existing = await prisma.doc.findFirst({
+        where: { id: docId, userId: this.ctx.userId },
+        select: { deckArtifactId: true },
+      })
+      if (existing?.deckArtifactId) {
+        const artifact = await getDeckArtifact(docId)
+        if (artifact) {
+          return {
+            success: false,
+            error: '该 deck 已迁移为 pptx 字节工件（富编辑），edit_deck 已退役 — 请使用 edit_deck_bytes 工具（结构化动作：set_text/set_chart_data/set_table_data/add_slide 等）',
+          }
+        }
+      }
+    } catch {
+      // 工件/指针读取异常 → 按 legacy 路径继续（既有行为兜底，不放大故障面）。
+    }
     const action = String(args.action || '')
     if (!['update', 'delete', 'insert_after', 'set_layout', 'set_theme', 'move', 'insert_chart'].includes(action)) {
       return { success: false, error: 'action 必须是 update | delete | insert_after | set_layout | set_theme | move | insert_chart' }

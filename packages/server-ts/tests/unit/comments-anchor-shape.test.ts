@@ -244,4 +244,47 @@ describe('#1101 §5 评论锚点 anchorShapeId', () => {
     // legacy 投影路径照常（slide1 投影文本含「页一」标题 → located=true）
     expect(one.anchor.located).toBe(true)
   })
+
+  // #1101 复审轮 1（Fix 6）：列表 with_anchor 的 shapeId 判定必须过投影
+  // staleness 闸门（create/PATCH 同口径）— 过期投影绝不参与定位与回填。
+  test('Fix 6: 投影过期（工件比 Doc 行新）→ shapeId 不信任、不回填，回退模糊诊断', async () => {
+    const docId = await createDocWithArtifact()
+    const prisma = await getPrisma()
+    const userId = await getAuthUserId()
+
+    // fresh 态创建：带 shapeId 的评论（工件与投影同帧 → 解析成功）。
+    const anchored = await createComment(docId, { target: 'deck_slide', slide_index: 1, anchor_text: '要点一：87 例 EGFR 敏感突变', text: 'x' })
+    expect(anchored.status).toBe(201)
+    expect(anchored.body.anchor_shape_id).toMatch(SHAPE_RE)
+    // 存量无 shapeId 评论（正常情况下列表会懒回填）。
+    const legacy = await prisma.docComment.create({
+      data: {
+        docId, sectionId: '', anchorText: 'PFS 9.2 vs 5.4 个月', status: 'open',
+        createdBy: userId, target: 'deck_slide', slideIndex: 2, createdAt: new Date().toISOString(),
+      },
+    })
+
+    // 造过期：投影内容回退成旧版（不含锚点文本）+ Doc 行时间早于工件
+    // （staleness = stale，模拟 putDeckArtifact 投影写未发生的瞬态窗口）。
+    const past = new Date(Date.now() - 60_000).toISOString()
+    await prisma.doc.update({
+      where: { id: docId },
+      data: {
+        deck: JSON.stringify({ title: '旧投影', slides: [{ title: '旧页一', content: [] }] }),
+        updatedAt: past,
+      },
+    })
+
+    const byId = await listWithAnchor(docId)
+    // shapeId 仍指向工件中的真实形状 — 但投影过期 → 闸门拦截 shapeId 主路径，
+    // 回退模糊诊断：旧投影里没有锚文本 → located=false（若不过闸门则 located=true）。
+    const a = byId.get(anchored.body.id)
+    expect(a.anchor.located).toBe(false)
+    // 懒回填同样被闸门拦截 — 存量评论不落 shapeId。
+    const l = byId.get(legacy.id)
+    expect(l.anchor_shape_id).toBeNull()
+    const row = await prisma.docComment.findUnique({ where: { id: legacy.id } })
+    expect(row?.anchorShapeId).toBeNull()
+    expect(l.anchor.located).toBe(false)
+  })
 })

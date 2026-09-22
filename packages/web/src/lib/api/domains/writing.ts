@@ -42,8 +42,17 @@ export interface DocCommentWire {
 
 /* ────────────── #1101 deck pptx 工件（字节真相源,artifact 端点）────────────── */
 
-/** GET /api/v1/docs/:docId/deck-artifact 响应 — artifact 元数据（download_url 为 tokenized 文件 URL）。 */
-export interface DeckArtifactWire { artifactId: string; version: string; download_url: string }
+/** GET /api/v1/docs/:docId/deck-artifact 响应 — artifact 元数据。字段与
+ * deck-artifact.router.ts 序列化对齐（snake_case wire，DocCommentWire 先例）：
+ * download_url 为 tokenized 文件 URL（短时效 chart token,无鉴权头可拉字节）。 */
+export interface DeckArtifactWire {
+  artifact_id: string;
+  version: string;
+  /** 工件 mime（application/octet-stream 或 pptx mime,服务端恒带）。 */
+  mime?: string;
+  updated_at?: string;
+  download_url: string;
+}
 
 export class WritingApi extends ApiCore {
   /* ────────────────────────── writing ────────────────────────── */
@@ -239,7 +248,7 @@ export class WritingApi extends ApiCore {
   /* ────────────── #1101 deck pptx 工件（pptx 字节 = 持久真相源,§3）────────────── */
 
   /**
-   * #1101: deck pptx 工件元数据 — artifactId/version（乐观锁版本戳）+
+   * #1101: deck pptx 工件元数据 — artifact_id/version（乐观锁版本戳）+
    * tokenized download_url（原始 pptx 字节的取数入口）。
    * 404 = 尚无工件（存量 Doc.deck 未迁移；由服务端迁移补建,富编辑器侧
    * 仅提示、不本地合成字节）。
@@ -252,9 +261,12 @@ export class WritingApi extends ApiCore {
    * #1101: 保存 deck 工件 — POST 原始 pptx 字节（application/octet-stream）。
    * baseVersion = 客户端最后同步的工件 version（'X-Deck-Base' 头）— 服务端
    * 校验工件版本戳未变,变了 → 409（设计文档 §6 乐观锁,提示重试/重载）。
+   * 走统一 ApiCore.fetch（#review-fix: 此前手写 fetch + ApiError 绕过了
+   * 401 → 全局登出 / nexus:auth-expired 流）。显式 Content-Type 八进制流 —
+   * core.fetch 仅在缺省时补 JSON 头,显式头生效;响应为 JSON。
    */
-  async putDeckArtifact(docId: string, bytes: Uint8Array, baseVersion?: string): Promise<{ ok: boolean; artifactId: string; version: string }> {
-    const r = await fetch(`/api/v1/docs/${docId}/deck-artifact`, {
+  async putDeckArtifact(docId: string, bytes: Uint8Array, baseVersion?: string): Promise<{ ok: boolean; artifact_id: string; version: string; changed: boolean }> {
+    return this.fetch(`/api/v1/docs/${docId}/deck-artifact`, {
       method: 'POST',
       headers: this.headers({
         'Content-Type': 'application/octet-stream',
@@ -262,8 +274,6 @@ export class WritingApi extends ApiCore {
       }),
       body: bytes as unknown as BodyInit,
     });
-    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''), '/deck-artifact');
-    return r.json() as Promise<{ ok: boolean; artifactId: string; version: string }>;
   }
 }
 

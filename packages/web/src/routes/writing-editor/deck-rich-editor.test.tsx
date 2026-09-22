@@ -80,10 +80,10 @@ async function buildPptxFixture(): Promise<Uint8Array> {
 const mkApiError = (status: number, body: string) =>
   new (ApiError as unknown as new (s: number, b: string) => Error & { status: number })(status, body);
 
-function Harness({ docId, onNotice, onClose }: { docId: string; onNotice?: (text: string, ttlMs?: number) => void; onClose?: () => void }) {
+function Harness({ docId, onNotice, onClose, onDirtyChange }: { docId: string; onNotice?: (text: string, ttlMs?: number) => void; onClose?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   return (
     <I18nextProvider i18n={i18n}>
-      <DeckRichEditor docId={docId} onNotice={onNotice} onClose={onClose ?? (() => {})} />
+      <DeckRichEditor docId={docId} onNotice={onNotice} onClose={onClose ?? (() => {})} onDirtyChange={onDirtyChange} />
     </I18nextProvider>
   );
 }
@@ -91,7 +91,8 @@ function Harness({ docId, onNotice, onClose }: { docId: string; onNotice?: (text
 /** 种好 GET 工件元数据 + download_url 的全局 fetch 兜底（默认成功）。 */
 async function seedArtifact(version = 'v1') {
   const bytes = await buildPptxFixture();
-  getDeckArtifactMock.mockResolvedValue({ artifactId: 'art-1', version, download_url: '/api/v1/files/f1/download?token=t' });
+  // wire 命名与 deck-artifact.router.ts 序列化对齐（snake_case artifact_id）。
+  getDeckArtifactMock.mockResolvedValue({ artifact_id: 'art-1', version, mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', updated_at: '2026-01-01T00:00:00Z', download_url: '/api/v1/files/f1/download?token=t' });
   // 注意：Response 收 jsdom Blob 会被 undici 字符串化成 "[object Blob]" —
   // 必须直接给 ArrayBuffer。
   vi.stubGlobal('fetch', vi.fn(async () => new Response(bytes.buffer as ArrayBuffer, { status: 200 })));
@@ -152,7 +153,7 @@ describe('#1101 DeckRichEditor 保存流', () => {
 
   test('编辑 → 2.5s debounce 自动保存（带 baseVersion），版本戳前移', async () => {
     await seedArtifact('v1');
-    putDeckArtifactMock.mockResolvedValue({ ok: true, artifactId: 'art-1', version: 'v2' });
+    putDeckArtifactMock.mockResolvedValue({ ok: true, artifact_id: 'art-2', version: 'v2', changed: true });
     render(<Harness docId="d1" />);
     await screen.findByTestId('pptx-viewer-stub');
 
@@ -196,7 +197,7 @@ describe('#1101 DeckRichEditor 保存流', () => {
 
   test('「保存并返回卡片流」→ 冲刷保存 → onClose', async () => {
     await seedArtifact('v1');
-    putDeckArtifactMock.mockResolvedValue({ ok: true, artifactId: 'art-1', version: 'v2' });
+    putDeckArtifactMock.mockResolvedValue({ ok: true, artifact_id: 'art-2', version: 'v2', changed: true });
     const onClose = vi.fn();
     render(<Harness docId="d1" onClose={onClose} />);
     await screen.findByTestId('pptx-viewer-simulate-edit');
@@ -246,6 +247,67 @@ describe('#1101 DeckRichEditor 保存流', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
     confirmSpy.mockRestore();
+  });
+
+  // #review-fix（debounce 竞态）: 保存飞行中的新编辑不得被迟到的 dirty 清零
+  // 吞掉 — 代数守护：完成时代数已前移 → dirty 保持 + 补拍发送最新字节。
+  // （两个连续 2.5s debounce 拍,用例超时放宽到 12s。）
+  test('保存飞行中的新编辑 → dirty 保持待补拍，第二拍带新版本戳发送最新字节', { timeout: 12_000 }, async () => {
+    await seedArtifact('v1');
+    let resolvePut1: (value: { ok: boolean; artifact_id: string; version: string; changed: boolean }) => void = () => {};
+    const putCalls: Array<{ bytes: Uint8Array; base?: string }> = [];
+    putDeckArtifactMock.mockImplementation((_docId: string, bytes: Uint8Array, base?: string) => {
+      putCalls.push({ bytes, base });
+      if (putCalls.length === 1) {
+        return new Promise((resolve) => { resolvePut1 = resolve; });
+      }
+      return Promise.resolve({ ok: true, artifact_id: 'art-3', version: 'v3', changed: true });
+    });
+    render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+
+    // 第一次编辑 → debounce 到期 → PUT#1 挂起（手动控制完成时机）
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    // PUT#1 在飞时再次编辑（代数前移）
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    resolvePut1({ ok: true, artifact_id: 'art-2', version: 'v2', changed: true });
+    // PUT#1 迟到成功 — 但代数已前移,不得清 dirty（修复前此处显示「已同步」）
+    await waitFor(() => {
+      expect(screen.getByText('● 未保存')).toBeInTheDocument();
+      expect(screen.queryByText('已同步')).not.toBeInTheDocument();
+    });
+    // 补拍自动触发：发送最新字节、基于前移后的版本戳
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(2), { timeout: 5000 });
+    expect(Array.from(putCalls[1].bytes)).toEqual([1, 2, 3, 4]);
+    expect(putCalls[1].base).toBe('v2');
+    expect(await screen.findByText('已同步')).toBeInTheDocument();
+  });
+
+  // #review-fix（dirty 上报）: onDirtyChange 随编辑检出/保存完成如实上报,
+  // 父级 leaveEditor / beforeunload 守护据此纳入画布未保存编辑。
+  test('onDirtyChange 编辑上报 true、保存完成后上报 false', async () => {
+    await seedArtifact('v1');
+    putDeckArtifactMock.mockResolvedValue({ ok: true, artifact_id: 'art-2', version: 'v2', changed: true });
+    const onDirtyChange = vi.fn();
+    render(<Harness docId="d1" onDirtyChange={onDirtyChange} />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false), { timeout: 5000 });
+    expect(onDirtyChange).toHaveBeenCalledTimes(2);
+  });
+
+  test('onDirtyChange 卸载时上报 false（会话结束撤守护）', async () => {
+    await seedArtifact('v1');
+    const onDirtyChange = vi.fn();
+    const { unmount } = render(<Harness docId="d1" onDirtyChange={onDirtyChange} />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
+    unmount();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 });
 
