@@ -20,6 +20,7 @@ export * from './stats.js'
 export * from './knowledge.js'
 export * from './submission.js'
 export * from './citations.js'
+export * from './deck-edit.js'
 
 export const SCHEMA_VERSION = 1
 

@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
-import { BarChart3, Bold, ChevronDown, ChevronUp, FilePlus, ImagePlus, Italic, Link2, MessageSquare, MessageSquarePlus, Pencil, Presentation, Sparkles, Strikethrough, Underline, Undo2, X } from 'lucide-react';
+import { BarChart3, Bold, ChevronDown, ChevronUp, FilePlus, ImagePlus, Italic, Link2, MessageSquare, MessageSquarePlus, Pencil, Presentation, Sparkles, SquarePen, Strikethrough, Underline, Undo2, X } from 'lucide-react';
 import { tableBlockSchema } from '@heurion/contracts';
 import { Button } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
@@ -987,9 +987,11 @@ export function DeckView(input: {
   /** #1087: 丢弃/拒绝提示通道（路由 showNotice 横幅）— epoch 失配放弃插入、
    * #1089-1 唯一块拒绝删除等场景明示（非静默）。 */
   onNotice?: (text: string, ttlMs?: number) => void;
+  /** #1101: 富编辑入口（pptx 画布编辑器接管）— deck 资产在场时展示入口。 */
+  onEnterRichEdit?: () => void;
 }) {
   const { t } = useTranslation();
-  const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick, citations, onCitationClick, onNotice } = input;
+  const { deckAsset, slides, body, deckCtl, sendChatText, onCardEdit, deckComments, onAddSlideComment, onCommentClick, citations, onCitationClick, onNotice, onEnterRichEdit } = input;
 
   // #1090-1: deck 编辑撤销快捷键 — Cmd/Ctrl+Z（deck 资产在场时）。焦点在输入框/
   // textarea/contenteditable 内不拦截（留给原生文本撤销），避免打断输入法与
@@ -1015,11 +1017,26 @@ export function DeckView(input: {
   return (
     <div className="space-y-3">
                     {deckAsset ? (
+                      /* #1101 设计 §7: deck 双模式 — 卡片流为默认（只读投影 +
+                          评论 + CitationBadges），富编辑按钮进入 pptx 画布编辑态。
+                          #1101 设计 §4.3 注：v1 仍保留卡片编辑（改标题/要点/删页），
+                          待 AI edit_deck_bytes 与工件链路验证后再退役编辑面。 */
                       <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-2">
                         <span className="text-xs text-accent">
                           {t('writing.deckAssetBadge', 'AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。')}
                         </span>
                         <div className="flex shrink-0 items-center gap-2">
+                          {/* #1101: 富编辑（画布）入口 — pptx-react-viewer 全宽接管。 */}
+                          {onEnterRichEdit && (
+                            <Button
+                              size="sm"
+                              data-testid="deck-rich-edit-entry"
+                              onClick={onEnterRichEdit}
+                              title={t('writing.deckRichEditEntryHint', '进入 pptx 画布富编辑（返回卡片流时自动保存）')}
+                            >
+                              <SquarePen size={13} className="mr-1" /> {t('writing.deckRichEdit', '富编辑（画布）')}
+                            </Button>
+                          )}
                           {/* #1090-1: deck 编辑撤销 — 撤销最近一次卡片编辑（栈深 10）+
                               Cmd/Ctrl+Z 快捷键（hook 挂载，见下方 effect）。 */}
                           {deckCtl.canUndoDeck && (

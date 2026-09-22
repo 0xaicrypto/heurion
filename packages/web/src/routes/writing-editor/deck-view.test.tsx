@@ -47,7 +47,7 @@ const makeDeck = (titles: string[]): DeckWire => ({
  * #1087: onNotice 透传 DeckView（路由 showNotice 同款签名），断言丢弃提示用。
  * #review-4: citations/onCitationClick 透传 DeckView（路由 docCitations +
  * setActiveCitationId 同款），断言卡片引用徽标用。 */
-function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, body, citations, onCitationClick }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void; sendChatText?: (text: string) => Promise<void>; slides?: Slide[]; body?: string; citations?: DocCitationWire[]; onCitationClick?: (id: string) => void }) {
+function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, body, citations, onCitationClick, onEnterRichEdit }: { initialDeck: DeckWire; onDeckChange?: (deck: DeckWire | null) => void; onNotice?: (text: string, ttlMs?: number) => void; sendChatText?: (text: string) => Promise<void>; slides?: Slide[]; body?: string; citations?: DocCitationWire[]; onCitationClick?: (id: string) => void; onEnterRichEdit?: () => void }) {
   const ctl = useDeckAsset();
   const seededRef = useRef(false);
   // #1044 测试探针:deckAsset 每次变化回传最新 deck,断言 content 块形状用。
@@ -74,6 +74,7 @@ function Harness({ initialDeck, onDeckChange, onNotice, sendChatText, slides, bo
         onNotice={onNotice}
         citations={citations}
         onCitationClick={onCitationClick}
+        onEnterRichEdit={onEnterRichEdit}
       />
     </I18nextProvider>
   );
@@ -1781,5 +1782,28 @@ describe('#review-4 deck 卡片引用徽标', () => {
     );
     expect(screen.queryByTestId('deck-citation-badges')).toBeNull();
     expect(screen.queryByTestId('deck-citation-badge-0')).toBeNull();
+  });
+});
+
+// #1101: 富编辑入口 — deck 资产在场时展示「富编辑（画布）」按钮，点击回调
+// onEnterRichEdit（路由据此挂载 DeckRichEditor）。
+describe('#1101 富编辑入口按钮', () => {
+  test('deckAsset 模式 → 入口在场，点击回调 onEnterRichEdit', () => {
+    const onEnterRichEdit = vi.fn();
+    render(
+      <Harness
+        initialDeck={makeDeck(['A'])}
+        onEnterRichEdit={onEnterRichEdit}
+      />,
+    );
+    const entry = screen.getByTestId('deck-rich-edit-entry');
+    expect(entry.textContent).toContain('富编辑（画布）');
+    fireEvent.click(entry);
+    expect(onEnterRichEdit).toHaveBeenCalledTimes(1);
+  });
+
+  test('无 onEnterRichEdit → 不渲染入口（可选 prop 兼容）', () => {
+    renderDeck(['A', 'B']);
+    expect(screen.queryByTestId('deck-rich-edit-entry')).toBeNull();
   });
 });

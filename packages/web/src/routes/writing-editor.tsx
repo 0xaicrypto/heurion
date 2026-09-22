@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import { findSectionAtOffset, type BlockProjection } from '@heurion/contracts';
@@ -58,6 +58,10 @@ import type { DocCommentWire, DocCitationWire } from '@/lib/api';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from './writing-editor/toolbar';
 import type { DocDetail, SnapshotEntry, PhiFinding } from './writing-editor/types';
+
+// #1101: 富编辑（pptx 字节单一标准）— React.lazy 拆 chunk（pptx-react-viewer
+// 依赖面 ~MB 级,不得进主 bundle;路由测试等常规路径也不加载该模块）。
+const DeckRichEditor = lazy(() => import('./writing-editor/deck-rich-editor').then((m) => ({ default: m.DeckRichEditor })));
 
 export function WritingEditorPage() {
   const { t } = useTranslation();
@@ -136,6 +140,9 @@ export function WritingEditorPage() {
 
   // #773: deck 资产状态下沉 useDeckAsset。
   const deckCtl = useDeckAsset();
+  // #1101: 富编辑（pptx 画布）会话态 — 仅进入时挂载 DeckRichEditor（懒拉
+  // deck 工件字节,文档常规加载不取数）；保存语义内聚在富编辑器内。
+  const [deckRichEditOpen, setDeckRichEditOpen] = useState(false);
   const { deckAsset, setDeckAsset, lastSavedDeck, appliedDocDeck, deckJson } = deckCtl;
 
   // #705: 自动保存（debounce）+ 未保存离开保护 + Cmd/Ctrl+S。
@@ -1228,6 +1235,9 @@ export function WritingEditorPage() {
     setActiveCitationId(null);
     // #1089-6: 锚点采纳态随切文档清空（采纳候选属于旧文档正文）。
     setAnchorAdoptions({});
+    // #1101: 富编辑会话态随切文档关闭 — 旧文档的画布编辑不串染新文档
+    // （组件卸载即丢弃未保存字节，与卡片流行为一致）。
+    setDeckRichEditOpen(false);
     // #1041: 评论处理在途状态一并清 — 旧文档的 pending turn/审阅关联/
     // 按钮 loading 不得串染(#1074-3: 清单随状态机下沉 hook reset)。
     resetCommentsAi();
@@ -1624,19 +1634,23 @@ export function WritingEditorPage() {
           )}
           {/* #996/#1000: Preview/History/DOCX 常驻按钮收进 ··· 菜单(Toolbar)。 */}
           {/* #770: 文档 | 幻灯片视图切换 — deck 视图是 body 的只读投影。
-              #1000: 共享 SegmentedControl(窄屏隐藏,#1001 经 ··· 可达)。 */}
-          <div className="ml-2 hidden sm:inline-flex">
-            <SegmentedControl
-              size="xs"
-              ariaLabel={t('writing.viewMode', '视图模式')}
-              value={viewMode}
-              onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
-              items={[
-                { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
-                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deck.slides.length}`, icon: <Presentation size={13} /> },
-              ]}
-            />
-          </div>
+              #1000: 共享 SegmentedControl(窄屏隐藏,#1001 经 ··· 可达)。
+              #1101: 富编辑会话期间隐藏切换 — 画布编辑态只能经富编辑器自身
+              「返回/保存并返回」退出（防止中途切视图静默丢失未保存字节）。 */}
+          {!deckRichEditOpen && (
+            <div className="ml-2 hidden sm:inline-flex">
+              <SegmentedControl
+                size="xs"
+                ariaLabel={t('writing.viewMode', '视图模式')}
+                value={viewMode}
+                onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
+                items={[
+                  { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
+                  { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deck.slides.length}`, icon: <Presentation size={13} /> },
+                ]}
+              />
+            </div>
+          )}
           {aiEditNotice && (
             <span className="ml-3 rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
               {aiEditNotice}
@@ -1697,6 +1711,17 @@ export function WritingEditorPage() {
 
         <div className="flex flex-1 overflow-hidden">
           <main className={cn('flex-1 overflow-y-auto p-6', chatOpen ? 'border-r border-border' : '')}>
+          {/* #1101: 富编辑接管 — 全宽画布替代整个文档视图区（评论侧栏保留，
+              见下方 commentsPanelOpen 渲染不在此 gate 内）。工件装载/保存/
+              冲突处置全部内聚在 DeckRichEditor；关闭即回到卡片流。 */}
+          {deckRichEditOpen ? (
+            <div className="flex h-full min-h-[70vh] flex-1 flex-col" data-testid="deck-rich-edit-root">
+              <Suspense fallback={<Skeleton className="h-full w-full rounded-xl" />}>
+                <DeckRichEditor docId={docId ?? ''} onNotice={showNotice} onClose={() => setDeckRichEditOpen(false)} />
+              </Suspense>
+            </div>
+          ) : (
+            <>
           {/* #763: Selection Bubble 首次引导 — 一次性,dismiss 永久记住。 */}
           <div className="mx-auto mb-3 max-w-3xl">
             <SpotHint id="writing-selection-bubble" icon="✨">
@@ -1836,6 +1861,8 @@ export function WritingEditorPage() {
                     onCitationClick={setActiveCitationId}
                     /* #1087: deck 插入竞态丢弃/唯一块拒绝（#1089-1）走统一轻提示通道。 */
                     onNotice={showNotice}
+                    /* #1101: 富编辑入口 — 进入 pptx 画布编辑态（工件懒加载+保存内聚）。 */
+                    onEnterRichEdit={() => setDeckRichEditOpen(true)}
                   />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
@@ -1964,6 +1991,8 @@ export function WritingEditorPage() {
               )}
 
             </div>
+            </>
+          )}
           </main>
 
           {/* #1040: 侧边栏评论面板 — 与 ChatPanel 并列(桌面右侧)。 */}

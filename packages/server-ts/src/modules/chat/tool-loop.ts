@@ -71,7 +71,8 @@ interface ToolResultPresenter {
 /** Tools whose output carries a full document body for the writing canvas.
  *  P0 hotfix 2026-09: 导出 — doc-executor 兜底只用这份写回工具面组装
  *  精简重试回路,复用同一集合避免两处手写。 */
-export const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images'])
+// #1101: edit_deck_bytes — deck pptx 工件编辑走同一 doc_updated 管道。
+export const DOC_WRITE_TOOLS = new Set(['edit_document', 'insert_asset', 'edit_deck', 'edit_deck_bytes', 'fix_document_images'])
 
 // #927: doc_updated rev — SSE 消费方(writing-editor)据此幂等防乱序(rev
 // 不大于已应用值的写回直接忽略)。

@@ -16,6 +16,8 @@ import { SearchCitationTool } from './search-citation-tool.js'
 import { InsertCitationTool } from './insert-citation-tool.js'
 import { OaPdfLookupTool } from './oa-pdf-tool.js'
 import { EditDeckTool } from './edit-deck-tool.js'
+// #1101（pptx 字节单一标准）：deck pptx 工件编辑工具 — 正式 API 字节路径。
+import { EditDeckBytesTool } from './edit-deck-bytes-tool.js'
 // #976: 会话级任务清单（agent todo-list）— 全场景可用（chat/doc 通用账本）。
 import { SetTaskPlanTool } from './set-task-plan-tool.js'
 import { LoadSkillTool } from './skill-tools.js'
@@ -56,6 +58,7 @@ const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
   edit_document: 300_000,
   insert_asset: 300_000,
   edit_deck: 300_000,
+  edit_deck_bytes: 300_000,
   fix_document_images: 300_000,
   run_stats_analysis: 300_000,
   ocr_image: 300_000,
@@ -288,6 +291,8 @@ export class ToolRegistry {
     this.register(new InsertAssetTool(ctx))
     // #773: deck 资产 AI 编辑工具 — 仅 doc- 会话暴露（与 edit_document 同门控）。
     this.register(new EditDeckTool(ctx))
+    // #1101: deck pptx 工件字节编辑工具 — 仅 doc- 会话暴露（同 edit_deck 门控）。
+    this.register(new EditDeckBytesTool(ctx))
     // #fix 2026-09: 图片链接先审计后修复 — 仅 doc- 会话暴露（与 edit_document 同门控）。
     this.register(new FixDocumentImagesTool(ctx))
     // #976: 任务清单 — 复杂任务（≥3 步）的结构化账本（闸门见工具内）。
@@ -388,6 +393,8 @@ export class ToolRegistry {
       if (tool.name === 'insert_citation' && !isDocSession) continue
       if (tool.name === 'insert_asset' && !isDocSession) continue
       if (tool.name === 'edit_deck' && !isDocSession) continue
+      // #1101: edit_deck_bytes 同 edit_deck 门控 — 仅真实存在的 doc- 会话暴露。
+      if (tool.name === 'edit_deck_bytes' && !isDocSession) continue
       if (tool.name === 'fix_document_images' && !isDocSession) continue
       if (tool.name === 'query_logs' && !(await isUserAdmin(this.ctx.userId))) continue
       if (PLUGIN_GATED_TOOLS[tool.name] && !(await this.isToolAvailable(tool.name))) continue
@@ -468,7 +475,8 @@ export class ToolRegistry {
     // 防上下文膨胀改由 tool-loop 注入时截断(tool-loop.ts 的 messages push)。
     // #765: insert_asset 同理 — 表格写回同样携带完整 body。
     // #773: edit_deck 同理 — deck JSON 随输出返回（doc_updated SSE 需要）。
-    if (result.success && result.output && name !== 'edit_document' && name !== 'insert_asset' && name !== 'edit_deck') {
+    // #1101: edit_deck_bytes 同理 — deck 投影 + 动作结果随输出返回。
+    if (result.success && result.output && name !== 'edit_document' && name !== 'insert_asset' && name !== 'edit_deck' && name !== 'edit_deck_bytes') {
       try {
         const { boundToolOutput } = await import('./tool-output-store.js')
         const { bounded, truncated, filePath } = boundToolOutput(result.output, { userId: this.ctx.userId })

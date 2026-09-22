@@ -207,7 +207,8 @@ export async function finalizeUpload(input: FinalizeUploadInput): Promise<Finali
  *  output — #811 图库与知识库域分离的判别键)。 */
 export function isGeneratedFileId(fileId: string): boolean {
   // #825: fig_ — 学术渲染产物(mermaid/LaTeX SVG)纳入图库域。
-  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_') || fileId.startsWith('fig_')
+  // #1101: deck- — deck pptx 工件（编辑真相源，非知识文档）不入知识库文件面。
+  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_') || fileId.startsWith('fig_') || fileId.startsWith('deck-')
 }
 
 export function newFileId(filename: string): string {

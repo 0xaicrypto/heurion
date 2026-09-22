@@ -79,4 +79,5 @@ export const ApiClient: new () => ApiClient = function ApiClient(this: any) {
 export const api = new ApiClient();
 export { ApiError, CLIENT_API_VERSION };
 // #1040: 评论 wire 类型 re-export — 调用方统一从 '@/lib/api' 导入。
-export type { DocCommentWire, DocCommentReplyWire, DocCommentAnchorWire, DocCommentAnchorCandidate, DocCitationWire } from './domains/writing.js';
+// #1101: deck 工件 wire 类型随 writing 域一起 re-export。
+export type { DocCommentWire, DocCommentReplyWire, DocCommentAnchorWire, DocCommentAnchorCandidate, DocCitationWire, DeckArtifactWire } from './domains/writing.js';

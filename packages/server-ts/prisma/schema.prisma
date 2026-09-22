@@ -114,6 +114,12 @@ model Doc {
   // 同帧重算，强一致；存量文档首次写回时自动建投影。读侧发现 bodyHash 与
   // body 不符（投影过期）按无投影处理，绝不信任过期投影。
   blockProjection String? @map("block_projection")
+  // #1101（pptx 字节单一标准）— deck 工件指针：真实 pptx 字节落在 FileIndex
+  // 工件（uploads 目录 + file_index 行），此处松散引用其 id（刻意不建 relation：
+  // 工件生命周期独立于 Doc，按存储级指针语义管理）。Doc.deck 降级为 DeckWire
+  // 投影缓存（pptx-extractor 按工件重建）。契约见
+  // docs/design/DECK_PPTX_SINGLE_STANDARD.md §3。
+  deckArtifactId String? @map("deck_artifact_id")
   createdAt String @map("created_at")
   updatedAt String @map("updated_at")
   studyId   String? @map("study_id") // #383: linked research study

@@ -14,6 +14,8 @@ import { researchRouter } from './modules/research/research.router.js'
 import { submissionRouter } from './modules/submission/submission.router.js'
 import { mcpAdminRouter } from './modules/settings/mcp-admin.router.js'
 import { documentsRouter } from './modules/documents/documents.router.js'
+// #1101（pptx 字节单一标准）：deck pptx 工件 HTTP 端点（人类保存路径）。
+import { deckArtifactRouter } from './modules/documents/deck-artifact.router.js'
 // #1039: 写作编辑器评论线程（sidecar 旁路表 + 锚点漂移诊断）。
 import { commentsRouter } from './modules/comments/comments.router.js'
 import { referencesRouter } from './modules/references/references.router.js'
@@ -97,6 +99,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(submissionRouter)
   await app.register(mcpAdminRouter)
   await app.register(documentsRouter)
+  await app.register(deckArtifactRouter)
   await app.register(commentsRouter)
   await app.register(referencesRouter)
   await app.register(citationsRouter)

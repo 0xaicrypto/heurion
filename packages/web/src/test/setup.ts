@@ -40,3 +40,26 @@ if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localSto
     },
   });
 }
+
+// #1101 deck rich editor（pptx-react-viewer）在 jsdom 挂载所需的补充 polyfill
+// （matchMedia 已在上方提供；以下 idempotent，真实浏览器不受影响）。
+if (typeof window !== 'undefined') {
+  // 编辑器布局/悬浮面板用 ResizeObserver 订阅容器尺寸。
+  if (typeof window.ResizeObserver !== 'function') {
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(window, 'ResizeObserver', { writable: true, value: ResizeObserverStub });
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
+  }
+  // 主题/快捷键面板等 useSyncExternalStore 订阅场景之外的滚动定位调用。
+  if (typeof window.Element !== 'undefined' && typeof window.Element.prototype.scrollIntoView !== 'function') {
+    Object.defineProperty(window.Element.prototype, 'scrollIntoView', { writable: true, value: () => {} });
+  }
+  // rAF 兜底（vitest jsdom pretendToBeVisual 已提供；cAF 缺失时补 clearTimeout 形态）。
+  if (typeof window.cancelAnimationFrame !== 'function') {
+    Object.defineProperty(window, 'cancelAnimationFrame', { writable: true, value: (id: number) => clearTimeout(id) });
+  }
+}

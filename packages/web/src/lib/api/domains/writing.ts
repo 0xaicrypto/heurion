@@ -40,6 +40,11 @@ export interface DocCommentWire {
 }
 
 
+/* ────────────── #1101 deck pptx 工件（字节真相源,artifact 端点）────────────── */
+
+/** GET /api/v1/docs/:docId/deck-artifact 响应 — artifact 元数据（download_url 为 tokenized 文件 URL）。 */
+export interface DeckArtifactWire { artifactId: string; version: string; download_url: string }
+
 export class WritingApi extends ApiCore {
   /* ────────────────────────── writing ────────────────────────── */
 
@@ -229,6 +234,36 @@ export class WritingApi extends ApiCore {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(opts),
     });
+  }
+
+  /* ────────────── #1101 deck pptx 工件（pptx 字节 = 持久真相源,§3）────────────── */
+
+  /**
+   * #1101: deck pptx 工件元数据 — artifactId/version（乐观锁版本戳）+
+   * tokenized download_url（原始 pptx 字节的取数入口）。
+   * 404 = 尚无工件（存量 Doc.deck 未迁移；由服务端迁移补建,富编辑器侧
+   * 仅提示、不本地合成字节）。
+   */
+  async getDeckArtifact(docId: string): Promise<DeckArtifactWire> {
+    return this.fetch(`/api/v1/docs/${docId}/deck-artifact`);
+  }
+
+  /**
+   * #1101: 保存 deck 工件 — POST 原始 pptx 字节（application/octet-stream）。
+   * baseVersion = 客户端最后同步的工件 version（'X-Deck-Base' 头）— 服务端
+   * 校验工件版本戳未变,变了 → 409（设计文档 §6 乐观锁,提示重试/重载）。
+   */
+  async putDeckArtifact(docId: string, bytes: Uint8Array, baseVersion?: string): Promise<{ ok: boolean; artifactId: string; version: string }> {
+    const r = await fetch(`/api/v1/docs/${docId}/deck-artifact`, {
+      method: 'POST',
+      headers: this.headers({
+        'Content-Type': 'application/octet-stream',
+        ...(baseVersion ? { 'X-Deck-Base': baseVersion } : {}),
+      }),
+      body: bytes as unknown as BodyInit,
+    });
+    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''), '/deck-artifact');
+    return r.json() as Promise<{ ok: boolean; artifactId: string; version: string }>;
   }
 }
 

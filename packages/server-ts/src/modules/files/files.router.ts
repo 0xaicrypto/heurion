@@ -222,8 +222,9 @@ export async function filesRouter(app: FastifyInstance) {
     const offset = Math.max(0, parseInt(q?.offset || '0', 10))
     const patientHash = q?.patient_hash ? String(q.patient_hash) : undefined
     // #811: 域分离 — chat picker 只列用户上传,排除 AI 生成产物(chart/scene/img)。
+    // #1101: deck pptx 工件同域排除（编辑真相源，非知识文档）。
     const where = { userId, deletedAt: null,
-      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }, { id: { startsWith: 'fig_' } }],
+      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }, { id: { startsWith: 'fig_' } }, { id: { startsWith: 'deck-' } }],
       ...(patientHash ? { patientHash } : {}) }
     const [rows, total] = await Promise.all([
       prisma.fileIndex.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
