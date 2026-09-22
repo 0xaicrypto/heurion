@@ -371,6 +371,12 @@ model DocComment {
   // 恢复「确认修改/撤销修改」按钮态，撤销以服务端快照为准；确认/撤销成功
   // 后清除（null）。TEXT 旁路同 deck 大字段先例，SQLite 无枚举/回填风险。
   deckSnapshot String? @map("deck_snapshot")
+  // #1101 §5: deck_slide 锚点升级 — pptx 原生稳定 shapeId（findText 返回的
+  // elementId，形如 `ppt/slides/slideN.xml-shape-M` = part path + OOXML shape
+  // 序位，spike #1102 实测跨 round-trip 稳定）。锚点判定优先 shapeId 精确
+  // （画布级重排/页序漂移不再大面积失配），失配回退 anchorText 模糊。可空：
+  // 无工件/未命中/存量评论（懒回填 — with_anchor 列表首次唯一解析时落库）。
+  anchorShapeId String? @map("anchor_shape_id")
 
   doc     Doc               @relation(fields: [docId], references: [id], onDelete: Cascade)
   replies DocCommentReply[]

@@ -155,4 +155,32 @@ describe('#1101 deck-artifact API', () => {
     const doc = await prisma.doc.findUnique({ where: { id: docId } })
     expect(doc!.deckArtifactId).toBeNull()
   })
+
+  // #1101 §5: 工件上传后创建 deck_slide 评论 → create 流程解析 pptx 原生
+  // shapeId（findText 首个命中 elementId）落库并随序列化带出。
+  test('工件在场创建 deck_slide 评论 → anchorShapeId 解析落库', async () => {
+    const app = await getApp()
+    const docId = await createDoc()
+    const bytes = await samplePptxBytes('anchor')
+    const put = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/deck-artifact`,
+      headers: { ...await authHeader(), 'content-type': 'application/octet-stream' }, payload: bytes,
+    })
+    expect(put.statusCode).toBe(200)
+
+    const created = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/comments`,
+      headers: { ...(await authHeader()), 'content-type': 'application/json' },
+      payload: JSON.stringify({ target: 'deck_slide', slide_index: 1, anchor_text: '页一要点', text: '这页要补充数据来源' }),
+    })
+    expect(created.statusCode).toBe(201)
+    const comment = JSON.parse(created.payload)
+    // elementId = part path + shape 序位（spike #1102 实测的稳定标识形状）
+    expect(comment.anchor_shape_id).toMatch(/^ppt\/slides\/slide\d+\.xml-shape-\d+$/)
+
+    // 落库持久化
+    const prisma = await getPrisma()
+    const row = await prisma.docComment.findUnique({ where: { id: comment.id } })
+    expect(row?.anchorShapeId).toBe(comment.anchor_shape_id)
+  })
 })

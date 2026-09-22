@@ -14,6 +14,10 @@ import { embedContentImages, resolveLocalImageBlock } from './asset-embed.js'
 import { runRenderJob } from './asset-render-pipeline.js'
 import { chartSpecPng } from './deck-chart-embed.js'
 import { resolveDeckContentCitations, composeExportBody } from '../lib/citation-store.js'
+// #1101(b): deck 工件直出 — 工件字节 = 所见即所导的最终产物。
+import { getDeckArtifact } from '../lib/deck-bytes.js'
+import { parsePptx, PPTX_MIME_TYPE } from '../lib/pptx-extractor.js'
+import { issueChartToken } from '../common/chart-token.js'
 
 /** #767 — 导出格式 → 插件 id / 契约 content_type / job type / 模板 / mime。 */
 export const EXPORT_FORMATS: Record<string, { pluginId: string; contentType: 'sidecar.generate_docx' | 'sidecar.generate_pptx' | 'sidecar.convert_to_pdf'; templateId: string; ext: string; mime: string; label: string }> = {
@@ -112,6 +116,15 @@ async function organizedExport(deps: ExportExecutorDeps, docId: string, existing
   // 两段协议第一段。success:false → 工具循环把完整文本按 Error 注入
   // （不会被 DOC_WRITE_TOOLS 的摘要替换截断），模型可见完整摘要。
   if (rawSlides.length === 0) {
+    // #1101(b): deck 工件直出（所见即所导）— 有可读 pptx 工件时跳过
+    // pptxgenjs 重渲，直接服务富编辑后的最终字节（react-viewer 人工编辑 /
+    // edit_deck_bytes 均已落在工件内；embedDeckSpecialBlocks 引用烘焙等
+    // 派生步骤全部跳过 — 字节已是终态）。工件缺失/不可读 → 落回下方
+    // DeckWire 重渲路径。
+    if (existing.deckArtifactId) {
+      const direct = await exportDeckArtifactDirect(deps, docId, existing, args)
+      if (direct) return direct
+    }
     // #773: deck 已存在 → 直接以 Doc.deck 为内容源导出（所见即所导，
     // 不再重新编排 — deck 视图手动编辑后的再导出路径）。
     if (existing.deck) {
@@ -304,4 +317,47 @@ async function embedDeckSpecialBlocks(deps: ExportExecutorDeps, deckContent: any
     s.content = out
   }
   return { content: deckContent, notes: converted > 0 ? `（含 ${converted} 个图表/图形）` : '' }
+}
+
+/**
+ * #1101(b) — deck 工件直出（organize=true + deckArtifactId 可读）：跳过
+ * pptxgenjs 重渲与 runRenderJob，直接把工件字节以 tokenized download URL
+ * （deck-artifact.router GET 同款 issueChartToken 机制）做成下载卡片写回。
+ * 返回 null = 工件不可读/写回失败 → 调用方落回 DeckWire 重渲路径。
+ */
+async function exportDeckArtifactDirect(deps: ExportExecutorDeps, docId: string, existing: any, args: Record<string, unknown>): Promise<ToolResult | null> {
+  try {
+    const artifact = await getDeckArtifact(docId)
+    if (!artifact) return null
+    // 页数计数（parsePptx 轻量解析；失败不阻塞直出 — 字节本身即产物）。
+    const parsed = parsePptx(artifact.bytes)
+    const slideCount = parsed.ok ? parsed.slides.length : 0
+    const userId = deps.userId
+    const url = `/api/v1/files/download/${artifact.artifactId}?token=${issueChartToken(artifact.artifactId, userId)}`
+    const fileName = `${String(existing.title || 'Presentation').slice(0, 40).replace(/[\\/:*?"<>|\s]+/g, '_') || 'Presentation'}.pptx`
+    const summaryBase = slideCount > 0 ? `已从 deck 导出 PPT（${slideCount} 页，直出工件）` : '已从 deck 导出 PPT（直出工件）'
+    const card = `[下载 PPT 版（${fileName}）](${url})`
+    // 同 renderExportFile 的卡片写回形态（无 deckJson — deck 未变化，不同帧写 deck）。
+    const result = await deps.writeBlock(docId, card, args, `${summaryBase}（${fileName}）`)
+    if (!result.success) return null
+    if (result.output) {
+      try {
+        const out = JSON.parse(result.output)
+        out.file = { fileId: artifact.artifactId, fileName, mimeType: PPTX_MIME_TYPE, url }
+        // knowledge 大纲（#776 平价迁移）— 从工件字节解析，保持与 DeckWire 路径同等的知识索引面。
+        if (parsed.ok && parsed.slides.length > 0) {
+          out.knowledge = {
+            title: String(existing.title || 'Presentation'),
+            content: parsed.slides.map((s) => `## ${s.title}\n${s.paragraphs.map((p) => `- ${p}`).join('\n')}`).join('\n\n'),
+          }
+        }
+        result.output = JSON.stringify(out)
+      } catch {
+        // 输出非 JSON（异常形态）— 原样返回，卡片已写回。
+      }
+    }
+    return result
+  } catch {
+    return null
+  }
 }

@@ -30,6 +30,16 @@ import { closestTextCandidates, type AnchorCandidate } from '../../tools/anchor-
 // #1039: 「当前正文里还能不能定位到」的判定 — 与 edit_document 的两级
 // 归一化匹配 + 模糊兜底同口径（空白/markdown 标记差异不算漂移）。
 import { findNormalizedSpan, findFuzzySpan } from '../../lib/document-span-match.js'
+// #1101 §5: deck_slide 锚点升级 — pptx 原生稳定 shapeId（findText elementId）
+// 优先判定 + anchorText 模糊兜底；懒回填与 create/PATCH 解析共用 lib 单一实现。
+import {
+  openDeckAnchorEngine,
+  disposeDeckAnchorEngine,
+  resolveAnchorShapeId,
+  shapeHoldsAnchor,
+  resolveCommentAnchorShapeId,
+  type DeckAnchorEngine,
+} from '../../lib/deck-comment-anchor.js'
 
 const log = makeLogger('comments.router')
 
@@ -101,6 +111,9 @@ const deckSnapshotField = z.union([
 const patchCommentSchema = z.object({
   status: z.enum(['open', 'resolved']).optional(),
   deck_snapshot: deckSnapshotField.optional(),
+  // #1101 §5: anchor 编辑 — deck_slide 评论改锚后按当前工件重解析 shapeId
+  // （cap 与 create 同口径）。
+  anchor_text: z.string().min(1).max(2000).optional(),
 })
 
 // #1064: 列表分页 + 诊断懒计算 — limit 默认 50 上限 200，offset 偏移；
@@ -134,6 +147,9 @@ interface SerializedComment {
   slide_index: number | null
   block_index: number | null
   anchor_text: string
+  /** #1101 §5: pptx 原生稳定 shapeId（deck_slide 评论；可空 — 无工件/未命中/
+   *  存量未回填）。snake_case 对齐本序列化器既有风格。 */
+  anchor_shape_id: string | null
   status: string
   created_by: string
   created_at: string
@@ -158,6 +174,8 @@ function serializeComment(c: DocComment & { replies: DocCommentReply[] }): Seria
     slide_index: c.slideIndex,
     block_index: c.blockIndex,
     anchor_text: c.anchorText,
+    // #1101 §5: shapeId 锚点随序列化带出（可空；客户端后续消费）。
+    anchor_shape_id: c.anchorShapeId || null,
     status: c.status,
     created_by: c.createdBy,
     created_at: c.createdAt,
@@ -274,6 +292,10 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
       return reply.status(400).send({ error: parsed.error.format() })
     }
     const { section_id, anchor_text, text, target, slide_index, block_index } = parsed.data
+    // #1101 §5: deck_slide 评论 — 工件在场且投影非过期时解析 pptx 原生
+    // shapeId（findText 首个命中）；无工件/过期/无命中/异常 → null（legacy
+    // anchorText 模糊路径不受影响）。lib 内静默容错，不阻塞评论创建。
+    const anchorShapeId = target === 'deck_slide' ? await resolveCommentAnchorShapeId(doc, anchor_text) : null
     const now = new Date().toISOString()
     const comment = await prisma.docComment.create({
       data: {
@@ -283,6 +305,7 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
         anchorText: anchor_text,
         target,
         ...(target === 'deck_slide' ? { slideIndex: slide_index, ...(block_index !== undefined ? { blockIndex: block_index } : {}) } : {}),
+        ...(anchorShapeId ? { anchorShapeId } : {}),
         status: 'open',
         createdBy: userId,
         createdAt: now,
@@ -333,18 +356,54 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
     // #1074-6: withAnchor 已在 doc 查询时决定 select — body/deck 仅该分支访问。
     const deckParsed = withAnchor ? parseDeckSlides(doc.deck) : null
     const body = String(doc.body || '')
-    return {
-      comments: comments.map((c) => {
-        const out = serializeComment(c)
-        // #1039: 只对 open 评论跑定位诊断 — resolved 线程已完结，不再重定位。
-        // #1064: 默认不跑；?with_anchor=1 时诊断（#1051 deck_slide 用 Doc.deck）。
-        if (withAnchor && c.status === 'open') {
-          out.anchor = c.target === 'deck_slide'
-            ? diagnoseDeckAnchor(c.anchorText, deckParsed, c.slideIndex)
-            : diagnoseAnchor(c.anchorText, body)
+    // #1101 §5: 工件在场 → deck_slide 评论锚点优先按 shapeId 精确判定
+    // （引擎单次 load 全列表复用；undefined = 尚未尝试，lazy 初始化避免
+    // 纯正文评论列表白付引擎成本）。
+    let deckEngine: DeckAnchorEngine | null | undefined
+    const ensureDeckEngine = async (): Promise<DeckAnchorEngine | null> => {
+      if (deckEngine === undefined) deckEngine = await openDeckAnchorEngine(doc.id)
+      return deckEngine
+    }
+    const listComments = await Promise.all(comments.map(async (c) => {
+      const out = serializeComment(c)
+      // #1039: 只对 open 评论跑定位诊断 — resolved 线程已完结，不再重定位。
+      // #1064: 默认不跑；?with_anchor=1 时诊断（#1051 deck_slide 用 Doc.deck）。
+      if (withAnchor && c.status === 'open') {
+        if (c.target !== 'deck_slide') {
+          out.anchor = diagnoseAnchor(c.anchorText, body)
+        } else {
+          const engine = await ensureDeckEngine()
+          if (engine && c.anchorShapeId) {
+            // #1101 §5 主路径：shapeId 精确 — 形状在场且文本仍匹配（画布
+            // 重排/页序漂移不再失配）；失配（形状被删/文本改写超模糊预算）
+            // → 回退既有 anchorText 模糊行为。
+            out.anchor = shapeHoldsAnchor(engine, c.anchorShapeId, c.anchorText)
+              ? { located: true }
+              : diagnoseDeckAnchor(c.anchorText, deckParsed, c.slideIndex)
+          } else if (engine) {
+            // #1101 §5 懒回填：存量评论 anchorShapeId 为空 + findText 唯一
+            // 解析 → 落库（一次 findText，此后跨画布编辑稳定定位）；不唯一/
+            // 未命中 → 保持既有行为不回填。
+            const shapeId = await resolveAnchorShapeId(engine, c.anchorText, { unique: true })
+            if (shapeId) {
+              await prisma.docComment.update({ where: { id: c.id }, data: { anchorShapeId: shapeId } }).catch(() => null)
+              out.anchor_shape_id = shapeId
+              out.anchor = { located: true }
+            } else {
+              out.anchor = diagnoseDeckAnchor(c.anchorText, deckParsed, c.slideIndex)
+            }
+          } else {
+            // 无工件 → 既有行为不变。
+            out.anchor = diagnoseDeckAnchor(c.anchorText, deckParsed, c.slideIndex)
+          }
         }
-        return out
-      }),
+      }
+      return out
+    }))
+    // #1101 §5: 列表构建完成即释放引擎（pptx-viewer-core 重资源，及时归还）。
+    if (deckEngine) disposeDeckAnchorEngine(deckEngine)
+    return {
+      comments: listComments,
       // #1064: 分页元信息
       limit: query.data.limit,
       offset: query.data.offset,
@@ -423,6 +482,12 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
       // #1064: 信封统一为仓库主流 { error: parsed.error.format() }
       return reply.status(400).send({ error: parsed.error.format() })
     }
+    // #1101 §5: anchor 编辑重解析 — deck_slide 评论改锚时按当前工件解析
+    // shapeId（无工件/无命中 → null，回退 legacy 模糊路径）；section 评论
+    // 不涉 shapeId（undefined = 不触碰）。
+    const nextAnchorShapeId = parsed.data.anchor_text !== undefined && comment.target === 'deck_slide'
+      ? await resolveCommentAnchorShapeId(doc, parsed.data.anchor_text)
+      : undefined
     const updated = await prisma.docComment.update({
       where: { id: comment.id },
       data: {
@@ -437,6 +502,10 @@ export async function commentsRouter(app: FastifyInstance): Promise<void> {
           : {}),
         // #1091: 快照写入/清除（undefined = 不触碰；null/string 均为显式落库）
         ...(parsed.data.deck_snapshot !== undefined ? { deckSnapshot: parsed.data.deck_snapshot } : {}),
+        // #1101 §5: anchor 文本更新 + 重解析后的 shapeId（null 也显式落库 —
+        // 旧 shapeId 对新锚文本无意义，置空回退模糊路径）。
+        ...(parsed.data.anchor_text !== undefined ? { anchorText: parsed.data.anchor_text } : {}),
+        ...(nextAnchorShapeId !== undefined ? { anchorShapeId: nextAnchorShapeId } : {}),
       },
       include: { replies: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     })
