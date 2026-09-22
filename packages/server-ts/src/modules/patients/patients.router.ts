@@ -183,18 +183,34 @@ export async function patientsRouter(app: FastifyInstance) {
 
     // Gemini Vision analysis with timeout — AI FAILURES are telemetry only,
     // never persisted into the patient record as clinical findings.
+    // #1104-gap1: analyzeWithGeminiVision 现以结构化结果 resolve
+    // ({ok:true,text} | {ok:false,error});此前它 resolve 中文失败标记字符串,
+    // 而这里只在 promise REJECT 时置 aiFailed — 标记串被当真实 AI 结论写入
+    // 患者临床记录。现在 ok=false 显式走失败分支,标记串绝不落入临床记录。
     const AI_TIMEOUT_MS = 10000
     let aiFindings = ''
     let aiFailed = false
+    let aiError: string | undefined
     try {
-      aiFindings = await Promise.race([
+      const vision = await Promise.race([
         analyzeWithGeminiVision(userId, studyId),
-        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), AI_TIMEOUT_MS)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), AI_TIMEOUT_MS)),
       ])
+      if (vision.ok) {
+        aiFindings = vision.text
+      } else {
+        aiFailed = true
+        aiError = vision.error
+      }
     } catch (err) {
+      // 超时/未预期的 rejection — 仍按失败语义处理。
       aiFailed = true
-      const message = err instanceof Error ? err.message : String(err)
-      log.info(`[QUICK-SCAN] Vision analysis failed: ${message}`)
+      aiError = err instanceof Error ? err.message : String(err)
+    }
+    if (aiFailed) {
+      // 遥测备注 — 只进日志/审计(dicom-scanner 已落 phi.vision_analysis),
+      // 不写入患者临床记录。
+      log.info(`[QUICK-SCAN] Vision analysis failed: ${aiError}`)
     }
 
     if (aiFindings && !aiFailed) {

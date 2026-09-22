@@ -17,24 +17,19 @@ describe('#1106 TurnState — 退出转移与优先级', () => {
     expect(s.writeFailStreakExit).toBe(false)
   })
 
-  test('exitByBudget → shouldExit=budget 且清除轮次耗尽标志', () => {
+  test('exitByBudget: 清除轮次耗尽标志;budget 出口为置位后直接 break,不经 shouldExit(walker 判定)', () => {
     const s = new TurnState()
     s.exitByBudget()
-    expect(s.shouldExit()).toBe('budget')
     expect(s.exitedByBudget).toBe(true)
     expect(s.exitedByRoundCap).toBe(false)
+    expect(s.shouldExit()).toBeNull()
   })
 
-  test('markWriteFailStreak → shouldExit=writeStreak;budget 优先于 writeStreak', () => {
+  test('markWriteFailStreak → shouldExit=writeStreak(连败早退是唯一的 walker 级提前退出)', () => {
     const s = new TurnState()
     s.markWriteFailStreak()
     expect(s.shouldExit()).toBe('writeStreak')
     expect(s.exitedByRoundCap).toBe(false)
-
-    const both = new TurnState()
-    both.markWriteFailStreak()
-    both.exitByBudget()
-    expect(both.shouldExit()).toBe('budget')
   })
 
   test('exitWithoutRoundCap 只清轮次耗尽标志,不进入提前退出', () => {

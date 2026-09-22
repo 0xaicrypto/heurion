@@ -1,7 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, utimesSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 
 /**
  * #1108 回归:渲染产物无 TTL → 磁盘无限增长。
@@ -12,6 +13,13 @@ import { join } from 'path'
  *  - 陌生命名(非 worker 自有)→ 宁留不删;
  *  - 被删文件从 local-files.jsonl 同步剪枝。
  */
+
+// S3 侧测试:storage 模块的 getS3 返回假 client,send 按用例注入行为
+//(真实 storage 模块在无 S3_ENDPOINT 时 getS3()=null,侧不到批量删除路径)。
+const s3Mock = vi.hoisted(() => ({ send: vi.fn() }))
+vi.mock('../src/storage.js', () => ({
+  getS3: () => ({ client: { send: s3Mock.send }, bucket: 'test-bucket' }),
+}))
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000
@@ -146,6 +154,81 @@ describe('env TTL 解析 (#1108)', () => {
     expect(m.resolveProtectedPrefixes({ WORKER_ARTIFACT_PROTECTED_PREFIXES: '' } as NodeJS.ProcessEnv)).toEqual(['deck-'])
     expect(m.resolveProtectedPrefixes({ WORKER_ARTIFACT_PROTECTED_PREFIXES: ' , ' } as NodeJS.ProcessEnv)).toEqual(['deck-'])
     expect(m.resolveProtectedPrefixes({ WORKER_ARTIFACT_PROTECTED_PREFIXES: 'deck-, report_' } as NodeJS.ProcessEnv)).toEqual(['deck-', 'report_'])
+  })
+
+  test('默认保护前缀引用 contracts 权威常量(跨包单源 — server 改前缀 worker 自动跟随)', async () => {
+    const m = await import('../src/cleanup.js')
+    const contracts = await import('@heurion/contracts')
+    expect(m.DEFAULT_PROTECTED_PREFIXES).toEqual([contracts.DECK_FILE_ID_PREFIX])
+  })
+})
+
+describe('S3 镜像 TTL 清理 (#1108)', () => {
+  beforeEach(() => {
+    s3Mock.send.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test('DeleteObjects 部分失败:deleted 只计真正删除的 key,失败逐条记录(partial 不抛)', async () => {
+    const { cleanupS3Artifacts } = await import('../src/cleanup.js')
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    s3Mock.send.mockImplementation(async (cmd: unknown) => {
+      if (cmd instanceof ListObjectsV2Command) {
+        // 扫描覆盖 renders/ 与 previews/ 两个前缀 — 只在 renders/ 放对象。
+        if (cmd.input.Prefix !== 'renders/') return { Contents: [], IsTruncated: false }
+        return {
+          Contents: [
+            { Key: 'renders/aaa/old.png', LastModified: new Date(NOW - 40 * DAY_MS) },
+            { Key: 'renders/bbb/old2.png', LastModified: new Date(NOW - 40 * DAY_MS) },
+            { Key: 'renders/ccc/fresh.png', LastModified: new Date(NOW - 1 * DAY_MS) },
+          ],
+          IsTruncated: false,
+        }
+      }
+      if (cmd instanceof DeleteObjectsCommand) {
+        // 模拟 S3「不抛但部分失败」:一个 key AccessDenied,响应带 Errors。
+        const keys = (cmd.input.Delete?.Objects ?? []).map((o) => o.Key)
+        return {
+          Deleted: keys.filter((k) => k !== 'renders/bbb/old2.png').map((Key) => ({ Key })),
+          Errors: [{ Key: 'renders/bbb/old2.png', Code: 'AccessDenied', Message: 'Access Denied' }],
+        }
+      }
+      throw new Error(`unexpected command: ${(cmd as object).constructor.name}`)
+    })
+
+    const res = await cleanupS3Artifacts({ ttlMs: 30 * DAY_MS, now: NOW })
+
+    // 2 个过期对象进入批量删除:1 成功 1 失败(第三个未过期,不进批次)。
+    expect(res).toEqual({ deleted: 1, errors: 1 })
+    // 批量删除只携带过期对象(不含 fresh)。
+    const deleteCmd = s3Mock.send.mock.calls
+      .map((c) => c[0])
+      .find((c: unknown) => c instanceof DeleteObjectsCommand) as DeleteObjectsCommand
+    expect(deleteCmd.input.Delete?.Objects).toHaveLength(2)
+    // 逐对象失败日志:key + message。
+    const failureLine = logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.includes('s3 delete failed'))
+    expect(failureLine).toContain('renders/bbb/old2.png')
+    expect(failureLine).toContain('Access Denied')
+  })
+
+  test('DeleteObjects 整批抛错 → 整批计 errors(原语义保持)', async () => {
+    const { cleanupS3Artifacts } = await import('../src/cleanup.js')
+    s3Mock.send.mockImplementation(async (cmd: unknown) => {
+      if (cmd instanceof ListObjectsV2Command) {
+        if (cmd.input.Prefix !== 'renders/') return { Contents: [], IsTruncated: false }
+        return {
+          Contents: [{ Key: 'renders/aaa/old.png', LastModified: new Date(NOW - 40 * DAY_MS) }],
+          IsTruncated: false,
+        }
+      }
+      throw new Error('network down')
+    })
+
+    const res = await cleanupS3Artifacts({ ttlMs: 30 * DAY_MS, now: NOW })
+    expect(res).toEqual({ deleted: 0, errors: 1 })
   })
 })
 

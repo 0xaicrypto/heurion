@@ -9,6 +9,7 @@ import {
   findDanglingCitationIds,
   docCitationId,
   serializeDocCitation,
+  type DocCitationRow,
 } from '../../src/lib/citation-store.js'
 import { isValidDoi, assignCitationNumbers, resolveCitationShortcodes, CITATION_DANGLING_PLACEHOLDER } from '@heurion/contracts'
 
@@ -107,6 +108,20 @@ describe('#1083 contracts: isValidDoi + 编号算法', () => {
     expect(isValidDoi('9.1000/x')).toBe(false)
     expect(isValidDoi('10.x/y')).toBe(false)
     expect(isValidDoi('random text')).toBe(false)
+  })
+
+  test('serializeDocCitation: authors 解析委托 contracts（坏 JSON/非数组 → []，纯函数不落库）', () => {
+    const row = (over: Partial<DocCitationRow>): DocCitationRow => ({
+      id: 'cite_x', docId: DOC, doi: '10.1000/x', pmid: null, title: 'T',
+      authors: '[]', journal: null, year: null, url: null, source: 'pubmed',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      ...over,
+    })
+    expect(serializeDocCitation(row({ authors: '["Zhang S","Li Q"]' })).authors).toEqual(['Zhang S', 'Li Q'])
+    expect(serializeDocCitation(row({ authors: 'not-json{' })).authors).toEqual([])
+    expect(serializeDocCitation(row({ authors: '{"name":"意外对象"}' })).authors).toEqual([])
+    expect(serializeDocCitation(row({ authors: '' })).authors).toEqual([])
+    expect(serializeDocCitation(row({})).createdAt).toBe('2026-01-01T00:00:00.000Z')
   })
 
   test('assignCitationNumbers: 按首现顺序编号，同 id 共享编号', () => {

@@ -571,5 +571,88 @@
       ]
     },
     "ts_skip": true
+  },
+  "describe_basic": {
+    "input": {
+      "test": "describe",
+      "values": [
+        10,
+        12,
+        9,
+        15,
+        11,
+        13,
+        10,
+        14,
+        12,
+        11
+      ]
+    },
+    "expected": {
+      "method": "descriptive",
+      "n": 10,
+      "mean": 11.7,
+      "median": 11.5,
+      "sd": 1.888562,
+      "q1": 10.25,
+      "q3": 12.75,
+      "min": 9.0,
+      "max": 15.0
+    },
+    "ts_skip": true
+  },
+  "anova_2way": {
+    "input": {
+      "test": "two-way-anova",
+      "group": [
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B"
+      ],
+      "factor_a": [
+        "X",
+        "X",
+        "Y",
+        "Y",
+        "X",
+        "X",
+        "Y",
+        "Y"
+      ],
+      "values": [
+        5.1,
+        4.9,
+        8.2,
+        8.0,
+        6.3,
+        6.5,
+        9.4,
+        9.2
+      ]
+    },
+    "expected": {
+      "method": "two_way_anova",
+      "report": {
+        "C(g)": {
+          "f": 169.0,
+          "p": 0.000202
+        },
+        "C(f)": {
+          "f": 900.0,
+          "p": 7e-06
+        },
+        "interaction": {
+          "f": 1.0,
+          "p": 0.373901
+        }
+      },
+      "interpretation": "至少一个因素显著"
+    },
+    "ts_skip": true
   }
 }

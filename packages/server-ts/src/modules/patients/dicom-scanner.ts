@@ -139,12 +139,21 @@ export function renderDicomSlice(userId: string, fileId: string): Buffer | null 
 }
 
 /**
+ * Vision 分析返回契约(#1104-gap1): 显式区分「分析成功」与「分析失败」。
+ * 此前失败路径要么 resolve 中文 marker 字符串(被调用方当真实 AI 结论写入
+ * 患者临床记录),要么 return ''(与「无发现」不可区分)— 均已移除。
+ */
+export type VisionAnalysisResult =
+  | { ok: true; text: string }
+  | { ok: false; error: string }
+
+/**
  * Analyze DICOM image with Gemini Vision
  * Sends the rendered PNG to Gemini for AI-powered finding detection
  */
-export async function analyzeWithGeminiVision(userId: string, fileId: string): Promise<string> {
+export async function analyzeWithGeminiVision(userId: string, fileId: string): Promise<VisionAnalysisResult> {
   const filepath = getDicomPath(userId, fileId)
-  if (!filepath || !fs.existsSync(filepath) || !dicomParser) return ''
+  if (!filepath || !fs.existsSync(filepath) || !dicomParser) return { ok: false, error: 'no_dicom_file' }
 
   try {
     const buffer = fs.readFileSync(filepath)
@@ -152,7 +161,8 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
     const dataSet = dicomParser.parseDicom(new Uint8Array(arr))
     const rows = dataSet.uint16('x00280010')
     const cols = dataSet.uint16('x00280011')
-    if (!rows || !cols) return ''
+    // #1104-gap2: 此前 `return ''` — 「没跑成」与「无发现」不可区分。统一走 ok:false。
+    if (!rows || !cols) return { ok: false, error: 'no_pixel_data' }
 
     const pixelData = new Uint16Array(dataSet.byteArray.buffer, dataSet.byteArray.byteOffset, rows * cols)
     const wc = parseFloat((dataSet.string('x00281050') || '40').split('\\')[0])
@@ -207,11 +217,25 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
     const apiKey = setting?.value || process.env.GEMINI_API_KEY || ''
 
     if (!apiKey || apiKey.length < 10) {
-      return 'No API key configured; vision analysis skipped.'
+      // #1104-gap1: 「没配 key = 分析没跑」— 也走 ok:false,不再 resolve 成
+      // 句子被当 AI 结论。审计 outcome=api_key_missing 保持可见。
+      await prisma.auditLog.create({
+        data: {
+          actor: userId,
+          action: 'phi.vision_analysis',
+          targetType: 'DicomFile',
+          targetId: fileId,
+          reason: `gemini vision PHI outbound; outcome=api_key_missing`,
+          createdAt: new Date().toISOString(),
+        },
+      }).catch(() => {})
+      return { ok: false, error: 'No API key configured; vision analysis skipped.' }
     }
 
     // #fix(PHI 出境审计): DICOM 渲染图(可能含患者信息)出境到 Gemini —
     // 每次调用落一条 AuditLog(attempt),完成后同条 reason 补 outcome。
+    // outcome 全集: ok / api_key_missing / http_<status> / empty_response /
+    // error:<exception class>(+ no_dicom_file / no_pixel_data 前置路径不落审计)。
     let outcome = 'ok'
     let text = ''
     try {
@@ -230,14 +254,18 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
           }),
         },
       )
-      const data = await resp.json()
-      text = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
-      outcome = resp.ok ? 'ok' : `http_${resp.status}`
-      if (!text) outcome = 'empty_response'
+      let data: any = null
+      try { data = await resp.json() } catch { /* 非 JSON 响应体 — 按 HTTP 状态判定 */ }
+      if (!resp.ok) {
+        // #1104-gap2: HTTP 非 2xx 此前 `return text`('') — 与「无发现」不可区分。
+        outcome = `http_${resp.status}`
+      } else {
+        text = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+        if (!text) outcome = 'empty_response'
+      }
     } catch (e: any) {
-      // #fix: 此前 `return ''` 静默吞错 — 前端把「无 AI 分析」当「无发现」,
-      // 临床风险。改为显式标记 + log.warn,调用方(quick-scan)把该文本按
-      // ai_analysis 呈现,用户可见失败原因而非空白。
+      // #1104-gap1: 此前 resolve 中文 marker 字符串 — 调用方把失败文本当真实
+      // AI 结论写入患者临床记录。改为结构化 ok:false,失败语义显式跨边界传递。
       const reason = (e?.message || String(e)).slice(0, 200)
       outcome = `error:${e?.constructor?.name || 'Error'}`
       log.warn('Gemini vision analysis failed', { userId, fileId, reason })
@@ -251,7 +279,7 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
           createdAt: new Date().toISOString(),
         },
       }).catch(() => {})
-      return `（影像分析失败：${reason} — 请重试或人工判读）`
+      return { ok: false, error: reason }
     }
 
     await prisma.auditLog.create({
@@ -264,9 +292,15 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
         createdAt: new Date().toISOString(),
       },
     }).catch((err: Error) => log.warn('audit log write failed', { reason: err.message.slice(0, 120) }))
-    return text
+
+    if (outcome !== 'ok') {
+      const failMsg = outcome.startsWith('http_') ? `HTTP ${outcome.slice('http_'.length)}` : outcome
+      log.warn('Gemini vision analysis failed', { userId, fileId, reason: failMsg })
+      return { ok: false, error: failMsg }
+    }
+    return { ok: true, text }
   } catch (e: any) {
-    // 外层兜底(解析/渲染等前置步骤失败)— 同样不静默。
+    // 外层兜底(解析/渲染等前置步骤失败)— 同样不静默;结构化 ok:false。
     const reason = (e?.message || String(e)).slice(0, 200)
     log.warn('DICOM vision analysis failed (pre-flight)', { userId, fileId, reason })
     await prisma.auditLog.create({
@@ -279,7 +313,7 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
         createdAt: new Date().toISOString(),
       },
     }).catch(() => {})
-    return `（影像分析失败：${reason} — 请重试或人工判读）`
+    return { ok: false, error: reason }
   }
 }
 function getDicomPath(userId: string, fileId: string): string | null {

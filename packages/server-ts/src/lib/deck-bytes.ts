@@ -26,7 +26,7 @@ import prisma from '../common/prisma.js'
 import { uploadsBaseDir, safeUploadPath } from './upload-path.js'
 import { parsePptx, pptxSlidesToDeck, PPTX_MIME_TYPE } from './pptx-extractor.js'
 import { writeDocVersion } from '../tools/doc-version-writer.js'
-import { SCHEMA_VERSION } from '@heurion/contracts'
+import { SCHEMA_VERSION, DECK_FILE_ID_PREFIX } from '@heurion/contracts'
 import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('deck-bytes')
@@ -34,8 +34,10 @@ const log = makeLogger('deck-bytes')
 /** 单工件体积上限（真实 deck 十几 KB~几 MB，余量给图片密集产物）。 */
 export const MAX_DECK_BYTES = 50 * 1024 * 1024
 
-/** 工件文件 id 前缀 — 存储域判别键（uploads 列表域分离同 chart_/img_ 先例）。 */
-export const DECK_FILE_ID_PREFIX = 'deck-'
+/** 工件文件 id 前缀 — 权威定义在 @heurion/contracts（storage-conventions.ts，
+ *  worker 清理 cleanup.ts 同源引用）；此处 re-export 保持既有消费方
+ *  `import { DECK_FILE_ID_PREFIX } from '.../deck-bytes.js'` 路径不变。 */
+export { DECK_FILE_ID_PREFIX }
 
 export class DeckBytesError extends Error {
   constructor(message: string, readonly status: 'not-found' | 'conflict' | 'invalid' = 'invalid') {

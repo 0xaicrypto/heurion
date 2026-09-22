@@ -7,6 +7,10 @@
 # statsReportSchema（method 判别联合）+ 一条报告负样本（缺 p_value 必须
 # 被拒绝），request 与 report 两端都有机读约束。
 #
+# 复审（覆盖缺漏）— step 4 追加：`descriptive` 与 `two_way_anova` 两个
+# 联合分支必须在 golden 中有正样本（shape 漂移在机读检查即拦，不再等
+# 运行时 safeParse）+ 各自的缺必需键负样本。
+#
 # Usage: bash scripts/check-stats-schema-alignment.sh   (repo root)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,12 +80,30 @@ for (const [name, entry] of Object.entries(golden)) {
   methods.add(r.data.method)
 }
 console.log('  ✓ ' + Object.keys(golden).length + ' 条 golden 报告全部通过（method 集合: ' + [...methods].join(', ') + '）')
+// 联合分支正覆盖：descriptive / two_way_anova 必须有 golden 正样本 —
+// 缺位即失败，防止这两个分支的形状漂移只到运行时 safeParse 才暴露。
+for (const m of ['descriptive', 'two_way_anova']) {
+  if (!methods.has(m)) { console.error('golden 缺少 method=' + m + ' 的正样本（联合分支覆盖缺漏）'); process.exit(1) }
+}
+console.log('  ✓ 联合分支覆盖: descriptive + two_way_anova 正样本在位')
 // 负样本：welch 报告缺 p_value 必须被拒绝（catches missing required keys）
 const sample = { ...Object.values(golden)[0].expected }
 const drifted = { ...sample, p_value: undefined }
 const bad = statsReportSchema.safeParse(drifted)
 if (bad.success) { console.error('报告负样本被接受（缺 p_value 未拦截）'); process.exit(1) }
 console.log('  ✓ 报告负样本（缺 p_value）被拒绝')
+// 分支级负样本：各新覆盖分支缺自己的必需键必须被拒绝（缺位时联合
+// 可能落入同 method 字面量外的宽松匹配 — 显式钉死两个分支的判别语义）。
+const descSample = Object.values(golden).find((e) => e.expected.method === 'descriptive').expected
+if (statsReportSchema.safeParse({ ...descSample, sd: undefined }).success) {
+  console.error('descriptive 负样本被接受（缺 sd 未拦截）'); process.exit(1)
+}
+console.log('  ✓ descriptive 负样本（缺 sd）被拒绝')
+const anovaSample = Object.values(golden).find((e) => e.expected.method === 'two_way_anova').expected
+if (statsReportSchema.safeParse({ ...anovaSample, report: { ...anovaSample.report, interaction: undefined } }).success) {
+  console.error('two_way_anova 负样本被接受（缺 interaction 项未拦截）'); process.exit(1)
+}
+console.log('  ✓ two_way_anova 负样本（缺 interaction）被拒绝')
 "
 
 echo "✓ 双端 schema 形状对齐通过（正向 + 负样本 + golden 报告形状）"

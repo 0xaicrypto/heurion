@@ -13,12 +13,13 @@
  *     耗尽退出」，任何其他出口先清除该标志。
  *   - `budget`：回合级预算耗尽（任一维度）— 清除轮次耗尽标志。
  *   - `writeStreak`：doc- 会话写回连败早退 — 清除轮次耗尽标志。
- * `shouldExit()` 供轮次循环 walker 后判定；`exitedByRoundCap` 供收尾
- * 的轮次上限提示判定；`exitedByBudget` 供返回值 exhaustedReason 判定。
+ * `shouldExit()` 供轮次循环 walker 后判定（仅 writeStreak 有 walker 级
+ * 消费者；budget 出口在生产路径为置位后直接 break，不经 walker 判定，
+ * 由 `exitedByBudget` 供返回值 exhaustedReason 判定 — 见 tool-loop）。
  */
 
-/** 回合退出原因（walker 后应否提前结束轮次循环）。 */
-export type TurnExitReason = 'roundCap' | 'budget' | 'writeStreak'
+/** 回合退出原因（walker 后应否提前结束轮次循环）。budget 出口为置位后直接 break，不经此判定。 */
+export type TurnExitReason = 'roundCap' | 'writeStreak'
 
 export interface TurnStateSnapshot {
   toolRound: number
@@ -114,9 +115,13 @@ export class TurnState {
     this.exitedByRoundCapFlag = false
   }
 
-  /** walker 后应否提前结束轮次循环（null = 继续/自然结束）。 */
+  /**
+   * walker 后应否提前结束轮次循环（null = 继续/自然结束）。
+   * 复审（去死代码）：budget 出口在生产路径全部为 exitByBudget() 置位后
+   * 直接 break（#1019 轮前检查 / #1026 reasoning 熔断两处），不经 walker
+   * 判定 — 本方法只承载 writeStreak（#978）。
+   */
   shouldExit(): TurnExitReason | null {
-    if (this.exitedByBudgetFlag) return 'budget'
     if (this.writeFailStreakExitFlag) return 'writeStreak'
     return null
   }

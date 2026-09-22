@@ -9,23 +9,27 @@
  *    Doc.deckArtifactId / FigureRender 行引用 → 绝不按"引用"删,只按 TTL 删;
  *  - 仅删除 worker 自有命名(<uuid>_<fileName>)且 mtime 超过 TTL 的文件,
  *    陌生文件(人工放置/未来格式)一律跳过;
- *  - deck- 前缀默认保护 — deck 工件 id(server-ts deck-bytes.ts
- *    DECK_FILE_ID_PREFIX)被 Doc.deckArtifactId 永久引用,可能数月后仍被
- *    读取;figure_/preview_ 类产物可由同输入重渲染再生 → 可清理;
+ *  - deck- 前缀默认保护 — deck 工件 id 被 Doc.deckArtifactId 永久引用,
+ *    可能数月后仍被读取;前缀常量 DECK_FILE_ID_PREFIX 权威定义在
+ *    @heurion/contracts(storage-conventions.ts,server-ts deck-bytes.ts 同源
+ *    re-export),本文件 import 引用而非硬编码 → server 改前缀时保护自动跟随;
+ *    figure_/preview_ 类产物可由同输入重渲染再生 → 可清理;
  *  - 保护前缀可用 WORKER_ARTIFACT_PROTECTED_PREFIXES 覆盖(逗号分隔)。
  *  - S3 镜像走同一 TTL:仅清理 renders/ 与 previews/ 前缀下的过期对象。
  */
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { readdir, readFile, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import {
   ListObjectsV2Command,
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3'
-import { workerDataDir, loadJsonl } from './data-dir.js'
+import { DECK_FILE_ID_PREFIX } from '@heurion/contracts'
+import { workerDataDir } from './data-dir.js'
 import { getS3 } from './storage.js'
 
 const DEFAULT_TTL_DAYS = 30
-export const DEFAULT_PROTECTED_PREFIXES = ['deck-']
+/** deck- 前缀取 contracts 权威常量(跨包单源,server 改前缀 worker 自动跟随)。 */
+export const DEFAULT_PROTECTED_PREFIXES = [DECK_FILE_ID_PREFIX]
 const DEFAULT_S3_PREFIXES = ['renders', 'previews']
 
 /** saveFile 的本地命名:<uuid>_<fileName>。非此形状的文件不归 worker 管。 */
@@ -78,31 +82,45 @@ interface LocalFileManifestEntry {
   mimeType: string
 }
 
-/** #1108: 清单同步剪枝 — 被删文件的 local-files.jsonl 条目一并移除,
- *  否则清单只增不减(重载时靠 existsSync 剔除是软防御,这里硬清理)。 */
-function pruneManifest(dataDir: string, deletedPaths: Set<string>): void {
+/** #1108: 清单剪枝 — 被删文件的 local-files.jsonl 条目一并移除,
+ *  否则清单只增不减(重载时靠存在性检查剔除是软防御,这里硬清理)。
+ *  fs/promises 异步实现;逐行解析语义与 data-dir.ts loadJsonl 相同
+ *  (跳过空行/损坏行,文件不存在视为空清单)。 */
+async function pruneManifest(dataDir: string, deletedPaths: Set<string>): Promise<void> {
   if (deletedPaths.size === 0) return
   const manifestPath = join(dataDir, 'local-files.jsonl')
-  if (!existsSync(manifestPath)) return
-  const entries = loadJsonl<LocalFileManifestEntry>(manifestPath)
+  let raw: string
+  try {
+    raw = await readFile(manifestPath, 'utf-8')
+  } catch {
+    return
+  }
+  const entries: LocalFileManifestEntry[] = []
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      entries.push(JSON.parse(line) as LocalFileManifestEntry)
+    } catch { /* skip corrupted line */ }
+  }
   const kept = entries.filter((e) => !e.path || !deletedPaths.has(e.path))
   if (kept.length === entries.length) return
   const lines = kept
     .map((e) => JSON.stringify({ fileId: e.fileId, path: e.path, fileName: e.fileName, mimeType: e.mimeType }))
     .join('\n')
-  writeFileSync(manifestPath, lines ? lines + '\n' : '', 'utf-8')
+  await writeFile(manifestPath, lines ? lines + '\n' : '', 'utf-8')
 }
 
 /**
  * 磁盘 TTL 清理(fs 侧,可测)。opts.ttlMs 缺省读 env;opts.now 注入固定
- * 时钟供测试;opts.dataDir 覆盖 worker 数据目录。
+ * 时钟供测试;opts.dataDir 覆盖 worker 数据目录。fs/promises 异步实现 —
+ * 同步 readdir/stat/unlink 会在启动 + 每 24h 各阻塞事件循环一次。
  */
-export function cleanupArtifacts(opts: {
+export async function cleanupArtifacts(opts: {
   ttlMs?: number
   protectedPrefixes?: string[]
   now?: number
   dataDir?: string
-} = {}): CleanupSummary {
+} = {}): Promise<CleanupSummary> {
   const now = opts.now ?? Date.now()
   const ttlMs = opts.ttlMs ?? resolveTtlMs()
   const protectedPrefixes = opts.protectedPrefixes ?? resolveProtectedPrefixes()
@@ -111,15 +129,21 @@ export function cleanupArtifacts(opts: {
 
   const dataDir = opts.dataDir ?? workerDataDir()
   const outputDir = join(dataDir, 'output')
-  if (!existsSync(outputDir)) return summary
+  let names: string[]
+  try {
+    names = await readdir(outputDir)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return summary
+    throw err
+  }
 
   const cutoff = now - ttlMs
   const deletedPaths = new Set<string>()
-  for (const name of readdirSync(outputDir)) {
+  for (const name of names) {
     const full = join(outputDir, name)
-    let st: ReturnType<typeof statSync>
+    let st: Awaited<ReturnType<typeof stat>>
     try {
-      st = statSync(full)
+      st = await stat(full)
     } catch {
       summary.errors++
       continue
@@ -138,7 +162,7 @@ export function cleanupArtifacts(opts: {
     }
     if (st.mtimeMs >= cutoff) continue
     try {
-      unlinkSync(full)
+      await unlink(full)
       summary.deleted++
       summary.bytes += st.size
       deletedPaths.add(full)
@@ -146,13 +170,15 @@ export function cleanupArtifacts(opts: {
       summary.errors++
     }
   }
-  pruneManifest(dataDir, deletedPaths)
+  await pruneManifest(dataDir, deletedPaths)
   return summary
 }
 
 /**
  * S3 镜像同 TTL 清理。仅扫 renders/ 与 previews/ 前缀(deck 工件不经
  * worker 的 S3 通道落库,无需保护清单覆盖 S3 侧);未配置 S3 → 返回 null。
+ * 部分失败(响应内 Errors)不计入 deleted,逐条记 key+message 后以 partial
+ * 计入 errors。
  */
 export async function cleanupS3Artifacts(opts: {
   ttlMs?: number
@@ -194,11 +220,23 @@ export async function cleanupS3Artifacts(opts: {
       for (let i = 0; i < expired.length; i += 1000) {
         const batch = expired.slice(i, i + 1000)
         try {
-          await handle.client.send(new DeleteObjectsCommand({
+          const res = await handle.client.send(new DeleteObjectsCommand({
             Bucket: handle.bucket,
             Delete: { Objects: batch.map((o) => ({ Key: o.Key! })) },
           }))
-          deleted += batch.length
+          // 不抛 ≠ 全成 — DeleteObjects 可在响应内携带 per-object Errors
+          // (如个别 key AccessDenied)。只把真正删除的 key 计入 deleted;
+          // 失败逐条记录(key + message),以 partial 计入 errors,不整批
+          // 虚报成功、也不因个别失败崩溃。
+          const failed = res.Errors ?? []
+          deleted += Math.max(batch.length - failed.length, 0)
+          errors += failed.length
+          for (const e of failed) {
+            logCleanup(
+              `s3 delete failed: key=${e.Key} code=${e.Code ?? 'unknown'} ` +
+              `message=${(e.Message ?? '').slice(0, 200)}`,
+            )
+          }
         } catch {
           errors += batch.length
         }
@@ -219,7 +257,7 @@ export async function runArtifactCleanup(opts: {
   protectedPrefixes?: string[]
   now?: number
 } = {}): Promise<void> {
-  const summary = cleanupArtifacts(opts)
+  const summary = await cleanupArtifacts(opts)
   logCleanup(
     `disk: deleted=${summary.deleted} bytes=${summary.bytes} ` +
     `keptProtected=${summary.keptProtected} skippedForeign=${summary.skippedForeign} errors=${summary.errors}`,

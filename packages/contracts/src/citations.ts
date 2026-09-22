@@ -54,26 +54,35 @@ export type DocCitationWire = Omit<DocCitation, 'docId' | 'authors' | 'pmid' | '
 export function serializeDocCitationWire(
   citation: Omit<DocCitation, 'docId'> & { docId?: string; createdAt?: string },
 ): DocCitationWire {
-  let authors: string[] = []
-  try {
-    const parsed: unknown = JSON.parse(citation.authors || '[]')
-    if (Array.isArray(parsed)) authors = parsed.map(String)
-  } catch {
-    // 容错：坏 JSON 视为空作者列表
-  }
   return {
     id: citation.id,
     docId: citation.docId,
     doi: citation.doi,
     pmid: citation.pmid ?? null,
     title: citation.title,
-    authors,
+    authors: parseCitationAuthors(citation.authors),
     journal: citation.journal ?? null,
     year: citation.year ?? null,
     url: citation.url ?? null,
     source: citation.source,
     createdAt: citation.createdAt,
   }
+}
+
+/**
+ * 复审（去重）: authors JSON 列 → string[] 的唯一解析实现（坏 JSON / 非数组
+ * 容错为空数组）。serializeDocCitationWire 与 server-ts
+ * citation-store.serializeDocCitation 都必须调用本函数 — 禁止再手写
+ * JSON.parse(authors) 第二份，解析语义漂移在此单点拦截。
+ */
+export function parseCitationAuthors(authorsJson: string | null | undefined): string[] {
+  try {
+    const parsed: unknown = JSON.parse(authorsJson || '[]')
+    if (Array.isArray(parsed)) return parsed.map(String)
+  } catch {
+    // 容错：坏 JSON 视为空作者列表
+  }
+  return []
 }
 
 export function isValidDoi(doi: string): boolean {

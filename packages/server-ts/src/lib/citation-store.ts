@@ -10,7 +10,7 @@
  */
 import { createHash } from 'crypto'
 import prisma from '../common/prisma.js'
-import { isValidDoi, resolveCitationShortcodes, assignCitationNumbers } from '@heurion/contracts'
+import { isValidDoi, resolveCitationShortcodes, assignCitationNumbers, parseCitationAuthors } from '@heurion/contracts'
 import { makeLogger } from '../common/logger.js'
 import { stripLegacyReferencesSection } from './asset-content.js'
 
@@ -234,22 +234,20 @@ export async function composeExportBody(docId: string, body: string): Promise<st
   return `${stripLegacyReferencesSection(resolved).replace(/\s+$/, '')}\n\n${references}\n`
 }
 
-/** 序列化为 API 形状（authors 反序列化为数组）。 */
+/**
+ * 序列化为 API 形状（authors 反序列化为数组）。
+ * 复审（去重）: authors 解析委托 contracts.parseCitationAuthors — 坏 JSON
+ * 容错为空数组的唯一实现在 contracts 侧（与 serializeDocCitationWire 共用），
+ * 本包装只做 DB 行字段 → 回包对象的直通映射。
+ */
 export function serializeDocCitation(row: DocCitationRow) {
-  let authors: string[] = []
-  try {
-    const parsed: unknown = JSON.parse(row.authors || '[]')
-    if (Array.isArray(parsed)) authors = parsed.map(String)
-  } catch {
-    // 容错：坏 JSON 视为空作者列表
-  }
   return {
     id: row.id,
     docId: row.docId,
     doi: row.doi,
     pmid: row.pmid,
     title: row.title,
-    authors,
+    authors: parseCitationAuthors(row.authors),
     journal: row.journal,
     year: row.year,
     url: row.url,
