@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
-import { getApp, authHeader, getAuthUserId } from '../setup.js'
+import { getApp, authHeader, getAuthUserId, registerSecondUser } from '../setup.js'
 import prisma from '../../src/common/prisma.js'
 import { issueChartToken } from '../../src/common/chart-token.js'
 
@@ -129,5 +129,48 @@ describe('#771 文件预览端点（sidecar.preview_file）', () => {
     })
     expect(missing.statusCode).toBe(404)
     void prisma
+  }, 30000)
+
+  test('#1104 IDOR: preview-page 仅认 per-fileId token — Bearer 单独不再授权', async () => {
+    const app = await getApp()
+    const userA = await getAuthUserId()
+    const userB = await registerSecondUser()
+
+    // A 对自己的页面文件签 token → 200(token 是唯一授权凭证)。
+    mocks.fetchFile.mockResolvedValue(Buffer.from('page-a-bytes'))
+    const okA = await app.inject({
+      method: 'GET',
+      url: `/api/v1/files/preview-page/worker-page-a?token=${issueChartToken('worker-page-a', userA)}`,
+    })
+    expect(okA.statusCode).toBe(200)
+
+    // 越权核心断言:user B 带 Bearer(登录态有效)但无 token → 401,拿不到 A 的页。
+    const bearerOnly = await app.inject({
+      method: 'GET',
+      url: '/api/v1/files/preview-page/worker-page-a',
+      headers: { authorization: `Bearer ${userB.token}` },
+    })
+    expect(bearerOnly.statusCode).toBe(401)
+
+    // token 与 fileId 绑定:B 对自己 fileId 签的 token 用在 A 的 fileId 上 → HMAC 不匹配 401。
+    const mismatch = await app.inject({
+      method: 'GET',
+      url: `/api/v1/files/preview-page/worker-page-a?token=${issueChartToken('worker-page-b', userB.userId)}`,
+    })
+    expect(mismatch.statusCode).toBe(401)
+
+    // B 用自己文件的合法 token → 200。
+    mocks.fetchFile.mockResolvedValue(Buffer.from('page-b-bytes'))
+    const okB = await app.inject({
+      method: 'GET',
+      url: `/api/v1/files/preview-page/worker-page-b?token=${issueChartToken('worker-page-b', userB.userId)}`,
+    })
+    expect(okB.statusCode).toBe(200)
+
+    // 坏 token → 401。
+    const bad = await app.inject({
+      method: 'GET', url: '/api/v1/files/preview-page/worker-page-b?token=not.a.token',
+    })
+    expect(bad.statusCode).toBe(401)
   }, 30000)
 })

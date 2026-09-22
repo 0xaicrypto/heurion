@@ -1,7 +1,13 @@
 import { ApiCore, ApiError } from './core.js';
 import { parseSseStream } from '../../sse';
 import { downloadBlob } from '../../download';
-import type { PolishStreamChunk } from '@heurion/contracts';
+// 复审 #8 修复: DocCitationWire 单一真相源 — 类型定义移入 @heurion/contracts
+// （citations.ts，与 docCitationSchema 同文件），web 不再手写第二份。形状与
+// server-ts citation-store serializeDocCitation 的【实际回包】逐字段对齐：
+// camelCase docId/createdAt（复审 #9），authors 在序列化边界已从 DB 的 JSON
+// 字符串反序列化为 string[]（勿按 schema 的存储形状误标为 string）。
+import type { DocCitationWire, PolishStreamChunk } from '@heurion/contracts';
+export type { DocCitationWire };
 
 /* ────────────────── #1040 文档评论(#1039 sidecar 旁路表,不进正文)────────────────── */
 
@@ -275,21 +281,4 @@ export class WritingApi extends ApiCore {
       body: bytes as unknown as BodyInit,
     });
   }
-}
-
-// 复审 #9 修复: 字段命名与 serializeDocCitation（camelCase docId/createdAt）
-// 对齐 — 此前 snake_case 的 doc_id/created_at 无消费方也永不匹配服务端回包，
-// 一旦按时间排序/按 docId 关联会静默拿 undefined。
-export interface DocCitationWire {
-  id: string;
-  docId?: string;
-  doi: string;
-  pmid?: string | null;
-  title: string;
-  authors: string[];
-  journal?: string | null;
-  year?: number | null;
-  url?: string | null;
-  source: string;
-  createdAt?: string;
 }

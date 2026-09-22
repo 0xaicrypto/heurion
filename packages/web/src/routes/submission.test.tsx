@@ -3,6 +3,7 @@ import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { render } from '@/test/render';
 import { SubmissionWorkbench } from './submission';
 import { setPaperLink } from '@/lib/paper-link';
+import type { SubmissionDraft } from '@/lib/types';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -175,4 +176,87 @@ describe('SubmissionWorkbench (#362)', () => {
       localStorage.removeItem('nexus.paper.link');
     }
   });
+
+  // 复审 #5（覆盖竞态）回归: persist() 每次保存都产生新的 draft 对象引用，
+  // CoverTab 的回填 effect 若只 guard「当前值为空」，用户刚清空的字段会被
+  // 服务端旧值复活（后到覆盖先到）。
+  it('does not resurrect a cleared cover field when autosave produces a new draft object (复审 #5)', async () => {
+    const { api } = await import('@/lib/api');
+    vi.mocked(api.listSubmissionDrafts).mockResolvedValueOnce({
+      drafts: [makeDraft({ target_journal: 'Stale Journal', cover_letter: 'Stale letter' })],
+    });
+    // 服务端部分更新语义：persist({}) 不携带 target_journal/cover_letter 时
+    // 保留旧值 — 每次保存都返回【新对象】（新引用 + 同样旧内容）。
+    vi.mocked(api.saveSubmissionDraft).mockImplementation(async (input) => ({
+      draft: makeDraft({ article_title: input.article_title, target_journal: 'Stale Journal', cover_letter: 'Stale letter' }),
+      ok: true,
+    }));
+    try {
+      render(<SubmissionWorkbench embedded />);
+
+      const titleInput = screen.getByLabelText('Title');
+      await waitFor(() => expect(titleInput).toHaveValue('EGFR study'));
+
+      fireEvent.click(screen.getByText('Cover letter'));
+      // 正当同步路径：进入 cover tab 时从服务端草稿回填。
+      const journalInput = await screen.findByDisplayValue('Stale Journal');
+
+      // 用户清空字段（touched）→ 之后任何保存产生的新 draft 都不得覆盖回来。
+      fireEvent.change(journalInput, { target: { value: '' } });
+      expect(journalInput).toHaveValue('');
+
+      fireEvent.change(titleInput, { target: { value: 'EGFR study v2' } });
+      await waitFor(
+        () => expect(api.saveSubmissionDraft).toHaveBeenCalledWith(expect.objectContaining({ article_title: 'EGFR study v2' })),
+        { timeout: 2500 },
+      );
+      // 新 draft 对象已到达（保存已解析）— 静置一拍让 effect 跑完再断言。
+      await waitFor(() => expect(titleInput).toHaveValue('EGFR study v2'));
+      expect(screen.getByPlaceholderText('Target journal (optional)')).toHaveValue('');
+    } finally {
+      vi.mocked(api.saveSubmissionDraft).mockReset();
+      vi.mocked(api.saveSubmissionDraft).mockResolvedValue({ draft: makeDraft(), ok: true });
+    }
+  });
+
+  // 正当场景守护：用户未触碰 cover 字段时，服务端生成/更新的草稿仍会回填
+  // （draft 引用变化 → effect 同步空字段）。
+  it('still syncs untouched cover fields from a newly persisted server draft (复审 #5 legit case)', async () => {
+    const { api } = await import('@/lib/api');
+    // 服务端在保存时「生成」了 cover letter（autosave 不携带 cover_letter，
+    // 回包携带 — 模拟服务端侧内容更新）。
+    vi.mocked(api.saveSubmissionDraft).mockImplementation(async (input) => ({
+      draft: makeDraft({ article_title: input.article_title, cover_letter: 'Server-generated letter' }),
+      ok: true,
+    }));
+    try {
+      render(<SubmissionWorkbench embedded />);
+
+      // 先切到 cover tab（此时 draft 为 null，字段为空且未被触碰），
+      // 再改标题触发 autosave — 新 draft 到达后应同步回填空字段。
+      fireEvent.click(screen.getByText('Cover letter'));
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'EGFR study' } });
+
+      await waitFor(
+        () => expect(api.saveSubmissionDraft).toHaveBeenCalled(),
+        { timeout: 2500 },
+      );
+      expect(await screen.findByDisplayValue('Server-generated letter')).toBeTruthy();
+    } finally {
+      vi.mocked(api.saveSubmissionDraft).mockReset();
+      vi.mocked(api.saveSubmissionDraft).mockResolvedValue({ draft: makeDraft(), ok: true });
+    }
+  });
 });
+
+function makeDraft(patch: Partial<SubmissionDraft> = {}): SubmissionDraft {
+  return {
+    id: 'd1',
+    article_title: 'EGFR study',
+    authors: [],
+    status: 'draft',
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: '2026-09-01T00:00:00Z',
+    ...patch,
+  };
+}

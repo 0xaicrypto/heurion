@@ -69,7 +69,9 @@ Enforcement so far (manual greps, #666/#672):
   evolution→chat/memorization/practitioner,
   external→plugins/execution, figures→execution (#820 学术渲染编排),
   files→ingestion/knowledge/execution/patients (#913: DICOM 快扫, 动态 import),
-  ingestion→medical-records,
+  ingestion→medical-records/research (#1104: research 为 protocol.analyzer
+  复用 protocol-extractor 的规则提取 — analyzers/ 子目录 `../../` 边,
+  arch-layers 正则修复后浮出并显式申报),
   medical-records→approvals/research (#913: 病历入库自动筛查入队, 动态 import),
   memorization→chat, patients→chat/research (#913: 患者入库自动筛查入队,
   动态 import),

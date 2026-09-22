@@ -12,14 +12,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { NextBestActions } from '@/components/NextBestActions';
 import type { Summary } from '@/lib/types';
-import { KB_SOURCE_TYPES, type KbSourceType } from '@heurion/contracts'; // #744/#750 single source of truth
+import { KB_SOURCE_TYPES, type FilePipelineStage, type KbFact, type KbSourceType } from '@heurion/contracts'; // #744/#750 + 复审#8 single source of truth
 import { BookOpen, Brain, Lightbulb, Wrench, AlertTriangle, RotateCcw, Check, Clock, FileText, Trash2, Edit3, User, Stethoscope, FlaskConical, Globe, X, ChevronLeft, ChevronRight, GitGraph, Download, Image as ImageIcon } from 'lucide-react';
 
-interface Fact {
-  id: string; category: string; importance: number; content: string;
-  count: number; sourceType?: string; patientHash?: string; studyId?: string;
-  createdAt: number; updatedAt: number; lastSeenAt: number;
-}
+// 复审 #8 修复: Fact 行形状收敛到 @heurion/contracts KbFact（server facts
+// 路由序列化形状的单一契约），本地 interface 删除 — 此前与服务端序列化
+// 无关联、手写第二份。
+type Fact = KbFact;
 interface Gap {
   id: string; content: string; status: 'open' | 'answered' | 'ignored'; source: string; createdAt: string; updatedAt: string; answerText?: string;
 }
@@ -33,9 +32,9 @@ interface UploadedFile {
 }
 
 // #762: 文件管线状态(#747 FilePipelineJob)— Files 卡可见"为什么搜不到"。
-type PipelineStage = 'queued' | 'extracted' | 'embedded' | 'proposed' | 'ingested' | 'failed' | 'skipped';
-// #792: badge 文案走 i18n(key),cls 保留模块级。
-const PIPELINE_BADGE: Record<PipelineStage, { key: string; cls: string }> = {
+// 复审 #8 修复: 阶段枚举收敛到 @heurion/contracts FilePipelineStage（服务端
+// file-pipeline.service 同源），本地重复的 union 类型删除。
+const PIPELINE_BADGE: Record<FilePipelineStage, { key: string; cls: string }> = {
   queued: { key: 'kb.pipelineQueued', cls: 'bg-surface-muted text-text-secondary' },
   extracted: { key: 'kb.pipelineExtracted', cls: 'bg-surface-muted text-text-secondary' },
   embedded: { key: 'kb.pipelineEmbedded', cls: 'bg-success/10 text-success' },
@@ -91,7 +90,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const [tools, setTools] = useState<Tool[]>([]);
   const [files, setFiles] = useState<UploadedFile[]>([]);
   // #762: fileId → pipeline stage,Files 卡渲染状态徽章。
-  const [pipelineStages, setPipelineStages] = useState<Record<string, PipelineStage>>({});
+  const [pipelineStages, setPipelineStages] = useState<Record<string, FilePipelineStage>>({});
   // #811: 图库 — AI 生成产物(chart/scene/img)集中管理,支持预览/重下载/删除。
   const [charts, setCharts] = useState<Array<{ file_id: string; url: string; title: string; tool: string; size_bytes: number; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -150,7 +149,7 @@ export function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
       api.listFiles().then(r => setFiles(r.files)).catch(recordLoadError(t('kb.loadFiles', '文件列表加载失败'))),
       // #920: 图库/管线状态此前 .catch(() => {}) 静默吞错 — 统一走 recordLoadError。
       api.listGeneratedCharts().then(r => setCharts(r.charts)).catch(recordLoadError(t('kb.loadCharts', '图库加载失败'))),
-      api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as PipelineStage])))).catch(recordLoadError(t('kb.loadPipeline', '文件管线状态加载失败'))),
+      api.getPipelineJobs().then(r => setPipelineStages(Object.fromEntries(r.jobs.map(j => [j.fileId, j.stage as FilePipelineStage])))).catch(recordLoadError(t('kb.loadPipeline', '文件管线状态加载失败'))),
     ]).finally(() => setLoading(false));
   }, [t, recordLoadError]);
 

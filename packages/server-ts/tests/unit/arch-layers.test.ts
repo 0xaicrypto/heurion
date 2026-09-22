@@ -27,7 +27,7 @@ const peerEdges: Record<string, string[]> = {
   chat: ['knowledge', 'plugins', 'evolution', 'patients', 'execution', 'skills', 'figures'], // #913: skills 为会话内技能激活/遵循度/捕捉建议(动态 import);#939: figures 为 figure 渲染管线 port 注入(动态 import)
   evolution: ['memorization', 'practitioner', 'chat'],
   files: ['ingestion', 'knowledge', 'execution', 'patients'], // #913: patients 为 DICOM 快扫(动态 import)
-  ingestion: ['medical-records'],
+  ingestion: ['medical-records', 'research'], // #1104: research 为 protocol.analyzer 复用 protocol-extractor(analyzers/ 子目录 ../../ 边,regex 修复后浮出)
   'medical-records': ['approvals', 'research'], // #913: research 为病历入库自动筛查入队(动态 import)
   research: ['knowledge'],
   calendar: ['research'],
@@ -58,22 +58,48 @@ function listModuleFiles(): string[] {
  * #913 — 跨模块 import 提取:静态 `from '../X/'` 与动态 `import('../X/')`
  * 同时覆盖(此前正则只匹配静态形式,post-turn-pipeline 等动态编排边全部
  * 漏报)。两个 regex 导出供断言样例直接验证行为。
+ *
+ * #1104 — 嵌套深度盲区:此前只匹配一级 `../X/`,子目录文件(如
+ * ingestion/analyzers/protocol.analyzer.ts)的 `../../X/` 全部漏检。
+ * `(?:\.\.\/)+` 覆盖任意级数;捕获组 1 = `../` 前缀、组 2 = 最后一段模块
+ * 名,落点用真实路径解析(见 resolveImportedSegment):
+ *   - modules/X/ 子文件 `../../research/` → modules/research(✓ peer)
+ *   - `../../evolution/stores`(shared 文件)→ src/evolution(顶层,非 peer)
+ *   - `from '../..'`(父父目录自身,无模块段)不命中 — 需要 `[a-z-]+/` 段
  */
-export const STATIC_FROM_RE = /from\s+['"]\.\.\/([a-z-]+)\//g
-export const DYNAMIC_IMPORT_RE = /import\(\s*['"]\.\.\/([a-z-]+)\//g
+export const STATIC_FROM_RE = /from\s+['"]((?:\.\.\/)+)([a-z-]+)\//g
+export const DYNAMIC_IMPORT_RE = /import\(\s*['"]((?:\.\.\/)+)([a-z-]+)\//g
 
-function crossModuleImports(src: string): Array<{ mod: string; target: string }> {
-  const hits: Array<{ mod: string; target: string }> = []
+/** src/ 根(leafScan 判 src 级目录用)。 */
+const SRC_DIR = path.resolve(MODULES_DIR, '..')
+
+/**
+ * 解析 regex 命中的 (前缀+模块段) → import 真实落点相对 root 的首段目录。
+ * 落点不在 root 下(如顶层 common/、src/evolution/)返回 null。
+ * modules peer 扫描用 root=MODULES_DIR;leaf 反向依赖扫描用 root=SRC_DIR。
+ */
+function resolveImportedSegment(file: string, m: RegExpMatchArray, root: string): string | null {
+  const targetDir = path.resolve(path.dirname(file), `${m[1]}${m[2]}`)
+  const rel = path.relative(root, targetDir)
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null
+  return rel.split(path.sep)[0]
+}
+
+function crossModuleImports(file: string, src: string): string[] {
+  const hits: string[] = []
   for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
-    for (const m of src.matchAll(re)) hits.push({ mod: m[1], target: m[1] })
+    for (const m of src.matchAll(re)) {
+      const mod = resolveImportedSegment(file, m, MODULES_DIR)
+      if (mod) hits.push(mod)
+    }
   }
   return hits
 }
 
 /** 主体扫描用:单文件全部跨模块目标(静态+动态,排除 shared/同层)。 */
-function crossModuleTargets(src: string, from: string): Set<string> {
+function crossModuleTargets(file: string, src: string, from: string): Set<string> {
   const targets = new Set<string>()
-  for (const { mod } of crossModuleImports(src)) {
+  for (const mod of crossModuleImports(file, src)) {
     if (mod === 'shared' || mod === from) continue
     targets.add(mod)
   }
@@ -82,22 +108,44 @@ function crossModuleTargets(src: string, from: string): Set<string> {
 
 describe('#679 模块分层规则', () => {
   test('#913 动态 import 检出:import(../X/) 与 from ../X/ 同等可见(盲区回归锁)', () => {
+    // #1104: 样例以 modules/chat/sample.ts 的位置解析(../../research → modules/research)。
+    const sampleFile = path.join(MODULES_DIR, 'chat', 'sample.ts')
     const sample = [
       "import { x } from '../knowledge/citation-audit.js'",
       "const { recordFollowThrough } = await import('../skills/follow-through.js')",
       "void import( '../research/auto-screen.service.js' )",
       "import y from '../shared/user-context.js'", // shared 不计入
       "import z from './sibling.js'", // 同层不计入
+      // #1104: 一级以上 ../ 前缀(analyzers/ 子目录 → 兄弟模块)同样检出
+      "import { extractRulesFromProtocol } from '../../research/protocol-extractor.js'",
+      "import w from '../..'", // 无模块段(父父目录自身)不命中
     ].join('\n')
-    const targets = crossModuleTargets(sample, 'chat')
+    const targets = crossModuleTargets(sampleFile, sample, 'chat')
     expect(targets.has('knowledge')).toBe(true)
     expect(targets.has('skills')).toBe(true)
     expect(targets.has('research')).toBe(true)
     expect(targets.has('shared')).toBe(false)
     expect(targets.size).toBe(3)
     // regex 常量本身可独立复用(ARCHITECTURE.md 同步登记的机器可执行版)
-    expect([...sample.matchAll(DYNAMIC_IMPORT_RE)].map((m) => m[1])).toEqual(['skills', 'research'])
-    expect([...sample.matchAll(STATIC_FROM_RE)].map((m) => m[1])).toEqual(['knowledge', 'shared'])
+    // 组 1 = ../ 前缀、组 2 = 最后一段模块名。
+    expect([...sample.matchAll(DYNAMIC_IMPORT_RE)].map((m) => m[2])).toEqual(['skills', 'research'])
+    expect([...sample.matchAll(STATIC_FROM_RE)].map((m) => m[2])).toEqual(['knowledge', 'shared', 'research'])
+  })
+
+  test('#1104 落点解析:../../ 前缀按文件真实目录解析(顶层目录不误报为 peer)', () => {
+    // depth-1 文件:../evolution → modules/evolution(peer);../../evolution → src/evolution(顶层,非 peer)
+    const chatFile = path.join(MODULES_DIR, 'chat', 'sample.ts')
+    const hits1 = [...'from \'../evolution/stores.js\''.matchAll(STATIC_FROM_RE)].map((m) => resolveImportedSegment(chatFile, m, MODULES_DIR))
+    expect(hits1).toEqual(['evolution'])
+    const hits2 = [...'import(\'../../evolution/trajectory.js\')'.matchAll(DYNAMIC_IMPORT_RE)].map((m) => resolveImportedSegment(chatFile, m, MODULES_DIR))
+    expect(hits2).toEqual([null]) // src/evolution 顶层 — 不计 peer
+    // depth-2 文件(analyzers/):../../research → modules/research(peer,此前盲区)
+    const nestedFile = path.join(MODULES_DIR, 'ingestion', 'analyzers', 'sample.ts')
+    const hits3 = [...'from \'../../research/protocol-extractor.js\''.matchAll(STATIC_FROM_RE)].map((m) => resolveImportedSegment(nestedFile, m, MODULES_DIR))
+    expect(hits3).toEqual(['research'])
+    // 子目录文件 ../sibling → 本模块内,不计跨模块
+    const hits4 = [...'from \'../ingestion.service.js\''.matchAll(STATIC_FROM_RE)]
+    expect(hits4).toEqual([]) // 无目录段 — regex 不命中
   })
 
   test('peer 跨模块 import 必须在 peerEdges 例外表内(静态+动态,#913)', () => {
@@ -107,7 +155,7 @@ describe('#679 模块分层规则', () => {
       const from = rel.split(path.sep)[0]
       if (from === 'shared') continue
       const src = fs.readFileSync(file, 'utf-8')
-      for (const to of crossModuleTargets(src, from)) {
+      for (const to of crossModuleTargets(file, src, from)) {
         if (!(peerEdges[from] || []).includes(to)) {
           offenders.push(`${from} -> ${to} (${rel})`)
         }
@@ -122,11 +170,14 @@ describe('#679 模块分层规则', () => {
     const offenders: string[] = []
     for (const f of fs.readdirSync(sharedDir)) {
       if (!f.endsWith('.ts')) continue
-      const src = fs.readFileSync(path.join(sharedDir, f), 'utf-8')
-      // #913: shared 同样覆盖动态 import 盲区。
+      const file = path.join(sharedDir, f)
+      const src = fs.readFileSync(file, 'utf-8')
+      // #913: shared 同样覆盖动态 import 盲区;#1104: 落点真实解析 —
+      // `../../evolution/stores`(src 顶层)不计为 peer。
       for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
         for (const m of src.matchAll(re)) {
-          if (!allowed.has(m[1])) offenders.push(`shared/${f} -> ${m[1]}`)
+          const mod = resolveImportedSegment(file, m, MODULES_DIR)
+          if (mod && !allowed.has(mod)) offenders.push(`shared/${f} -> ${mod}`)
         }
       }
     }
@@ -160,9 +211,12 @@ describe('#679 模块分层规则', () => {
         else if (e.name.endsWith('.ts')) {
           const src = fs.readFileSync(p, 'utf-8')
           const rel = path.relative(path.resolve(__dirname, '../../src'), p)
+          // #1104: 落点真实解析 — 嵌套文件的 ../../modules/ 也会被检出,
+          // 顶层 common/memory 等目录不误报。
           for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
             for (const m of src.matchAll(re)) {
-              if (forbidden.has(m[1])) out.push(`${rel} -> ${m[1]}/`)
+              const seg = resolveImportedSegment(p, m, SRC_DIR)
+              if (seg && forbidden.has(seg)) out.push(`${rel} -> ${m[2]}/`)
             }
           }
         }

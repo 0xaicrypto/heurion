@@ -498,10 +498,14 @@ app.get<{ Params: FileIdParams; Querystring: { token?: string } }>('/api/v1/file
     return reply.status(504).send({ error: '预览超时，请稍后重试或下载查看' })
   })
 
+  // #fix(IDOR): preview-page 仅接受 per-fileId 签名 token（chart token 绑定
+  // fileId+owner）。此前 `Bearer || token` 双轨 — 任何登录用户拿到别人的
+  // fileId 即可拉取其渲染页（worker 存储无 tenant 隔离，#928）。Bearer 单独
+  // 不再授权：无 token / token 失效 → 401。
   app.get<{ Params: FileIdParams; Querystring: { token?: string } }>('/api/v1/files/preview-page/:fileId', async (request, reply) => {
     const fileId = request.params.fileId
     const token = request.query.token
-    const userId = request.user?.userId || (token ? verifyChartToken(fileId, token) : null)
+    const userId = token ? verifyChartToken(fileId, token) : null
     if (!userId) return reply.status(401).send({ error: 'Unauthorized' })
     const plane = createExecutionPlaneService()
     const bytes = await plane.fetchFile(fileId)

@@ -1,7 +1,10 @@
 import fs from 'fs'
 import { safeUploadPath } from '../../lib/upload-path.js'
-import { resolveDatabaseUrl } from '../../common/prisma.js'
+import prisma from '../../common/prisma.js'
+import { makeLogger } from '../../common/logger.js'
 import zlib from 'zlib'
+
+const log = makeLogger('patients.dicom-scan')
 
 let dicomParser: any = null
 try {
@@ -192,42 +195,91 @@ export async function analyzeWithGeminiVision(userId: string, fileId: string): P
 
     // Get Gemini API key from DB
     // #569-fix: 裸 PrismaClient 用默认连接池(无 busy_timeout)并发写 → SQLITE_BUSY,
-    // 生产反复报 "Error: SQLite database error"。走 resolveDatabaseUrl(单连接) +
-    // busy_timeout,与主连接池同策略。
-    const { PrismaClient } = require('@prisma/client')
-    const prisma = new PrismaClient({
-      datasources: { db: { url: resolveDatabaseUrl(process.env.DATABASE_URL || 'file:./nexus_server.db') } },
-    })
-    await prisma.$queryRawUnsafe('PRAGMA busy_timeout=10000').catch(() => {})
+    // 生产反复报 "Error: SQLite database error"。改用 common/prisma 单例
+    // (resolveDatabaseUrl 单连接 + busy_timeout 策略已内置)— 此前每次调用
+    // 各建一个引擎实例再 $disconnect,连接泄漏 + 锁竞争。
     const setting = await prisma.userSetting.findUnique({
       where: { userId_key: { userId, key: 'gemini_api_key' } },
+    }).catch((err: Error) => {
+      log.warn('gemini_api_key lookup failed', { reason: err.message.slice(0, 120) })
+      return null
     })
-    await prisma.$disconnect()
     const apiKey = setting?.value || process.env.GEMINI_API_KEY || ''
 
     if (!apiKey || apiKey.length < 10) {
       return 'No API key configured; vision analysis skipped.'
     }
 
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: 'Analyze this chest CT image. List any abnormalities, nodules, masses, or findings in Chinese. Keep it concise (3-5 bullet points).' },
-              { inlineData: { mimeType: 'image/png', data: base64 } },
-            ],
-          }],
-        }),
+    // #fix(PHI 出境审计): DICOM 渲染图(可能含患者信息)出境到 Gemini —
+    // 每次调用落一条 AuditLog(attempt),完成后同条 reason 补 outcome。
+    let outcome = 'ok'
+    let text = ''
+    try {
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: 'Analyze this chest CT image. List any abnormalities, nodules, masses, or findings in Chinese. Keep it concise (3-5 bullet points).' },
+                { inlineData: { mimeType: 'image/png', data: base64 } },
+              ],
+            }],
+          }),
+        },
+      )
+      const data = await resp.json()
+      text = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+      outcome = resp.ok ? 'ok' : `http_${resp.status}`
+      if (!text) outcome = 'empty_response'
+    } catch (e: any) {
+      // #fix: 此前 `return ''` 静默吞错 — 前端把「无 AI 分析」当「无发现」,
+      // 临床风险。改为显式标记 + log.warn,调用方(quick-scan)把该文本按
+      // ai_analysis 呈现,用户可见失败原因而非空白。
+      const reason = (e?.message || String(e)).slice(0, 200)
+      outcome = `error:${e?.constructor?.name || 'Error'}`
+      log.warn('Gemini vision analysis failed', { userId, fileId, reason })
+      await prisma.auditLog.create({
+        data: {
+          actor: userId,
+          action: 'phi.vision_analysis',
+          targetType: 'DicomFile',
+          targetId: fileId,
+          reason: `gemini vision PHI outbound; outcome=${outcome}; error=${reason}`,
+          createdAt: new Date().toISOString(),
+        },
+      }).catch(() => {})
+      return `（影像分析失败：${reason} — 请重试或人工判读）`
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        actor: userId,
+        action: 'phi.vision_analysis',
+        targetType: 'DicomFile',
+        targetId: fileId,
+        reason: `gemini vision PHI outbound; outcome=${outcome}`,
+        createdAt: new Date().toISOString(),
       },
-    )
-    const data = await resp.json()
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+    }).catch((err: Error) => log.warn('audit log write failed', { reason: err.message.slice(0, 120) }))
+    return text
   } catch (e: any) {
-    return ''
+    // 外层兜底(解析/渲染等前置步骤失败)— 同样不静默。
+    const reason = (e?.message || String(e)).slice(0, 200)
+    log.warn('DICOM vision analysis failed (pre-flight)', { userId, fileId, reason })
+    await prisma.auditLog.create({
+      data: {
+        actor: userId,
+        action: 'phi.vision_analysis',
+        targetType: 'DicomFile',
+        targetId: fileId,
+        reason: `gemini vision PHI outbound; outcome=error:${e?.constructor?.name || 'Error'}; error=${reason}`,
+        createdAt: new Date().toISOString(),
+      },
+    }).catch(() => {})
+    return `（影像分析失败：${reason} — 请重试或人工判读）`
   }
 }
 function getDicomPath(userId: string, fileId: string): string | null {

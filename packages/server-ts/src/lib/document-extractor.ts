@@ -476,6 +476,8 @@ export function pdfTextToMarkdown(text: string): string {
  * #fix: 导入文档专用提取 — 输出保留结构的 markdown:
  * - PDF/OCR 文本 → pdfTextToMarkdown(标题/段落恢复)
  * - DOCX → mammoth 结构化 markdown(标题/加粗/GFM 表格)
+ * - PPTX → #777/#1104: slides markdown(## 分节 + 页标记)— 此前 zip 容器
+ *   全交给 mammoth,pptx 解析失败/乱码,导入内容为空。
  * - txt/md → 原样
  */
 export async function extractDocumentMarkdownFromUpload(
@@ -507,6 +509,13 @@ export async function extractDocumentMarkdownFromUpload(
   }
 
   if (sniffed === 'application/zip' || isDocx(originalName)) {
+    // #1104: pptx 分支 — 与 extractDocumentMarkdownWithImagesFromUpload 的
+    // #777 修复对齐,zip 容器先判 pptx 再走 mammoth(docx)。
+    if (isPptx(originalName)) {
+      const parsed = parsePptx(buffer)
+      if (!parsed.ok) return `[PPTX extraction failed: ${parsed.error}]`
+      return pptxSlidesToMarkdown(parsed).slice(0, maxChars)
+    }
     return extractDocxText(buffer, maxChars)
   }
 

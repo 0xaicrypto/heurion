@@ -448,7 +448,18 @@ function CoverTab({ title, abstract, authors, draft, onSaved }: { title: string;
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // 复审 #5 修复（覆盖竞态）: persist() 是所有 tab 共享的保存路径，每次保存
+  // 都会 setDraft(res.draft) 产生【新的 draft 对象引用】→ 本 effect 以 [draft]
+  // 为依赖必然重跑。旧实现只 guard「当前值为空」，用户刚清空的字段会被
+  // 服务端旧值静默复活（后到覆盖先到）。改用 touched 标记：用户在 CoverTab
+  // 内做过任何输入后，本 effect 不再从 draft 回填（用户编辑优先）。
+  // 标记是组件实例级的 ref — 切 tab（条件渲染卸载重挂）即重置，重新挂载时
+  // 初值直接取最新 draft，因此「服务端生成/更新草稿后进入 cover tab 正常
+  // 回填」这一 effect 存在的正当场景不受影响。
+  const coverTouched = useRef(false);
+
   useEffect(() => {
+    if (coverTouched.current) return;
     if (draft?.target_journal && !journal) setJournal(draft.target_journal);
     if (draft?.cover_letter && !text) setText(draft.cover_letter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -497,7 +508,7 @@ function CoverTab({ title, abstract, authors, draft, onSaved }: { title: string;
       <div className="flex flex-wrap items-center gap-2">
         <Input
           value={journal}
-          onChange={(e) => setJournal(e.target.value)}
+          onChange={(e) => { coverTouched.current = true; setJournal(e.target.value); }}
           placeholder={t('submission.targetJournal', '目标期刊（可选）')}
           className="max-w-xs"
         />
@@ -520,7 +531,7 @@ function CoverTab({ title, abstract, authors, draft, onSaved }: { title: string;
       {text ? (
         <textarea
           value={text}
-          onChange={(e) => { setText(e.target.value); onSaved(e.target.value); }}
+          onChange={(e) => { coverTouched.current = true; setText(e.target.value); onSaved(e.target.value); }}
           rows={18}
           className="w-full rounded-lg border border-border bg-surface-elevated p-3 font-mono text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />

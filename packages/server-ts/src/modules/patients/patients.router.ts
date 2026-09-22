@@ -3,11 +3,9 @@ import { authGuard } from '../../common/auth.guard.js'
 import { registerPatientSchema } from '../shared/chat.dto.js'
 import prisma from '../../common/prisma.js'
 import crypto from 'crypto'
-import fs from 'fs'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { appendChiefComplaint, recordScanFindingsAsFacts } from './patient-record.service.js'
 import { getUserContext } from '../shared/user-context.js'
-import { uploadsBaseDir } from '../../lib/upload-path.js'
 import { makeLogger } from '../../common/logger.js'
 
 const log = makeLogger('knowledge.quick-scan')
@@ -108,25 +106,25 @@ export async function patientsRouter(app: FastifyInstance) {
     return { deleted: true, ...cascade }
   })
 
-  // ── Studies (stub) ──
+  // ── Studies ──
+  // #fix(串号): 此前直接 readdir 用户 uploads 目录 — 忽略 :patientHash,
+  // 患者A的页面能看到患者B的全部影像。改为 FileIndex 按 (userId, patientHash)
+  // 过滤;无 FileIndex 行的历史上传不列出(严格优于跨患者串号)。
   app.get('/api/v1/dicom/patients/:patientHash/studies', async (request) => {
-    // Return uploaded files as DICOM studies for this patient
-    const dir = uploadsBaseDir((request as any).user?.userId || '')
-    const files: Array<{study_id: string; modality: string; series_count: number; created_at: string}> = []
-    if (fs.existsSync(dir)) {
-      for (const f of fs.readdirSync(dir)) {
-        if (f.endsWith('.dcm')) {
-          files.push({
-            study_id: f, // Keep .dcm extension so viewer/render can find the file
-            modality: 'CT',
-            series_count: 1,
-            created_at: new Date().toISOString(),
-          })
-        }
-      }
-    }
+    const { patientHash } = request.params as any
+    const userId = (request as any).user!.userId as string
+    const rows = await prisma.fileIndex.findMany({
+      where: { userId, deletedAt: null, patientHash },
+    })
     // Frontend expects a bare array, not { studies: [...] }
-    return files
+    return rows
+      .filter((r) => r.name.toLowerCase().endsWith('.dcm') || r.mime === 'application/dicom')
+      .map((r) => ({
+        study_id: r.id, // Keep .dcm extension so viewer/render can find the file
+        modality: 'CT',
+        series_count: 1,
+        created_at: r.createdAt,
+      }))
   })
 
   // Study detail with series info for DICOM viewer

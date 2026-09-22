@@ -25,6 +25,57 @@ export const docCitationSchema = z.object({
 
 export type DocCitation = z.infer<typeof docCitationSchema>
 
+/**
+ * 复审 #8: HTTP wire 形状 — 与 server-ts citation-store.serializeDocCitation
+ * 的【实际回包】逐字段对齐（勿按 docCitationSchema 的存储形状臆测）。
+ * 与存储形状（docCitationSchema）的差异全部收敛在此单一类型，各端一律
+ * import 本类型，禁止手写第二份：
+ *  - authors: DB 列存 JSON 字符串，序列化边界已反序列化为 string[]
+ *    （坏 JSON 容错为空数组）；
+ *  - createdAt: prisma 行时间戳（schema 是用户输入形状，不含该字段）；
+ *  - 可空列（pmid/journal/year/url）在 wire 上显式 null（行值直通）；
+ *  - docId 放宽为可选：列表/徽标等消费方常只按 id 局部构造。
+ */
+export type DocCitationWire = Omit<DocCitation, 'docId' | 'authors' | 'pmid' | 'journal' | 'year' | 'url'> & {
+  docId?: string
+  authors: string[]
+  pmid?: string | null
+  journal?: string | null
+  year?: number | null
+  url?: string | null
+  createdAt?: string
+}
+
+/**
+ * 复审 #8: docCitationSchema 形状（authors 为 JSON 字符串列）→ wire 形状
+ * 的单一序列化实现 — authors 解析语义（坏 JSON 容错为空数组）与 server-ts
+ * citation-store.serializeDocCitation 保持一致。
+ */
+export function serializeDocCitationWire(
+  citation: Omit<DocCitation, 'docId'> & { docId?: string; createdAt?: string },
+): DocCitationWire {
+  let authors: string[] = []
+  try {
+    const parsed: unknown = JSON.parse(citation.authors || '[]')
+    if (Array.isArray(parsed)) authors = parsed.map(String)
+  } catch {
+    // 容错：坏 JSON 视为空作者列表
+  }
+  return {
+    id: citation.id,
+    docId: citation.docId,
+    doi: citation.doi,
+    pmid: citation.pmid ?? null,
+    title: citation.title,
+    authors,
+    journal: citation.journal ?? null,
+    year: citation.year ?? null,
+    url: citation.url ?? null,
+    source: citation.source,
+    createdAt: citation.createdAt,
+  }
+}
+
 export function isValidDoi(doi: string): boolean {
   return DOI_PATTERN.test(doi.trim())
 }

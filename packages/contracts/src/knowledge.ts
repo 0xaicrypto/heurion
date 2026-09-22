@@ -18,3 +18,22 @@ export const KB_EXTRACTABLE_EXTENSIONS = ['.txt', '.md', '.csv', '.docx', '.pdf'
 /** File pipeline stages (#747) — server owns transitions; web renders them. */
 export const FILE_PIPELINE_STAGES = ['queued', 'extracted', 'embedded', 'proposed', 'ingested', 'failed', 'skipped'] as const
 export type FilePipelineStage = (typeof FILE_PIPELINE_STAGES)[number]
+
+/**
+ * 复审 #8: Facts tab 行形状 — server facts 路由的序列化输出（camelCase，
+ * 时间戳为 epoch ms 数字）。此前 web 页面手写本地 interface，与服务端
+ * 序列化无关联；收敛为单一契约类型，web 直接 import，禁止再手写。
+ */
+export interface KbFact {
+  id: string
+  category: string
+  importance: number
+  content: string
+  count: number
+  sourceType?: string
+  patientHash?: string
+  studyId?: string
+  createdAt: number
+  updatedAt: number
+  lastSeenAt: number
+}
