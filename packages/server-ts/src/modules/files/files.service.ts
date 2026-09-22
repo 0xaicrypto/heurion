@@ -14,6 +14,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import prisma from '../../common/prisma.js'
+import { DECK_FILE_ID_PREFIX } from '@heurion/contracts'
 import { sanitizeFilename, uploadsBaseDir } from '../../lib/upload-path.js'
 import { createAndRunPipeline } from './file-pipeline.service.js'
 import { makeLogger } from '../../common/logger.js'
@@ -208,7 +209,8 @@ export async function finalizeUpload(input: FinalizeUploadInput): Promise<Finali
 export function isGeneratedFileId(fileId: string): boolean {
   // #825: fig_ — 学术渲染产物(mermaid/LaTeX SVG)纳入图库域。
   // #1101: deck- — deck pptx 工件（编辑真相源，非知识文档）不入知识库文件面。
-  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_') || fileId.startsWith('fig_') || fileId.startsWith('deck-')
+  // 复审轮 2 收敛: 'deck-' 字面量 → contracts DECK_FILE_ID_PREFIX（单一来源）。
+  return fileId.startsWith('scene_') || fileId.startsWith('chart_') || fileId.startsWith('img_') || fileId.startsWith('fig_') || fileId.startsWith(DECK_FILE_ID_PREFIX)
 }
 
 export function newFileId(filename: string): string {

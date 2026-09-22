@@ -24,7 +24,7 @@ import {
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3'
 import { DECK_FILE_ID_PREFIX } from '@heurion/contracts'
-import { workerDataDir } from './data-dir.js'
+import { parseJsonlContent, workerDataDir } from './data-dir.js'
 import { getS3 } from './storage.js'
 
 const DEFAULT_TTL_DAYS = 30
@@ -84,8 +84,8 @@ interface LocalFileManifestEntry {
 
 /** #1108: 清单剪枝 — 被删文件的 local-files.jsonl 条目一并移除,
  *  否则清单只增不减(重载时靠存在性检查剔除是软防御,这里硬清理)。
- *  fs/promises 异步实现;逐行解析语义与 data-dir.ts loadJsonl 相同
- *  (跳过空行/损坏行,文件不存在视为空清单)。 */
+ *  fs/promises 异步实现;逐行解析复用 data-dir.ts 的 parseJsonlContent
+ *  (跳过空行/损坏行 — 单一实现,复审轮 2 收敛)。 */
 async function pruneManifest(dataDir: string, deletedPaths: Set<string>): Promise<void> {
   if (deletedPaths.size === 0) return
   const manifestPath = join(dataDir, 'local-files.jsonl')
@@ -95,13 +95,7 @@ async function pruneManifest(dataDir: string, deletedPaths: Set<string>): Promis
   } catch {
     return
   }
-  const entries: LocalFileManifestEntry[] = []
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue
-    try {
-      entries.push(JSON.parse(line) as LocalFileManifestEntry)
-    } catch { /* skip corrupted line */ }
-  }
+    const entries: LocalFileManifestEntry[] = parseJsonlContent<LocalFileManifestEntry>(raw)
   const kept = entries.filter((e) => !e.path || !deletedPaths.has(e.path))
   if (kept.length === entries.length) return
   const lines = kept
@@ -252,11 +246,26 @@ function logCleanup(line: string): void {
 }
 
 /** 启动/定时统一入口:磁盘 + S3 同轮清理,汇总日志。 */
+// #1101 复审轮 2（清单读-改-写原子性）: 进程内单飞 — 并发触发（手动 +
+// 定时重叠 / 间隔短于单次耗时）会各自读到同一份旧清单、各自写回，后写
+// 覆盖先写导致已删条目复活。单 promise 链串行化（同进程排队，不丢触发）。
+let cleanupChain: Promise<void> = Promise.resolve()
+
 export async function runArtifactCleanup(opts: {
   ttlMs?: number
   protectedPrefixes?: string[]
   now?: number
 } = {}): Promise<void> {
+  const tail = cleanupChain.then(() => runArtifactCleanupInner(opts), () => runArtifactCleanupInner(opts))
+  cleanupChain = tail.catch(() => {})
+  return tail
+}
+
+async function runArtifactCleanupInner(opts: {
+  ttlMs?: number
+  protectedPrefixes?: string[]
+  now?: number
+}): Promise<void> {
   const summary = await cleanupArtifacts(opts)
   logCleanup(
     `disk: deleted=${summary.deleted} bytes=${summary.bytes} ` +

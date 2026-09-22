@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import type { MultipartFile, MultipartFields } from '@fastify/multipart'
 import { authGuard } from '../../common/auth.guard'
 import prisma from '../../common/prisma'
+import { DECK_FILE_ID_PREFIX } from '@heurion/contracts'
 import { Prisma } from '@prisma/client'
 import { getUserContext } from '../shared/user-context.js'
 import { safeUploadPath } from '../../lib/upload-path.js'
@@ -224,7 +225,7 @@ export async function filesRouter(app: FastifyInstance) {
     // #811: 域分离 — chat picker 只列用户上传,排除 AI 生成产物(chart/scene/img)。
     // #1101: deck pptx 工件同域排除（编辑真相源，非知识文档）。
     const where = { userId, deletedAt: null,
-      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }, { id: { startsWith: 'fig_' } }, { id: { startsWith: 'deck-' } }],
+      NOT: [{ id: { startsWith: 'chart_' } }, { id: { startsWith: 'scene_' } }, { id: { startsWith: 'img_' } }, { id: { startsWith: 'fig_' } }, { id: { startsWith: DECK_FILE_ID_PREFIX } }],
       ...(patientHash ? { patientHash } : {}) }
     const [rows, total] = await Promise.all([
       prisma.fileIndex.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
