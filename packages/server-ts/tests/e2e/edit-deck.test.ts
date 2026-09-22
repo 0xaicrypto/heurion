@@ -135,6 +135,23 @@ describe('#773 edit_deck 工具', () => {
     expect(refused.error).toContain('edit_deck 已退役')
     expect(refused.error).toContain('edit_deck_bytes')
 
+    // #1101 复审轮 2 — fail-closed：工件指针在场但工件文件暂不可读（fs 异常
+    // 等价模拟：把文件从盘上拿走）→ 仍然拒绝（不再有 catch{} 吞异常后走
+    // legacy 的分叉口子 — 拒绝判定只看指针）。
+    const pathMod = await import('path')
+    const { uploadsBaseDir } = await import('../../src/lib/upload-path.js')
+    const artifactPath = pathMod.join(uploadsBaseDir(userId), put.artifactId)
+    const bytesOnDisk = fs.readFileSync(artifactPath)
+    fs.rmSync(artifactPath)
+    try {
+      const refusedMissing = await new EditDeckTool({ userId, sessionId: `doc-${docId}` })
+        .execute({ action: 'update', slide_index: 1, title: '文件缺失也应拒绝', bullets: ['仍拒绝'] })
+      expect(refusedMissing.success).toBe(false)
+      expect(refusedMissing.error).toContain('edit_deck 已退役')
+    } finally {
+      fs.writeFileSync(artifactPath, bytesOnDisk)
+    }
+
     // 拒绝路径零写入 — deck 投影（putDeckArtifact 重建）未被 edit_deck 改动。
     const doc = await prisma.doc.findUnique({ where: { id: docId } })
     const deckAfter = JSON.parse(doc!.deck!)

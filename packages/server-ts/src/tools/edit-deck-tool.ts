@@ -4,7 +4,6 @@ import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSche
 import { writeDocVersion } from './doc-version-writer.js'
 import { looksLikeHandwrittenReferences, HANDWRITTEN_REFERENCES_GUIDANCE } from './citation-guard.js'
 // #1101 复审轮 1: 双写收敛 — 文档已迁移 pptx 字节工件时 edit_deck 退役。
-import { getDeckArtifact } from '../lib/deck-bytes.js'
 
 /**
  * #773 — edit_deck: deck 资产（Doc.deck）的 AI 编辑工具。
@@ -92,22 +91,19 @@ export class EditDeckTool extends BaseTool {
     // #1101 复审轮 1（双写收敛）：文档已迁移为 pptx 字节工件（DeckWire 降级为
     // 只读投影，设计 §3.1）→ edit_deck 退役，整次拒绝并引导到 edit_deck_bytes。
     // 刻意在任何参数校验/写回之前 — 不给旧路径对真相源的残余写入口。
-    try {
-      const existing = await prisma.doc.findFirst({
-        where: { id: docId, userId: this.ctx.userId },
-        select: { deckArtifactId: true },
-      })
-      if (existing?.deckArtifactId) {
-        const artifact = await getDeckArtifact(docId)
-        if (artifact) {
-          return {
-            success: false,
-            error: '该 deck 已迁移为 pptx 字节工件（富编辑），edit_deck 已退役 — 请使用 edit_deck_bytes 工具（结构化动作：set_text/set_chart_data/set_table_data/add_slide 等）',
-          }
-        }
+    // #1101 复审轮 2 修复（fail-closed）: 拒绝判定只看 Doc.deckArtifactId 指针
+    // — 不做 getDeckArtifact 的文件可读性探测（其异常曾被兜底 catch 吞掉，
+    // 把分叉口子在异常路径上重新捅开）。工件文件暂不可读时 legacy 路径同样
+    // 错误 — edit_deck_bytes 会报同样的读取错误，语义一致；查询失败原样上抛。
+    const existing = await prisma.doc.findFirst({
+      where: { id: docId, userId: this.ctx.userId },
+      select: { deckArtifactId: true },
+    })
+    if (existing?.deckArtifactId) {
+      return {
+        success: false,
+        error: '该 deck 已迁移为 pptx 字节工件（富编辑），edit_deck 已退役 — 请使用 edit_deck_bytes 工具（结构化动作：set_text/set_chart_data/set_table_data/add_slide 等）',
       }
-    } catch {
-      // 工件/指针读取异常 → 按 legacy 路径继续（既有行为兜底，不放大故障面）。
     }
     const action = String(args.action || '')
     if (!['update', 'delete', 'insert_after', 'set_layout', 'set_theme', 'move', 'insert_chart'].includes(action)) {

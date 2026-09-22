@@ -229,6 +229,37 @@ describe('#1101 putDeckArtifact（FileIndex 工件 + 投影重建 + 乐观锁）
     expect(row).not.toBeNull()
   })
 
+  test('#1101 复审轮 2 — 并发指认保护：工件被并发 doc 指认后回滚跳过删除（B 的成功不丢）', async () => {
+    const docA = await createDoc()
+    const docB = await createDoc()
+    const bytes = await serializeDeckWireToPptx(sampleDeckWire())
+
+    // A：创建工件行 R（put1 会把 docA 指到 R）。
+    const putA1 = await putDeckArtifact({ userId: USER, docId: docA, bytes })
+    expect(putA1.conflict).toBeFalsy()
+
+    // 模拟并发时序：B（相同字节）去重命中 R 并成功指认 → Doc.deckArtifactId(R)。
+    const putB = await putDeckArtifact({ userId: USER, docId: docB, bytes })
+    expect(putB.conflict).toBeFalsy()
+    await prisma.doc.update({ where: { id: docB }, data: { deckArtifactId: putB.artifactId } })
+
+    // A 的下一次保存因 baseline 被并发推进而冲突 → 走回滚。
+    await prisma.doc.update({ where: { id: docA }, data: { deck: '{"title":"并发写","slides":[]}' } })
+    const bytesA2 = await serializeDeckWireToPptx({ ...sampleDeckWire(), title: 'A2' })
+    const putA2 = await putDeckArtifact({ userId: USER, docId: docA, bytes: bytesA2, baseDeck: putA1.projection })
+    expect(putA2.conflict).toBe(true)
+
+    // 回滚后 R 仍存在（B 的指认保护生效）— B 报的成功不会变成读 null。
+    const rowR = await prisma.fileIndex.findUnique({ where: { id: putB.artifactId } })
+    expect(rowR).not.toBeNull()
+    const docBAfter = await prisma.doc.findUnique({ where: { id: docB } })
+    expect(docBAfter!.deckArtifactId).toBe(putB.artifactId)
+    // R 的字节仍完整可读。
+    const still = await getDeckArtifact(docB)
+    expect(still?.artifactId).toBe(putB.artifactId)
+    expect(still!.bytes.equals(bytes)).toBe(true)
+  })
+
   test('Fix 4/5: sha256 去重复用行 + 冲突 → 复用的既有工件绝不回滚删除', async () => {
     const docId = await createDoc()
     const bytes = await serializeDeckWireToPptx(sampleDeckWire())

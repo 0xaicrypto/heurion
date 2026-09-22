@@ -350,14 +350,29 @@ export interface PutDeckArtifactResult {
  */
 async function rollbackArtifactUpload(args: { userId: string; artifactId: string; createdHere: boolean }): Promise<void> {
   if (!args.createdHere) return
+  // #1101 复审轮 2（并发指认保护）: 删除前复查 — 任何 doc 仍把
+  // Doc.deckArtifactId 指向该工件 → 不删。并发场景：A 创建工件行 R →
+  // B（相同字节）sha256 去重命中 R 并成功指认 → A 的 writeDocVersion 因
+  // baseline 被改而冲突走回滚 → 无条件删 R 会连带删掉 B 刚指向的工件
+  // （B 报成功、读回 null）。事务内复查+删除最小化 TOCTOU 窗口（SQLite
+  // connection_limit=1 下写本就串行，复查是双保险）。
   try {
-    await prisma.fileIndex.delete({ where: { id: args.artifactId } }).catch((err: unknown) => {
-      log.warn('deck artifact rollback: file_index delete failed (orphan row left)', {
-        artifactId: args.artifactId, reason: (err as Error).message.slice(0, 120),
+    const refs = await prisma.doc.count({ where: { deckArtifactId: args.artifactId } })
+    if (refs > 0) {
+      log.warn('deck artifact rollback: skipped — artifact still referenced by concurrent doc pointer', {
+        artifactId: args.artifactId, refs,
       })
+      return
+    }
+    await prisma.$transaction(async (tx) => {
+      const c = await (tx as typeof prisma).doc.count({ where: { deckArtifactId: args.artifactId } })
+      if (c > 0) return
+      await (tx as typeof prisma).fileIndex.delete({ where: { id: args.artifactId } })
     })
-  } catch {
-    // 上面 catch 内已记日志 — 双保险，绝不让回滚抛错掩盖原始失败。
+  } catch (err) {
+    log.warn('deck artifact rollback: file_index delete failed (orphan row left)', {
+      artifactId: args.artifactId, reason: (err as Error).message.slice(0, 120),
+    })
   }
   try {
     const filepath = safeUploadPath(args.userId, args.artifactId)
