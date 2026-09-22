@@ -91,6 +91,32 @@ describe('Knowledge Gap API', () => {
     expect(fact?.content).toBe('A1')
   })
 
+  test('#高-7 rejected answer (记忆闸门) → 409 且 gap 保持 open（不得假 answered）', async () => {
+    const app = await getApp()
+    const { headers } = await freshUser()
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/v1/knowledge/gaps',
+      headers: { ...headers, 'content-type': 'application/json' },
+      payload: { content: 'Q-REJ', source: 'user' },
+    })
+    const gap = JSON.parse(create.payload)
+
+    // 工具完成通知会被记忆闸门拒绝（确定性路径，无需 embedding）。
+    const answer = await app.inject({
+      method: 'POST',
+      url: `/api/v1/knowledge/gaps/${gap.id}/answer`,
+      headers: { ...headers, 'content-type': 'application/json' },
+      payload: { answer: '已生成 report.pptx' },
+    })
+    expect(answer.statusCode).toBe(409)
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/knowledge/gaps', headers })
+    const found = JSON.parse(list.payload).gaps.find((g: any) => g.id === gap.id)
+    expect(found.status).toBe('open')
+  })
+
   test('POST /api/v1/knowledge/gaps/:id/answer requires answer', async () => {
     const app = await getApp()
     const { headers } = await freshUser()

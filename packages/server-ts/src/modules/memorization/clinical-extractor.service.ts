@@ -32,24 +32,14 @@ export async function extractClinicalEntities(
   const model = options?.model || 'deepseek-chat'
   const maxTokens = options?.maxTokens || 4000
 
-  let raw = ''
-  try {
-    raw = await deepseekChat(
-      [{ role: 'user', content: clinicalEntityExtractionPrompt(sourceText) }],
-      apiKey,
-      { model, maxTokens, temperature: 0.2 },
-    )
-  } catch (err) {
-    return {
-      raw_llm_output: `(extractor error: ${(err as Error).message})`,
-      entities: [],
-      tokensIn: Math.ceil(sourceText.length / 4),
-      tokensOut: 0,
-      latencyMs: Date.now() - t0,
-      drops: {},
-      rawCount: 0,
-    }
-  }
+  // #高-6: LLM 失败必须上抛 — 此前返回形状正常的空结果，把「抽取失败」
+  // 伪装成「这轮没有临床内容」，上游专门加的 .catch()（#928 告警）永不触发，
+  // 数据静默丢失且无重试。调用方（evolution worker / ingest 路由）负责留痕。
+  const raw = await deepseekChat(
+    [{ role: 'user', content: clinicalEntityExtractionPrompt(sourceText) }],
+    apiKey,
+    { model, maxTokens, temperature: 0.2 },
+  )
 
   const parsed = parseJsonSafe(raw)
   const entitiesRaw = Array.isArray(parsed)

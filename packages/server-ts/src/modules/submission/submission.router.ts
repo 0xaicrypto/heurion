@@ -269,17 +269,29 @@ export async function submissionRouter(app: FastifyInstance) {
     const { status, doc_id } = request.body as any
     const allowed = ['draft', 'ready', 'submitted', 'revision', 'published']
     if (!allowed.includes(status)) return reply.status(400).send({ error: `status must be one of: ${allowed.join(', ')}` })
-    // #726: 按文档隔离状态追踪。
+    // #高-8: 终态保护。不带 doc_id 时本就排除已提交草稿，但带 doc_id 的
+    // 分支此前完全没有状态过滤 — 可把已提交/已发布稿件改回 draft/ready 再
+    // 重新提交（终态保护在 doc 隔离改造时漏掉）。两条分支统一为状态机：
+    //   - published：终态，一律不可再改；
+    //   - submitted：只允许前进到 revision/published（返修/发表），
+    //     禁止回退到 draft/ready（回退重投）。
+    const userId = request.user!.userId
     const draft = doc_id
       ? await prisma.submissionDraft.findFirst({
-          where: { userId: request.user!.userId, docId: doc_id },
+          where: { userId, docId: doc_id },
           orderBy: { updatedAt: 'desc' },
         })
       : await prisma.submissionDraft.findFirst({
-          where: { userId: request.user!.userId, status: { not: 'submitted' } },
+          where: { userId, status: { notIn: ['submitted', 'published'] } },
           orderBy: { updatedAt: 'desc' },
         })
     if (!draft) return reply.status(404).send({ error: 'No draft to update' })
+    if (draft.status === 'published') {
+      return reply.status(409).send({ error: '稿件已发布（published）— 终态不可更改' })
+    }
+    if (draft.status === 'submitted' && (status === 'draft' || status === 'ready')) {
+      return reply.status(409).send({ error: `稿件已提交（submitted），不能回退为 ${status}（防止回退重投）` })
+    }
     const now = new Date().toISOString()
     const updated = await prisma.submissionDraft.update({
       where: { id: draft.id },

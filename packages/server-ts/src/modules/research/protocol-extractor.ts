@@ -54,10 +54,16 @@ export async function extractRulesFromProtocol(
     telemetryContext?: ChatOptions['telemetryContext']
     sourceJobId?: string
     extractedFrom?: string
+    /** 低优先（潜伏 IDOR）: 断言 study 归属。调用方已知用户时必须传 —
+     *  studyId 目前恒空所以不可达，接线当天若漏传即为真实越权。 */
+    userId?: string
   } = {},
 ): Promise<ProtocolRule[]> {
   const study = await prisma.researchStudy.findUnique({ where: { id: studyId } })
   if (!study) throw new Error(`Study ${studyId} not found`)
+  if (options.userId !== undefined && study.userId !== options.userId) {
+    throw new Error(`Study ${studyId} not found for user`)
+  }
 
   const prompt = `Extract structured clinical trial rules from this protocol. Return ONLY a JSON object with these keys:
 

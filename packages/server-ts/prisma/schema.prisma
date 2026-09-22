@@ -43,6 +43,7 @@ model User {
   chatTakeaways ChatTakeaway[]
   taskPlans     TaskPlan[]
   figureRenders FigureRender[]
+  clinicalReports ClinicalReport[]
   studies       ResearchStudy[]
   patients      PatientRecord[]
    knowledgeGaps KnowledgeGap[]
@@ -1061,4 +1062,36 @@ model TaskPlan {
   user User @relation(fields: [userId], references: [id])
   @@index([userId, sessionId, status])
   @@map("task_plans")
+}
+
+// #中-10: 临床报告 PDF 落库 — POST 生成必须真正持久化，GET 只回放已生成
+// 的那份；此前 GET 无论是否生成过都用空 findings 现场伪造「零发现」报告。
+// 以 (userId, patientHash) 为键，天然 owner-scoped（跨用户 GET 404）。
+// #中-13: 执行面作业归属 — 内部 /execution/jobs/:id 与 /execution/files/:fileId
+// 端点按 userId 校验（此前只查登录态）。job 入队时登记；轮询到 file_id 时补挂。
+// UUID 不可猜只是缓解，不是纵深防御。
+model ExecutionJobOwner {
+  jobId     String  @id @map("job_id")
+  userId    String  @map("user_id")
+  fileId    String? @map("file_id")
+  createdAt String  @map("created_at")
+  updatedAt String  @map("updated_at")
+
+  @@index([fileId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("execution_job_owners")
+}
+
+model ClinicalReport {
+  id          String  @id @default(cuid())
+  userId      String  @map("user_id")
+  patientHash String  @map("patient_hash")
+  pdf         Bytes
+  createdAt   String  @map("created_at")
+  updatedAt   String  @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  @@unique([userId, patientHash])
+  @@index([userId, updatedAt(sort: Desc)])
+  @@map("clinical_reports")
 }

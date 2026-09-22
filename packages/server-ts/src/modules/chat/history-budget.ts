@@ -23,7 +23,8 @@ export interface CompactionTriggers {
   patientHash?: string | null
   ctx: Awaited<ReturnType<typeof getUserContext>>
   send: (chunk: ChatStreamChunk) => void
-  /** Newest-first user/assistant history (raw event log rows). */
+  /** Oldest-first user/assistant history (EventLog.query returns
+   *  newest-first, loadHistoryBudget reverses it). */
   history: any[]
   /** Newest-first history messages under the token budget. */
   historyMessages: Array<{ role: string; content: string }>
@@ -91,8 +92,26 @@ function buildCompactionCompletedReporter(t: CompactionTriggers) {
   }
 }
 
+/**
+ * #严重-4: oldest event idx still inside the retained context window.
+ *
+ * `history` is oldest-first and the retained window is its TAIL (the newest
+ * `retainedCount` events — buildHistoryMessages keeps newest-first messages
+ * under the budget). The previous `history[retainedCount - 1]` indexed from
+ * the OPPOSITE end: at the threshold it compacted everything except the last
+ * message, and in long sessions it compacted only a tiny early prefix —
+ * the omitted middle could never be captured again (compaction covers
+ * [prevCursor, firstRetainedIdx), so too-small a value is a silent memory
+ * black hole).
+ */
+export function oldestRetainedEventIdx(history: any[], retainedCount: number): number {
+  const count = Math.min(Math.max(retainedCount, 0), history.length)
+  if (count === 0) return 0
+  return (history[history.length - count] as any)?.idx ?? 0
+}
+
 function fireCompaction(t: CompactionTriggers, completed: (outcome: CompactionOutcome) => void): void {
-  const oldestRetainedIdx = (t.history[t.historyMessages.length - 1] as any)?.idx ?? 0
+  const firstRetainedIdx = oldestRetainedEventIdx(t.history, t.historyMessages.length)
   ensureSessionCompaction(
     {
       userId: t.userId,
@@ -104,7 +123,7 @@ function fireCompaction(t: CompactionTriggers, completed: (outcome: CompactionOu
       memory: t.ctx.memory,
     },
     t.sid,
-    oldestRetainedIdx,
+    firstRetainedIdx,
     t.patientHash || undefined,
   )
     .then(completed)

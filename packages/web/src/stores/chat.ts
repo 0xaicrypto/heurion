@@ -155,6 +155,12 @@ async function consumeStream(
   set: (fn: (state: { sessions: Record<string, SessionState> }) => { sessions: Record<string, SessionState> }) => void,
   sessionId: string,
   stream: AsyncIterable<ChatStreamChunk>,
+  /** #严重-5: true when this stream's abort controller is no longer the
+   *  session's current one (stop / next message / regenerate). Chunks already
+   *  buffered in the reader must NOT be applied to the new turn's assistant
+   *  message — previously only session existence was checked, so a stale
+   *  failed/tool-call frame silently polluted the fresh reply. */
+  isStale?: () => boolean,
 ): Promise<boolean> {
   let gotChunks = false;
   let lastEventAt = Date.now();
@@ -169,14 +175,14 @@ async function consumeStream(
   const markStall = () => {
     set((state) => {
       const s = state.sessions[sessionId];
-      if (!s || s.stallSince != null) return state;
+      if (!s || isStale?.() || s.stallSince != null) return state;
       return { sessions: { ...state.sessions, [sessionId]: { ...s, stallSince: Date.now() } } };
     });
   };
   const clearStall = () => {
     set((state) => {
       const s = state.sessions[sessionId];
-      if (!s) return state;
+      if (!s || isStale?.()) return state;
       if (s.stallSince == null) return state;
       return { sessions: { ...state.sessions, [sessionId]: { ...s, stallSince: null } } };
     });
@@ -209,19 +215,23 @@ async function consumeStream(
     lastStallAt = 0;
     clearStall();
     if (r.done) break;
+    // #严重-5: 停止/新 turn 已发生 → 丢弃缓冲中属于上一轮的 chunk，立即收口。
+    if (isStale?.()) break;
     if (r.value.length === 0) continue;
     gotChunks = true;
     // #1072-2（web 侧 turn_id 适配）: 捕获 turn_complete 携带的服务端
     // assistant 消息 id（见 latestAssistantTurnId）。watchdog/中断等无
     // event_idx 的终止事件不记录（保留上一轮 id — 仍满足「真实存在」校验）。
     for (const chunk of r.value) {
+      if (isStale?.()) break;
       if (chunk.type === 'turn_complete' && typeof chunk.assistant_event_idx === 'number') {
         lastAssistantTurnIds.set(sessionId, String(chunk.assistant_event_idx));
       }
     }
     set((state) => {
       const s = state.sessions[sessionId];
-      if (!s) return state;
+      // #严重-5: 只允许当前 controller 的 chunk 落到会话上。
+      if (!s || isStale?.()) return state;
       const next = r.value.reduce(applyChunkToSession, s);
       return { sessions: { ...state.sessions, [sessionId]: next } };
     });
@@ -261,12 +271,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     try {
       // #660: coalesce SSE chunks into ~16ms windows — one set() per batch.
-      await consumeStream(set, sessionId, api.sendChatFull(opts, abort.signal));
+      // #严重-5: 传 abort 归属判定 — 停止/新 turn 后旧流的缓冲 chunk 不得落库。
+      await consumeStream(set, sessionId, api.sendChatFull(opts, abort.signal), () => get().sessions[sessionId]?.abort !== abort);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       set((state) => {
         const s = state.sessions[sessionId];
-        if (!s) return state;
+        // #严重-5: 旧流迟到抛错不得把新一轮的回复标成 failed。
+        if (!s || s.abort !== abort) return state;
         const msgs = [...s.messages];
         const last = msgs[msgs.length - 1];
         if (last?.role === 'assistant') {
@@ -380,6 +392,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const s = get().sessions[sessionId];
     if (!s || s.loading) return;
     const now = Date.now();
+    // #严重-5: 与 sendMessage 同款归属控制 — deep analysis 也要能被 stop/
+    // 新 turn 真正取消，旧流缓冲 chunk 不得污染新回复。
+    const abort = new AbortController();
     // Mirror the user question into the stream like a normal turn.
     set((state) => {
       const cur = state.sessions[sessionId] ?? emptySession();
@@ -392,6 +407,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               { id: crypto.randomUUID(), role: 'user', text: `🔬 ${opts.question}`, createdAt: now },
               { id: crypto.randomUUID(), role: 'assistant', text: '', isStreaming: true, createdAt: now },
             ],
+            abort,
             loading: true,
             stallSince: null,
           },
@@ -400,13 +416,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
 
     try {
-      const gotChunks = await consumeStream(set, sessionId, api.deepAnalysis(opts));
+      const gotChunks = await consumeStream(set, sessionId, api.deepAnalysis(opts, abort.signal), () => get().sessions[sessionId]?.abort !== abort);
       if (!gotChunks) {
         // #685: no chunks at all — surface a definitive state instead of a
         // blank message (previous component-level handler wrote a fallback).
         set((state) => {
           const cur = state.sessions[sessionId];
-          if (!cur) return state;
+          if (!cur || cur.abort !== abort) return state;
           const msgs = [...cur.messages];
           const last = msgs[msgs.length - 1];
           if (last?.role === 'assistant') {
@@ -419,15 +435,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         // it off for the deep-analysis pseudo-turn.
         set((state) => {
           const cur = state.sessions[sessionId];
-          if (!cur) return state;
+          if (!cur || cur.abort !== abort) return state;
           const msgs = cur.messages.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
           return { sessions: { ...state.sessions, [sessionId]: { ...cur, messages: msgs } } };
         });
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       set((state) => {
         const cur = state.sessions[sessionId];
-        if (!cur) return state;
+        if (!cur || cur.abort !== abort) return state;
         const msgs = [...cur.messages];
         const last = msgs[msgs.length - 1];
         if (last?.role === 'assistant') {
@@ -442,7 +459,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } finally {
       set((state) => {
         const cur = state.sessions[sessionId];
-        if (!cur) return state;
+        if (!cur || cur.abort !== abort) return state;
         return { sessions: { ...state.sessions, [sessionId]: { ...cur, loading: false, stallSince: null } } };
       });
     }

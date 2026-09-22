@@ -42,15 +42,17 @@ export async function workflowsRouter(app: FastifyInstance) {
 
   app.get('/api/v1/workflows/:id', async (request, reply) => {
     const { id } = request.params as any
-    const wf = getService().get(id)
+    const userId = request.user!.userId
+    const wf = getService().get(id, userId)
     if (!wf) return reply.status(404).send({ error: 'Workflow not found' })
     return wf
   })
 
   app.put('/api/v1/workflows/:id', async (request, reply) => {
     const { id } = request.params as any
+    const userId = request.user!.userId
     const body = request.body as any
-    const wf = getService().update(id, {
+    const wf = getService().update(id, userId, {
       name: body.name,
       description: body.description,
       category: body.category,
@@ -63,7 +65,8 @@ export async function workflowsRouter(app: FastifyInstance) {
 
   app.delete('/api/v1/workflows/:id', async (request, reply) => {
     const { id } = request.params as any
-    const ok = getService().delete(id)
+    const userId = request.user!.userId
+    const ok = getService().delete(id, userId)
     if (!ok) return reply.status(404).send({ error: 'Workflow not found' })
     return { deleted: true }
   })
@@ -76,7 +79,8 @@ export async function workflowsRouter(app: FastifyInstance) {
 
   app.get('/api/v1/workflows/runs/:runId', async (request, reply) => {
     const { runId } = request.params as any
-    const run = getService().getRun(runId)
+    const userId = request.user!.userId
+    const run = getService().getRun(runId, userId)
     if (!run) return reply.status(404).send({ error: 'Run not found' })
     return run
   })
@@ -85,7 +89,7 @@ export async function workflowsRouter(app: FastifyInstance) {
     const { id } = request.params as any
     const userId = request.user!.userId
     const body = (request.body || {}) as any
-    const wf = getService().get(id)
+    const wf = getService().get(id, userId)
     if (!wf) return reply.status(404).send({ error: 'Workflow not found' })
     const run = getService().createRun(id, userId, body.input || {})
     return run

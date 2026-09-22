@@ -237,6 +237,33 @@ describe('Plugin Marketplace', () => {
     expect(body.errors.length).toBeGreaterThan(0)
   })
 
+  test('#中-12 manifest permissions 不再被静默忽略：未知键/类型错误被拒', async () => {
+    const app = await getApp()
+    const headers = { ...await authHeader(), 'content-type': 'application/json' }
+
+    const validate = async (permissions: unknown) => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/validate-manifest',
+        headers,
+        payload: { ...communityManifest, plugin: { ...communityManifest.plugin, id: `acme/perm-${Math.random().toString(36).slice(2, 8)}` }, permissions },
+      })
+      return JSON.parse(res.payload) as { valid: boolean; errors: string[] }
+    }
+
+    // 合法声明（官方同款形状）→ 通过。
+    expect((await validate({ network_egress: { enabled: false }, file_system: { read: true, write: true, paths: ['/tmp'] }, phi_access: false })).valid).toBe(true)
+    // 未知能力键 → 拒绝（fail-closed，不静默放过）。
+    const unknown = await validate({ root_access: true })
+    expect(unknown.valid).toBe(false)
+    expect(unknown.errors.join('；')).toContain('root_access')
+    // 类型错误 → 拒绝。
+    expect((await validate({ network_egress: { enabled: 'yes' } })).valid).toBe(false)
+    expect((await validate({ phi_access: 'true' })).valid).toBe(false)
+    expect((await validate({ file_system: { read: true } })).valid).toBe(false)
+    expect((await validate([1, 2, 3])).valid).toBe(false)
+  })
+
   test('install from URL publishes community plugin and installs it', async () => {
     const app = await getApp()
     const headers = { ...await authHeader(), 'content-type': 'application/json' }

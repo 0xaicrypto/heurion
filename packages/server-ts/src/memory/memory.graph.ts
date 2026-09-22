@@ -226,11 +226,15 @@ export class MemoryGraph {
     }
   }
 
-  /** Replace state directly — used by import/replay. */
+  /** Replace state directly — used by import/replay.
+   *  低优先:restore 必须同步重建 latestByStableId —— 此前只清理 nodes,
+   *  旧索引残留 + 新节点不索引,恢复后 getLatestByStableId 返回陈旧/缺失。 */
   restore(state: MemoryGraphState) {
     this.nodes.clear()
+    this.latestByStableId.clear()
     for (const node of state.nodes) {
       this.nodes.set(node.id, node)
+      this.indexNode(node)
     }
     this.relations = state.relations ? [...state.relations] : []
   }

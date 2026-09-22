@@ -134,14 +134,44 @@ export async function knowledgeRouter(app: FastifyInstance) {
       fastTrack: true,
     })
 
-    let factId = proposal.appliedStableId ?? proposal.id
-    if (proposal.status === 'approved' && proposal.appliedStableId) {
-      // Best-effort link to a memory gap node (gap may only exist in Prisma).
-      try {
-        const node = ctx.memory.graph.getLatestByStableId(proposal.appliedStableId)
-        if (node) ctx.memory.answerGap(id, node)
-      } catch { /* gap may only exist in Prisma */ }
+    // #高-7: fast-track 可能被语义查重/PII 闸门拒绝(rejected)，或写入异常
+    // 降级为 pending。只有 fact 真正落图(approved + appliedStableId)才能把
+    // gap 标记 answered；否则界面会永久显示「已回答」，而医生的回答从未
+    // 成为事实。pending 保持 gap open，审批通过时由 approval.service 收口。
+    if (proposal.status === 'rejected') {
+      await telemetry.record({
+        userId,
+        workspaceId: userId,
+        category: 'gap',
+        action: 'answer_rejected',
+        metadata: { gapId: id, proposalId: proposal.id, reason: proposal.rejectedReason },
+      }).catch(() => {})
+      return reply.status(409).send({ error: proposal.rejectedReason ?? '回答未通过记忆闸门，缺口保持未解决' })
     }
+
+    if (proposal.status !== 'approved' || !proposal.appliedStableId) {
+      await telemetry.record({
+        userId,
+        workspaceId: userId,
+        category: 'gap',
+        action: 'answer_pending_review',
+        metadata: { gapId: id, proposalId: proposal.id },
+      }).catch(() => {})
+      return reply.status(202).send({
+        status: 'pending_review',
+        gapId: id,
+        proposalId: proposal.id,
+        answerId: proposal.id,
+        message: '回答已进入人工审核队列；审核通过前缺口保持未解决。',
+      })
+    }
+
+    const factId = proposal.appliedStableId
+    // Best-effort link to a memory gap node (gap may only exist in Prisma).
+    try {
+      const node = ctx.memory.graph.getLatestByStableId(proposal.appliedStableId)
+      if (node) ctx.memory.answerGap(id, node)
+    } catch { /* gap may only exist in Prisma */ }
 
     const updated = await gapService.resolve(id, String(body.answer))
     if (!updated) {

@@ -94,6 +94,47 @@ export function validateManifest(input: unknown): ValidationResult {
     }
   }
 
+  // #中-12: permissions 此前只被解析不校验（声明形同虚设）。现在按已知
+  // 能力键做 fail-closed 形状校验：未知键/类型错误在安装（validate-manifest
+  // / installPluginFromUrl）即拒绝，声明不再被静默忽略。运行面能力仍由
+  // worker 沙箱/服务端注入 port 强制（见 PLUGIN_MANIFEST_SPEC §5）。
+  const permissions = input.permissions
+  if (permissions !== undefined) {
+    if (!isPlainObject(permissions)) {
+      errors.push('permissions must be an object')
+    } else {
+      const allowedPermissionKeys = ['network_egress', 'file_system', 'phi_access', 'execute_code']
+      for (const key of Object.keys(permissions)) {
+        if (!allowedPermissionKeys.includes(key)) {
+          errors.push(`permissions.${key} is not a recognized capability (allowed: ${allowedPermissionKeys.join(', ')})`)
+        }
+      }
+      const network = permissions.network_egress
+      if (network !== undefined) {
+        if (!isPlainObject(network) || typeof network.enabled !== 'boolean') {
+          errors.push('permissions.network_egress.enabled must be a boolean')
+        } else if (network.description !== undefined && typeof network.description !== 'string') {
+          errors.push('permissions.network_egress.description must be a string')
+        }
+      }
+      const fileSystem = permissions.file_system
+      if (fileSystem !== undefined) {
+        if (!isPlainObject(fileSystem) || typeof fileSystem.read !== 'boolean' || typeof fileSystem.write !== 'boolean') {
+          errors.push('permissions.file_system.read/write must be booleans')
+        } else if (fileSystem.paths !== undefined
+          && (!Array.isArray(fileSystem.paths) || !fileSystem.paths.every((p) => typeof p === 'string'))) {
+          errors.push('permissions.file_system.paths must be an array of strings')
+        }
+      }
+      if (permissions.phi_access !== undefined && typeof permissions.phi_access !== 'boolean') {
+        errors.push('permissions.phi_access must be a boolean')
+      }
+      if (permissions.execute_code !== undefined && typeof permissions.execute_code !== 'boolean') {
+        errors.push('permissions.execute_code must be a boolean')
+      }
+    }
+  }
+
   const triggers = input.triggers
   if (triggers !== undefined) {
     if (!Array.isArray(triggers)) {

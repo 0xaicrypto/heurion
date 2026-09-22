@@ -13,8 +13,12 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import i18n from '../i18n';
 import {
   buildAllCommentDecorations,
+  // #严重-9 回归：直接钉住二分实现 + 搜索副本构建（块边界哨兵 -1 破坏单调）。
+  buildPosAtSearch,
+  rawIndexAtPmPos,
   locateAllSpans,
   migrateCommentDecorations,
+  nearestSpanToServerOffset,
   normalizeWithMap,
   resolveAnchorSpans,
   type CommentAnchorItem,
@@ -31,8 +35,9 @@ const schema = new Schema({
 const para = (text: string) => schema.node('paragraph', null, schema.text(text));
 const makeDoc = (...paras: string[]) => schema.node('doc', null, paras.map(para));
 
-/** 文档纯文本按块拼接 + 字符级位置映射(与 buildDocTextIndex 同语义 — 测试侧重建)。 */
-function docIndex(doc: PMNode): { text: string; posAt: number[] } {
+/** 文档纯文本按块拼接 + 字符级位置映射(与 buildDocTextIndex 同语义 — 测试侧重建,
+ *  #严重-9 起含单调搜索副本 posAtSearch)。 */
+function docIndex(doc: PMNode): { text: string; posAt: number[]; posAtSearch: number[] } {
   let text = '';
   const posAt: number[] = [];
   doc.descendants((node, pos) => {
@@ -50,7 +55,7 @@ function docIndex(doc: PMNode): { text: string; posAt: number[] } {
     }
     return true;
   });
-  return { text, posAt };
+  return { text, posAt, posAtSearch: buildPosAtSearch(posAt) };
 }
 
 function makeItem(fx: { id?: string; anchorText: string; status?: string; located?: boolean; candidates?: Array<{ text: string; similarity?: number }> }): CommentAnchorItem {
@@ -117,6 +122,44 @@ describe('#1071-2 locateAllSpans — 全命中扫描', () => {
 
   test('未命中返回空列表', () => {
     expect(locateAllSpans(hay, index, 'omega')).toEqual([]);
+  });
+});
+
+describe('#严重-9 rawIndexAtPmPos — 块边界哨兵不得破坏二分', () => {
+  test('报告反例 [1,2,3,-1,6,7,8] 搜 2 → 下标 1（旧实现返回 4/值 6）', () => {
+    const search = buildPosAtSearch([1, 2, 3, -1, 6, 7, 8]);
+    expect(rawIndexAtPmPos(search, 2)).toBe(1);
+    // 旧实现直接对该数组二分会落到第二段（值 6）— 回归锚点。
+    expect(search[4]).toBe(6);
+  });
+
+  test('各段内查找仍单调正确，跨边界不跳段', () => {
+    const search = buildPosAtSearch([1, 2, 3, -1, 6, 7, 8]);
+    expect(rawIndexAtPmPos(search, 1)).toBe(0);
+    expect(rawIndexAtPmPos(search, 3)).toBe(2);
+    expect(rawIndexAtPmPos(search, 7)).toBe(5);
+    expect(rawIndexAtPmPos(search, 8)).toBe(6);
+  });
+
+  test('超过末尾 → length；空数组 → 0', () => {
+    expect(rawIndexAtPmPos(buildPosAtSearch([1, 2, 3, -1, 6, 7, 8]), 99)).toBe(7);
+    expect(rawIndexAtPmPos(buildPosAtSearch([]), 5)).toBe(0);
+  });
+
+  test('两段重复文本：多命中按服务端偏移就近落位（不选错出现位置）', () => {
+    const doc = makeDoc('alpha beta', 'gamma beta delta');
+    const index = docIndex(doc);
+    const hay = normalizeWithMap(index.text);
+    const spans = locateAllSpans(hay, index, 'beta');
+    expect(spans.length).toBe(2);
+    // 服务端偏移落在第二段 beta 之后 → 应选第二处命中。
+    const bodyText = 'alpha beta\n\ngamma beta delta';
+    const serverStart = bodyText.indexOf('beta delta') + 'beta delta'.length;
+    const chosen = nearestSpanToServerOffset(spans, index, hay, serverStart, bodyText);
+    expect(chosen.from).toBe(spans[1].from);
+    // 第一段之后的偏移 → 选第一处命中。
+    const chosenFirst = nearestSpanToServerOffset(spans, index, hay, 10, bodyText);
+    expect(chosenFirst.from).toBe(spans[0].from);
   });
 });
 

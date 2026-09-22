@@ -4,7 +4,7 @@ import { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../../ev
 import { ChatOrchestrator } from './chat-orchestrator.js'
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { MemoryService } from '../../memory/memory.service.js'
-import { defaultProposalApplier, registerContextResolver, registerProposalApplier, registerProposalCreatedHandler } from '../../memory/memory-gateway.js'
+import { defaultProposalApplier, registerContextResolver, registerProposalApplier, registerProposalCreatedHandler, registerGapAnsweredHandler } from '../../memory/memory-gateway.js'
 import { createApprovalRequest } from '../approvals/approval.service.js'
 import { twinsBaseDir } from '../../lib/upload-path.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
@@ -75,6 +75,18 @@ registerProposalCreatedHandler(async (userId, proposal) => {
     payload,
     diff,
   })
+})
+// #高-7: gap 审批通过 → Prisma gap 收口（手动回答缺口 pending 时保持
+// open）。hook 在此注册，approvals 只消费 registry（#679 分层）。
+registerGapAnsweredHandler(async (userId, gapId, answer) => {
+  const { PrismaKnowledgeGapService } = await import('../knowledge/knowledge-gap.service.js')
+  const gapSvc = new PrismaKnowledgeGapService()
+  const gap = await gapSvc.getById(gapId)
+  if (gap && gap.userId === userId) {
+    await gapSvc.resolve(gapId, answer)
+  } else {
+    console.warn('[gap-answer] resolve skipped: owner mismatch or missing', { gapId })
+  }
 })
 
 export function evictUserContext(userId: string): void {

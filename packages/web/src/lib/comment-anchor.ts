@@ -91,6 +91,10 @@ interface DocTextIndex {
   text: string;
   /** posAt[i] = text 第 i 个字符的 ProseMirror 位置;-1 = 块边界分隔符。 */
   posAt: number[];
+  /** #严重-9: posAt 的单调搜索副本 — 哨兵(-1)被替换为后继文本字符的 PM
+   *  位置（无后继则 +∞），恢复非降序后二分查找才成立。posAt 本身因哨兵
+   *  先升后降到 -1 再升，直接二分会跳段取错（见 rawIndexAtPmPos）。 */
+  posAtSearch: number[];
 }
 
 /** 拼接文档纯文本并记录字符级位置映射(decoration 用 PM 位置,不是 body 偏移)。 */
@@ -114,7 +118,23 @@ function buildDocTextIndex(doc: PMNode): DocTextIndex {
     }
     return true;
   });
-  return { text, posAt };
+  return { text, posAt, posAtSearch: buildPosAtSearch(posAt) };
+}
+
+/**
+ * #严重-9: 由 posAt 构建单调（非降序）搜索副本。块边界哨兵 -1 本身不是 PM
+ * 位置，但它在 text 里对应一个 '\n' 字符 — 用「后继有效位置」作它的搜索
+ * 键，即把边界映射到其后的首个字符（末尾边界 → +∞）。这样二分查找的单调
+ * 前提恢复，且返回值仍可安全用作 text 下标（落点可能是边界 '\n'）。
+ */
+export function buildPosAtSearch(posAt: ArrayLike<number>): number[] {
+  const out = new Array<number>(posAt.length);
+  let nextValid = Number.POSITIVE_INFINITY;
+  for (let i = posAt.length - 1; i >= 0; i--) {
+    if (posAt[i] >= 0) nextValid = posAt[i];
+    out[i] = nextValid;
+  }
+  return out;
 }
 
 /** 归一化(空白折叠 + 忽略大小写,与服务端归一化匹配同口径)并保留 norm 索引 → 原始索引映射。 */
@@ -249,13 +269,20 @@ function normIndexAt(map: ArrayLike<number>, raw: number): number {
   return lo;
 }
 
-/** PM 位置 → 文本 raw 下标（posAt 单调，二分取首个 ≥ pmPos 的下标）。 */
-function rawIndexAtPmPos(posAt: ArrayLike<number>, pmPos: number): number {
+/**
+ * PM 位置 → 文本 raw 下标（二分取首个 ≥ pmPos 的下标）。
+ *
+ * #严重-9: 输入必须是 `buildPosAtSearch` 产物（非降序）。此前直接对含有
+ * 块边界哨兵 -1 的 posAt 二分 — 数组先升后降到 -1 再升，不单调；反例
+ * [1,2,3,-1,6,7,8] 搜 2 会返回下标 4（值 6）而非 1，多段落重复文本时评论
+ * 会高亮到错误的出现位置。函数导出供回归测试直接钉住哨兵行为。
+ */
+export function rawIndexAtPmPos(posAtSearch: ArrayLike<number>, pmPos: number): number {
   let lo = 0;
-  let hi = posAt.length;
+  let hi = posAtSearch.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (posAt[mid] >= pmPos) hi = mid;
+    if (posAtSearch[mid] >= pmPos) hi = mid;
     else lo = mid + 1;
   }
   return lo;
@@ -279,7 +306,7 @@ export function nearestSpanToServerOffset(
   let best = spans[0];
   let bestDist = Number.POSITIVE_INFINITY;
   for (const s of spans) {
-    const raw = rawIndexAtPmPos(index.posAt, s.from);
+    const raw = rawIndexAtPmPos(index.posAtSearch, s.from);
     const d = Math.abs(normIndexAt(hay.map, raw) - want);
     if (d < bestDist) {
       bestDist = d;

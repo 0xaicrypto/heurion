@@ -1,0 +1,7 @@
+{
+  "request": {
+    "test": "kaplan-meier",
+    "survival_a": [{ "time": 1 }],
+    "survival_b": [{ "event": true }]
+  }
+}

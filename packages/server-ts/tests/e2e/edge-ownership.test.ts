@@ -131,4 +131,56 @@ describe('ownership isolation (边界 #253)', () => {
     })
     expect([404, 403]).toContain(bGet.statusCode)
   })
+
+  test('workflows: user B cannot read/update/delete/run user A workflow or read A runs', async () => {
+    const app = await getApp()
+    const a = { ...await authHeader(), 'content-type': 'application/json' }
+    const b = await registerSecondUser()
+    const bHeaders = { authorization: `Bearer ${b.token}`, 'content-type': 'application/json' }
+
+    // A creates a workflow and a run.
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/workflows',
+      headers: a, payload: JSON.stringify({ name: 'A 的临床复核流程', steps: [{ name: 'secret-step' }] }),
+    })
+    expect(created.statusCode).toBe(200)
+    const wfId = JSON.parse(created.payload).id
+
+    const runCreated = await app.inject({
+      method: 'POST', url: `/api/v1/workflows/${wfId}/run`,
+      headers: a, payload: JSON.stringify({ input: { patient: 'secret' } }),
+    })
+    expect(runCreated.statusCode).toBe(200)
+    const runId = JSON.parse(runCreated.payload).id
+
+    // B cannot read / mutate / execute A's workflow (404 = no enumeration).
+    const bGet = await app.inject({ method: 'GET', url: `/api/v1/workflows/${wfId}`, headers: bHeaders })
+    expect(bGet.statusCode).toBe(404)
+    const bPut = await app.inject({
+      method: 'PUT', url: `/api/v1/workflows/${wfId}`,
+      headers: bHeaders, payload: JSON.stringify({ name: 'Hijacked' }),
+    })
+    expect(bPut.statusCode).toBe(404)
+    const bRun = await app.inject({
+      method: 'POST', url: `/api/v1/workflows/${wfId}/run`,
+      headers: bHeaders, payload: JSON.stringify({}),
+    })
+    expect(bRun.statusCode).toBe(404)
+    const bRunGet = await app.inject({ method: 'GET', url: `/api/v1/workflows/runs/${runId}`, headers: bHeaders })
+    expect(bRunGet.statusCode).toBe(404)
+
+    // A's workflow is untouched and only visible to A.
+    const aGet = await app.inject({ method: 'GET', url: `/api/v1/workflows/${wfId}`, headers: a })
+    expect(JSON.parse(aGet.payload).name).toBe('A 的临床复核流程')
+    const bList = await app.inject({ method: 'GET', url: '/api/v1/workflows', headers: bHeaders })
+    expect(JSON.parse(bList.payload).workflows.some((w: any) => w.id === wfId)).toBe(false)
+    const bRuns = await app.inject({ method: 'GET', url: '/api/v1/workflows/runs', headers: bHeaders })
+    expect(JSON.parse(bRuns.payload).runs.some((r: any) => r.id === runId)).toBe(false)
+
+    // B cannot delete A's workflow; A still can.
+    const bDelete = await app.inject({ method: 'DELETE', url: `/api/v1/workflows/${wfId}`, headers: bHeaders })
+    expect(bDelete.statusCode).toBe(404)
+    const aDelete = await app.inject({ method: 'DELETE', url: `/api/v1/workflows/${wfId}`, headers: a })
+    expect(aDelete.statusCode).toBe(200)
+  })
 })

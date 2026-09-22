@@ -85,7 +85,7 @@ GET/PUT /api/v1/plugins/:id/settings                  配置读写（secret 解�
 | `runtime` | object | ✅ | `type` ∈ `{container, wasm, process, in-process}`；container→`image` 必填；wasm→`module` 必填；process→`command[]` 必填 |
 | `tools` | array | ✅ 非空 | 每项 `name`/`description`/`parameters(object)` 必填；**name 全局唯一性无校验** |
 | `triggers` | array | 可选 | 每项 `intent` 必填 + `patterns` 非空数组 |
-| `permissions` / `settings` / `ui` / `skills` / `dependencies` | — | 可选 | permissions 内容**不校验**；skills/dependencies 在 TS 类型之外（校验器忽略，安装流程不消费——skills 注册与依赖解析均未实现，见 §8） |
+| `permissions` / `settings` / `ui` / `skills` / `dependencies` | — | 可选 | permissions **形状强校验**（#中-12：四个已知能力键 + 类型，未知键/类型错误拒绝）；skills/dependencies 在 TS 类型之外（校验器忽略，安装流程不消费——skills 注册与依赖解析均未实现，见 §8） |
 
 提案 §3.3 的 category 枚举（connector/execution/data_source/ui/automation/other）
 未实现——校验器只要求非空字符串，官方目录实际用 `execution`（docx/pptx/table/
@@ -129,11 +129,14 @@ Cloudflare Worker 桥）。校验器白名单含 `in-process`；`PluginManifest`
   官方目录无用例——规范保留。
 - `wasm`：校验器仅要求 `module` 字段存在，**无实际 wasm 运行时**——占位。
 
-## 5. Permissions（与提案的关键差异：声明性，非强制闸门）
+## 5. Permissions（声明性 + 形状强校验，非强制闸门）
 
-`permissions` 是 `Record<string, unknown>`——**校验器完全不消费内容**，
-既无 `phi_access:true 需审批` 的检查，也无 registry 白名单。实际安全机制
-在别处：
+`permissions` 目前仍是声明性元数据（无 `phi_access:true 需审批` 的检查，
+无 registry 白名单），但**形状已 fail-closed 校验**（#中-12 起）：
+`validateManifest` 接受 `network_egress{enabled:boolean,description?}` /
+`file_system{read:boolean,write:boolean,paths?:string[]}` / `phi_access:boolean` /
+`execute_code:boolean` 四个已知能力键，未知键或类型错误在安装/发布时即被
+拒绝——声明不再被静默忽略。实际安全机制在别处：
 
 - 官方渲染插件 `network_egress.enabled=false`：worker 渲染器本身零外呼
   （渲染边界见 `RENDER_BOUNDARY.md`）。

@@ -93,8 +93,10 @@ export class WorkflowService {
     return this.workflows.filter(w => w.userId === userId)
   }
 
-  get(id: string): WorkflowDefinition | undefined {
-    return this.workflows.find(w => w.id === id)
+  /** #严重-3: every by-id read is owner-scoped — an id from another user must
+   *  behave exactly like a missing one (callers return 404, no enumeration). */
+  get(id: string, userId: string): WorkflowDefinition | undefined {
+    return this.workflows.find(w => w.id === id && w.userId === userId)
   }
 
   create(input: { name: string; description?: string; category?: string; steps?: WorkflowStep[]; inputs?: Record<string, any> }, userId: string): WorkflowDefinition {
@@ -115,17 +117,17 @@ export class WorkflowService {
     return wf
   }
 
-  update(id: string, patch: Partial<Pick<WorkflowDefinition, 'name' | 'description' | 'category' | 'steps' | 'inputs'>>): WorkflowDefinition | null {
-    const idx = this.workflows.findIndex(w => w.id === id)
+  update(id: string, userId: string, patch: Partial<Pick<WorkflowDefinition, 'name' | 'description' | 'category' | 'steps' | 'inputs'>>): WorkflowDefinition | null {
+    const idx = this.workflows.findIndex(w => w.id === id && w.userId === userId)
     if (idx === -1) return null
     this.workflows[idx] = { ...this.workflows[idx], ...patch, updatedAt: new Date().toISOString() }
     this.save()
     return this.workflows[idx]
   }
 
-  delete(id: string): boolean {
+  delete(id: string, userId: string): boolean {
     const before = this.workflows.length
-    this.workflows = this.workflows.filter(w => w.id !== id)
+    this.workflows = this.workflows.filter(w => w.id !== id || w.userId !== userId)
     if (this.workflows.length < before) { this.save(); return true }
     return false
   }
@@ -136,12 +138,12 @@ export class WorkflowService {
     return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
 
-  getRun(id: string): WorkflowRun | undefined {
-    return this.runs.find(r => r.id === id)
+  getRun(id: string, userId: string): WorkflowRun | undefined {
+    return this.runs.find(r => r.id === id && r.userId === userId)
   }
 
   createRun(workflowId: string, userId: string, input: Record<string, unknown> = {}): WorkflowRun {
-    const wf = this.get(workflowId)
+    const wf = this.get(workflowId, userId)
     const now = new Date().toISOString()
     const run: WorkflowRun = {
       id: `run_${randomUUID().replace(/-/g, '').slice(0, 12)}`,

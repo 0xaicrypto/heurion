@@ -149,6 +149,76 @@ describe('chat store — 选中即引用 selection 透传（#693）', () => {
   });
 });
 
+describe('#严重-5 — 旧流缓冲 chunk 不得污染新回复', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+    resetAssistantTurnIdsForTests();
+  });
+
+  test('立即发下一条消息：上一轮流式残留 chunk / 终止帧被丢弃', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    const release: { fn: (() => void) | null } = { fn: null };
+    sendChatFull
+      .mockImplementationOnce(async function* () {
+        yield { type: 'final_answer_chunk', text: 'first' };
+        await new Promise<void>((resolve) => { release.fn = resolve; });
+        // 上一轮缓冲中的收尾帧 — 属于旧 abort controller。
+        yield { type: 'final_answer_chunk', text: 'STALE-CHUNK' };
+        yield { type: 'turn_complete', assistant_event_idx: 999 };
+      })
+      .mockImplementationOnce(async function* () {
+        yield { type: 'final_answer_chunk', text: 'fresh' };
+        yield { type: 'turn_complete' };
+      });
+
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: 'q1', attachments: [], skills: [] });
+    await vi.waitFor(() => expect(useChatStore.getState().sessions.s1.messages[1].text).toBe('first'));
+
+    // 第二轮立刻发出 → 旧 controller 作废。
+    await store.sendMessage('s1', { sessionId: 's1', text: 'q2', attachments: [], skills: [] });
+    // 放行旧流的残留帧。
+    release.fn?.();
+    await p1;
+
+    const msgs = useChatStore.getState().sessions.s1.messages;
+    expect(msgs[msgs.length - 1].text).toBe('fresh');
+    expect(msgs.some((m) => m.text.includes('STALE'))).toBe(false);
+    // 旧流的 turn_complete 也不得覆盖新 turn 的 turn id。
+    expect(latestAssistantTurnId('s1')).toBeNull();
+    expect(useChatStore.getState().sessions.s1.loading).toBe(false);
+  });
+
+  test('停止后再发新消息：旧流残留帧同样被丢弃', async () => {
+    const { api } = await import('@/lib/api');
+    const sendChatFull = api.sendChatFull as any;
+    const release: { fn: (() => void) | null } = { fn: null };
+    sendChatFull
+      .mockImplementationOnce(async function* () {
+        yield { type: 'final_answer_chunk', text: 'partial' };
+        await new Promise<void>((resolve) => { release.fn = resolve; });
+        yield { type: 'final_answer_chunk', text: 'STALE-AFTER-STOP' };
+      })
+      .mockImplementationOnce(async function* () {
+        yield { type: 'final_answer_chunk', text: 'new-turn' };
+        yield { type: 'turn_complete' };
+      });
+
+    const store = useChatStore.getState();
+    const p1 = store.sendMessage('s1', { sessionId: 's1', text: 'q1', attachments: [], skills: [] });
+    await vi.waitFor(() => expect(useChatStore.getState().sessions.s1.messages[1].text).toBe('partial'));
+    store.stopStream('s1');
+    await store.sendMessage('s1', { sessionId: 's1', text: 'q2', attachments: [], skills: [] });
+    release.fn?.();
+    await p1;
+
+    const msgs = useChatStore.getState().sessions.s1.messages;
+    expect(msgs[msgs.length - 1].text).toBe('new-turn');
+    expect(msgs.some((m) => m.text.includes('STALE-AFTER-STOP'))).toBe(false);
+  });
+});
+
 describe('chat store — 追加问题排队(#fix)', () => {
   beforeEach(() => {
     useChatStore.setState({ sessions: {} });

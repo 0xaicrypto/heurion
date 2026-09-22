@@ -17,6 +17,14 @@ import stats_core
 app = FastAPI(title="Heurion Python Stats Worker")
 
 
+class SurvivalRecord(BaseModel):
+    """#严重-2: time/event are REQUIRED — zod already requires both. Optional
+    fields silently coerced missing time to t=0 and missing event to censored,
+    corrupting the KM curve and log-rank p without any error."""
+    time: float
+    event: bool
+
+
 class AnalyzeRequest(BaseModel):
     """Mirror of contracts/src/stats.ts statsRequestSchema (#689).
     形状对齐由 scripts/check-stats-schema-alignment.sh 机读锁定（#941）。
@@ -27,8 +35,8 @@ class AnalyzeRequest(BaseModel):
     group_b: Optional[List[float]] = None
     table: Optional[List[List[float]]] = None
     values: Optional[List[float]] = None
-    survival_a: Optional[List[Dict[str, Any]]] = None
-    survival_b: Optional[List[Dict[str, Any]]] = None
+    survival_a: Optional[List[SurvivalRecord]] = None
+    survival_b: Optional[List[SurvivalRecord]] = None
     group: Optional[List[str]] = None
     factor_a: Optional[List[str]] = None
 
@@ -39,17 +47,20 @@ def run_analysis(req: AnalyzeRequest) -> Dict[str, Any]:
         "t-test": lambda: stats_core.welch_t(req.group_a or [], req.group_b or []),
         "chi-square": lambda: stats_core.chi_square(req.table or []),
         "kaplan-meier": lambda: stats_core.kaplan_meier(
-            [r.get("time", 0) for r in (req.survival_a or [])],
-            [bool(r.get("event")) for r in (req.survival_a or [])],
-            [r.get("time", 0) for r in (req.survival_b or [])],
-            [bool(r.get("event")) for r in (req.survival_b or [])],
+            [r.time for r in (req.survival_a or [])],
+            [r.event for r in (req.survival_a or [])],
+            [r.time for r in (req.survival_b or [])],
+            [r.event for r in (req.survival_b or [])],
         ),
         "two-way-anova": lambda: stats_core.two_way_anova(req.group or [], req.factor_a or [], req.values or []),
     }
     handler = handlers.get(req.test)
     if handler is None:
         raise HTTPException(status_code=400, detail=f"unknown test: {req.test}")
-    return {"report": handler()}
+    try:
+        return {"report": handler()}
+    except stats_core.StatsInputError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @app.get("/healthz")

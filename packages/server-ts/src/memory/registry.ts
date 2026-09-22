@@ -60,6 +60,24 @@ export function getProposalCreatedHandler(): ProposalCreatedHandler | null {
   return proposalCreatedHandler
 }
 
+/**
+ * #高-7: gap 收口 side effect (knowledge module) — 手动回答缺口走 pending
+ * 审批时 Prisma gap 保持 open；审批通过后由 approvals 调本 hook 收口为
+ * answered。knowledge 模块在 user-context 注册，approvals 只调 hook，
+ * `modules/approvals` 不 import `modules/knowledge`（分层规则 #679）。
+ */
+export type GapAnsweredHandler = (userId: string, gapId: string, answer: string) => void | Promise<void>
+
+let gapAnsweredHandler: GapAnsweredHandler | null = null
+
+export function registerGapAnsweredHandler(fn: GapAnsweredHandler): void {
+  gapAnsweredHandler = fn
+}
+
+export function getGapAnsweredHandler(): GapAnsweredHandler | null {
+  return gapAnsweredHandler
+}
+
 // Default applier: fact/summary → memory service write via the resolver.
 export function defaultProposalApplier(userId: string, proposal: MemoryProposalRow): MemoryNode | null {
   const ctx = contextResolver?.(userId)

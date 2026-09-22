@@ -420,6 +420,16 @@ async function applyProposalViaGateway(userId: string, row: any): Promise<any> {
     } catch (err) {
       log.info('[APPROVAL] gap link skipped:', (err as Error).message.slice(0, 120))
     }
+    // #高-7: 手动回答缺口走 pending 审核时 Prisma gap 保持 open（不再提前
+    // 标 answered）— 审批通过即在此收口。知识模块经 registry hook 注册
+    // （#679 分层：approvals 不 import modules/knowledge）；owner 校验在
+    // hook 实现内完成，防跨用户 id 注入。
+    try {
+      const { getGapAnsweredHandler } = await import('../../memory/registry.js')
+      await getGapAnsweredHandler()?.(userId, gapId, row.content)
+    } catch (err) {
+      log.info('[APPROVAL] gap resolve skipped:', (err as Error).message.slice(0, 120))
+    }
   }
   // K4: once a fact is confirmed, check whether a new knowledge summary can
   // be synthesized from >= 3 unused confirmed facts of the same category.

@@ -212,3 +212,56 @@ describe('submission workflow (#362)', () => {
     expect(submitted.statusCode).toBe(200)
     expect(JSON.parse(submitted.payload).draft.status).toBe('submitted')
   }, 30000)
+
+  test('#高-8 doc_id 分支终态保护：submitted 不可回退 draft；revision/published 前进允许', async () => {
+    const app = await getApp()
+    const h = { ...await authHeader(), 'content-type': 'application/json' }
+    const docId = `doc_sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/submission/drafts',
+      headers: h, payload: JSON.stringify({ doc_id: docId, article_title: 'Terminal guard test' }),
+    })
+    expect(create.statusCode).toBe(200)
+
+    const submitted = await app.inject({
+      method: 'POST', url: '/api/v1/submission/status',
+      headers: h, payload: JSON.stringify({ doc_id: docId, status: 'submitted' }),
+    })
+    expect(submitted.statusCode).toBe(200)
+
+    // 回退重投被拒（此前 doc_id 分支无任何状态过滤）。
+    const revert = await app.inject({
+      method: 'POST', url: '/api/v1/submission/status',
+      headers: h, payload: JSON.stringify({ doc_id: docId, status: 'draft' }),
+    })
+    expect(revert.statusCode).toBe(409)
+    const ready = await app.inject({
+      method: 'POST', url: '/api/v1/submission/status',
+      headers: h, payload: JSON.stringify({ doc_id: docId, status: 'ready' }),
+    })
+    expect(ready.statusCode).toBe(409)
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/submission/drafts', headers: h })
+    const row = JSON.parse(list.payload).drafts.find((d: any) => d.doc_id === docId)
+    expect(row.status).toBe('submitted')
+
+    // 前进式状态（返修/发表）仍被允许。
+    const revision = await app.inject({
+      method: 'POST', url: '/api/v1/submission/status',
+      headers: h, payload: JSON.stringify({ doc_id: docId, status: 'revision' }),
+    })
+    expect(revision.statusCode).toBe(200)
+    const published = await app.inject({
+      method: 'POST', url: '/api/v1/submission/status',
+      headers: h, payload: JSON.stringify({ doc_id: docId, status: 'published' }),
+    })
+    expect(published.statusCode).toBe(200)
+
+    // published 终态：任何改动都被拒。
+    const after = await app.inject({
+      method: 'POST', url: '/api/v1/submission/status',
+      headers: h, payload: JSON.stringify({ doc_id: docId, status: 'revision' }),
+    })
+    expect(after.statusCode).toBe(409)
+  }, 30000)

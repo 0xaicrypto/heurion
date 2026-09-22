@@ -29,6 +29,8 @@ export const protocolAnalyzer: IngestionAnalyzer = {
       },
       sourceJobId: job.id,
       extractedFrom: job.fileName,
+      // 低优先（潜伏 IDOR）: 传入归属断言 — studyId 接线后从此受保护。
+      userId: job.userId,
     })
 
     if (rules.length === 0) {

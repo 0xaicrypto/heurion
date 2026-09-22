@@ -7,8 +7,45 @@
  */
 import type { JobStatusResponse, SidecarFileInfo } from '@heurion/contracts'
 import { makeLogger } from '../../common/logger.js'
+import prisma from '../../common/prisma.js'
 
 const log = makeLogger('execution-plane')
+
+/**
+ * #中-13: 作业归属登记 — tenant.userId 是服务端调用方传入的可信身份
+ * （外部应用经 ensureHeurionUser 映射；内部工具/路由传认证用户）。HTTP
+ * 路由按此表做归属校验。best-effort：登记失败不阻断渲染（表缺失/单测
+ * mock 空 prisma 时静默跳过），授权端点缺记录时 fail-closed 404。
+ */
+async function recordJobOwner(jobId: string, userId?: string): Promise<void> {
+  if (!userId) return
+  try {
+    // 单测以空对象 mock prisma（execution-plane-fetchfile）→ 运行时守卫；
+    // 类型层用真实 client（#701 禁 as any）。
+    const model = prisma.executionJobOwner
+    if (!model) return
+    const now = new Date().toISOString()
+    await model.upsert({
+      where: { jobId },
+      update: { userId, updatedAt: now },
+      create: { jobId, userId, createdAt: now, updatedAt: now },
+    })
+  } catch (err) {
+    log.warn(`[ownership] job owner registration skipped for ${jobId}: ${(err as Error).message.slice(0, 120)}`)
+  }
+}
+
+/** 轮询到 result.file_id 时补挂 file→owner（下载端点据此校验）。 */
+async function recordJobFile(jobId: string, fileId?: unknown): Promise<void> {
+  if (typeof fileId !== 'string' || !fileId) return
+  try {
+    const model = prisma.executionJobOwner
+    if (!model) return
+    await model.updateMany({ where: { jobId }, data: { fileId, updatedAt: new Date().toISOString() } })
+  } catch {
+    /* best-effort */
+  }
+}
 
 /** Enqueue payload — `callbackUrl` (camelCase, client-side) maps to the
  * wire field `callback_url` at send time. */
@@ -76,7 +113,9 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
       const text = await res.text().catch(() => '')
       throw new Error(`Execution Plane enqueue failed: ${res.status} ${text}`)
     }
-    return res.json() as Promise<ExecutionJobStatus>
+    const status = await res.json() as ExecutionJobStatus
+    if (status.job_id) await recordJobOwner(status.job_id, job.tenant?.userId)
+    return status
   }
 
   async getStatus(jobId: string): Promise<ExecutionJobStatus | null> {
@@ -93,7 +132,9 @@ class HttpExecutionPlaneService implements ExecutionPlaneService {
       const text = await res.text().catch(() => '')
       throw new Error(`Execution Plane status failed: ${res.status} ${text}`)
     }
-    return res.json() as Promise<ExecutionJobStatus>
+    const status = await res.json() as ExecutionJobStatus
+    await recordJobFile(jobId, status.result?.file_id)
+    return status
   }
 
   async getDownloadUrl(fileId: string): Promise<FileDownloadUrl | null> {
@@ -148,6 +189,8 @@ class StubExecutionPlaneService implements ExecutionPlaneService {
       result: { acknowledged: true, type: job.type, mode: 'stub' },
     }
     this.jobs.set(id, status)
+    // #中-13: stub 路径同样登记归属（测试/开发环境走 stub）。
+    await recordJobOwner(id, job.tenant?.userId)
     return status
   }
 

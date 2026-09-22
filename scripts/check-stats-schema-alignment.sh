@@ -46,12 +46,17 @@ print('  ✓ pydantic 解析通过（%d 字段）' % len(fixture['request']))
 PYEOF
 
 echo "── 3/4 双端拒绝负样本（形状漂移会被拦截）…"
-BAD="$ROOT/packages/python-stats-worker/fixture_stats_request.bad.json"
+# fixture_stats_request.bad.json        — test 类型错误
+# fixture_stats_request.survival-missing.bad.json — survival 记录缺 time/event
+# （#严重-2：缺字段曾因 Optional 被静默补成 t=0/删失，必须两端都拒绝）
+for BAD in \
+  "$ROOT/packages/python-stats-worker/fixture_stats_request.bad.json" \
+  "$ROOT/packages/python-stats-worker/fixture_stats_request.survival-missing.bad.json"; do
 node --input-type=module -e "
 import { statsRequestSchema } from '$ROOT/packages/contracts/dist/index.js'
 import fs from 'fs'
 const r = statsRequestSchema.safeParse(JSON.parse(fs.readFileSync('$BAD', 'utf8')).request)
-if (r.success) { console.error('zod 端接受了本应拒绝的负样本'); process.exit(1) }
+if (r.success) { console.error('zod 端接受了本应拒绝的负样本: $BAD'); process.exit(1) }
 "
 "$PY" - "$BAD" << 'PYEOF'
 import json, sys, os
@@ -62,8 +67,10 @@ try:
     AnalyzeRequest(**json.load(open(sys.argv[1], 'r'))['request'])
 except ValidationError:
     sys.exit(0)
-sys.exit('pydantic 端接受了本应拒绝的负样本')
+sys.exit('pydantic 端接受了本应拒绝的负样本: ' + sys.argv[1])
 PYEOF
+done
+echo "  ✓ 类型错误 + survival 缺字段负样本双端均被拒绝"
 
 echo "── 4/4 报告形状对齐（golden → statsReportSchema, #1109）…"
 node --input-type=module -e "

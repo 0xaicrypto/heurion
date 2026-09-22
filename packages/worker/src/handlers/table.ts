@@ -1,6 +1,20 @@
 import { validateRenderContent, SCHEMA_VERSION, type TableContent } from '@heurion/contracts'
 import { renderPdf } from './common.js'
 
+/** #中-14: 行越界截断的纯函数（导出供单测钉住可见提示的触发条件）。 */
+export function normalizeTableRows(colCount: number, rows: string[][]): {
+  rows: string[][]
+  overflowRows: number
+  colCount: number
+} {
+  let overflowRows = 0
+  const normalized = rows.map((row) => {
+    if (row.length > colCount) overflowRows++
+    return row.slice(0, colCount)
+  })
+  return { rows: normalized, overflowRows, colCount }
+}
+
 /**
  * #686: render_table 入口契约化 — 契约 TableContent（schemaVersion/title/
  * headers/rows）必检;legacy 直调（无 schemaVersion、title 可空）走归一化
@@ -21,11 +35,15 @@ export async function renderTable(payload: unknown) {
   }
   const input = p as unknown as TableContent
 
+  // #中-14: 行长度超过表头列数时此前直接越界渲染（第 N+1 个单元格画到表格
+  // 外/页面右缘之外，视觉上静默丢失）。按表头列数截断并给可见提示。
+  const { rows, overflowRows, colCount } = normalizeTableRows(input.headers.length, input.rows)
+
   return renderPdf((doc, hasCjk) => {
     doc.fontSize(20).text(input.title, { align: 'center' })
     doc.moveDown(1)
 
-    const colWidth = (doc.page.width - 100) / input.headers.length
+    const colWidth = (doc.page.width - 100) / colCount
     const fontSize = 10
     const rowHeight = 20
 
@@ -50,12 +68,20 @@ export async function renderTable(payload: unknown) {
     }
 
     drawRow(input.headers, true)
-    for (const row of input.rows) {
+    for (const row of rows) {
       if (y > doc.page.height - 50) {
         doc.addPage()
         y = 50
       }
       drawRow(row, false)
+    }
+    if (overflowRows > 0) {
+      if (y > doc.page.height - 70) {
+        doc.addPage()
+        y = 50
+      }
+      doc.font(hasCjk ? 'cjk' : 'Helvetica').fontSize(9).fillColor('#B45309')
+      doc.text(`⚠️ ${overflowRows} 行的单元格数超出表头列数（${colCount} 列）— 超出的单元格已省略`, 50, y + 8, { width: doc.page.width - 100 })
     }
   }, 'table.pdf')
 }

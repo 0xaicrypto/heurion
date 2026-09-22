@@ -100,8 +100,11 @@ export {
   getProposalApplier,
   registerProposalCreatedHandler,
   getProposalCreatedHandler,
+  registerGapAnsweredHandler,
+  getGapAnsweredHandler,
   defaultProposalApplier,
   type ContextResolver,
   type ProposalApplier,
   type ProposalCreatedHandler,
+  type GapAnsweredHandler,
 } from './registry.js'

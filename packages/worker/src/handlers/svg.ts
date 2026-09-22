@@ -9,28 +9,50 @@ export function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+/** 有限数值守卫 — undefined/NaN 不得进入 SVG 几何（会渲染出 NaN 坐标）。 */
+function finiteOr(v: unknown, fallback = 0): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+
+/**
+ * #中-14: 数据集值多于 labels 时，此前按 labels 循环导致超出部分被静默丢弃
+ * （柱状图）— 现在 SVG 内给出可见注记。行/列几何只消费 labels 范围。
+ */
+function droppedValuesNote(input: PlotInput): number {
+  const maxDataLen = Math.max(0, ...input.datasets.map((d) => d.data.length))
+  return Math.max(0, maxDataLen - input.labels.length)
+}
+
+function dropNoteText(input: PlotInput, w: number, h: number, count: number): string {
+  if (count <= 0) return ''
+  return `<text x="${w / 2}" y="${h - 6}" text-anchor="middle" font-size="11" fill="#B45309">⚠️ ${count} 个数据值超出标签数（${input.labels.length}），已省略</text>`
+}
+
 export function generateBarSvg(input: PlotInput, w: number, h: number): string {
   const pad = { top: 40, right: 20, bottom: 50, left: 60 }
   const chartW = w - pad.left - pad.right
   const chartH = h - pad.top - pad.bottom
 
-  const allValues = input.datasets.flatMap((d) => d.data)
+  const labelCount = input.labels.length
+  const dropped = droppedValuesNote(input)
+  const allValues = input.datasets.flatMap((d) => d.data).filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
   const maxVal = Math.max(...allValues, 1)
-  const barCount = input.labels.length * input.datasets.length
+  const barCount = Math.max(1, labelCount * input.datasets.length)
   const barWidth = Math.max(10, (chartW / barCount) * 0.7)
-  const groupWidth = chartW / input.labels.length
+  const groupWidth = chartW / Math.max(1, labelCount)
 
   let bars = ''
   const colors = PLOT_COLORS
 
   input.labels.forEach((label, li) => {
     input.datasets.forEach((ds, di) => {
+      const value = finiteOr(ds.data[li])
       const x = pad.left + li * groupWidth + di * barWidth + (groupWidth - barWidth * input.datasets.length) / 2
-      const barH = (ds.data[li] / maxVal) * chartH
+      const barH = (value / maxVal) * chartH
       const y = pad.top + chartH - barH
       const color = ds.color || colors[(di + li * input.datasets.length) % colors.length]
       bars += `<rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" fill="${color}" opacity="0.8">
-        <title>${escapeXml(ds.label)}: ${ds.data[li]}</title>
+        <title>${escapeXml(ds.label)}: ${value}</title>
       </rect>`
     })
   })
@@ -64,6 +86,7 @@ export function generateBarSvg(input: PlotInput, w: number, h: number): string {
     ${yLabels}
     ${xLabels}
     ${bars}
+    ${dropNoteText(input, w, h, dropped)}
     <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}" stroke="#ccc" stroke-width="1"/>
     <line x1="${pad.left}" y1="${pad.top + chartH}" x2="${w - pad.right}" y2="${pad.top + chartH}" stroke="#ccc" stroke-width="1"/>
   </svg>`
@@ -74,7 +97,9 @@ export function generateLineSvg(input: PlotInput, w: number, h: number): string 
   const chartW = w - pad.left - pad.right
   const chartH = h - pad.top - pad.bottom
 
-  const allValues = input.datasets.flatMap((d) => d.data)
+  const labelCount = input.labels.length
+  const dropped = droppedValuesNote(input)
+  const allValues = input.datasets.flatMap((d) => d.data).filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
   const maxVal = Math.max(...allValues, 1)
   const colors = PLOT_COLORS
 
@@ -82,16 +107,20 @@ export function generateLineSvg(input: PlotInput, w: number, h: number): string 
   let dots = ''
   input.datasets.forEach((ds, di) => {
     const color = ds.color || colors[di % colors.length]
-    const points = ds.data.map((val, i) => {
-      const x = pad.left + (i / Math.max(input.labels.length - 1, 1)) * chartW
-      const y = pad.top + chartH - (val / maxVal) * chartH
+    // #中-14: 超出 labels 范围的数据点此前会画到图表区之外（x 越界）— 截断
+    // 并在 SVG 底部给可见注记；labels 缺失时按数据长度铺开。
+    const data = labelCount > 0 ? ds.data.slice(0, labelCount) : ds.data
+    const denom = Math.max((labelCount > 0 ? labelCount : data.length) - 1, 1)
+    const points = data.map((val, i) => {
+      const x = pad.left + (i / denom) * chartW
+      const y = pad.top + chartH - (finiteOr(val) / maxVal) * chartH
       return { x, y }
     })
     const d = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
     paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`
-    points.forEach((p) => {
+    points.forEach((p, i) => {
       dots += `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}">
-        <title>${escapeXml(ds.label)}: ${ds.data[points.indexOf(p)]}</title>
+        <title>${escapeXml(ds.label)}: ${finiteOr(data[i])}</title>
       </circle>`
     })
   })
@@ -126,6 +155,7 @@ export function generateLineSvg(input: PlotInput, w: number, h: number): string 
     ${xLabels}
     ${paths}
     ${dots}
+    ${dropNoteText(input, w, h, dropped)}
     <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}" stroke="#ccc" stroke-width="1"/>
     <line x1="${pad.left}" y1="${pad.top + chartH}" x2="${w - pad.right}" y2="${pad.top + chartH}" stroke="#ccc" stroke-width="1"/>
   </svg>`

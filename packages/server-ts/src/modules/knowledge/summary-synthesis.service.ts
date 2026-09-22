@@ -10,7 +10,7 @@ import { summarySynthesisPrompt, SUMMARY_SYNTHESIS_PERSONA } from '../../memory/
 import { normalizeSynthesizedSummary } from '../../memory/summary-contract.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import type { SummaryNode, FactNode } from '../../memory/memory.types.js'
-import type { Result } from '../../common/result.js'
+import { err, type Result } from '../../common/result.js'
 
 /**
  * Re-write an summary from its current source facts. LLM failure falls back
@@ -27,6 +27,14 @@ export async function regenerateSummaryWithLlm(
   const sourceFacts = summary.sourceFacts
     .map(s => memory.graph.getLatestByStableId(s.stableId))
     .filter((n): n is FactNode => n?.type === 'fact' && n.status !== 'superseded')
+
+  // #中-11: 所有来源事实都已被替换/删除时，LLM 无从重写 — 此前会跳过 LLM
+  // 却仍用旧 title/content 调 editSummary，把一份没有任何 fact 支撑的摘要
+  // 无条件标回 current（「重新生成」只是清掉了过期标记）。宁可失败也不
+  // 伪造新鲜度：保持 stale 状态，交由用户编辑或删除。
+  if (sourceFacts.length === 0) {
+    return err('该摘要已无有效来源事实（全部被替换或删除），无法重新生成；请手动编辑内容或删除该摘要。')
+  }
 
   let title = summary.title
   let content = summary.content

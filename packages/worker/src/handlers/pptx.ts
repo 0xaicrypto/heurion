@@ -115,17 +115,33 @@ function fitBullets(items: Array<{ text: string; bullet: boolean }>, widthIn: nu
   return { font: MIN_FONT, chunks: chunk(MIN_FONT) }
 }
 
-/** table 块 data 解析（#1047）— JSON 字符串 `{rows: string[][], header?: boolean}`；畸形返回 null。 */
-function parseTableBlockData(raw: unknown): { rows: string[][]; header: boolean } | null {
+/** table 块 data 解析（#1047）— JSON 字符串 `{rows: string[][], header?: boolean}`；畸形返回 null。
+ *  #中-14: 30 列/2000 字符的截断此前静默 — 返回截断计数供调用方给可见注记
+ *  （与行数截断 #1062-3 同口径）。 */
+export function parseTableBlockData(raw: unknown): {
+  rows: string[][]
+  header: boolean
+  truncatedCols: number
+  truncatedCells: number
+} | null {
   if (typeof raw !== 'string') return null
   try {
     const v = JSON.parse(raw) as { rows?: unknown; header?: unknown }
     if (!Array.isArray(v.rows) || v.rows.length === 0) return null
+    let truncatedCols = 0
+    let truncatedCells = 0
     const rows = v.rows
       .filter((r): r is unknown[] => Array.isArray(r))
       .slice(0, 200)
-      .map((r) => r.slice(0, 30).map((c) => String(c ?? '').slice(0, 2000)))
-    return { rows, header: v.header === true }
+      .map((r) => {
+        if (r.length > 30) truncatedCols += r.length - 30
+        return r.slice(0, 30).map((c) => {
+          const s = String(c ?? '')
+          if (s.length > 2000) truncatedCells++
+          return s.slice(0, 2000)
+        })
+      })
+    return { rows, header: v.header === true, truncatedCols, truncatedCells }
   } catch {
     return null
   }
@@ -361,6 +377,15 @@ export async function generatePptx(payload: any) {
         const renderedRows = parsed.rows.slice(0, 100)
         if (parsed.rows.length > renderedRows.length) {
           items.push({ text: `[表格过长：仅渲染前 100 行（源共 ${parsed.rows.length} 行）]`, bullet: false })
+        }
+        // #中-14: 列数/单元格字符截断不再静默（与行数截断同口径可见注记）。
+        if (parsed.truncatedCols > 0) {
+          console.warn(`[PPTX] #中-14 表格列数超上限(30) — 省略 ${parsed.truncatedCols} 个单元格`)
+          items.push({ text: `[表格列数超上限：仅渲染前 30 列（共省略 ${parsed.truncatedCols} 个单元格）]`, bullet: false })
+        }
+        if (parsed.truncatedCells > 0) {
+          console.warn(`[PPTX] #中-14 表格单元格超长(2000 字符) — ${parsed.truncatedCells} 个已截断`)
+          items.push({ text: `[表格单元格超长：${parsed.truncatedCells} 个单元格已截断至 2000 字符]`, bullet: false })
         }
         // #1068: 按页高预算把行拆到续页（#1062-3 拆续页语义），而不是整表
         // 塞一页。布局预算按「该页表格高度求和」累计（tableBottom 跨表格块

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { authGuard } from '../../common/auth.guard.js'
+import prisma from '../../common/prisma.js'
 import { createExecutionPlaneService } from './execution-plane.service.js'
 
 const service = createExecutionPlaneService()
@@ -18,10 +19,12 @@ export async function executionRouter(app: FastifyInstance) {
     if (!body.type) {
       return reply.status(400).send({ error: 'job type is required' })
     }
+    // #中-13: tenant.userId 来自认证身份，绝不接受 body 伪造（此前会把作业
+    // 归属成任意 userId）。workspaceId 可透传。
     const job = await service.enqueue({
       type: body.type,
       payload: body.payload ?? {},
-      tenant: body.tenant ?? { userId: request.user!.userId },
+      tenant: { userId: request.user!.userId, workspaceId: body.tenant?.workspaceId },
       callbackUrl: body.callbackUrl,
     })
     return job
@@ -29,6 +32,12 @@ export async function executionRouter(app: FastifyInstance) {
 
   app.get('/api/v1/execution/jobs/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
+    const userId = request.user!.userId
+    // #中-13: 归属校验 — 缺记录/他人记录一律 404（不泄露存在性）。
+    const owner = await prisma.executionJobOwner.findUnique({ where: { jobId: id } }).catch(() => null)
+    if (!owner || owner.userId !== userId) {
+      return reply.status(404).send({ error: 'job not found' })
+    }
     const status = await service.getStatus(id)
     if (!status) {
       return reply.status(404).send({ error: 'job not found' })
@@ -40,6 +49,12 @@ export async function executionRouter(app: FastifyInstance) {
   // for a rendered Sidecar output file.
   app.get('/api/v1/execution/files/:fileId/download', async (request, reply) => {
     const { fileId } = request.params as { fileId: string }
+    const userId = request.user!.userId
+    // #中-13: file → owner 校验（轮询终态时登记）。缺记录 404（fail-closed）。
+    const owner = await prisma.executionJobOwner.findFirst({ where: { fileId } }).catch(() => null)
+    if (!owner || owner.userId !== userId) {
+      return reply.status(404).send({ error: 'file not found' })
+    }
     const urlInfo = await service.getDownloadUrl(fileId)
     if (!urlInfo) {
       return reply.status(404).send({ error: 'file not found' })
