@@ -27,4 +27,8 @@ jobs:
             echo '=== nexus-server last 20 log lines ==='; sudo docker logs --tail 20 nexus-server 2>&1 | tail -20;
             echo '=== embedding-server last 15 log lines ==='; sudo docker logs --tail 15 nexus-embedding-server 2>&1 | tail -15;
             echo '=== staging containers (if any) ==='; sudo docker ps --filter name=staging --format '{{.Names}}\t{{.Status}}' || true;
+            echo '=== active pull/download processes ===';
+            sudo ps -eo pid,etime,cmd 2>/dev/null | grep -E 'docker (compose )?pull|docker-untar|containerd' | grep -v grep | head -8 || true;
+            echo '=== image store recent activity ===';
+            sudo docker system df 2>/dev/null | head -5 || true;
           "
