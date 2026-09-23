@@ -435,6 +435,9 @@ export async function putDeckArtifact(input: PutDeckArtifactInput): Promise<PutD
         userId,
         docId,
         deck: projectionObject as Record<string, unknown>,
+        // #review-1(收尾): 指针随 deck/body 同事务原子落库（此前是成功后的
+        // 独立 updateMany — 「投影新、指针旧」窗口会让元数据读端错配）。
+        deckArtifactId: artifactId,
         // 调用方显式基线优先（最宽的「调用方读 → writer 读」窗口保护）；
         // 未提供时回退本函数读值（仍保护「本函数读 → writer 读」窗口）。
         baseDeck: input.baseDeck !== undefined ? input.baseDeck : prevDeckRaw,
@@ -447,32 +450,6 @@ export async function putDeckArtifact(input: PutDeckArtifactInput): Promise<PutD
         return {
           artifactId: '', version: '', changed: false, projection: null,
           conflict: Boolean(written.conflict), error: written.error,
-        }
-      }
-
-      // 4) deckArtifactId 指针 — 存储层关注点，writeDocVersion 形状之外的条件
-      //    更新：where 带写回后的 body+deck 值（写回单点刚确认过的行态），并发
-      //    写者推进行后本写自动落空（0 行）。Fix 4/5：0 行 = 指针未落 → 报告
-      //    成功是错的（真相源字节与 Doc 脱钩）→ 按冲突收场：回滚 + 返回冲突
-      //    （调用方映射 409，模型/前端重读重试）。幂等：指针已相等时跳过。
-      if (doc.deckArtifactId !== artifactId) {
-        const res = await prisma.doc.updateMany({
-          where: {
-            id: docId,
-            userId,
-            body: String(written.body),
-            deck: projection,
-          },
-          data: { deckArtifactId: artifactId },
-        }).catch(() => null)
-        if (!res || res.count === 0) {
-          log.warn('deck artifact pointer write lost (row moved under us) — rolling back', { docId, artifactId })
-          await rollback()
-          return {
-            artifactId: '', version: '', changed: false, projection: null,
-            conflict: true,
-            error: 'deck 工件写入与并发修改冲突（指针未落库），请重读文档后重试',
-          }
         }
       }
 
@@ -529,6 +506,34 @@ export interface DeckArtifactContent {
  * 文件。任一环缺失（无指针/行被软删/盘上文件消失）→ null，调用方按 404
  * 处理（不区分「从未有工件」与「工件已失效」，反枚举同语义）。
  */
+export interface DeckArtifactMeta {
+  artifactId: string
+  /** 版本戳 = artifactId（X-Deck-Base 乐观协议值）。 */
+  version: string
+  mime: string
+  updatedAt: string
+}
+
+/**
+ * #review-3(收尾): 元数据读 — 只查指针 + FileIndex 行，**不读盘上字节**。
+ * 元数据端点（GET /deck-artifact 的一致性重试）不再为一次校验白读几十 MB
+ * pptx 文件；字节读取只留给真正消费 bytes 的调用方（getDeckArtifact）。
+ */
+export async function getDeckArtifactMeta(docId: string): Promise<DeckArtifactMeta | null> {
+  const doc = await prisma.doc.findFirst({ where: { id: docId } })
+  if (!doc?.deckArtifactId) return null
+  const file = await prisma.fileIndex.findFirst({
+    where: { id: doc.deckArtifactId, userId: doc.userId, deletedAt: null },
+  })
+  if (!file) return null
+  return {
+    artifactId: file.id,
+    version: file.id,
+    mime: file.mime || PPTX_MIME_TYPE,
+    updatedAt: file.updatedAt,
+  }
+}
+
 export async function getDeckArtifact(docId: string): Promise<DeckArtifactContent | null> {
   const doc = await prisma.doc.findFirst({ where: { id: docId } })
   if (!doc?.deckArtifactId) return null

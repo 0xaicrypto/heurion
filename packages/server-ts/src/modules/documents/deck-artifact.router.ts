@@ -20,7 +20,7 @@ import prisma from '../../common/prisma.js'
 import { findOwned } from '../../common/ownership.js'
 import { issueChartToken } from '../../common/chart-token.js'
 import { parsePptx, PPTX_MIME_TYPE } from '../../lib/pptx-extractor.js'
-import { DeckBytesError, getDeckArtifact, putDeckArtifact } from '../../lib/deck-bytes.js'
+import { DeckBytesError, getDeckArtifactMeta, putDeckArtifact } from '../../lib/deck-bytes.js'
 
 /** 路由级请求体上限（与 MAX_DECK_BYTES 对齐 — Fastify 默认 1MB 会被 MB 级
  * pptx 撞破；超限 413 而非裸 500，对齐 files.router 超限语义）。 */
@@ -58,7 +58,7 @@ export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
     const userId = request.user!.userId
 
-    type DeckArtifact = NonNullable<Awaited<ReturnType<typeof getDeckArtifact>>>
+    type DeckArtifact = NonNullable<Awaited<ReturnType<typeof getDeckArtifactMeta>>>
     const respond = (artifact: DeckArtifact, slideCount: number | null) => ({
       artifact_id: artifact.artifactId,
       version: artifact.version,
@@ -72,12 +72,13 @@ export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {
       download_url: `/api/v1/files/download/${artifact.artifactId}?token=${issueChartToken(artifact.artifactId, userId)}`,
     })
 
-    // #review-2(收尾): 一致读 — artifact 与投影是两次独立读库；只有指针仍
-    // 指向本次 artifact 版本时 slide_count 才与之同刻有效。不一致重读一轮
-    // （并发写多半已收敛），仍不一致则返回 null（客户端回退，不给过期页数）。
+    // #review-1/#review-3(收尾): 一致读 — 指针随投影同事务原子落库
+    // （writeDocVersion + deckArtifactId），因此「指针 === 本次版本」即可
+    // 断定投影与之同刻；不一致 = 两次读之间发生了完整写入 → 重读一轮
+    // （廉价：元数据读不读盘上字节），仍不一致返回 null（客户端回退）。
     let artifact: DeckArtifact | null = null
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      artifact = await getDeckArtifact(doc.id)
+      artifact = await getDeckArtifactMeta(doc.id)
       if (!artifact) return reply.status(404).send({ error: 'Deck artifact not found' })
       const fresh = await prisma.doc.findFirst({
         where: { id: doc.id, userId },

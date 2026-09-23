@@ -60,6 +60,13 @@ export interface DocVersionWrite {
    * 条件更新覆盖「writer 读 → 落库」窗口，输入级基线缺失）。
    */
   baseDeck?: string | null
+  /**
+   * #review-1(收尾): deck 工件指针 — 提供时与 deck/body 同一事务、同一
+   * 乐观锁条件更新原子落库。此前 putDeckArtifact 在 writeDocVersion 成功
+   * 之后用独立的 updateMany 更新指针：两步之间存在「投影已新、指针仍旧」
+   * 窗口，元数据读端无法据此判断一致性（返回旧字节+新页数的错配组合）。
+   */
+  deckArtifactId?: string
   snapshotLabel: string
   /**
    * #996/#999: 写回来源 — 节级元数据作者轴。'ai' = 工具/AI 写回路径
@@ -281,6 +288,22 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
         }
       }
     }
+    // #review-1(收尾): 内容未变但指针需前移（同字节去重复用旧工件）—
+    // 条件更新与上面的 title/投影回填同守卫强度；0 行 = 并发修改 → 冲突。
+    if (input.deckArtifactId !== undefined && existing.deckArtifactId !== input.deckArtifactId) {
+      const res = await prisma.doc.updateMany({
+        where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
+        data: { deckArtifactId: input.deckArtifactId },
+      }).catch(() => undefined)
+      if (!res || res.count === 0) {
+        return {
+          body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
+          conflict: true,
+          projection: null,
+          error: '文档已被并发修改，deck 指针未写入，请重新读取文档后重试',
+        }
+      }
+    }
     return { body: prevBody, deck: parseDeckJson(prevDeckRaw), changed: false, bodyChanged: false, deckChanged: false, projection }
   }
 
@@ -303,6 +326,9 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
       data: {
         body: nextBody, deck: nextDeckRaw, updatedAt: now, blockProjection: projectionJson,
         ...(titleChanged ? { title: input.title } : {}),
+        // #review-1(收尾): 指针与 deck 投影同一原子更新 — 消除「投影新、
+        // 指针旧」的读端窗口。
+        ...(input.deckArtifactId !== undefined ? { deckArtifactId: input.deckArtifactId } : {}),
       },
     })
     if (res.count === 0) { stale = true; return }

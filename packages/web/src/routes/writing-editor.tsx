@@ -852,13 +852,17 @@ export function WritingEditorPage() {
   // （正文保存已剥离 deck），citation 基线同步前移。
   useEffect(() => {
     const next = chatSession?.lastDocDeck;
-    if (!docId || !next) return;
+    // #review-2(收尾): 必须等权威 getDoc 装载完成（doc !== null）才允许
+    // 消费聊天 store 的缓存值 — 否则同 SPA 重开旧文档时，上一轮会话残留的
+    // lastDocDeck 会抢在 getDoc 之前被当作「已保存基线」；若随后 getDoc 失败
+    // （仅内嵌错误提示、不整页替换），错误基线会永久残留。
+    if (!docId || !next || doc === null) return;
     const key = JSON.stringify(next);
     if (appliedDocDeck.current === key) return;
     appliedDocDeck.current = key;
     lastSavedDeck.current = key;
     setDeckAsset(next as DeckWire);
-  }, [chatSession?.lastDocDeck, docId, setDeckAsset]);
+  }, [chatSession?.lastDocDeck, docId, doc, setDeckAsset]);
 
   /**
    * 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。

@@ -13,6 +13,7 @@ import prisma from '../../src/common/prisma.js'
 import {
   putDeckArtifact,
   getDeckArtifact,
+  getDeckArtifactMeta,
   serializeDeckWireToPptx,
   deckProjectionStaleness,
   rebuildDeckProjection,
@@ -297,15 +298,24 @@ describe('#1101 putDeckArtifact（FileIndex 工件 + 投影重建 + 乐观锁）
     expect(fs.existsSync(path.join(uploadsBaseDir(USER), put1.artifactId))).toBe(true)
   })
 
-  test('Fix 4/5: 指针 updateMany 0 行 → 按冲突收场并回滚（不再 warn+假成功）', async () => {
+  test('Fix 4/5 + review-1: 写回窗口内并发推进行态 → 指针/投影同事务冲突收场并回滚', async () => {
     const docId = await createDoc()
     const rowsBefore = await prisma.fileIndex.count({ where: { userId: USER, id: { startsWith: 'deck-' } } })
     const filesBefore = fs.readdirSync(uploadsBaseDir(USER)).filter((f) => f.startsWith('deck-'))
     const bytes = await serializeDeckWireToPptx({ ...sampleDeckWire(), title: 'pointer-rollback' })
 
-    // 拦截指针条件更新 → 0 行（并发写者接管行态的确定性等价模拟）。
-    // writeDocVersion 走事务客户端（tx.doc），不受该 spy 影响。
-    const spy = vi.spyOn(prisma.doc, 'updateMany').mockResolvedValue({ count: 0 } as never)
+    // 并发写者接管行态的确定性模拟：在工件落盘（fileIndex.create）后、
+    // writeDocVersion 读取校验前改写 doc.deck — baseDeck/乐观锁冲突。
+    // #review-1: 指针现在与 deck 投影同一事务原子落库，冲突在写回单点内
+    // 即被拦截（不再有「成功后独立指针 updateMany」窗口）。
+    const realCreate = prisma.fileIndex.create.bind(prisma.fileIndex)
+    const spy = vi.spyOn(prisma.fileIndex, 'create').mockImplementation((async (args: never) => {
+      await prisma.doc.update({
+        where: { id: docId },
+        data: { deck: JSON.stringify({ schemaVersion: 1, title: 'concurrent', slides: [] }) },
+      })
+      return realCreate(args)
+    }) as never)
     try {
       const put = await putDeckArtifact({ userId: USER, docId, bytes })
       expect(put.conflict).toBe(true)
@@ -323,6 +333,18 @@ describe('#1101 putDeckArtifact（FileIndex 工件 + 投影重建 + 乐观锁）
     // doc 指针未落（conflict 收场）。
     const doc = await prisma.doc.findUnique({ where: { id: docId } })
     expect(doc!.deckArtifactId).toBeNull()
+  })
+
+  test('#review-3 getDeckArtifactMeta：无指针 → null；有工件 → 元数据（不读盘上字节）', async () => {
+    const docId = await createDoc()
+    expect(await getDeckArtifactMeta(docId)).toBeNull()
+
+    const put = await putDeckArtifact({ userId: USER, docId, bytes: await serializeDeckWireToPptx(sampleDeckWire()) })
+    const meta = await getDeckArtifactMeta(docId)
+    expect(meta).toBeTruthy()
+    expect(meta!.artifactId).toBe(put.artifactId)
+    expect(meta!.version).toBe(put.version)
+    expect(meta!.mime).toContain('presentationml')
   })
 
   test('DeckWire → 字节 → 投影重建（extractor 单一实现）', async () => {
