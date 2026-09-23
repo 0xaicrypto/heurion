@@ -156,8 +156,11 @@ export function DeckRichEditor(input: {
    * AI 写回共用同一份撤销快照（整轮合批），跨 turn 后重开新快照。
    */
   turnBoundary?: number;
+  /** #review-8: 画布真实页数上报（装载/保存/AI 应用/撤销时）— 标签页计数与
+   *  评论页码上限的数据源。null = 投影缺失（调用方回退 markdown 估算）。 */
+  onSlideCountChange?: (n: number | null) => void;
 }) {
-  const { docId, onClose, onNotice, onDirtyChange, docTitle, onGenerateDeck, aiDeckVersion, turnBoundary } = input;
+  const { docId, onClose, onNotice, onDirtyChange, docTitle, onGenerateDeck, aiDeckVersion, turnBoundary, onSlideCountChange } = input;
   const { t } = useTranslation();
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [content, setContent] = useState<Uint8Array | null>(null);
@@ -182,12 +185,24 @@ export function DeckRichEditor(input: {
   // 不进 useCallback 依赖,报告路径零重渲染。
   const onDirtyChangeRef = useRef(onDirtyChange);
   onDirtyChangeRef.current = onDirtyChange;
+  // #review-8: 页数上报 latest-ref（装载 effect 早于声明点执行）。
+  const onSlideCountChangeRef = useRef(onSlideCountChange);
+  onSlideCountChangeRef.current = onSlideCountChange;
   // #1113/#1114: AI 写回版本排队 + 整轮撤销快照。
   const queuedAiVersionRef = useRef<string | null>(null);
-  const turnUndoRef = useRef<{ bytes: Uint8Array; version: string } | null>(null);
+  /**
+   * 整轮撤销快照。`aiVersion` = AI 应用后的工件版本 — 撤销必须以它为前置
+   * 条件（recheck）与乐观锁 token：若之后用户又手动保存（版本前移），撤销
+   * 目标已失效，绝不能反向吞掉用户的手工编辑。
+   */
+  const turnUndoRef = useRef<{ bytes: Uint8Array; version: string; aiVersion: string } | null>(null);
   const snapshotTurnRef = useRef<number>(-1);
   const turnBoundaryRef = useRef<number>(turnBoundary ?? 0);
   turnBoundaryRef.current = turnBoundary ?? 0;
+  // #review-2: applyAiTurn 单飞（两条评论线程前后脚落地时不得并发 GET 竞态）。
+  const applyingAiRef = useRef(false);
+  // #review-2: AI 字节瞬时失败的重试定时器（失败不丢排队，画布不永久卡旧内容）。
+  const aiRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** dirty 单点写入：ref + 徽标 state + 父级上报同步推进。 */
   const applyDirty = useCallback((next: boolean) => {
@@ -213,6 +228,8 @@ export function DeckRichEditor(input: {
         bytesRef.current = bytes;
         setContent(bytes);
         setStatus('ready');
+        // #review-8: 页数上报（标签页计数/评论页码上限的真实来源）。
+        onSlideCountChangeRef.current?.(artifact.slide_count ?? null);
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 404) {
@@ -220,7 +237,7 @@ export function DeckRichEditor(input: {
           setStatus('missing');
           return;
         }
-        onNotice?.(t('writing.deckRichEditLoadFail', 'deck 工件加载失败，请返回卡片流后重试'), 6000);
+        onNotice?.(t('writing.deckRichEditLoadFail', 'deck 工件加载失败，请稍后重试'), 6000);
         setStatus('error');
       }
     })();
@@ -230,6 +247,7 @@ export function DeckRichEditor(input: {
 
   useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current);
+    if (aiRetryTimerRef.current) clearTimeout(aiRetryTimerRef.current);
     // 会话结束即撤守护 — 父级 leave 保护不再需要本组件的 dirty 信号
     // （丢弃路径 onClose 已同步复位,这里兜住路由级离开/切文档卸载）。
     onDirtyChangeRef.current?.(false);
@@ -259,6 +277,13 @@ export function DeckRichEditor(input: {
     try {
       const res = await api.putDeckArtifact(docId, bytes, lastVersionRef.current);
       lastVersionRef.current = res.version;
+      onSlideCountChangeRef.current?.(res.slide_count ?? null);
+      // #review-2: 用户保存成功 = 内容已前移到用户版本 — 本轮 AI 撤销窗口失效
+      // （否则点撤销会用用户保存后的版本号做锁，反向吞掉用户刚保存的手工编辑）。
+      if (turnUndoRef.current && res.version !== turnUndoRef.current.aiVersion) {
+        turnUndoRef.current = null;
+        setTurnUndo(false);
+      }
       if (generationRef.current !== generation) {
         // 飞行中用户又编辑了 — dirty 保持（不迟到清零,UI 不谎报已同步）,
         // 无挂起 debounce 时补排一拍把最新字节送出。
@@ -275,9 +300,32 @@ export function DeckRichEditor(input: {
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        // 设计 §6: 工件版本戳已变（其他窗口/AI 已写）— 明示重试，不静默覆盖。
+        // #review-2: 409 不再死锁 — 拉取服务端最新版本重建基线（用户手改优先
+        // 于 AI 并发写入），随后自动重试；绝不静默丢弃本地未保存编辑。
+        let rebased = false;
+        try {
+          const latest = await api.getDeckArtifact(docId);
+          lastVersionRef.current = latest.version;
+          rebased = true;
+          if (turnUndoRef.current && latest.version !== turnUndoRef.current.aiVersion) {
+            turnUndoRef.current = null;
+            setTurnUndo(false);
+          }
+        } catch { /* 版本拉取也失败 — 保持 dirty，提示重试 */ }
         applyDirty(true);
-        onNotice?.(t('writing.deckRichEditConflict', 'deck 工件已被其他窗口修改，请重试'), 6000);
+        onNotice?.(
+          rebased
+            ? t('writing.deckRichEditConflictRebased', '画布已在其他窗口/AI 更新 — 已基于最新版本继续保存你的编辑')
+            : t('writing.deckRichEditConflict', 'deck 工件已被其他窗口修改，请重试'),
+          6000,
+        );
+        if (rebased && !timerRef.current) {
+          timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            if (!dirtyRef.current || savingRef.current) return;
+            void saveRef.current();
+          }, 2500);
+        }
       } else {
         onNotice?.(t('writing.deckRichEditSaveFail', 'deck 保存失败，请重试'), 6000);
       }
@@ -360,39 +408,90 @@ export function DeckRichEditor(input: {
     }
   }, [docId, docTitle, downloading, onNotice, t, save]);
 
+  /** #review-2: AI 字节拉取瞬时失败的重试排程（失败不丢排队，画布不永久旧）。 */
+  const scheduleAiRetry = useCallback(() => {
+    if (aiRetryTimerRef.current) return;
+    aiRetryTimerRef.current = setTimeout(() => {
+      aiRetryTimerRef.current = null;
+      if (dirtyRef.current || savingRef.current) return; // 用户编辑中 — 仍由保存后 effect 冲刷
+      if (queuedAiVersionRef.current && queuedAiVersionRef.current !== lastVersionRef.current) {
+        void applyAiRef.current();
+      }
+    }, 3000);
+  }, []);
+
   /**
    * #1113: 拉取 AI 刚写入的新版本并应用到画布。同一 turn 内只捕获一次
    * 「AI 修改前」快照 — 多次工具调用合批为一个可撤销单元。
+   *
+   * #review-2:
+   * - 单飞（applyingAiRef）：两条评论线程前后脚写回时不得并发 GET 竞争，
+   *   否则晚返回的旧版本可能覆盖新版本、快照对错版本；
+   * - 失败不丢排队：只弹错会永久停在旧内容（AI 已成功落服务端）— 恢复
+   *   排队标记 + 3s 重试，画布最终必然收敛到服务端最新字节。
    */
   const applyAiTurn = useCallback(async () => {
+    if (applyingAiRef.current) return; // 在飞 — 完成后自会消费最新排队版本
     const version = queuedAiVersionRef.current;
     if (!version || !docId) return;
-    queuedAiVersionRef.current = null;
-    setAiQueued(false);
+    applyingAiRef.current = true;
     try {
-      const artifact = await api.getDeckArtifact(docId);
-      const r = await fetch(artifact.download_url);
-      if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
-      const bytes = new Uint8Array(await r.arrayBuffer());
-      if (snapshotTurnRef.current !== turnBoundaryRef.current && bytesRef.current) {
-        turnUndoRef.current = { bytes: bytesRef.current, version: lastVersionRef.current ?? '' };
-        snapshotTurnRef.current = turnBoundaryRef.current;
-        setTurnUndo(true);
+      while (queuedAiVersionRef.current && queuedAiVersionRef.current !== lastVersionRef.current) {
+        const target = queuedAiVersionRef.current;
+        try {
+          const artifact = await api.getDeckArtifact(docId);
+          const r = await fetch(artifact.download_url);
+          if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
+          const bytes = new Uint8Array(await r.arrayBuffer());
+          if (snapshotTurnRef.current !== turnBoundaryRef.current && bytesRef.current) {
+            // 新一轮：捕获「AI 修改前」字节（本轮所有写回共用同一份快照）。
+            turnUndoRef.current = {
+              bytes: bytesRef.current,
+              version: lastVersionRef.current ?? '',
+              aiVersion: artifact.version,
+            };
+            snapshotTurnRef.current = turnBoundaryRef.current;
+            setTurnUndo(true);
+          } else if (turnUndoRef.current) {
+            // #review-2: 同一轮内后续 AI 写回 — 快照字节保持不变，只把
+            // aiVersion 前移到最新（撤销前置条件看的是「用户是否已保存过」，
+            // 不能被同轮 AI 自身的推进误判为失效）。
+            turnUndoRef.current = { ...turnUndoRef.current, aiVersion: artifact.version };
+          }
+          lastVersionRef.current = artifact.version;
+          bytesRef.current = bytes;
+          generationRef.current += 1;
+          setContent(bytes);
+          applyDirty(false);
+          onSlideCountChangeRef.current?.(artifact.slide_count ?? null);
+          // #review-4: 只清理「本次已应用的目标」— 在飞期间到达的新版本必须
+          // 保留在队列里由下一轮循环消费（无条件清空会丢最新版本）。
+          if (queuedAiVersionRef.current === target) {
+            queuedAiVersionRef.current = null;
+            setAiQueued(false);
+          }
+        } catch (err) {
+          // 失败：恢复排队标记（不丢版本）+ 排程重试。
+          queuedAiVersionRef.current = target;
+          setAiQueued(true);
+          scheduleAiRetry();
+          onNotice?.(
+            err instanceof ApiError && err.status === 404
+              ? t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑')
+              : t('writing.deckAiApplyFail', 'AI 修改同步到画布失败，正在自动重试…'),
+            6000,
+          );
+          return;
+        }
       }
-      lastVersionRef.current = artifact.version;
-      bytesRef.current = bytes;
-      generationRef.current += 1;
-      setContent(bytes);
-      applyDirty(false);
-    } catch (err) {
-      onNotice?.(
-        err instanceof ApiError && err.status === 404
-          ? t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑')
-          : t('writing.deckAiApplyFail', 'AI 修改同步到画布失败，请刷新重试'),
-        6000,
-      );
+      if (!queuedAiVersionRef.current) setAiQueued(false);
+    } finally {
+      applyingAiRef.current = false;
     }
-  }, [docId, onNotice, t, applyDirty]);
+  }, [docId, onNotice, t, applyDirty, scheduleAiRetry]);
+  // applyAiTurn 自引用（重试定时器 — 声明顺序解耦）。
+  const applyAiRef = useRef(applyAiTurn);
+  applyAiRef.current = applyAiTurn;
 
   /**
    * #1113/#1114: 收到 AI 写回版本 —
@@ -420,13 +519,25 @@ export function DeckRichEditor(input: {
     if (v && v !== lastVersionRef.current) void applyAiTurn();
   }, [dirty, phase, status, applyAiTurn]);
 
-  /** #1113: 整轮撤销 — 回滚 Artifact 指针到本轮 AI 修改前（乐观锁 PUT 旧字节）。 */
+  /**
+   * #1113: 整轮撤销 — 回滚 Artifact 指针到本轮 AI 修改前（乐观锁 PUT 旧字节）。
+   * #review-2: 撤销必须以快照携带的 `aiVersion` 为前置（= 当时服务端版本）：
+   * 若其后用户又手动保存（版本前移），撤销目标已被用户内容取代 — 直接失效
+   * 并明确提示，绝不用最新版本号做锁反向吞掉用户的手工编辑。
+   */
   const handleUndoAiTurn = useCallback(async () => {
     const snap = turnUndoRef.current;
     if (!snap || !docId) return;
+    if (lastVersionRef.current !== snap.aiVersion) {
+      turnUndoRef.current = null;
+      setTurnUndo(false);
+      onNotice?.(t('writing.deckAiUndoStale', '画布已有更新（你或 AI 保存了新版本）— 本轮撤销已失效，未改动任何内容'), 6000);
+      return;
+    }
     try {
-      const res = await api.putDeckArtifact(docId, snap.bytes, lastVersionRef.current);
+      const res = await api.putDeckArtifact(docId, snap.bytes, snap.aiVersion);
       lastVersionRef.current = res.version;
+      onSlideCountChangeRef.current?.(res.slide_count ?? null);
       bytesRef.current = snap.bytes;
       generationRef.current += 1;
       setContent(snap.bytes);
@@ -448,11 +559,12 @@ export function DeckRichEditor(input: {
     setTurnUndo(false);
   }, []);
 
-  // 切文档：排队/撤销/快照全部作废（旧文档的 AI 版本不得串染新画布）。
+  // 切文档：排队/撤销/快照/重试全部作废（旧文档的 AI 版本不得串染新画布）。
   useEffect(() => {
     queuedAiVersionRef.current = null;
     turnUndoRef.current = null;
     snapshotTurnRef.current = -1;
+    if (aiRetryTimerRef.current) { clearTimeout(aiRetryTimerRef.current); aiRetryTimerRef.current = null; }
     setAiQueued(false);
     setTurnUndo(false);
   }, [docId]);

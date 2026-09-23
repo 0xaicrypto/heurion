@@ -494,6 +494,9 @@ export function WritingEditorPage() {
   // #1113: deck AI 写回按「轮」合批 — 每轮 chat 完成 +1，画布据此在每轮只
   // 捕获一次撤销快照（同一轮内多次 edit_deck_bytes = 一个可撤销单元）。
   const [deckTurnBoundary, setDeckTurnBoundary] = useState(0);
+  // #review-8: 画布真实页数（工件投影）— 标签页计数/评论页码上限；null 回退
+  // body markdown 估算（旧文档未迁移时）。
+  const [deckSlideCount, setDeckSlideCount] = useState<number | null>(null);
 
   // #1074-3: 评论-AI 状态机（登记/loading/收口/清账/ai-replies）— hook 化。
   // #1112/#1113: deck 评论的撤销出口收敛到画布的「整轮撤销」（#1088 的
@@ -1227,17 +1230,23 @@ export function WritingEditorPage() {
     }
   };
 
-  /** #1112: deck 评论创建 — 卡片流退役后从画布头部提供（页码输入 → 侧边栏线程）。 */
+  /** #1112: deck 评论创建 — 卡片流退役后从画布头部提供（页码输入 → 侧边栏线程）。
+   *  #review-9: 页码上限按画布真实页数校验 — 超页会产生永远定位不到的悬挂评论。 */
   const addDeckComment = useCallback(() => {
     const raw = window.prompt(t('writing.deckCommentSlidePrompt', '为第几页添加评论？（1 开始的页码）'));
     if (raw === null) return;
     const n = parseInt(raw, 10);
+    const maxSlides = deckSlideCount ?? deckAsset?.slides?.length ?? deck.slides.length;
     if (!Number.isFinite(n) || n < 1) {
       showNotice(t('writing.deckCommentSlideInvalid', '页码无效'), 4000);
       return;
     }
+    if (n > maxSlides) {
+      showNotice(t('writing.deckCommentSlideOutOfRange', '页码超出范围：当前共 {{n}} 页', { n: maxSlides }), 4000);
+      return;
+    }
     setCommentDraft({ target: 'deck_slide', slideIndex0: n - 1, anchorText: t('writing.deckSlideLabel', '第 {{n}} 页', { n }) });
-  }, [showNotice, t]);
+  }, [showNotice, t, deckSlideCount, deckAsset, deck.slides.length]);
 
   // #1040: 追加回复 — 本地按时间序插入线程。
   const replyToComment = async (commentId: string, text: string) => {
@@ -1287,8 +1296,10 @@ export function WritingEditorPage() {
     setSaving(true);
     setError(null);
     try {
-      // #773: deck 一并保存（deckAsset 为 null 时不触碰服务端 deck）。
-      const updated = await saveDoc(title, body, { deck: deckAsset ?? undefined });
+      // #review-2（红线）: 正文保存绝不携带本地 deck 镜像 — 画布是 deck 唯一
+      // 写入方（工件 PUT），本地 deckAsset 在画布保存后必然过期；一并 PUT 会
+      // 用旧投影静默覆盖画布刚保存的修改。文档保存只写 title/body。
+      const updated = await saveDoc(title, body);
       lastSavedBody.current = updated.body ?? body;
       serverBodyRef.current = updated.body ?? body;
       lastSavedDeck.current = deckAsset ? JSON.stringify(deckAsset) : lastSavedDeck.current;
@@ -1324,7 +1335,8 @@ export function WritingEditorPage() {
   const resolveConflictKeepMine = async () => {
     if (!docId || !saveConflict) return;
     try {
-      const updated = await saveDoc(saveConflict.title, saveConflict.body, { deck: saveConflict.deck, force: true });
+      // #review-2: 冲突保留同样不携带 deck（投影由画布工件路径维护）。
+      const updated = await saveDoc(saveConflict.title, saveConflict.body, { force: true });
       lastSavedBody.current = updated.body ?? saveConflict.body;
       serverBodyRef.current = updated.body ?? saveConflict.body;
       setDoc((prev) => prev ? { ...prev, body: updated.body } : prev);
@@ -1559,7 +1571,8 @@ export function WritingEditorPage() {
               onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
               items={[
                 { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
-                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deck.slides.length}`, icon: <Presentation size={13} /> },
+                /* #review-8: 优先画布真实页数（工件投影）；未装载时回退 markdown 估算。 */
+                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deckSlideCount ?? deck.slides.length}`, icon: <Presentation size={13} /> },
               ]}
             />
           </div>
@@ -1626,7 +1639,7 @@ export function WritingEditorPage() {
               onTogglePreview={() => setPreview((v) => !v)}
               viewMode={viewMode}
               onToggleViewMode={() => setViewMode((m) => (m === 'deck' ? 'document' : 'deck'))}
-              deckSlideCount={deck.slides.length}
+              deckSlideCount={deckSlideCount ?? deck.slides.length}
               exportResult={exportResult}
               exportHistory={exportHistory}
               exportPanelOpen={exportPanelOpen}
@@ -1652,6 +1665,8 @@ export function WritingEditorPage() {
                   /* #1113/#1114: AI 写回版本 + 轮边界（实时落地/整轮撤销/未保存排队）。 */
                   aiDeckVersion={chatSession?.lastDocDeckVersion ?? null}
                   turnBoundary={deckTurnBoundary}
+                  /* #review-8: 画布真实页数（标签页计数/评论页码上限）。 */
+                  onSlideCountChange={setDeckSlideCount}
                   onClose={() => {
                     // 组件自身 onClose 只在「无 dirty 或保存成功」路径触发 —
                     // 镜像随会话关闭复位,不影响下一次画布会话。

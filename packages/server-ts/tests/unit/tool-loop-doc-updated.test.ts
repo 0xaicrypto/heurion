@@ -183,10 +183,9 @@ describe('#989 Phase 3 — doc_updated 携带块投影(presenter 接线)', () =>
       userId: 'user_docupd7', sessionId: 'doc-docupd7',
     })
 
-    const docUpdated = chunks.find((c) => c.type === 'doc_updated') as { deck_artifact_id?: string; deck_version?: string } | undefined
+    const docUpdated = chunks.find((c) => c.type === 'doc_updated') as { deck_version?: string } | undefined
     expect(docUpdated).toBeTruthy()
     expect(docUpdated!.deck_version).toBe('deck-d1-1700000000000.pptx')
-    expect(docUpdated!.deck_artifact_id).toBe('deck-d1-1700000000000.pptx')
   })
 
   test('#1113 无 artifact 字段的写回 → 不携带 deck_version(向后兼容)', async () => {

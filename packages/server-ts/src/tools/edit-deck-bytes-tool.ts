@@ -49,8 +49,11 @@ export class EditDeckBytesTool extends BaseTool {
       '{ op: "add_slide", afterIndex, title?, bullets? } inserts a new slide after position afterIndex (0 = very first).',
       '{ op: "remove_slide", slideIndex } removes slide N (at least 1 slide must remain).',
       '{ op: "move_slide", from, to } reorders slide from-position to to-position.',
+      '{ op: "set_layout", slideIndex, layout } applies a slide layout (master layout name or standard type, e.g. "Title Slide"/"Title and Content"/"Blank") to slide N.',
+      '{ op: "set_theme", theme } applies a built-in theme preset (id or name from the shipped preset catalog) to the whole deck.',
       'slideIndex/afterIndex/from/to are 1-based (afterIndex may be 0). Indices refer to the CURRENT deck state as earlier actions in the same call are applied in order.',
-      'The deck is edited as a real pptx file: untouched slides/elements are preserved bit-for-bit. Use when the user asks to modify deck slide text/notes/order (把第 2 页里的 87 例改成 120 例 / 改备注 / 插一页 / 删掉结论页 / 把第 3 页移到第 1 页). Do NOT use edit_document for deck changes; do NOT hand-write numbered reference lists in deck text (use insert_citation).',
+      'Native chart insertion is NOT supported by this tool yet — for chart requests, use add_slide with bullet data and tell the user the chart needs the canvas/plot pipeline.',
+      'The deck is edited as a real pptx file: untouched slides/elements are preserved bit-for-bit. Use when the user asks to modify deck slide text/notes/order/layout/theme (把第 2 页里的 87 例改成 120 例 / 改备注 / 插一页 / 删掉结论页 / 把第 3 页移到第 1 页 / 第 3 页换成标题版式 / 整份换主题). Do NOT use edit_document for deck changes; do NOT hand-write numbered reference lists in deck text (use insert_citation).',
     ].join(' ')
   }
 
@@ -66,7 +69,7 @@ export class EditDeckBytesTool extends BaseTool {
           items: {
             type: 'object',
             properties: {
-              op: { type: 'string', enum: ['set_text', 'set_notes', 'add_slide', 'remove_slide', 'move_slide'] },
+              op: { type: 'string', enum: ['set_text', 'set_notes', 'add_slide', 'remove_slide', 'move_slide', 'set_layout', 'set_theme'] },
               find: { type: 'string', description: 'set_text: original text copied verbatim from the deck (min 1 char).' },
               replace: { type: 'string', description: 'set_text: replacement text (empty string = delete).' },
               scope: { type: 'string', enum: ['all', 'slide'], description: 'set_text: default all slides; slide = only slideIndex.' },
@@ -77,6 +80,8 @@ export class EditDeckBytesTool extends BaseTool {
               text: { type: 'string', description: 'set_notes: notes text (max 5000, empty = clear).' },
               from: { type: 'number', description: 'move_slide: source 1-based position.' },
               to: { type: 'number', description: 'move_slide: target 1-based position.' },
+              layout: { type: 'string', description: 'set_layout: target layout name or standard type (e.g. "Title Slide", "Title and Content", "Blank").' },
+              theme: { type: 'string', description: 'set_theme: built-in theme preset id or name (applied to the whole deck).' },
             },
             required: ['op'],
           },
@@ -222,6 +227,38 @@ export class EditDeckBytesTool extends BaseTool {
                 }
                 break
               }
+              // #review-7: 能力对齐 — 布局/主题走 pptx-viewer-core 公开 API。
+              case 'set_layout': {
+                const layouts = await pres.handler.getAvailableLayoutsForSlide(action.slideIndex - 1, pres.slides)
+                const q = action.layout.trim().toLowerCase()
+                const target = layouts.find((l) => l.name.toLowerCase() === q)
+                  ?? layouts.find((l) => (l.type ?? '').toLowerCase() === q)
+                if (!target) {
+                  const names = layouts.map((l) => `${l.name}${l.type ? `(${l.type})` : ''}`).slice(0, 12).join('、')
+                  results.push({ index: i + 1, op: 'set_layout', applied: false, detail: `未找到布局「${action.layout}」— 当前可用：${names || '（无）'}` })
+                  break
+                }
+                const updated = await pres.handler.applyLayoutToSlide(action.slideIndex - 1, target.path, pres.slides)
+                pres.slides[action.slideIndex - 1] = updated
+                appliedCount += 1
+                results.push({ index: i + 1, op: 'set_layout', applied: true, detail: `第 ${action.slideIndex} 页已应用布局「${target.name}」` })
+                break
+              }
+              case 'set_theme': {
+                const { THEME_PRESETS } = await import('pptx-viewer-core')
+                const q = action.theme.trim().toLowerCase()
+                const preset = THEME_PRESETS.find((p) => p.id.toLowerCase() === q)
+                  ?? THEME_PRESETS.find((p) => p.name.toLowerCase() === q)
+                if (!preset) {
+                  const ids = THEME_PRESETS.map((p) => p.id).slice(0, 20).join('、')
+                  results.push({ index: i + 1, op: 'set_theme', applied: false, detail: `未找到主题「${action.theme}」— 内置主题：${ids}` })
+                  break
+                }
+                await pres.handler.applyTheme(preset.colorScheme, preset.fontScheme, preset.name)
+                appliedCount += 1
+                results.push({ index: i + 1, op: 'set_theme', applied: true, detail: `全 deck 已应用主题「${preset.name}」` })
+                break
+              }
             }
           } catch (err) {
             results.push({ index: i + 1, op: action.op, applied: false, detail: `执行失败：${(err as Error).message.slice(0, 120)}` })
@@ -304,6 +341,11 @@ function precheckBounds(actions: DeckEditAction[], slideCount: number): string |
         break
       case 'move_slide':
         if (action.from > count || action.to > count) return `from/to 超出范围（当前共 ${count} 页）`
+        break
+      case 'set_layout':
+        if (action.slideIndex > count) return `slideIndex ${action.slideIndex} 超出范围（当前共 ${count} 页）`
+        break
+      case 'set_theme':
         break
     }
   }

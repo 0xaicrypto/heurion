@@ -31,6 +31,18 @@ async function ownedDoc(request: FastifyRequest<{ Params: { docId: string } }>) 
   return findOwned(prisma.doc, request.params.docId, userId)
 }
 
+/** #review-8: 投影页数 — 标签页/评论页码上限的真实数据源（正文 markdown
+ *  页数在画布编辑后必然脱节）。投影缺失/损坏 → null（调用方回退）。 */
+function slideCountOf(deckRaw: string | null | undefined): number | null {
+  if (!deckRaw) return null
+  try {
+    const d = JSON.parse(deckRaw) as { slides?: unknown }
+    return Array.isArray(d.slides) ? d.slides.length : null
+  } catch {
+    return null
+  }
+}
+
 export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authGuard)
 
@@ -52,6 +64,8 @@ export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {
       version: artifact.version,
       mime: artifact.mime,
       updated_at: artifact.updatedAt,
+      // #review-8: 画布真实页数（投影随工件更新）— 标签页计数/评论页码上限。
+      slide_count: slideCountOf(doc.deck),
       // tokenized download（files 模块同机制 — 短时效 chart token 带 owner）。
       download_url: `/api/v1/files/download/${artifact.artifactId}?token=${issueChartToken(artifact.artifactId, userId)}`,
     }
@@ -93,7 +107,8 @@ export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {
       })
       if (put.conflict) return reply.status(409).send({ error: put.error || '写回冲突，请刷新后重试' })
       if (put.error) return reply.status(500).send({ error: put.error })
-      return { ok: true, artifact_id: put.artifactId, version: put.version, changed: put.changed }
+      // #review-8: 保存响应同步真实页数（投影由 putDeckArtifact 重建）。
+      return { ok: true, artifact_id: put.artifactId, version: put.version, changed: put.changed, slide_count: slideCountOf(put.projection ?? null) }
     } catch (err) {
       if (err instanceof DeckBytesError) {
         return err.status === 'not-found' ? reply.status(404).send({ error: err.message }) : reply.status(400).send({ error: err.message })

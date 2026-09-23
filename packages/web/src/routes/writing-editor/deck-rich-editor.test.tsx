@@ -195,9 +195,11 @@ describe('#1101 DeckRichEditor 保存流', () => {
     expect(await screen.findByText('已同步')).toBeInTheDocument();
   });
 
-  test('PUT 409 → 冲突提示（乐观锁语义），dirty 保持待重试', async () => {
+  test('#review-3 PUT 409 → 重建基线并自动重试（不再死锁，用户编辑不丢）', { timeout: 15_000 }, async () => {
     await seedArtifact('v1');
-    putDeckArtifactMock.mockRejectedValue(mkApiError(409, '{"error":{"code":"deck_conflict"}}'));
+    putDeckArtifactMock
+      .mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'))
+      .mockResolvedValueOnce({ ok: true, artifact_id: 'art-2', version: 'v2', changed: true });
     const notice = vi.fn();
     render(<Harness docId="d1" onNotice={notice} />);
     await screen.findByTestId('pptx-viewer-simulate-edit');
@@ -205,11 +207,14 @@ describe('#1101 DeckRichEditor 保存流', () => {
     fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
     await waitFor(
       () => {
-        expect(notice).toHaveBeenCalledWith('deck 工件已被其他窗口修改，请重试', 6000);
+        expect(notice).toHaveBeenCalledWith(expect.stringContaining('已基于最新版本继续保存'), 6000);
       },
-      { timeout: 5000 },
+      { timeout: 6000 },
     );
-    expect(screen.getByText('● 未保存')).toBeInTheDocument();
+    // 自动重试落地 → dirty 清空，用户字节保留。
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(2), { timeout: 8000 });
+    expect(Array.from(putDeckArtifactMock.mock.calls[1][1] as Uint8Array)).toEqual([1, 2, 3, 4]);
+    await waitFor(() => expect(screen.getByText('已同步')).toBeInTheDocument(), { timeout: 8000 });
   });
 
   test('「保存并返回卡片流」→ 冲刷保存 → onClose', async () => {
@@ -489,6 +494,111 @@ describe('#1113/#1114 DeckRichEditor AI 写回', () => {
     fireEvent.click(screen.getByTestId('deck-ai-undo'));
     await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent('999'));
     expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  test('#review-1 用户手动保存后撤销窗口失效 — 撤销绝不反向吞掉用户手改', async () => {
+    const { v2 } = await seedTwoVersions();
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+
+    // AI 落地 → 撤销横幅出现。
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await screen.findByTestId('deck-ai-undo-banner');
+    expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v2.length));
+
+    // 用户手动编辑并保存（版本前移 ≠ aiVersion）→ 撤销窗口立即失效。
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    putDeckArtifactMock.mockResolvedValueOnce({ ok: true, artifact_id: 'art-user', version: 'v-user', changed: true });
+    fireEvent.click(screen.getByTestId('deck-rich-editor-save'));
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByTestId('deck-ai-undo-banner')).not.toBeInTheDocument());
+    // 保存的正是用户字节（base 为 AI 版本）。
+    const [, userBytes, userBase] = putDeckArtifactMock.mock.calls[0];
+    expect(Array.from(userBytes as Uint8Array)).toEqual([1, 2, 3, 4]);
+    expect(userBase).toBe('v2');
+  });
+
+  test('#review-3 409 冲突：重建基线后自动重试，不再死锁、不丢用户编辑', { timeout: 15_000 }, async () => {
+    await seedTwoVersions();
+    render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+
+    // 第一次 PUT 409（其他窗口），rebase 时 GET 返回 v2；第二次 PUT 成功。
+    putDeckArtifactMock
+      .mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'))
+      .mockResolvedValueOnce({ ok: true, artifact_id: 'art-rebased', version: 'v-rebased', changed: true });
+
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    // 409 → rebase（getDeckArtifact 第二调）→ 2.5s 后重试 → 成功清 dirty。
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(2), { timeout: 9000 });
+    const [docArg1] = putDeckArtifactMock.mock.calls[0];
+    const [docArg2, , base2] = putDeckArtifactMock.mock.calls[1];
+    expect(docArg1).toBe('d1');
+    expect(base2).toBe('v2'); // 重试基于 rebase 后的服务端版本
+    expect(docArg2).toBe('d1');
+    await waitFor(() => expect(screen.getByText('已同步')).toBeInTheDocument(), { timeout: 9000 });
+  });
+
+  test('#review-4 AI 落地单飞：并发到达的新旧版本不交错，最终收敛到最新', { timeout: 15_000 }, async () => {
+    // mount v1；v2 GET 挂起；期间到达 v3 → 单飞后按最新排队续拉。
+    const v1 = await buildPptxFixture();
+    const v2Bytes = new Uint8Array(999).fill(7);
+    const v3Bytes = new Uint8Array(777).fill(5);
+    const meta = (version: string, file: string) => ({
+      artifact_id: `art-${version}`, version,
+      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-01T00:00:00Z', download_url: `/api/v1/files/${file}/download?token=t`,
+    });
+    // 对象持有 resolve：回调内赋值对 TS 控制流可见（裸 let 会被窄化为 never）。
+    const deferred: { resolve: ((v: unknown) => void) | null } = { resolve: null };
+    getDeckArtifactMock
+      .mockResolvedValueOnce(meta('v1', 'f1'))
+      .mockImplementationOnce(() => new Promise((resolve) => { deferred.resolve = resolve; }))
+      .mockResolvedValueOnce(meta('v3', 'f3'))
+      .mockResolvedValue(meta('v4', 'f3'));
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes('/f1/')) return new Response(v1.buffer as ArrayBuffer, { status: 200 });
+      if (u.includes('/f2/')) return new Response(v2Bytes.buffer as ArrayBuffer, { status: 200 });
+      return new Response(v3Bytes.buffer as ArrayBuffer, { status: 200 });
+    }));
+
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-stub');
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await waitFor(() => expect(getDeckArtifactMock).toHaveBeenCalledTimes(2));
+    // v2 在飞期间 v3 到达（若并发会交错覆盖）→ 单飞：v2 完成后再拉 v3。
+    rerender(<Harness docId="d1" aiDeckVersion="v3" turnBoundary={0} />);
+    deferred.resolve?.(meta('v2', 'f2'));
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v3Bytes.length)), { timeout: 5000 });
+    // 最终版本 = v3（base 前移）；撤销快照只捕获一次（本轮）。
+    expect(getDeckArtifactMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('#review-5 AI 字节拉取瞬时失败：排队保留 + 自动重试收敛，不永久卡旧内容', { timeout: 15_000 }, async () => {
+    // 独立链：装载 v1 → AI 同步首次失败 → 重试成功 v2。
+    const v1 = await buildPptxFixture();
+    const v2 = new Uint8Array(999).fill(7);
+    const meta = (version: string, file: string) => ({
+      artifact_id: `art-${version}`, version,
+      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-01T00:00:00Z', download_url: `/api/v1/files/${file}/download?token=t`,
+    });
+    getDeckArtifactMock
+      .mockResolvedValueOnce(meta('v1', 'f1'))
+      .mockRejectedValueOnce(new Error('transient network'))
+      .mockResolvedValue(meta('v2', 'f2'));
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/f2/') ? new Response(v2.buffer as ArrayBuffer, { status: 200 }) : new Response(v1.buffer as ArrayBuffer, { status: 200 })));
+
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    // 失败后排队提示仍在（版本未被丢弃）。
+    await screen.findByTestId('deck-ai-queued-banner');
+    // 3s 自动重试 → 拉到 v2 字节。
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent('999'), { timeout: 10_000 });
+    expect(screen.queryByTestId('deck-ai-queued-banner')).not.toBeInTheDocument();
   });
 
   test('#1114 有未保存编辑：AI 写回不覆盖画布，排队等待；保存后自动应用', async () => {

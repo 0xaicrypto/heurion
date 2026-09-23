@@ -207,8 +207,7 @@ const PRESENTERS: ToolResultPresenter[] = [
             return sections.length > 0 ? { changed_sections: sections } : {}
           })(),
           // #1113: deck 工件版本随写回下发 — 已打开画布据此实时刷新
-          // （edit_deck_bytes 输出 artifact_id/version；字节走 GET 不占 SSE）。
-          ...(typeof parsed.artifact_id === 'string' && parsed.artifact_id ? { deck_artifact_id: parsed.artifact_id } : {}),
+          // （edit_deck_bytes 输出 version；字节走 GET 不占 SSE）。
           ...(typeof parsed.version === 'string' && parsed.version ? { deck_version: parsed.version } : {}),
         })
       }

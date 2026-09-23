@@ -53,6 +53,20 @@ const deckEditActionUnion = z.discriminatedUnion('op', [
     /** 目标位置（1-based）。 */
     to: slideIndexSchema,
   }),
+  // #review-7（能力对齐）: 卡片流 edit_deck 的 set_layout/set_theme 在字节
+  // 路径补齐（pptx-viewer-core 公开 API：applyLayoutToSlide / applyTheme）。
+  z.object({
+    op: z.literal('set_layout'),
+    slideIndex: slideIndexSchema,
+    /** 目标布局名或标准 type（如 '标题幻灯片'/'Title Slide'/'obj'/'blank'），
+     *  大小写不敏感 — 在当前 slide master 的可用布局里解析。 */
+    layout: z.string().min(1).max(120),
+  }),
+  z.object({
+    op: z.literal('set_theme'),
+    /** 内置主题预设 id 或显示名（THEME_PRESETS，如 'ion'/'Facet'）。 */
+    theme: z.string().min(1).max(60),
+  }),
 ])
 
 export const deckEditActionSchema = deckEditActionUnion.superRefine((a, ctx) => {

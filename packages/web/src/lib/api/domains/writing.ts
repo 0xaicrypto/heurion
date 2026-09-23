@@ -57,6 +57,8 @@ export interface DeckArtifactWire {
   /** 工件 mime（application/octet-stream 或 pptx mime,服务端恒带）。 */
   mime?: string;
   updated_at?: string;
+  /** #review-8: 画布真实页数（投影随工件更新）— 标签页计数/评论页码上限。 */
+  slide_count?: number | null;
   download_url: string;
 }
 
@@ -271,7 +273,7 @@ export class WritingApi extends ApiCore {
    * 401 → 全局登出 / nexus:auth-expired 流）。显式 Content-Type 八进制流 —
    * core.fetch 仅在缺省时补 JSON 头,显式头生效;响应为 JSON。
    */
-  async putDeckArtifact(docId: string, bytes: Uint8Array, baseVersion?: string): Promise<{ ok: boolean; artifact_id: string; version: string; changed: boolean }> {
+  async putDeckArtifact(docId: string, bytes: Uint8Array, baseVersion?: string): Promise<{ ok: boolean; artifact_id: string; version: string; changed: boolean; slide_count?: number | null }> {
     return this.fetch(`/api/v1/docs/${docId}/deck-artifact`, {
       method: 'POST',
       headers: this.headers({

@@ -231,6 +231,66 @@ describe('#1101 edit_deck_bytes 工具', () => {
     expect(JSON.stringify(parsed.slides)).toContain('遗留要点（已编辑）')
   })
 
+  // #review-7（能力对齐）: 卡片流 edit_deck 的布局/主题能力在字节路径补齐。
+  test('set_theme：内置主题预设应用（工件推进 + 动作生效）', async () => {
+    const docId = await createDoc()
+    const put = await putDeckArtifact({ userId: USER, docId, bytes: await fixtureBytes() })
+    const { THEME_PRESETS } = await import('pptx-viewer-core')
+    const preset = THEME_PRESETS[0]
+    const out = expectSuccess(await tool(docId).execute({
+      actions: [{ op: 'set_theme', theme: preset.id }],
+    }))
+    expect(out.actions_applied).toBe(1)
+    expect(out.results[0].applied).toBe(true)
+    expect(out.results[0].detail).toContain(preset.name)
+    const artifact = await getDeckArtifact(docId)
+    expect(artifact!.artifactId).not.toBe(put.artifactId)
+  })
+
+  test('set_theme：未知主题 → 动作不生效并列出可用主题；整次无动作 → 明确失败', async () => {
+    const docId = await createDoc()
+    await putDeckArtifact({ userId: USER, docId, bytes: await fixtureBytes() })
+    const res = await tool(docId).execute({
+      actions: [{ op: 'set_theme', theme: 'no-such-theme-xyz' }],
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('没有动作生效')
+  })
+
+  test('set_layout：按当前可用布局名应用到指定页（工件推进）', async () => {
+    const docId = await createDoc()
+    const put = await putDeckArtifact({ userId: USER, docId, bytes: await fixtureBytes() })
+    // 枚举可用布局（取一个存在的名字，避免对 fixture 布局命名硬编码）。
+    const { Presentation } = await import('pptx-viewer-core')
+    const loaded = await getDeckArtifact(docId)
+    const pres = await Presentation.load(new Uint8Array(loaded!.bytes).buffer)
+    let layoutName = ''
+    try {
+      const opts = await pres.handler.getAvailableLayoutsForSlide(0, pres.slides)
+      layoutName = opts[opts.length - 1]?.name ?? opts[0]?.name ?? ''
+    } finally {
+      pres.handler.dispose()
+    }
+    expect(layoutName).toBeTruthy()
+    const out = expectSuccess(await tool(docId).execute({
+      actions: [{ op: 'set_layout', slideIndex: 1, layout: layoutName }],
+    }))
+    expect(out.actions_applied).toBe(1)
+    expect(out.results[0].applied).toBe(true)
+    const artifact = await getDeckArtifact(docId)
+    expect(artifact!.artifactId).not.toBe(put.artifactId)
+  })
+
+  test('set_layout：未知布局 → 动作不生效（列出可用布局）', async () => {
+    const docId = await createDoc()
+    await putDeckArtifact({ userId: USER, docId, bytes: await fixtureBytes() })
+    const res = await tool(docId).execute({
+      actions: [{ op: 'set_layout', slideIndex: 1, layout: '不存在的布局名' }],
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('没有动作生效')
+  })
+
   test('非 doc- 会话 / 文档不存在 → 拒绝', async () => {
     const chatTool = new EditDeckBytesTool({ userId: USER, sessionId: 'chat-123' })
     const res = await chatTool.execute({ actions: [{ op: 'set_notes', slideIndex: 1, text: 'x' }] })

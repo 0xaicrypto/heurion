@@ -72,10 +72,11 @@ export function useDocChat<const TDoc extends { body: string; updated_at: string
   setError: (e: string) => void;
   onNotice: (text: string, ttlMs?: number) => void;
   loadReferences: () => Promise<void>;
-  /** #773: deck 写回轮询需要 lastSavedDeck/appliedDocDeck/setDeckAsset。 */
+  /** #773: deck 写回轮询需要 lastSavedDeck/appliedDocDeck/setDeckAsset。
+   *  #review-11: setDeckAsset 收敛为直值 setter（函数式入参无调用方）。 */
   lastSavedDeck: React.MutableRefObject<string>;
   appliedDocDeck: React.MutableRefObject<string>;
-  setDeckAsset: React.Dispatch<React.SetStateAction<DeckWire | null>>;
+  setDeckAsset: (deck: DeckWire | null) => void;
   setViewMode: (mode: 'document' | 'deck') => void;
   /** 外部已有的编辑器选中文本(选中即引用)。 */
   editorSelection: () => string;

@@ -281,6 +281,16 @@ describe('#1051/#1112 deck slide 评论（画布形态）', () => {
     expect(text).toContain('未能自动处理');
   });
 
+  test('#review-2 正文保存不携带本地 deck 镜像（画布保存不被旧投影覆盖）', { timeout: 10_000 }, async () => {
+    renderEditor();
+    const title = await screen.findByPlaceholderText('Document title');
+    fireEvent.change(title, { target: { value: 'New title' } });
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalled(), { timeout: 8000 });
+    const [, payload] = apiMock.updateDoc.mock.calls.at(-1)!;
+    expect(payload).not.toHaveProperty('deck');
+    expect(payload.body).toBe(BASE_BODY);
+  });
+
   test('漂移锚点仍可发起：指令注明可能漂移，不崩溃', async () => {
     apiMock.listDocComments.mockResolvedValue({
       comments: [makeComment({

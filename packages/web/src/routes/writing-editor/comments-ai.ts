@@ -40,6 +40,27 @@ interface PendingCommentTurn {
   turnId?: string;
 }
 
+/**
+ * #review-6: deck 评论收口基线的轮开始 re-arm — 只重写「本轮指令对应」的
+ * 登记项版本。排队期间前排评论的写回会推高整 deck 版本，登记时的版本会让
+ * 本轮 no-op 的评论被误判成「已按评论意见修改」；轮开始时取自己那一轮的
+ * 起始版本才正确。导出供单测直接钉住归属语义。
+ */
+export function armDeckVersionAtTurnStart(
+  pending: Map<string, { target: 'section' | 'deck_slide'; instruction?: string; deckVersionAtStart?: string | null }>,
+  instruction: string | null,
+  version: string | null,
+): number {
+  if (!instruction) return 0;
+  let armed = 0;
+  for (const [id, meta] of [...pending.entries()]) {
+    if (meta.target !== 'deck_slide' || meta.instruction !== instruction) continue;
+    pending.set(id, { ...meta, deckVersionAtStart: version });
+    armed++;
+  }
+  return armed;
+}
+
 export interface CommentsAiInput {
   docId: string | undefined;
   /** 评论线程列表（路由态）— 乐观更新经 setDocComments 回写。 */
@@ -471,6 +492,37 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
     };
     recompute();
     return useChatStore.subscribe(recompute);
+  }, [docId]);
+
+  // #review-6: deck 评论收口基线必须在「自己那一轮真正开始」时重取 —
+  // 排队期间前排评论的写回会推高版本号，登记时的版本会让 no-op 的评论
+  // 也被误判成「已按评论意见修改」。订阅 loading false→true 沿，把该轮
+  // 指令对应的登记项基线刷成轮开始时的版本（同一轮内多次 store 变更不重刷）。
+  useEffect(() => {
+    if (!docId) return;
+    const sid = `doc-${docId}`;
+    let prevLoading = useChatStore.getState().sessions[sid]?.loading ?? false;
+    return useChatStore.subscribe((state) => {
+      const s = state.sessions[sid];
+      const loading = s?.loading ?? false;
+      const started = prevLoading === false && loading === true;
+      prevLoading = loading;
+      if (!started) return;
+      const msgs = s?.messages ?? [];
+      let instruction: string | null = null;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== 'user') continue;
+        if (m.text.startsWith('[📎')) continue;
+        instruction = m.text;
+        break;
+      }
+      armDeckVersionAtTurnStart(
+        pendingCommentTurnsRef.current,
+        instruction,
+        s?.lastDocDeckVersion ?? null,
+      );
+    });
   }, [docId]);
 
   /** 切文档双保险 — #1041: 旧文档的 pending turn/审阅关联/按钮 loading 不得串染。 */
