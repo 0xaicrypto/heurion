@@ -56,19 +56,38 @@ export async function deckArtifactRouter(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/docs/:docId/deck-artifact', async (request, reply) => {
     const doc = await ownedDoc(request as never)
     if (!doc) return reply.status(404).send({ error: 'Document not found' })
-    const artifact = await getDeckArtifact(doc.id)
-    if (!artifact) return reply.status(404).send({ error: 'Deck artifact not found' })
     const userId = request.user!.userId
-    return {
+
+    type DeckArtifact = NonNullable<Awaited<ReturnType<typeof getDeckArtifact>>>
+    const respond = (artifact: DeckArtifact, slideCount: number | null) => ({
       artifact_id: artifact.artifactId,
       version: artifact.version,
       mime: artifact.mime,
       updated_at: artifact.updatedAt,
-      // #review-8: 画布真实页数（投影随工件更新）— 标签页计数/评论页码上限。
-      slide_count: slideCountOf(doc.deck),
+      // #review-8/#review-2(收尾): 画布真实页数（投影随工件更新）— 标签页
+      // 计数/评论页码上限。null = 指针/投影与工件版本不一致（并发写窗口）→
+      // 客户端回退，绝不拿过期页数喂页码校验。
+      slide_count: slideCount,
       // tokenized download（files 模块同机制 — 短时效 chart token 带 owner）。
       download_url: `/api/v1/files/download/${artifact.artifactId}?token=${issueChartToken(artifact.artifactId, userId)}`,
+    })
+
+    // #review-2(收尾): 一致读 — artifact 与投影是两次独立读库；只有指针仍
+    // 指向本次 artifact 版本时 slide_count 才与之同刻有效。不一致重读一轮
+    // （并发写多半已收敛），仍不一致则返回 null（客户端回退，不给过期页数）。
+    let artifact: DeckArtifact | null = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      artifact = await getDeckArtifact(doc.id)
+      if (!artifact) return reply.status(404).send({ error: 'Deck artifact not found' })
+      const fresh = await prisma.doc.findFirst({
+        where: { id: doc.id, userId },
+        select: { deck: true, deckArtifactId: true },
+      })
+      if (fresh && fresh.deckArtifactId === artifact.version) {
+        return respond(artifact, slideCountOf(fresh.deck))
+      }
     }
+    return respond(artifact!, null)
   })
 
   app.post('/api/v1/docs/:docId/deck-artifact', { bodyLimit: DECK_BODY_LIMIT }, async (request, reply) => {

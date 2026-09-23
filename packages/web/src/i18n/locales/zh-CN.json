@@ -598,7 +598,7 @@
     "deckAiKeep": "保留",
     "deckAiUndone": "已撤销本轮 AI 修改，画布已恢复",
     "deckAiUndoFail": "撤销失败，请重试",
-    "deckAiApplyFail": "AI 修改同步到画布失败，请刷新重试",
+    "deckAiApplyFail": "AI 修改同步到画布失败，正在自动重试…",
     "deckAddComment": "添加幻灯片评论",
     "deckCommentSlidePrompt": "为第几页添加评论？（1 开始的页码）",
     "deckCommentSlideInvalid": "页码无效",

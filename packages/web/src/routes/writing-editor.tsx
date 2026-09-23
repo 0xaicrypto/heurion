@@ -846,9 +846,19 @@ export function WritingEditorPage() {
     setDoc((prev) => (prev ? { ...prev, title: next } : prev));
   }, [chatSession?.lastDocTitle, docId]);
 
-  // #1074-3: deck 写回消费 effect / undoDeckWriteBack / 两个冲突 resolve
-  // handler 已下沉 useDeckConflict — 此处仅经 hook 返回值接线（横幅/确认弹窗
-  // 仍在路由 JSX,数据与动作全部来自 deckConflictCtl）。
+  // #review-3: AI 只在聊天里改 deck（从未打开画布）时，doc_updated.deck 投影
+  // 同步到 deckAsset — 标签页页数的中间回退层（deckAsset.slides.length）不再
+  // 停留在文档装载时的旧值。画布是唯一 deck 编辑入口，投影同步不回写服务端
+  // （正文保存已剥离 deck），citation 基线同步前移。
+  useEffect(() => {
+    const next = chatSession?.lastDocDeck;
+    if (!docId || !next) return;
+    const key = JSON.stringify(next);
+    if (appliedDocDeck.current === key) return;
+    appliedDocDeck.current = key;
+    lastSavedDeck.current = key;
+    setDeckAsset(next as DeckWire);
+  }, [chatSession?.lastDocDeck, docId, setDeckAsset]);
 
   /**
    * 审阅结束:接受/拒绝结果落地,拒绝或放弃则保持原正文。#837: 结束后弹出队列中的下一轮写回。
@@ -1571,8 +1581,9 @@ export function WritingEditorPage() {
               onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
               items={[
                 { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
-                /* #review-8: 优先画布真实页数（工件投影）；未装载时回退 markdown 估算。 */
-                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deckSlideCount ?? deck.slides.length}`, icon: <Presentation size={13} /> },
+                /* #review-8/#review-3: 优先画布真实页数（工件投影）→ SSE 同步的
+                   deckAsset 投影 → markdown 估算（仅剩从未拿到投影的极端路径）。 */
+                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deckSlideCount ?? deckAsset?.slides?.length ?? deck.slides.length}`, icon: <Presentation size={13} /> },
               ]}
             />
           </div>
@@ -1639,7 +1650,7 @@ export function WritingEditorPage() {
               onTogglePreview={() => setPreview((v) => !v)}
               viewMode={viewMode}
               onToggleViewMode={() => setViewMode((m) => (m === 'deck' ? 'document' : 'deck'))}
-              deckSlideCount={deckSlideCount ?? deck.slides.length}
+              deckSlideCount={deckSlideCount ?? deckAsset?.slides?.length ?? deck.slides.length}
               exportResult={exportResult}
               exportHistory={exportHistory}
               exportPanelOpen={exportPanelOpen}

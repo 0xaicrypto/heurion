@@ -91,13 +91,16 @@ describe('#1101 deck-artifact API', () => {
     const data = JSON.parse(res.payload)
     expect(data.ok).toBe(true)
     expect(data.artifact_id).toMatch(/^deck-/)
+    // #review-8: 保存响应同步真实页数（投影重建结果）。
+    expect(data.slide_count).toBe(2)
 
-    // GET 返回同工件 + download URL。
+    // GET 返回同工件 + download URL + 与工件版本一致的真实页数。
     const resGet = await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}/deck-artifact`, headers: await authHeader() })
     expect(resGet.statusCode).toBe(200)
     const got = JSON.parse(resGet.payload)
     expect(got.artifact_id).toBe(data.artifact_id)
     expect(got.version).toBe(data.version)
+    expect(got.slide_count).toBe(2)
     expect(got.download_url).toContain('/api/v1/files/download/')
 
     // download URL（token，无鉴权头）拉回同字节。

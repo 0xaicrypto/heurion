@@ -8,6 +8,22 @@ import type { DocCommentWire } from '@/lib/api';
 import { latestAssistantTurnId, onChatPendingDropped, pendingQueuePosition, useChatStore, type ChatPendingDropped } from '@/stores/chat';
 
 /**
+ * #review-4(收尾): 「当前指令指纹」单一实现 — 会话最后一条非附件提示的
+ * user 消息文本。附件上传提示（[📎 前缀）可插在 turn 期间，必须跳过。
+ * currentTurnInstruction 与轮开始基线 re-arm 订阅共用本函数，附件判定
+ * 规则后续只改一处。
+ */
+function lastNonAttachmentUserText(msgs: Array<{ role: string; text: string }>): string | null {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role !== 'user') continue;
+    if (m.text.startsWith('[📎')) continue;
+    return m.text;
+  }
+  return null;
+}
+
+/**
  * #1074-3 — 评论-AI 状态机从 writing-editor 路由下沉（仿 bubble.ts/doc-chat.ts
  * 先例：hook + 参数对象 + 返回值；路由只留接线）。
  *
@@ -171,13 +187,7 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
   const currentTurnInstruction = useCallback((): string | null => {
     if (!docId) return null;
     const msgs = useChatStore.getState().sessions[`doc-${docId}`]?.messages ?? [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m.role !== 'user') continue;
-      if (m.text.startsWith('[📎')) continue;
-      return m.text;
-    }
-    return null;
+    return lastNonAttachmentUserText(msgs);
   }, [docId]);
 
   /** #1041: turn 的最终 AI 答复 — 评论线程 AI 回复的内容来源(说明做了什么)。 */
@@ -508,15 +518,8 @@ export function useCommentsAi(input: CommentsAiInput): CommentsAi {
       const started = prevLoading === false && loading === true;
       prevLoading = loading;
       if (!started) return;
-      const msgs = s?.messages ?? [];
-      let instruction: string | null = null;
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if (m.role !== 'user') continue;
-        if (m.text.startsWith('[📎')) continue;
-        instruction = m.text;
-        break;
-      }
+      const instruction = lastNonAttachmentUserText(s?.messages ?? []);
+      if (!instruction) return;
       armDeckVersionAtTurnStart(
         pendingCommentTurnsRef.current,
         instruction,
