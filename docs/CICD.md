@@ -110,7 +110,9 @@ gh workflow run deploy-staging.yml -f reset_db=true     # 清库重来
 ```
 
 - server 镜像与 web dist 都从选中的 revision 构建（`staging-<sha>` 标签）；
-  embedding/stats 默认复用 `latest`（可用 `deps_tag` 指定）。
+  stats 默认复用 `latest`（可用 `deps_tag` 指定）。
+- **embedding 复用生产服务**（不另起容器）：主机仅 7.8G 内存，bge-m3 单实例
+  常驻 ~3G，两份会互相 OOM（2026-09-23 事故）；服务无状态，共享安全。
 - 也支持 `push: branches: [staging]` 的集成流（分支不存在则触发器静默）。
 - URL: `https://staging.heurion.org`（basic auth），清除测试数据端点
   `clear-test-data` 在该 host 开放。

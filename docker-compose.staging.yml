@@ -7,6 +7,10 @@
 #   生产 Caddy 通过容器名 `nexus-server-staging:8001` 反代到本栈
 #   （Caddyfile 里的 staging.heurion.org 站点块）。
 # - 不暴露任何 host 端口：唯一入口是共享 Caddy（basic auth 保护）。
+# - **不另起 embedding 容器**：本机仅 7.8G 内存，bge-m3 单实例常驻 ~3G，
+#   两份会互挤到 OOM（2026-09-23 生产 embedding 被 staging 挤挂事故）。
+#   staging 直接复用生产 embedding 服务（同网络
+#   http://nexus-embedding-server:8003/embed；该服务无状态，共享安全）。
 # - ENVIRONMENT=staging（非 prod 语义）：main.ts 的 schema sync 走
 #   `prisma db push --accept-data-loss`，可丢弃的 staging 库随 schema 自愈；
 #   同时 auth 的 clear-test-data 端点仅在 staging host 开放（已有实现）。
@@ -23,25 +27,6 @@ x-logging: &default-logging
     tag: "{{.Name}}"
 
 services:
-  nexus-embedding-staging:
-    image: ${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}
-    logging: *default-logging
-    container_name: nexus-embedding-staging
-    restart: unless-stopped
-    env_file:
-      - .env.staging
-    environment:
-      - EMBEDDING_SERVER_HOST=0.0.0.0
-      - EMBEDDING_SERVER_PORT=8003
-    networks:
-      - nexus-net
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8003/health"]
-      interval: 30s
-      timeout: 5s
-      start_period: 60s
-      retries: 5
-
   nexus-stats-staging:
     image: ${STATS_IMAGE:-ghcr.io/0xaicrypto/nexus-stats-worker:latest}
     logging: *default-logging

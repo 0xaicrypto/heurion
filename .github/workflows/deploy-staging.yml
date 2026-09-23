@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       deps_tag:
-        description: 'embedding/stats 镜像 tag（默认 latest；代码分支只需 server 自建）'
+        description: 'stats 镜像 tag（默认 latest；embedding 复用生产服务，不单独起）'
         required: false
         default: 'latest'
       reset_db:
@@ -138,7 +138,8 @@ jobs:
           EMBEDDING_MODEL=BAAI/bge-m3
           EMBEDDING_BATCH_SIZE=32
           EMBEDDING_FALLBACK_PROVIDER=none
-          LOCAL_EMBEDDING_URL=http://nexus-embedding-staging:8003/embed
+          # 复用生产 embedding（无状态；8G 主机放不下第二份 bge-m3 常驻内存）。
+          LOCAL_EMBEDDING_URL=http://nexus-embedding-server:8003/embed
           EOF
           scp -o StrictHostKeyChecking=no /tmp/heurion-staging.env \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion-staging/.env.staging
@@ -147,12 +148,11 @@ jobs:
       - name: Deploy staging stack
         env:
           NEXUS_IMAGE: ${{ env.SERVER_IMAGE_NAME }}:staging-${{ steps.vars.outputs.sha }}
-          EMBEDDING_IMAGE: ${{ env.EMBEDDING_IMAGE_NAME }}:${{ inputs.deps_tag || 'latest' }}
           STATS_IMAGE: ${{ env.STATS_IMAGE_NAME }}:${{ inputs.deps_tag || 'latest' }}
           RESET_DB: ${{ inputs.reset_db && '1' || '0' }}
         run: |
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cd /opt/heurion-staging && NEXUS_IMAGE='$NEXUS_IMAGE' EMBEDDING_IMAGE='$EMBEDDING_IMAGE' STATS_IMAGE='$STATS_IMAGE' RESET_DB='$RESET_DB' bash deploy-staging-compose.sh"
+            "cd /opt/heurion-staging && NEXUS_IMAGE='$NEXUS_IMAGE' STATS_IMAGE='$STATS_IMAGE' RESET_DB='$RESET_DB' bash deploy-staging-compose.sh"
 
       - name: Smoke test (basic auth required)
         env:

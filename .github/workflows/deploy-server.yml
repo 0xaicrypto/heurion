@@ -10,6 +10,10 @@ on:
       - '.github/**'
       # #1035: 测试代码不进入镜像，测试-only 改动不需要重建/部署生产。
       - 'packages/server-ts/tests/**'
+      # staging 专属基础设施（独立 compose/部署脚本）不参与生产镜像与部署 —
+      # 改这些文件不该重启生产容器。
+      - 'docker-compose.staging.yml'
+      - 'scripts/deploy-staging-compose.sh'
   workflow_dispatch:
     inputs:
       # #596: staging 默认跳过(资源占用大:embedding 模型 3.4GB + pm2),
