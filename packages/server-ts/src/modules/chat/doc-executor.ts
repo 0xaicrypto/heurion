@@ -130,7 +130,7 @@ export async function runDocExecutorFallback(
     log.warn('doc executor skipped — document not found', { docId, userId })
     return empty
   }
-  // 工具面只保留写回类(edit_document/insert_asset/edit_deck/
+  // 工具面只保留写回类(edit_document/insert_asset/edit_deck_bytes/
   // fix_document_images) — 检索/渲染工具在此无意义,且减少工具面噪声。
   const writeTools = tools.filter((t) => DOC_WRITE_TOOLS.has(t.function.name))
   if (writeTools.length === 0) return empty

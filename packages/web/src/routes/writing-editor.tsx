@@ -30,7 +30,7 @@ import { lineDiffRows, extractSectionText, type SectionCardRow } from '@/lib/sec
 import { resolveSectionJumpTarget } from '@/lib/section-jump';
 // #927: doc_updated rev 幂等防乱序(与 chat-reducer 同源判定)。
 import { shouldApplyDocRev } from '@/lib/chat-reducer';
-import { toSlides, type Slide } from '@/lib/deck';
+import { toSlides } from '@/lib/deck';
 import type { DeckWire } from '@/lib/types';
 // #696: 状态机全部下沉 hooks — 路由只保留编排与布局。
 import { usePolishBubble, conflictSavedPreview } from './writing-editor/bubble';
@@ -39,10 +39,8 @@ import { useDocChat } from './writing-editor/doc-chat';
 import { useDocReferences } from './writing-editor/references';
 // #1074-3: 评论-AI 状态机 / deck 冲突逻辑下沉 — 路由只留接线。
 import { useCommentsAi } from './writing-editor/comments-ai';
-import { useDeckConflict } from './writing-editor/deck-conflict';
-import { HistoryDialog, PhiDialog, AddReferenceDialog, DeckConflictConfirmDialog } from './writing-editor/dialogs';
-// #688: 渲染块拆出 — deck 网格 / 右侧聊天面板 / 工具栏。
-import { DeckView } from './writing-editor/deck-view';
+import { HistoryDialog, PhiDialog, AddReferenceDialog } from './writing-editor/dialogs';
+// #1112: 卡片流（DeckView）退役 — 幻灯片视图 = 画布（DeckRichEditor）唯一入口。
 import { ChatPanel } from './writing-editor/chat-panel';
 // #1040: 侧边栏评论面板 + 评论创建弹窗(选区高亮标注线程列表)。
 // #1089-6: AnchorConfirmState — 侧边栏「待确认位置」数据形状。
@@ -138,11 +136,9 @@ export function WritingEditorPage() {
     if (lastSavedBody.current === null && doc) lastSavedBody.current = doc.body;
   }, [doc]);
 
-  // #773: deck 资产状态下沉 useDeckAsset。
+  // #773: deck 资产状态下沉 useDeckAsset（#1112 起仅作投影/基线消费 —
+  // 卡片编辑入口退役，画布字节才是编辑真相源）。
   const deckCtl = useDeckAsset();
-  // #1101: 富编辑（pptx 画布）会话态 — 仅进入时挂载 DeckRichEditor（懒拉
-  // deck 工件字节,文档常规加载不取数）；保存语义内聚在富编辑器内。
-  const [deckRichEditOpen, setDeckRichEditOpen] = useState(false);
   // #review-fix: 富编辑器 dirty 镜像 — DeckRichEditor 经 onDirtyChange 如实
   // 上报（编辑检出/保存完成/冲突/会话结束）。此前画布内未保存编辑对页头
   // 返回键与 beforeunload 不可见（dirtyRef 只看正文）→ 静默丢编辑。
@@ -495,19 +491,13 @@ export function WritingEditorPage() {
   });
   const chatSession = chat.chatSession;
   const chatSessionId = docId ? `doc-${docId}` : '';
+  // #1113: deck AI 写回按「轮」合批 — 每轮 chat 完成 +1，画布据此在每轮只
+  // 捕获一次撤销快照（同一轮内多次 edit_deck_bytes = 一个可撤销单元）。
+  const [deckTurnBoundary, setDeckTurnBoundary] = useState(0);
 
   // #1074-3: 评论-AI 状态机（登记/loading/收口/清账/ai-replies）— hook 化。
-  // #1088: 撤销出口接线 — useCommentsAi 装配先于 useDeckConflict，快照恢复
-  // （restoreDeckSnapshot）/8s 撤销窗口收口经 ref 反向引用（调用点读取，
-  // 与 hook 装配顺序解耦）；评论出口撤销成功后顺带收掉横幅窗口（同一写回
-  // 不重复出口）。
-  const deckRestoreRef = useRef<(prevDeck: DeckWire | null) => Promise<boolean>>(async () => false);
-  const deckUndoCloseRef = useRef<() => void>(() => {});
-  const onRestoreDeckSnapshot = useCallback(async (prevDeck: DeckWire | null) => {
-    const ok = await deckRestoreRef.current(prevDeck);
-    if (ok) deckUndoCloseRef.current();
-    return ok;
-  }, []);
+  // #1112/#1113: deck 评论的撤销出口收敛到画布的「整轮撤销」（#1088 的
+  // 每评论 DeckWire 快照机制随卡片流退休 — 不再有独立 confirm/undo 态）。
   const commentsAi = useCommentsAi({
     docId,
     docComments,
@@ -516,51 +506,8 @@ export function WritingEditorPage() {
     pendingWriteBackRef,
     writeBackQueueRef,
     sendChatText: (text) => chat.sendChatText(text),
-    onRestoreDeckSnapshot,
-    // #1088: 撤销快照来源 — 登记时捕获当前画布 deck（deckAsset）。
-    deckSnapshotNow: () => deckAsset,
     onNotice: showNotice,
   });
-
-  // #1074-3: deck 冲突/可撤销窗口状态机 — hook 化（写回消费 effect 在 hook 内）。
-  const deckConflictCtl = useDeckConflict({
-    docId,
-    deckAsset,
-    setDeckAsset,
-    lastSavedDeck,
-    appliedDocDeck,
-    deckJson,
-    lastDocDeck: chatSession?.lastDocDeck,
-    title,
-    body,
-    saveDoc,
-    serverBodyRef,
-    lastSavedBody,
-    diffReview,
-    pendingWriteBackRef,
-    markSaveFailed,
-    clearSaveFailure: () => setSaveFailure(null),
-    onNotice: showNotice,
-  });
-  const { deckConflict, deckConflictConfirm, setDeckConflictConfirm, deckConflictResolving, deckUndo, undoDeckWriteBack, resolveDeckConflictKeepMine, resolveDeckConflictUseAI, restoreDeckSnapshot, closeDeckUndoWindow } = deckConflictCtl;
-  // #1088: ref 反向接线 — useCommentsAi 的「撤销修改」消费共享内核。
-  deckRestoreRef.current = restoreDeckSnapshot;
-  deckUndoCloseRef.current = closeDeckUndoWindow;
-  // #1088: 局部别名 — 依赖数组以稳定标识进入（对象成员表达式会触发
-  // exhaustive-deps 的整对象要求,同 resetCommentsAi 先例）。
-  const settleDeckConfirmUndo = commentsAi.settleDeckConfirmUndo;
-
-  /**
-   * #1088: 撤销横幅（#1071-1 的 8s 窗口）与评论确认闭环的收口联动 — 横幅
-   * 撤销成功后，快照一致（同一笔写回）的 deck 评论待确认态同步清账并在线程
-   * 补「已撤销」说明：画布已被横幅出口恢复，评论侧不得再对已撤销的修改点
-   * 「确认修改」（不重复/不冲突 — 两个撤销出口各自幂等，先到先得）。
-   */
-  const handleDeckUndoBanner = useCallback(async () => {
-    const prev = deckUndo?.prevDeck ?? null;
-    const ok = await undoDeckWriteBack();
-    if (ok) await settleDeckConfirmUndo(prev);
-  }, [deckUndo, undoDeckWriteBack, settleDeckConfirmUndo]);
 
   // ── #1089-5/#1089-6: 锚点偏移消费 + 「待确认位置」确认路径 ─────────────
   // 用户「用此位置」采纳态（commentId → 候选）— 经 items.chosen 下发装饰层
@@ -632,7 +579,7 @@ export function WritingEditorPage() {
     // 由用户决策(载入最新/保留我的版本)后再恢复。
     // #1043: deck 冲突未决时同样暂停 — 自动保存会以本地 deck 静默覆盖
     // 服务端 AI deck,谁生效不再由定时器决定,由冲突提示条明示决策。
-    if (diffReview !== null || pendingWriteBackRef.current !== null || saveConflict !== null || deckConflict !== null) return;
+    if (diffReview !== null || pendingWriteBackRef.current !== null || saveConflict !== null) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void handleSave();
@@ -641,7 +588,7 @@ export function WritingEditorPage() {
     // #986: saveFailure 计数入依赖 — 保存失败后自动重试(重试仍失败则继续,
     // 直至成功清警示)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, title, docId, dirty, diffReview, saveConflict, deckConflict, saveFailure]);
+  }, [body, title, docId, dirty, diffReview, saveConflict, saveFailure]);
 
   /** 弹出下一轮写回:以「用户当前正文」为新基线做三路合并重放;冲突则丢弃并明示。 */
   const popNextWriteBack = useCallback((currentMd: string) => {
@@ -806,6 +753,8 @@ export function WritingEditorPage() {
       if (!docId || sid !== `doc-${docId}`) return;
       flushPendingWriteBack();
       settlePendingCommentTurns();
+      // #1113: turn 收口 — 画布的整轮撤销快照边界前移（下一轮 AI 写回新开快照）。
+      setDeckTurnBoundary((n) => n + 1);
     });
   }, [docId, flushPendingWriteBack, settlePendingCommentTurns]);
 
@@ -1008,48 +957,8 @@ export function WritingEditorPage() {
 
   const [preview, setPreview] = useState(false);
 
-  // #770: 画布视图模式 — body 仍是唯一数据源，幻灯片视图 = toSlides(body) 投影；
-  // AI 写回（doc_updated → setBody）与文档视图编辑自动同步到卡片，零额外状态。
-  // #773: Doc.deck 存在时 deck 视图切换为 deck 资产来源（可编辑，独立于 body）。
-  // #996/#1000: viewMode 初始化上移（?view=deck 直达 Slides tab）。
-  const pendingDeckAnchorRef = useRef<string | null>(null);
-
-  // #770: 幻灯片卡片 = body 派生（useMemo），doc_updated / 手动编辑即时反映。
+  // #1112: body 派生投影仅用于视图切换标签的页数（卡片流已退役）。
   const deck = useMemo(() => toSlides(body), [body]);
-
-  // #770: 卡片「编辑」→ 切回文档视图并锚定对应 ## 段（复用编辑器实例定位）。
-  // DocEditor 重新挂载后编辑器实例才可用 — 短暂重试等挂载完成。
-  useEffect(() => {
-    if (viewMode !== 'document') return;
-    const anchor = pendingDeckAnchorRef.current;
-    if (!anchor) return;
-    const timer = setTimeout(() => {
-      const editor = polishEditorRef.current;
-      if (!editor) return;
-      pendingDeckAnchorRef.current = null;
-      let target: number | null = null;
-      editor.state.doc.descendants((node, pos) => {
-        if (target !== null) return false;
-        if (node.type.name === 'heading' && node.textContent.trim() === anchor.trim()) {
-          target = pos;
-          return false;
-        }
-        return true;
-      });
-      if (target !== null) {
-        editor.commands.setTextSelection((target as number) + 1);
-        editor.commands.scrollIntoView();
-        editor.commands.focus();
-      }
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [viewMode]);
-
-  const handleDeckCardEdit = (slide: Slide) => {
-    pendingDeckAnchorRef.current = slide.headingRaw ? slide.title : '';
-    setPreview(false);
-    setViewMode('document');
-  };
 
   const handleGenerateMethods = async () => {
     if (!docId) return;
@@ -1220,7 +1129,6 @@ export function WritingEditorPage() {
   // #1074-3: hook 返回值均为稳定 useCallback — 经局部别名进入依赖(对象
   // 成员表达式会触发 exhaustive-deps 的整对象要求)。
   const resetCommentsAi = commentsAi.resetForDocSwitch;
-  const resetDeckConflict = deckConflictCtl.resetForDocSwitch;
   useEffect(() => {
     setDiffReview(null);
     setRestoreReview(null);
@@ -1243,18 +1151,10 @@ export function WritingEditorPage() {
     setActiveCitationId(null);
     // #1089-6: 锚点采纳态随切文档清空（采纳候选属于旧文档正文）。
     setAnchorAdoptions({});
-    // #1101: 富编辑会话态随切文档关闭 — 旧文档的画布编辑不串染新文档
-    // （组件卸载即丢弃未保存字节，与卡片流行为一致）。
-    setDeckRichEditOpen(false);
     // #1041: 评论处理在途状态一并清 — 旧文档的 pending turn/审阅关联/
     // 按钮 loading 不得串染(#1074-3: 清单随状态机下沉 hook reset)。
     resetCommentsAi();
-    // #1072-5/#1071-1: deckConflict 系列/可撤销窗口纳入双保险清空清单 —
-    // 旧文档未决的画布冲突/确认态/解决中标记不得串染新文档（此前仅靠路由
-    // key={docId} 重挂兜底，#902/#903 的清单漂移教训：逐项补不可靠；
-    // #1074-3: 清单随状态机下沉 hook reset）。
-    resetDeckConflict();
-  }, [docId, resetCommentsAi, resetDeckConflict]);
+  }, [docId, resetCommentsAi]);
 
   const loadSnapshots = useCallback(() => {
     if (!docId) return;
@@ -1327,6 +1227,18 @@ export function WritingEditorPage() {
     }
   };
 
+  /** #1112: deck 评论创建 — 卡片流退役后从画布头部提供（页码输入 → 侧边栏线程）。 */
+  const addDeckComment = useCallback(() => {
+    const raw = window.prompt(t('writing.deckCommentSlidePrompt', '为第几页添加评论？（1 开始的页码）'));
+    if (raw === null) return;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      showNotice(t('writing.deckCommentSlideInvalid', '页码无效'), 4000);
+      return;
+    }
+    setCommentDraft({ target: 'deck_slide', slideIndex0: n - 1, anchorText: t('writing.deckSlideLabel', '第 {{n}} 页', { n }) });
+  }, [showNotice, t]);
+
   // #1040: 追加回复 — 本地按时间序插入线程。
   const replyToComment = async (commentId: string, text: string) => {
     if (!docId) return;
@@ -1372,10 +1284,6 @@ export function WritingEditorPage() {
     // 兜底路径即横幅按钮本身:「保留我的编辑」force 落盘不依赖 autosave,
     // 失败再回灌 dirty 且横幅保留可重试,无死路。
     if (diffReview !== null || pendingWriteBackRef.current !== null) return;
-    if (deckConflict !== null) {
-      showNotice(t('writing.deckConflictBanner', '画布冲突 — AI 已更新服务端画布，本地有未保存的画布编辑，请选择保留哪个版本'));
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
@@ -1641,30 +1549,40 @@ export function WritingEditorPage() {
             </span>
           )}
           {/* #996/#1000: Preview/History/DOCX 常驻按钮收进 ··· 菜单(Toolbar)。 */}
-          {/* #770: 文档 | 幻灯片视图切换 — deck 视图是 body 的只读投影。
-              #1000: 共享 SegmentedControl(窄屏隐藏,#1001 经 ··· 可达)。
-              #1101: 富编辑会话期间隐藏切换 — 画布编辑态只能经富编辑器自身
-              「返回/保存并返回」退出（防止中途切视图静默丢失未保存字节）。 */}
-          {!deckRichEditOpen && (
-            <div className="ml-2 hidden sm:inline-flex">
-              <SegmentedControl
-                size="xs"
-                ariaLabel={t('writing.viewMode', '视图模式')}
-                value={viewMode}
-                onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
-                items={[
-                  { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
-                  { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deck.slides.length}`, icon: <Presentation size={13} /> },
-                ]}
-              />
-            </div>
-          )}
+          {/* #1112: 文档 | 幻灯片切换 — 幻灯片 = pptx 画布（唯一编辑入口），
+              不再有卡片流/只读投影分支。 */}
+          <div className="ml-2 hidden sm:inline-flex">
+            <SegmentedControl
+              size="xs"
+              ariaLabel={t('writing.viewMode', '视图模式')}
+              value={viewMode}
+              onChange={(next) => { if (next === 'document') setPreview(false); setViewMode(next); }}
+              items={[
+                { value: 'document', label: t('writing.docView', '文档'), icon: <FileText size={13} /> },
+                { value: 'deck', label: `${t('writing.deckView', '幻灯片')} · ${deck.slides.length}`, icon: <Presentation size={13} /> },
+              ]}
+            />
+          </div>
           {aiEditNotice && (
             <span className="ml-3 rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
               {aiEditNotice}
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
+            {/* #1112: 幻灯片评论创建入口 — 卡片流退役后从画布头部提供
+                （页码 + 侧边栏线程；AI 处理/列表沿用同一套）。 */}
+            {viewMode === 'deck' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="deck-add-comment"
+                onClick={addDeckComment}
+                aria-label={t('writing.deckAddComment', '添加幻灯片评论')}
+                title={t('writing.deckAddComment', '添加幻灯片评论')}
+              >
+                <MessageSquare size={14} /><span className="ml-0.5 text-xs">+</span>
+              </Button>
+            )}
             {/* #1040: 评论面板开关 — 徽标数为 open 线程数。 */}
             <Button size="sm" variant="ghost" onClick={() => setCommentsPanelOpen((v) => !v)} aria-label={t('writing.commentsPanel', '评论')} title={t('writing.commentsPanel', '评论')} className={cn(commentsPanelOpen && 'bg-surface')}>
               <MessageSquare size={14} />
@@ -1719,20 +1637,26 @@ export function WritingEditorPage() {
 
         <div className="flex flex-1 overflow-hidden">
           <main className={cn('flex-1 overflow-y-auto p-6', chatOpen ? 'border-r border-border' : '')}>
-          {/* #1101: 富编辑接管 — 全宽画布替代整个文档视图区（评论侧栏保留，
-              见下方 commentsPanelOpen 渲染不在此 gate 内）。工件装载/保存/
-              冲突处置全部内聚在 DeckRichEditor；关闭即回到卡片流。 */}
-          {deckRichEditOpen ? (
+          {/* #1112: 幻灯片视图 = 富画布（唯一 deck 编辑入口）— 全宽接管文档
+              视图区（评论侧栏保留）。工件装载/保存/冲突处置内聚在
+              DeckRichEditor；关闭即切回文档视图。 */}
+          {viewMode === 'deck' ? (
             <div className="flex h-full min-h-[70vh] flex-1 flex-col" data-testid="deck-rich-edit-root">
               <Suspense fallback={<Skeleton className="h-full w-full rounded-xl" />}>
                 <DeckRichEditor
                   docId={docId ?? ''}
                   onNotice={showNotice}
+                  docTitle={title}
+                  /* #1115: 无工件时保留 AI 生成入口（经 chat 驱动 edit_deck_bytes）。 */
+                  onGenerateDeck={() => chat.sendChatText(t('writing.aiExportPptPrompt', '请把当前稿件生成 PPT（调用 edit_deck_bytes 创建 deck 工件并编排分页）。'))}
+                  /* #1113/#1114: AI 写回版本 + 轮边界（实时落地/整轮撤销/未保存排队）。 */
+                  aiDeckVersion={chatSession?.lastDocDeckVersion ?? null}
+                  turnBoundary={deckTurnBoundary}
                   onClose={() => {
                     // 组件自身 onClose 只在「无 dirty 或保存成功」路径触发 —
-                    // 镜像随会话关闭复位,不影响下一次富编辑会话。
+                    // 镜像随会话关闭复位,不影响下一次画布会话。
                     deckRichDirtyRef.current = false;
-                    setDeckRichEditOpen(false);
+                    setViewMode('document');
                   }}
                   onDirtyChange={(next) => { deckRichDirtyRef.current = next; }}
                 />
@@ -1824,64 +1748,10 @@ export function WritingEditorPage() {
                     }
                   }}
                 />
-                {deckUndo && (
-                  /* #1071-1: deck AI 写回可撤销窗口 — 落地前快照本地画布,
-                     TTL 内可一键回滚（no-op 优于 AI 改错页后无出口）。 */
-                  <div data-testid="deck-undo-banner" role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-[12px] text-text-primary">
-                    <span>{t('writing.deckUndoBanner', 'AI 已更新幻灯片画布 — 如不符合预期可撤销')}</span>
-                    <Button size="sm" variant="secondary" onClick={() => void handleDeckUndoBanner()}>{t('writing.deckUndo', '撤销')}</Button>
-                  </div>
-                )}
-                {deckConflict && (
-                  /* #1043: deck/正文分叉冲突 — 常驻提示条(不自动消失),
-                     两个明确出口;未决策前 autosave/手动保存均暂停。 */
-                  <div data-testid="deck-conflict-banner" role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-text-primary">
-                    <span>⚠ {t('writing.deckConflictBanner', '画布冲突 — AI 已更新服务端画布，本地有未保存的画布编辑，请选择保留哪个版本')}</span>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => setDeckConflictConfirm('keep')}>{t('writing.deckConflictKeepMine', '保留我的编辑')}</Button>
-                      <Button size="sm" variant="danger" onClick={() => setDeckConflictConfirm('use-ai')}>{t('writing.deckConflictUseAI', '使用 AI 的版本')}</Button>
-                    </div>
-                  </div>
-                )}
                 {preview ? (
                   <div className="min-h-[300px] rounded-lg border border-border bg-surface-elevated p-4">
                     <MarkdownRenderer content={body} />
                   </div>
-                ) : viewMode === 'deck' ? (
-                  /* #770: 幻灯片视图 — 16:9 卡片流。
-                     #773: 双来源 — Doc.deck 存在时为可编辑 deck 卡片（写
-                     Doc.deck，不动正文）；否则回落 body 的 markdown 投影
-                     （只读 + 锚点跳回文档编辑）。 */
-                  <DeckView
-                    deckAsset={deckAsset}
-                    slides={deck.slides}
-                    body={body}
-                    deckCtl={deckCtl}
-                    sendChatText={chat.sendChatText}
-                    onCardEdit={handleDeckCardEdit}
-                    /* #1051: deck slide 评论 — 添加入口 + 卡片高亮/徽标与侧边栏联动
-                       （deck 非 TipTap,不做 decoration,卡片文字高亮替代）。 */
-                    deckComments={docComments
-                      .filter((c) => c.target === 'deck_slide')
-                      .map((c) => ({
-                        commentId: c.id,
-                        slideIndex: c.slide_index ?? 0,
-                        anchorText: c.anchor_text,
-                        status: c.status,
-                        located: c.anchor?.located ?? true,
-                        active: activeCommentId === c.id,
-                      }))}
-                    onAddSlideComment={(slideIndex0, anchorText) => setCommentDraft({ target: 'deck_slide', slideIndex0, anchorText })}
-                    onCommentClick={(id) => { setActiveCommentId(id); setCommentsPanelOpen(true); }}
-                    /* #review-4: deck 卡片引用徽标 — 复用 docCitations（30s 轮询），
-                        点击弹既有 CitationPreviewModal（悬挂引用 id 同样可点）。 */
-                    citations={docCitations}
-                    onCitationClick={setActiveCitationId}
-                    /* #1087: deck 插入竞态丢弃/唯一块拒绝（#1089-1）走统一轻提示通道。 */
-                    onNotice={showNotice}
-                    /* #1101: 富编辑入口 — 进入 pptx 画布编辑态（工件懒加载+保存内聚）。 */
-                    onEnterRichEdit={() => setDeckRichEditOpen(true)}
-                  />
                 ) : (
                   <div className="overflow-hidden rounded-lg border border-border bg-surface-elevated">
                     {!diffReview && editingSections.length > 0 && (
@@ -2024,10 +1894,6 @@ export function WritingEditorPage() {
               onAiProcess={commentsAi.handleCommentAiProcess}
               processingCommentIds={commentsAi.commentProcessing}
               queuePositions={commentsAi.commentQueuePositions}
-              /* #1088: deck 写回待确认 — 线程级确认/撤销动作。 */
-              deckConfirming={commentsAi.deckPendingConfirm}
-              onDeckConfirm={(id) => void commentsAi.confirmDeckWriteBack(id)}
-              onDeckUndo={(id) => void commentsAi.undoDeckWriteBackForComment(id)}
               /* #1089-6: 待确认位置 — 候选列表 + 「用此位置」采纳。 */
               anchorConfirms={anchorConfirms}
               adoptedAnchors={anchorAdoptions}
@@ -2086,16 +1952,6 @@ export function WritingEditorPage() {
         {/* Add Reference Dialog(#696: 从路由拆出) */}
         {refDialogOpen && (
           <AddReferenceDialog form={refForm} setForm={setRefForm} submitting={refSubmitting} onClose={() => setRefDialogOpen(false)} onSubmit={() => void handleAddReference()} />
-        )}
-
-        {/* #1043: deck 冲突二选一的二次确认 — 不可逆提示走 Modal 基础设施。 */}
-        {deckConflict && deckConflictConfirm && (
-          <DeckConflictConfirmDialog
-            mode={deckConflictConfirm}
-            resolving={deckConflictResolving}
-            onConfirm={() => (deckConflictConfirm === 'keep' ? void resolveDeckConflictKeepMine() : resolveDeckConflictUseAI())}
-            onClose={() => setDeckConflictConfirm(null)}
-          />
         )}
 
         {/* #1040: 选区评论创建弹窗 — 气泡「添加评论」(选区文字作 anchorText)。

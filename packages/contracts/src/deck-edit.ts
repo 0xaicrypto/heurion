@@ -6,7 +6,7 @@
  * PptxElement.text 直接赋值不被 save 管道识别（text/textSegments 双字段）
  * — AI 只产结构化 actions，服务端逐一映射为正式 API 调用，绝不裸改模型字段。
  *
- * 与 edit_deck 的 old_text/new_text 语义同构（§4.1）：`find` = 模型从投影
+ * 与已退役的卡片流 edit_deck old_text/new_text 语义同构（§4.1）：`find` = 模型从投影
  * 上下文逐字复制的原文；`replace` = 新文本。schema 见
  * docs/design/DECK_PPTX_SINGLE_STANDARD.md §4。
  */

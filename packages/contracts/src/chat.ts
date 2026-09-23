@@ -331,8 +331,11 @@ export type ChatStreamChunk =
    * insert_asset 等全部编辑模式覆盖；失败写回不会有该字段。
    * #408-followup: title = 本次写回同时改动的文档标题（title-only 改名或
    * 与正文同帧原子写入）— 前端同步页头/标题输入框。
+   * #1113: deck_artifact_id/deck_version = edit_deck_bytes 写回后的 pptx
+   * 工件版本（version === artifactId）— 已打开的 deck 画布据此实时拉取新
+   * 字节；字节本身绝不走 SSE（体积大），前端按版本号去重后再 GET 元数据。
    */
-  | { type: 'doc_updated'; body: string; summary?: string; title?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap; changed_sections?: Array<{ id: string; heading: string }> }
+  | { type: 'doc_updated'; body: string; summary?: string; title?: string; deck?: DeckWire | null; rev?: number; updatedAt?: string; projection?: BlockProjection; section_meta?: SectionMetaMap; changed_sections?: Array<{ id: string; heading: string }>; deck_artifact_id?: string; deck_version?: string }
   | { type: 'chart_created'; url: string; markdown?: string; chart_type?: string }
   | { type: 'tier_classified'; tier: 'T1' | 'T2' | 'T3'; view_kind?: string; anchor?: string }
   | { type: 'context_info'; text: string; kind?: string }

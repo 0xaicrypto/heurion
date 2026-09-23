@@ -255,9 +255,10 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
     PLAN_RULE,
   ].join('\n\n')
 
-  // #773: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck
+  // #773/#1112: deck 资产上下文可见性 — deck 存在时注入 ## Current Deck
   // (markdown 化表示,有界),模型才能执行"把第 3 页拆成两页"类请求
-  // (走 edit_deck,slide_index 定位);与 #777 上传 pptx 联动。
+  // (走 edit_deck_bytes,slide_index 定位);与 #777 上传 pptx 联动。
+  // 卡片流/edit_deck 已退役 — 投影仅作只读上下文,编辑唯一路径是工件字节。
   let deckBlock = ''
   if (doc.deck) {
     try {
@@ -276,7 +277,7 @@ export async function buildDocumentContext(input: DocumentContextInput): Promise
         }
       })
       const deckMd = fitTextToTokens(deckLines.join('\n'), CONTEXT_CONFIG.scene.docBodyTokens / 2)
-      deckBlock = `\n\n## Current Deck（AI 编排的 PPT 资产 — 与正文独立,编辑它不会改动正文）\n页码定位用于 edit_deck 的 slide_index(1-based):\n${deckMd}`
+      deckBlock = `\n\n## Current Deck（AI 编排的 PPT 资产 — 与正文独立,编辑它不会改动正文）\n页码定位用于 edit_deck_bytes 的 slide_index(1-based):\n${deckMd}`
     } catch {
       deckBlock = ''
     }

@@ -90,12 +90,6 @@ export function CommentsPanel(input: {
   processingCommentIds?: Record<string, boolean>;
   /** #1095: 排队位次（commentId → 队列位次）— 处理中按钮的「排队第 n 位」提示。 */
   queuePositions?: Record<string, number>;
-  /** #1088: deck 写回待确认态（commentId → { undoable }）— 线程级确认/撤销按钮。 */
-  deckConfirming?: Record<string, { undoable: boolean }>;
-  /** #1088: 「确认修改」— #1096: 采纳本轮修改（不关闭评论）。 */
-  onDeckConfirm?: (id: string) => void;
-  /** #1088: 「撤销修改」— 恢复写回前画布快照。 */
-  onDeckUndo?: (id: string) => void;
   /** #1089-6: 待确认位置 — 歧义（编辑器扫描命中）或漂移（服务端候选）线程的候选列表。 */
   anchorConfirms?: Record<string, AnchorConfirmState>;
   /** #1089-6: 已采纳的候选（采纳后候选列表收起）。 */
@@ -105,7 +99,7 @@ export function CommentsPanel(input: {
   className?: string;
 }) {
   const { t } = useTranslation();
-  const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, queuePositions, deckConfirming, onDeckConfirm, onDeckUndo, anchorConfirms, adoptedAnchors, onAdoptAnchor, className } = input;
+  const { comments, activeId, onSelect, onReply, onToggleResolve, onAiProcess, processingCommentIds, queuePositions, anchorConfirms, adoptedAnchors, onAdoptAnchor, className } = input;
   // #1095: 评论并行处理 — 各评论独立登记独立 turn，不再全局互斥禁用；
   // 每按钮只禁用自身（防同评论双击），排队中的按钮显示「排队第 n 位」。
   // 展开态覆盖:open 默认展开、resolved 默认收起;用户点开后记为展开。
@@ -291,23 +285,6 @@ export function CommentsPanel(input: {
                         {t('writing.commentReplySend', '回复')}
                       </Button>
                     </div>
-                  )}
-                </div>
-              )}
-              {/* #1088: deck 评论 AI 写回待确认态 — 线程级「采纳本轮修改/撤销修改」
-                  (仅 target='deck_slide' 且待确认;撤销仅在快照可恢复时显示)。
-                  #1091: 渲染条件从纯内存 map 扩为「内存态 || wire.deck_snapshot
-                  在场」— 刷新后从服务端快照恢复 pending-confirm 按钮态。
-                  #1096: 确认语义 = 采纳本轮修改（不关闭评论，关闭权在用户）。 */}
-              {c.target === 'deck_slide' && c.status !== 'resolved' && (!!deckConfirming?.[c.id] || !!c.deck_snapshot) && (
-                <div data-testid={`comment-deck-confirm-${c.id}`} className="flex gap-1 px-2.5 pb-1 pt-0.5">
-                  <Button size="sm" data-testid={`comment-deck-confirm-btn-${c.id}`} onClick={() => onDeckConfirm?.(c.id)}>
-                    {t('writing.commentDeckConfirm', '采纳本轮修改')}
-                  </Button>
-                  {(!!deckConfirming?.[c.id]?.undoable || !!c.deck_snapshot) && (
-                    <Button size="sm" variant="ghost" data-testid={`comment-deck-undo-btn-${c.id}`} onClick={() => onDeckUndo?.(c.id)}>
-                      {t('writing.commentDeckUndo', '撤销修改')}
-                    </Button>
                   )}
                 </div>
               )}

@@ -123,6 +123,17 @@ describe('chat-reducer #927 — doc_updated rev 幂等', () => {
     expect(s2.lastDocRev).toBe(7);
   });
 
+  test('#1113 deck_version 随帧存储，普通正文写回不回退', () => {
+    let s = sessionWithAssistant();
+    s = send(s, { type: 'doc_updated', body: 'v2', deck_version: 'v2' });
+    expect(s.lastDocDeckVersion).toBe('v2');
+    // 无该字段的普通正文写回保留既有版本（画布据此去重，不被清空）。
+    s = send(s, { type: 'doc_updated', body: 'v3' });
+    expect(s.lastDocDeckVersion).toBe('v2');
+    s = send(s, { type: 'doc_updated', body: 'v4', deck_version: 'v5' });
+    expect(s.lastDocDeckVersion).toBe('v5');
+  });
+
   test('shouldApplyDocRev — rev 更大才应用,乱序/重放忽略,无 rev 兼容', () => {
     expect(shouldApplyDocRev(undefined, 5)).toBe(true); // 首笔写回
     expect(shouldApplyDocRev(5, 6)).toBe(true); // 正常递增

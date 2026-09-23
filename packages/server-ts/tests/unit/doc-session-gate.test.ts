@@ -54,7 +54,7 @@ function makeRegistryCtx(userId: string, sessionId?: string): ToolContext {
   } as ToolContext
 }
 
-const DOC_TOOL_NAMES = ['edit_document', 'insert_asset', 'edit_deck', 'fix_document_images']
+const DOC_TOOL_NAMES = ['edit_document', 'insert_asset', 'edit_deck_bytes', 'fix_document_images']
 
 beforeEach(() => {
   vi.clearAllMocks()

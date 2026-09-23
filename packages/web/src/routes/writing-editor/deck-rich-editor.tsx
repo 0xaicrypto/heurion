@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Check, Loader2, Presentation } from 'lucide-react';
+import { ArrowLeft, Check, Download, Loader2, Presentation } from 'lucide-react';
 import { PowerPointViewer } from 'pptx-react-viewer';
+import { downloadBlob } from '@/lib/download';
 import type { ThemeCatalogEntry } from 'pptx-react-viewer';
 // viewer 预构建样式（tailwind v4 产物,自带 --pptx-* 主题 token）。以 ?raw 注入
 // <style> — 必须绕过本仓 postcss 管线（tailwind v3 会把 viewer 的 @layer base
@@ -141,11 +142,30 @@ export function DeckRichEditor(input: {
    * 的守护据此把画布内未保存编辑纳入确认门。
    */
   onDirtyChange?: (dirty: boolean) => void;
+  /** #1115: 下载文件名（取文档标题；缺省 deck.pptx）。 */
+  docTitle?: string;
+  /** #1115: 无工件时的「AI 生成 PPT」入口（路由经 chat 发送生成指令）。 */
+  onGenerateDeck?: () => void;
+  /**
+   * #1113: 最近一次 AI deck 写回的工件版本（chat store lastDocDeckVersion）。
+   * 变化即触发画布刷新（无本地未保存编辑时自动应用；编辑中则排队 — #1114）。
+   */
+  aiDeckVersion?: string | null;
+  /**
+   * #1113: turn 边界序号（路由在每轮 chat 完成时 +1）。同一 turn 内的多次
+   * AI 写回共用同一份撤销快照（整轮合批），跨 turn 后重开新快照。
+   */
+  turnBoundary?: number;
 }) {
-  const { docId, onClose, onNotice, onDirtyChange } = input;
+  const { docId, onClose, onNotice, onDirtyChange, docTitle, onGenerateDeck, aiDeckVersion, turnBoundary } = input;
   const { t } = useTranslation();
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [content, setContent] = useState<Uint8Array | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  // #1114: AI 写回排队态（本地有未保存编辑时不落地，保存后自动应用）。
+  const [aiQueued, setAiQueued] = useState(false);
+  // #1113: 本轮 AI 修改的撤销快照 + 横幅态。
+  const [turnUndo, setTurnUndo] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [phase, setPhase] = useState<SavePhase>('idle');
   // 最新字节为非响应式 ref（viewer 回调高频；重渲染只驱动 dirty 徽标）。
@@ -162,6 +182,12 @@ export function DeckRichEditor(input: {
   // 不进 useCallback 依赖,报告路径零重渲染。
   const onDirtyChangeRef = useRef(onDirtyChange);
   onDirtyChangeRef.current = onDirtyChange;
+  // #1113/#1114: AI 写回版本排队 + 整轮撤销快照。
+  const queuedAiVersionRef = useRef<string | null>(null);
+  const turnUndoRef = useRef<{ bytes: Uint8Array; version: string } | null>(null);
+  const snapshotTurnRef = useRef<number>(-1);
+  const turnBoundaryRef = useRef<number>(turnBoundary ?? 0);
+  turnBoundaryRef.current = turnBoundary ?? 0;
 
   /** dirty 单点写入：ref + 徽标 state + 父级上报同步推进。 */
   const applyDirty = useCallback((next: boolean) => {
@@ -301,6 +327,136 @@ export function DeckRichEditor(input: {
     onClose();
   }, [onClose, t]);
 
+  /**
+   * #1115: 直接下载 PPTX — 工件字节即持久真相源，复用画布装载同款
+   * tokenized 下载接口，不经过聊天/AI：GET 元数据 → fetch 字节 → 浏览器原生
+   * 下载。所见即所导（有未保存编辑时先冲刷保存，下载的才是画布当前内容）。
+   */
+  const handleDownload = useCallback(async () => {
+    if (!docId || downloading) return;
+    setDownloading(true);
+    try {
+      if (dirtyRef.current && !savingRef.current) {
+        const saved = await save();
+        if (!saved) {
+          // 保存失败/仍在飞行 — 不下载旧字节冒充当前内容。
+          onNotice?.(t('writing.deckDownloadSaveFirst', '有未保存的 deck 编辑且自动保存未完成，请稍后重试下载'), 6000);
+          return;
+        }
+      }
+      const artifact = await api.getDeckArtifact(docId);
+      const r = await fetch(artifact.download_url);
+      if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
+      const safeName = (docTitle || 'deck').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || 'deck';
+      downloadBlob(await r.blob(), `${safeName}.pptx`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        onNotice?.(t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑'), 6000);
+      } else {
+        onNotice?.(t('writing.deckDownloadFail', 'PPTX 下载失败，请重试'), 6000);
+      }
+    } finally {
+      setDownloading(false);
+    }
+  }, [docId, docTitle, downloading, onNotice, t, save]);
+
+  /**
+   * #1113: 拉取 AI 刚写入的新版本并应用到画布。同一 turn 内只捕获一次
+   * 「AI 修改前」快照 — 多次工具调用合批为一个可撤销单元。
+   */
+  const applyAiTurn = useCallback(async () => {
+    const version = queuedAiVersionRef.current;
+    if (!version || !docId) return;
+    queuedAiVersionRef.current = null;
+    setAiQueued(false);
+    try {
+      const artifact = await api.getDeckArtifact(docId);
+      const r = await fetch(artifact.download_url);
+      if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (snapshotTurnRef.current !== turnBoundaryRef.current && bytesRef.current) {
+        turnUndoRef.current = { bytes: bytesRef.current, version: lastVersionRef.current ?? '' };
+        snapshotTurnRef.current = turnBoundaryRef.current;
+        setTurnUndo(true);
+      }
+      lastVersionRef.current = artifact.version;
+      bytesRef.current = bytes;
+      generationRef.current += 1;
+      setContent(bytes);
+      applyDirty(false);
+    } catch (err) {
+      onNotice?.(
+        err instanceof ApiError && err.status === 404
+          ? t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑')
+          : t('writing.deckAiApplyFail', 'AI 修改同步到画布失败，请刷新重试'),
+        6000,
+      );
+    }
+  }, [docId, onNotice, t, applyDirty]);
+
+  /**
+   * #1113/#1114: 收到 AI 写回版本 —
+   * - 画布空闲（无未保存编辑、无在飞保存）→ 直接应用（默认路径）；
+   * - 有未保存本地编辑 → 不覆盖画布，登记排队（#1114 用户手改优先），
+   *   保存完成/放弃后由下方 effect 自动呈现。
+   * 服务端写入不受此影响（AI 工具已正常落库，下一轮读取即最新字节）。
+   */
+  useEffect(() => {
+    if (!aiDeckVersion || status !== 'ready') return;
+    if (aiDeckVersion === lastVersionRef.current) return;
+    if (dirtyRef.current || savingRef.current) {
+      queuedAiVersionRef.current = aiDeckVersion;
+      setAiQueued(true);
+      return;
+    }
+    queuedAiVersionRef.current = aiDeckVersion;
+    void applyAiTurn();
+  }, [aiDeckVersion, status, applyAiTurn]);
+
+  // #1114: 本地编辑保存落地（dirty 清除、无在飞保存）后，冲刷排队中的 AI 写回。
+  useEffect(() => {
+    if (status !== 'ready' || dirty || phase === 'saving') return;
+    const v = queuedAiVersionRef.current;
+    if (v && v !== lastVersionRef.current) void applyAiTurn();
+  }, [dirty, phase, status, applyAiTurn]);
+
+  /** #1113: 整轮撤销 — 回滚 Artifact 指针到本轮 AI 修改前（乐观锁 PUT 旧字节）。 */
+  const handleUndoAiTurn = useCallback(async () => {
+    const snap = turnUndoRef.current;
+    if (!snap || !docId) return;
+    try {
+      const res = await api.putDeckArtifact(docId, snap.bytes, lastVersionRef.current);
+      lastVersionRef.current = res.version;
+      bytesRef.current = snap.bytes;
+      generationRef.current += 1;
+      setContent(snap.bytes);
+      applyDirty(false);
+      turnUndoRef.current = null;
+      setTurnUndo(false);
+      // 排队中的后续 AI 写回同属已撤销的轮次 — 一并作废（避免撤销后又被覆盖）。
+      queuedAiVersionRef.current = null;
+      setAiQueued(false);
+      onNotice?.(t('writing.deckAiUndone', '已撤销本轮 AI 修改，画布已恢复'), 4000);
+    } catch {
+      onNotice?.(t('writing.deckAiUndoFail', '撤销失败，请重试'), 6000);
+    }
+  }, [docId, onNotice, t, applyDirty]);
+
+  /** #1113: 保留本轮 AI 修改 — 关闭撤销窗口。 */
+  const handleKeepAiTurn = useCallback(() => {
+    turnUndoRef.current = null;
+    setTurnUndo(false);
+  }, []);
+
+  // 切文档：排队/撤销/快照全部作废（旧文档的 AI 版本不得串染新画布）。
+  useEffect(() => {
+    queuedAiVersionRef.current = null;
+    turnUndoRef.current = null;
+    snapshotTurnRef.current = -1;
+    setAiQueued(false);
+    setTurnUndo(false);
+  }, [docId]);
+
   return (
     <div data-testid="deck-rich-editor" className="flex h-full min-h-[70vh] w-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-3 py-2">
@@ -315,6 +471,19 @@ export function DeckRichEditor(input: {
           <span className="flex items-center gap-1 text-xs text-text-tertiary"><Check size={12} /> {t('writing.deckRichEditUpToDate', '已同步')}</span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {/* #1115: 有工件即可直接下载（不需要 AI/聊天中介）。 */}
+          {status === 'ready' && (
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="deck-rich-editor-download"
+              disabled={downloading}
+              onClick={() => void handleDownload()}
+            >
+              <Download size={14} className="mr-1" />
+              {t('writing.deckDownloadPptx', '下载 PPTX')}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="secondary"
@@ -322,10 +491,29 @@ export function DeckRichEditor(input: {
             disabled={phase === 'saving'}
             onClick={handleSaveAndBack}
           >
-            {t('writing.deckRichEditSaveBack', '保存并返回卡片流')}
+            {t('writing.deckRichEditSaveBack', '保存并返回')}
           </Button>
         </div>
       </div>
+      {/* #1113/#1114: AI 写回状态条 — 排队等待（本地编辑优先）/ 整轮可撤销。 */}
+      {aiQueued && (
+        <div data-testid="deck-ai-queued-banner" role="status" className="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 py-1.5 text-[12px] text-text-primary">
+          <span>{t('writing.deckAiQueued', 'AI 更新了 deck，但你还有未保存的编辑 — 已排队，保存后自动应用（不会覆盖你的修改）')}</span>
+        </div>
+      )}
+      {turnUndo && (
+        <div data-testid="deck-ai-undo-banner" role="status" className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-accent/30 bg-accent/5 px-3 py-1.5 text-[12px] text-text-primary">
+          <span>{t('writing.deckAiUpdated', 'AI 已更新画布（本轮修改可整轮撤销）')}</span>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="secondary" data-testid="deck-ai-undo" onClick={() => void handleUndoAiTurn()}>
+              {t('writing.deckAiUndo', '撤销本轮')}
+            </Button>
+            <Button size="sm" variant="ghost" data-testid="deck-ai-keep" onClick={handleKeepAiTurn}>
+              {t('writing.deckAiKeep', '保留')}
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="min-h-0 flex-1 bg-surface-elevated">
         {status === 'ready' && content && (
           <PowerPointViewer
@@ -345,16 +533,23 @@ export function DeckRichEditor(input: {
           </div>
         )}
         {status === 'missing' && (
-          <div className="flex h-full items-center justify-center px-6">
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6">
             <p className="max-w-md text-center text-sm text-text-secondary">
               {t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑')}
             </p>
+            {/* #1115: 无工件时保留 AI 生成入口（有工件则默认是直接下载，两入口不混用）。 */}
+            {onGenerateDeck && (
+              <Button size="sm" data-testid="deck-rich-editor-generate" onClick={onGenerateDeck}>
+                <Presentation size={14} className="mr-1" />
+                {t('writing.aiExportPpt', 'AI 生成 PPT')}
+              </Button>
+            )}
           </div>
         )}
         {status === 'error' && (
           <div className="flex h-full items-center justify-center px-6">
             <p className="max-w-md text-center text-sm text-text-secondary">
-              {t('writing.deckRichEditLoadFail', 'deck 工件加载失败，请返回卡片流后重试')}
+              {t('writing.deckRichEditLoadFail', 'deck 工件加载失败，请稍后重试')}
             </p>
           </div>
         )}

@@ -35,7 +35,7 @@ export class SetTaskPlanTool extends BaseTool {
     return [
       'Create and maintain a structured task plan (todo list) for the CURRENT session when a complex task decomposes into ≥3 independent steps.',
       "Actions: 'create' (title + steps[{title, tool?, note?}]) — HARD RULE: fewer than 3 steps is REJECTED; simple tasks (1-2 steps) must execute the corresponding tool directly instead of creating a plan. Do NOT pause for confirmation after creating — start the first step immediately in the same turn.",
-      "'advance' (step_index, note?) marks an ANALYSIS/reporting step done — steps whose tool is edit_document/edit_deck/insert_asset/fix_document_images are WRITE steps: the system auto-advances them when the tool actually succeeds, so you CANNOT advance them by hand (fabricating completion is impossible).",
+      "'advance' (step_index, note?) marks an ANALYSIS/reporting step done — steps whose tool is edit_document/edit_deck_bytes/insert_asset/fix_document_images are WRITE steps: the system auto-advances them when the tool actually succeeds, so you CANNOT advance them by hand (fabricating completion is impossible).",
       "'fail' (step_index, failure_note) marks a step failed; 'retry' (step_index) re-opens a failed step (max 2 auto-retries, then escalate to the user); 'skip' (step_index, note?) skips it and continues; 'complete' closes the plan (refuses while steps remain pending/failed — report honestly instead); 'cancel' abandons the plan.",
       'Use when: multi-section document filling, ≥3 numbered review comments, multi-phase analysis. Do NOT use for: single-question answers, one-line edits, polish of one selection, or any 1-2 step task.',
       'A plan is a ledger of execution, NOT a pre-execution checklist to wait on — create it, then immediately execute step 1.',
@@ -54,7 +54,7 @@ export class SetTaskPlanTool extends BaseTool {
             type: 'object',
             properties: {
               title: { type: 'string', description: 'Step title (one actionable item).' },
-              tool: { type: 'string', description: 'Write tools (edit_document/edit_deck/insert_asset/fix_document_images): the system advances this step when that tool succeeds — do NOT hand-advance.' },
+              tool: { type: 'string', description: 'Write tools (edit_document/edit_deck_bytes/insert_asset/fix_document_images): the system advances this step when that tool succeeds — do NOT hand-advance.' },
               note: { type: 'string', description: 'Step detail/progress note.' },
               section: { type: 'string', description: '#989: target section id ([sec:...] from the injected document, e.g. s_xxx) when the step maps to a document section — keeps the ledger aligned with document structure.' },
             },

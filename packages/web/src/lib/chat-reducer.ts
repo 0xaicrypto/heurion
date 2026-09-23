@@ -143,6 +143,12 @@ export interface SessionState {
   /** #773: AI 写回同帧携带的 deck 资产（null = 无 deck 变更）。 */
   lastDocDeck?: DeckWire | null;
   /**
+   * #1113: 最近一次 edit_deck_bytes 写回后的 pptx 工件版本（version ===
+   * artifactId）。已打开的 deck 画布据此去重并实时拉取新字节；无该字段的
+   * 事件（普通正文写回）保留既有值。
+   */
+  lastDocDeckVersion?: string | null;
+  /**
    * #989 Phase 3: 最近一次 doc_updated 的块级结构投影（派生，可选）—
    * writing-editor 批内 diff 得出「AI 正在编辑哪些节」（#987 流式可见）。
    * 旧后端事件无此字段时保留既有值（与 lastDocRev 同策略）。
@@ -358,6 +364,9 @@ function applyChunkToSessionInner(s: SessionState, chunk: ChatStreamChunk): Sess
         ...(chunk.title ? { lastDocTitle: chunk.title } : {}),
         lastDocDeck: chunk.deck ?? null,
         lastDocRev: typeof chunk.rev === 'number' ? chunk.rev : s.lastDocRev,
+        // #1113: deck 工件版本随帧存储（普通正文写回无字段时保留既有值）—
+        // 画布按版本号去重后实时刷新。
+        ...(typeof chunk.deck_version === 'string' && chunk.deck_version ? { lastDocDeckVersion: chunk.deck_version } : {}),
         // #989 Phase 3: 投影随帧存储(旧事件无字段时保留既有值)。
         // #996/#999: 节级元数据随帧存储(同策略)。
         ...(chunk.projection !== undefined ? { lastDocProjection: chunk.projection } : {}),

@@ -40,12 +40,15 @@ vi.mock('@/lib/api', () => ({
 const { viewerReal } = vi.hoisted(() => ({ viewerReal: { value: false } }));
 
 vi.mock('pptx-react-viewer', async (importOriginal) => {
-  const { createElement, useState } = await import('react');
+  const { createElement, useEffect, useState } = await import('react');
   const actual = (await importOriginal()) as { PowerPointViewer: React.ComponentType<Record<string, unknown>> };
   // stub：content-length 自持状态 — simulate-edit 触发 onContentChange 后按
   // 新字节长度重渲染（模拟 viewer 内部 content state 被编辑替换的语义）。
   const StubViewer = (props: { content?: Uint8Array; canEdit?: boolean; onContentChange?: (bytes: Uint8Array) => void }) => {
     const [len, setLen] = useState(() => props.content?.length ?? 0);
+    // #1113: 外部（AI 写回/撤销）替换 content 身份时同步展示新字节长度；
+    // 本地 simulate-edit 只改自己的 len（父级 content 身份不变，不重置）。
+    useEffect(() => { setLen(props.content?.length ?? 0); }, [props.content]);
     return createElement(
       'div',
       { 'data-testid': 'pptx-viewer-stub' },
@@ -80,10 +83,24 @@ async function buildPptxFixture(): Promise<Uint8Array> {
 const mkApiError = (status: number, body: string) =>
   new (ApiError as unknown as new (s: number, b: string) => Error & { status: number })(status, body);
 
-function Harness({ docId, onNotice, onClose, onDirtyChange }: { docId: string; onNotice?: (text: string, ttlMs?: number) => void; onClose?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
+function Harness({ docId, onNotice, onClose, onDirtyChange, aiDeckVersion, turnBoundary }: {
+  docId: string;
+  onNotice?: (text: string, ttlMs?: number) => void;
+  onClose?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  aiDeckVersion?: string | null;
+  turnBoundary?: number;
+}) {
   return (
     <I18nextProvider i18n={i18n}>
-      <DeckRichEditor docId={docId} onNotice={onNotice} onClose={onClose ?? (() => {})} onDirtyChange={onDirtyChange} />
+      <DeckRichEditor
+        docId={docId}
+        onNotice={onNotice}
+        onClose={onClose ?? (() => {})}
+        onDirtyChange={onDirtyChange}
+        aiDeckVersion={aiDeckVersion}
+        turnBoundary={turnBoundary}
+      />
     </I18nextProvider>
   );
 }
@@ -308,6 +325,213 @@ describe('#1101 DeckRichEditor 保存流', () => {
     await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
     unmount();
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+// ── #1115: 直接下载 PPTX + 无工件 AI 生成入口 ──
+describe('#1115 DeckRichEditor 直接下载 / 生成入口', () => {
+  beforeEach(() => {
+    getDeckArtifactMock.mockReset();
+    putDeckArtifactMock.mockReset();
+    // jsdom 未实现 object URL — downloadBlob 依赖它。
+    vi.stubGlobal('URL', Object.assign(URL, {
+      createObjectURL: vi.fn(() => 'blob:mock'),
+      revokeObjectURL: vi.fn(),
+    }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  test('有工件：点击下载 → GET 工件 + fetch 字节 → 触发浏览器下载（文件名取文档标题）', async () => {
+    await seedArtifact('v1');
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DeckRichEditor docId="d1" docTitle="研究方案 v2" onClose={() => {}} />
+      </I18nextProvider>,
+    );
+    await screen.findByTestId('pptx-viewer-stub');
+
+    fireEvent.click(screen.getByTestId('deck-rich-editor-download'));
+    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+    const anchor = clickSpy.mock.instances[0] as unknown as HTMLAnchorElement;
+    expect(anchor.download).toBe('研究方案 v2.pptx');
+    // 不经过聊天/AI — 仅装载 + 下载两次工件元数据调用，无聊天发送。
+    expect(getDeckArtifactMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('装载成功但下载请求失败 → 明确提示，不产生下载', async () => {
+    await seedArtifact('v1');
+    const notice = vi.fn();
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(<Harness docId="d1" onNotice={notice} />);
+    await screen.findByTestId('pptx-viewer-stub');
+    // 下载时的元数据请求失败（装载那一次已成功）。
+    getDeckArtifactMock.mockRejectedValueOnce(new Error('boom'));
+    fireEvent.click(screen.getByTestId('deck-rich-editor-download'));
+    await waitFor(() => expect(notice).toHaveBeenCalledWith('PPTX 下载失败，请重试', 6000));
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  test('无工件：显示 AI 生成入口并回调（有/无工件两入口区分）', async () => {
+    getDeckArtifactMock.mockRejectedValue(mkApiError(404, '{"error":{"code":"no_artifact"}}'));
+    const onGenerateDeck = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DeckRichEditor docId="d1" onClose={() => {}} onGenerateDeck={onGenerateDeck} />
+      </I18nextProvider>,
+    );
+    await screen.findByTestId('deck-rich-editor');
+    const gen = await screen.findByTestId('deck-rich-editor-generate');
+    fireEvent.click(gen);
+    expect(onGenerateDeck).toHaveBeenCalledTimes(1);
+    // 无工件时不出现「下载 PPTX」。
+    expect(screen.queryByTestId('deck-rich-editor-download')).not.toBeInTheDocument();
+  });
+
+  test('无工件且未提供生成回调 → 不渲染生成按钮', async () => {
+    getDeckArtifactMock.mockRejectedValue(mkApiError(404, '{"error":{"code":"no_artifact"}}'));
+    render(<Harness docId="d1" />);
+    await screen.findByTestId('deck-rich-editor');
+    expect(screen.queryByTestId('deck-rich-editor-generate')).not.toBeInTheDocument();
+  });
+});
+
+// ── #1113/#1114: AI 写回实时落地 + 整轮撤销 + 未保存编辑排队 ──
+describe('#1113/#1114 DeckRichEditor AI 写回', () => {
+  beforeEach(() => {
+    getDeckArtifactMock.mockReset();
+    putDeckArtifactMock.mockReset();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  /** 多个工件版本（装载 v1 → AI v2/v3） + 按 download_url 分发的 fetch。 */
+  async function seedTwoVersions(v2Len = 999) {
+    const v1 = await buildPptxFixture();
+    const v2 = new Uint8Array(v2Len).fill(7);
+    const meta = (version: string, file: string) => ({
+      artifact_id: `art-${version}`,
+      version,
+      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-01T00:00:00Z',
+      download_url: `/api/v1/files/${file}/download?token=t`,
+    });
+    getDeckArtifactMock
+      .mockResolvedValueOnce(meta('v1', 'f1'))
+      .mockResolvedValueOnce(meta('v2', 'f2'))
+      .mockResolvedValueOnce(meta('v3', 'f3'))
+      .mockResolvedValue(meta('v4', 'f4'));
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/f1/') ? new Response(v1.buffer as ArrayBuffer, { status: 200 }) : new Response(v2.buffer as ArrayBuffer, { status: 200 })));
+    return { v1, v2 };
+  }
+
+  test('空闲时收到 AI 写回版本 → 自动拉新字节并展示整轮撤销横幅', async () => {
+    const { v2 } = await seedTwoVersions();
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-stub');
+
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v2.length)));
+    expect(await screen.findByTestId('deck-ai-undo-banner')).toBeInTheDocument();
+  });
+
+  test('整轮合批：同 turn 多次写回只捕获一次快照，撤销回滚到 AI 修改前字节', async () => {
+    const { v1 } = await seedTwoVersions();
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-stub');
+
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await screen.findByTestId('deck-ai-undo-banner');
+    // 同一 turn 第二笔写回（v3 → 复用 v2 字节 stub）— 不重置快照。
+    rerender(<Harness docId="d1" aiDeckVersion="v3" turnBoundary={0} />);
+    await waitFor(() => expect(getDeckArtifactMock).toHaveBeenCalledTimes(3)); // 装载 + v2 + v3
+
+    putDeckArtifactMock.mockResolvedValueOnce({ ok: true, artifact_id: 'art-old', version: 'v-old', changed: true });
+    fireEvent.click(screen.getByTestId('deck-ai-undo'));
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(1));
+    const [, bytesArg, baseArg] = putDeckArtifactMock.mock.calls[0];
+    expect(Array.from(bytesArg as Uint8Array)).toEqual(Array.from(v1));
+    expect(baseArg).toBe('v3');
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v1.length)));
+    expect(screen.queryByTestId('deck-ai-undo-banner')).not.toBeInTheDocument();
+  });
+
+  test('#1113 跨 turn 边界：下一轮 AI 写回开启新撤销快照（撤销只回滚本轮）', async () => {
+    await seedTwoVersions();
+    // 第二轮写入用不同字节（复用 v2 stub 999，无法区分 — 用独立响应覆盖）。
+    const round2Bytes = new Uint8Array(777).fill(9);
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-stub');
+
+    // 第一轮 v2（boundary 0）→ 快照 = v1。
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await screen.findByTestId('deck-ai-undo-banner');
+    // turn 收口 → boundary 前移；下一轮 v3 用新字节。
+    getDeckArtifactMock.mockResolvedValue({
+      artifact_id: 'art-v3', version: 'v3', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-03T00:00:00Z', download_url: '/api/v1/files/f3/download?token=t',
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/f3/') ? new Response(round2Bytes.buffer as ArrayBuffer, { status: 200 }) : new Response(new Uint8Array(999).fill(7).buffer as ArrayBuffer, { status: 200 })));
+    rerender(<Harness docId="d1" aiDeckVersion="v3" turnBoundary={1} />);
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(round2Bytes.length)));
+
+    // 撤销 → 回到第二轮写入前的字节（v2 stub 长度 999），而非第一轮前的 v1。
+    putDeckArtifactMock.mockResolvedValueOnce({ ok: true, artifact_id: 'art-back', version: 'v-back', changed: true });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    fireEvent.click(screen.getByTestId('deck-ai-undo'));
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent('999'));
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  test('#1114 有未保存编辑：AI 写回不覆盖画布，排队等待；保存后自动应用', async () => {
+    const { v2 } = await seedTwoVersions();
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+
+    // 用户本地编辑（dirty，字节 [1,2,3,4]）。
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    expect(screen.getByText('● 未保存')).toBeInTheDocument();
+
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await screen.findByTestId('deck-ai-queued-banner');
+    // 画布仍是用户未保存字节，未被 AI 覆盖；也没有提前拉 AI 字节。
+    expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(/^4$/);
+    expect(getDeckArtifactMock).toHaveBeenCalledTimes(1);
+
+    // 保存本地编辑（PUT 成功）→ 排队写回自动应用。
+    putDeckArtifactMock.mockResolvedValueOnce({ ok: true, artifact_id: 'art-user', version: 'v-user', changed: true });
+    fireEvent.click(screen.getByTestId('deck-rich-editor-save'));
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v2.length)), { timeout: 5000 });
+    expect(screen.queryByTestId('deck-ai-queued-banner')).not.toBeInTheDocument();
+    expect(screen.getByTestId('deck-ai-undo-banner')).toBeInTheDocument();
+  });
+
+  test('#1114 排队期间用户点击撤销本轮 → 排队写回一并作废（不被覆盖）', async () => {
+    await seedTwoVersions();
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await screen.findByTestId('deck-ai-queued-banner');
+
+    // 先保存本地（v-user），排队 v2 立即应用并弹出撤销横幅。
+    putDeckArtifactMock.mockResolvedValueOnce({ ok: true, artifact_id: 'art-user', version: 'v-user', changed: true });
+    fireEvent.click(screen.getByTestId('deck-rich-editor-save'));
+    await screen.findByTestId('deck-ai-undo-banner');
+    // 撤销 → 回滚到 AI 前（用户保存前快照）并清空排队。
+    putDeckArtifactMock.mockResolvedValueOnce({ ok: true, artifact_id: 'art-back', version: 'v-back', changed: true });
+    fireEvent.click(screen.getByTestId('deck-ai-undo'));
+    await waitFor(() => expect(screen.queryByTestId('deck-ai-undo-banner')).not.toBeInTheDocument());
+    expect(screen.queryByTestId('deck-ai-queued-banner')).not.toBeInTheDocument();
   });
 });
 
