@@ -11,6 +11,8 @@ import prisma from '../../src/common/prisma.js'
 // #789②: 纯构建器下沉 lib/asset-content。
 import { InsertAssetTool } from '../../src/tools/insert-asset-tool.js'
 import { buildMarkdownTable, buildDocumentContent, buildPresentationContent } from '../../src/lib/asset-content.js'
+// #fix(首次生成): organize 产物登记 deck 工件 — 测试需提供可解析的真实 pptx 字节。
+import { serializeDeckWireToPptx } from '../../src/lib/deck-bytes.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -456,12 +458,28 @@ describe('#774 export 空正文自动导入唯一参考材料', () => {
 
 describe('#772 insert_asset organize 编排导出（slides JSON 直供）', () => {
   function fakePlane(over: Record<string, any> = {}) {
-    return {
-      enqueue: vi.fn(async () => ({ job_id: 'j1', status: 'pending' })),
+    const plane: any = {
+      enqueue: vi.fn(async (job: any) => { plane.lastPayload = job.payload; return { job_id: 'j1', status: 'pending' } }),
       getStatus: vi.fn(async () => ({ job_id: 'j1', status: 'completed', result: { file_id: 'f1', file_name: 'out.pptx' } })),
-      fetchFile: vi.fn(async () => Buffer.from('PK\x03\x04fake-pptx')),
+      lastPayload: null,
+      // 真实可解析 pptx（组织导出登记工件需过 parsePptx 真相源校验）：
+      // 按 enqueue 的 payload.data 序列化，保证工件投影与编排内容一致。
+      fetchFile: vi.fn(async () => {
+        const data = plane.lastPayload?.data ?? {}
+        return serializeDeckWireToPptx({
+          schemaVersion: 1,
+          title: data.title,
+          slides: (data.slides ?? []).map((s: any) => ({
+            title: s.title,
+            content: (s.content ?? []).map((c: any) => (c.type === 'image'
+              ? { type: 'paragraph', text: c.caption || 'image', style: 'bullet' }
+              : c)),
+          })),
+        })
+      }),
       ...over,
     }
+    return plane
   }
 
   const SLIDES = [
@@ -499,10 +517,22 @@ describe('#772 insert_asset organize 编排导出（slides JSON 直供）', () =
     const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
     expect(doc.body).toContain('[下载 PPT 版')
     // #773: 编排产物同帧落 Doc.deck + 'AI deck' 快照（画布可编辑、再导出源）。
-    expect(JSON.parse(doc.deck).title).toBe('EGFR 研究汇报')
-    expect(JSON.parse(doc.deck).slides.map((s: any) => s.title)).toEqual(['研究背景', '关键结果', '结论'])
-    const deckSnap = await (prisma as any).docSnapshot.findFirst({ where: { docId }, orderBy: { id: 'desc' } })
-    expect(deckSnap.label).toBe('AI deck')
+    // #fix(首次生成): 工件登记后 Doc.deck 为**工件字节的投影**（真相源）；
+    // 投影标题跟随文档标题（putDeckArtifact 语义）。fake plane 用
+    // serializeDeckWireToPptx 生成字节（文本块保留、title 占位不还原），
+    // 故按内容断言而非标题。
+    const projection = JSON.parse(doc.deck)
+    expect(projection.title).toBe(doc.title)
+    expect(projection.slides).toHaveLength(3)
+    expect(JSON.stringify(projection.slides)).toContain('研究背景')
+    expect(JSON.stringify(projection.slides)).toContain('中位 PFS 5.2 个月')
+    const snaps = await (prisma as any).docSnapshot.findMany({ where: { docId } })
+    expect(snaps.some((s: any) => s.label === 'AI deck')).toBe(true)
+    // #fix(首次生成): 渲染出的 pptx 登记为 deck 工件（画布可直接进入富编辑），
+    // 且输出 version → presenter 下发 deck_version → 打开中的画布自动装载。
+    const parsedOut = JSON.parse(result.output as string)
+    expect(doc.deckArtifactId).toBeTruthy()
+    expect(parsedOut.version).toBe(doc.deckArtifactId)
   }, 30000)
 
   test('organize=true + 无 slides + 正文非空 → 返回正文摘要引导第二次调用', async () => {

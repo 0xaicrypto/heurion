@@ -4,8 +4,11 @@
  * EXPORT_FORMATS table, the two-phase organize protocol and the render →
  * store → download-card pipeline via asset-render-pipeline.
  */
+import fs from 'fs'
+import path from 'path'
 import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSchema, chartBlockSchema } from '@heurion/contracts'
 import prisma from '../common/prisma.js'
+import { uploadsBaseDir } from '../lib/upload-path.js'
 import type { ToolResult } from './base-tool.js'
 import type { ToolExecutionPlane } from './tool-registry.js'
 import { ensureDraftBody } from './doc-import.js'
@@ -15,7 +18,7 @@ import { runRenderJob } from './asset-render-pipeline.js'
 import { chartSpecPng } from './deck-chart-embed.js'
 import { resolveDeckContentCitations, composeExportBody } from '../lib/citation-store.js'
 // #1101(b): deck 工件直出 — 工件字节 = 所见即所导的最终产物。
-import { getDeckArtifact } from '../lib/deck-bytes.js'
+import { getDeckArtifact, putDeckArtifact } from '../lib/deck-bytes.js'
 import { parsePptx, PPTX_MIME_TYPE } from '../lib/pptx-extractor.js'
 import { issueChartToken } from '../common/chart-token.js'
 
@@ -271,6 +274,36 @@ async function renderExportFile(deps: ExportExecutorDeps, docId: string, spec: t
     // #776: knowledge 平价迁移 — organize 产物正文可能为空，
     // 用 deck 大纲作为知识索引内容。
     if (knowledge) parsed.knowledge = knowledge
+    // #fix(首次生成): organize 渲染出的 pptx 同时登记为 deck 工件（真相源）—
+    // 此前只写 DeckWire 投影，画布因无 deckArtifactId 永远停在「尚无工件」。
+    // 登记后输出 version，presenter 随 doc_updated 下发 → 打开中的画布自动装载。
+    if (deckJson !== undefined && spec.contentType === 'sidecar.generate_pptx') {
+      try {
+        const filePath = path.join(uploadsBaseDir(userId), localFileId)
+        const bytes = fs.existsSync(filePath) ? fs.readFileSync(filePath) : null
+        // 真相源纪律：只登记可解析的 pptx（worker 返回异常字节不污染工件指针）。
+        if (bytes && parsePptx(bytes).ok) {
+          const put = await putDeckArtifact({
+            userId,
+            docId,
+            bytes,
+            writeSource: 'ai',
+            snapshotLabel: 'AI deck artifact',
+          })
+          if (put.conflict || put.error) {
+            console.warn('[EXPORT] deck artifact registration skipped:', put.error || 'conflict')
+          } else {
+            parsed.version = put.version
+            if (put.projection) {
+              try { parsed.deck = JSON.parse(put.projection) } catch { /* 投影异常不影响导出卡片 */ }
+            }
+          }
+        }
+      } catch (err) {
+        // 工件登记失败不阻断导出（下载卡片已写回）；画布侧仍可经 edit_deck_bytes 建工件。
+        console.warn('[EXPORT] deck artifact registration failed:', (err as Error).message.slice(0, 120))
+      }
+    }
     result.output = JSON.stringify(parsed)
   }
   return result
@@ -344,6 +377,9 @@ async function exportDeckArtifactDirect(deps: ExportExecutorDeps, docId: string,
       try {
         const out = JSON.parse(result.output)
         out.file = { fileId: artifact.artifactId, fileName, mimeType: PPTX_MIME_TYPE, url }
+        // #fix(首次生成): 直出已存在的工件时同样下发 version — 「画布尚无
+        // 工件但服务端已有」的窗口（迁移/并发挂载）可自愈重载。
+        out.version = artifact.version
         // knowledge 大纲（#776 平价迁移）— 从工件字节解析，保持与 DeckWire 路径同等的知识索引面。
         if (parsed.ok && parsed.slides.length > 0) {
           out.knowledge = {

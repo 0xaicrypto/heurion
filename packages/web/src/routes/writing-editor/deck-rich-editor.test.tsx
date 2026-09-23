@@ -496,6 +496,30 @@ describe('#1113/#1114 DeckRichEditor AI 写回', () => {
     expect(clickSpy).not.toHaveBeenCalled();
   });
 
+  test('#fix 首次生成：missing 态收到 AI 版本 → 自动装载画布（不必退出重进）', async () => {
+    const v1 = await buildPptxFixture();
+    const meta = {
+      artifact_id: 'art-1', version: 'v1',
+      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-01T00:00:00Z', slide_count: 1,
+      download_url: '/api/v1/files/f1/download?token=t',
+    };
+    // 首次装载 404（missing）；AI 写入版本后重载成功。
+    getDeckArtifactMock
+      .mockRejectedValueOnce(mkApiError(404, '{"error":{"code":"no_artifact"}}'))
+      .mockResolvedValue(meta);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(v1.buffer as ArrayBuffer, { status: 200 })));
+
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('deck-rich-editor');
+    expect(await screen.findByText(/尚无 pptx 工件/)).toBeInTheDocument();
+
+    rerender(<Harness docId="d1" aiDeckVersion="v1" turnBoundary={0} />);
+    await screen.findByTestId('pptx-viewer-stub');
+    expect(screen.queryByText(/尚无 pptx 工件/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v1.length));
+  });
+
   test('#review-1 用户手动保存后撤销窗口失效 — 撤销绝不反向吞掉用户手改', async () => {
     const { v2 } = await seedTwoVersions();
     const { rerender } = render(<Harness docId="d1" />);

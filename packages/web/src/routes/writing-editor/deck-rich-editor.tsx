@@ -203,6 +203,10 @@ export function DeckRichEditor(input: {
   const applyingAiRef = useRef(false);
   // #review-2: AI 字节瞬时失败的重试定时器（失败不丢排队，画布不永久卡旧内容）。
   const aiRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // #fix(首次生成): 画布处于 missing/error 态时，AI 写入新版本应触发一次重载 —
+  // 每个版本只自动重试一次（避免 404 循环）。
+  const reloadedAiVersionRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
 
   /** dirty 单点写入：ref + 徽标 state + 父级上报同步推进。 */
   const applyDirty = useCallback((next: boolean) => {
@@ -214,34 +218,39 @@ export function DeckRichEditor(input: {
   // 工件装载（懒加载承诺兑现：DeckRichEditor 仅在进入富编辑时挂载，
   // 文档常规加载不拉 60KB+ 字节）。404 = 尚无工件 — 由服务端迁移（§3.2）
   // 为存量 deck 补建，客户端不本地合成 pptx 字节。
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+  // #fix(首次生成): 抽成可重入的 loadArtifact — AI 首次生成工件（画布此前
+  // 处于 missing/error）时由版本事件触发重载，不必退出重进。
+  const loadArtifact = useCallback(async () => {
+    setStatus('loading');
+    try {
       await registerViewerLocales();
-      try {
-        const artifact = await api.getDeckArtifact(docId);
-        const r = await fetch(artifact.download_url);
-        if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
-        const bytes = new Uint8Array(await r.arrayBuffer());
-        if (cancelled) return;
-        lastVersionRef.current = artifact.version;
-        bytesRef.current = bytes;
-        setContent(bytes);
-        setStatus('ready');
-        // #review-8: 页数上报（标签页计数/评论页码上限的真实来源）。
-        onSlideCountChangeRef.current?.(artifact.slide_count ?? null);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 404) {
-          onNotice?.(t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑'), 6000);
-          setStatus('missing');
-          return;
-        }
-        onNotice?.(t('writing.deckRichEditLoadFail', 'deck 工件加载失败，请稍后重试'), 6000);
-        setStatus('error');
+      const artifact = await api.getDeckArtifact(docId);
+      const r = await fetch(artifact.download_url);
+      if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (!mountedRef.current) return;
+      lastVersionRef.current = artifact.version;
+      bytesRef.current = bytes;
+      setContent(bytes);
+      setStatus('ready');
+      // #review-8: 页数上报（标签页计数/评论页码上限的真实来源）。
+      onSlideCountChangeRef.current?.(artifact.slide_count ?? null);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      if (err instanceof ApiError && err.status === 404) {
+        onNotice?.(t('writing.deckRichEditNoArtifact', '该 deck 尚无 pptx 工件 — 让 AI 编排一次或手动导出后再进入富编辑'), 6000);
+        setStatus('missing');
+        return;
       }
-    })();
-    return () => { cancelled = true; };
+      onNotice?.(t('writing.deckRichEditLoadFail', 'deck 工件加载失败，请稍后重试'), 6000);
+      setStatus('error');
+    }
+  }, [docId, onNotice, t]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void loadArtifact();
+    return () => { mountedRef.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- docId 装配期生命周期（t/onNotice 稳定）
   }, [docId]);
 
@@ -501,7 +510,16 @@ export function DeckRichEditor(input: {
    * 服务端写入不受此影响（AI 工具已正常落库，下一轮读取即最新字节）。
    */
   useEffect(() => {
-    if (!aiDeckVersion || status !== 'ready') return;
+    if (!aiDeckVersion) return;
+    if (status !== 'ready') {
+      // #fix(首次生成): 画布尚无工件（missing/error）时 AI 写入了版本 —
+      // 自动重载一次（每个版本去重，避免 404 循环）；loading 表示装载在飞，
+      // 其返回的即最新版本。
+      if (status === 'loading' || reloadedAiVersionRef.current === aiDeckVersion) return;
+      reloadedAiVersionRef.current = aiDeckVersion;
+      void loadArtifact();
+      return;
+    }
     if (aiDeckVersion === lastVersionRef.current) return;
     if (dirtyRef.current || savingRef.current) {
       queuedAiVersionRef.current = aiDeckVersion;
@@ -510,7 +528,7 @@ export function DeckRichEditor(input: {
     }
     queuedAiVersionRef.current = aiDeckVersion;
     void applyAiTurn();
-  }, [aiDeckVersion, status, applyAiTurn]);
+  }, [aiDeckVersion, status, applyAiTurn, loadArtifact]);
 
   // #1114: 本地编辑保存落地（dirty 清除、无在飞保存）后，冲刷排队中的 AI 写回。
   useEffect(() => {

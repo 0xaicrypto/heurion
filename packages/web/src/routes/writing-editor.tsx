@@ -1552,33 +1552,33 @@ export function WritingEditorPage() {
             type="button"
             onClick={() => { titleInputRef.current?.focus(); titleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
             title={t('writing.renameHint', '编辑标题')}
-            className="min-w-0 flex-1 truncate text-left font-serif text-[17px] font-bold tracking-tight text-text-primary transition-colors hover:text-accent sm:flex-none"
+            className="min-w-0 flex-1 truncate text-left font-serif text-[17px] font-bold tracking-tight text-text-primary transition-colors hover:text-accent"
           >
             {title || 'Untitled'}
           </button>
           {studyName && (
             <button
               onClick={() => studyId && navigate(`/app/research/${studyId}`)}
-              className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent/10 sm:inline"
+              className="hidden shrink-0 whitespace-nowrap rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent/10 sm:inline"
               title={t('writing.openStudy', '打开研究详情')}
             >
               {t('writing.studyBadge', '研究')}: {studyName} ↗
             </button>
           )}
           {linkedJournal && (
-            <span className="hidden rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
+            <span className="hidden shrink-0 whitespace-nowrap rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-xs text-accent sm:inline">
               {t('submission.targetJournalShort', '目标期刊')}: {linkedJournal}
             </span>
           )}
           {linkedTemplate && (
-            <span className="hidden rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary sm:inline">
+            <span className="hidden shrink-0 whitespace-nowrap rounded-full border border-border bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary sm:inline">
               {t('submission.templateAppliedShort', '已应用模板')}: {linkedTemplate}
             </span>
           )}
           {/* #996/#1000: Preview/History/DOCX 常驻按钮收进 ··· 菜单(Toolbar)。 */}
           {/* #1112: 文档 | 幻灯片切换 — 幻灯片 = pptx 画布（唯一编辑入口），
               不再有卡片流/只读投影分支。 */}
-          <div className="ml-2 hidden sm:inline-flex">
+          <div className="ml-2 hidden shrink-0 sm:inline-flex">
             <SegmentedControl
               size="xs"
               ariaLabel={t('writing.viewMode', '视图模式')}
@@ -1593,11 +1593,11 @@ export function WritingEditorPage() {
             />
           </div>
           {aiEditNotice && (
-            <span className="ml-3 rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
+            <span className="ml-3 max-w-[280px] shrink-0 truncate rounded-full border border-success/30 bg-success/5 px-2 py-0.5 text-xs text-success">
               {aiEditNotice}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {/* #1112: 幻灯片评论创建入口 — 卡片流退役后从画布头部提供
                 （页码 + 侧边栏线程；AI 处理/列表沿用同一套）。 */}
             {viewMode === 'deck' && (
@@ -1676,8 +1676,10 @@ export function WritingEditorPage() {
                   docId={docId ?? ''}
                   onNotice={showNotice}
                   docTitle={title}
-                  /* #1115: 无工件时保留 AI 生成入口（经 chat 驱动 edit_deck_bytes）。 */
-                  onGenerateDeck={() => chat.sendChatText(t('writing.aiExportPptPrompt', '请把当前稿件生成 PPT（调用 edit_deck_bytes 创建 deck 工件并编排分页）。'))}
+                  /* #1115/#fix(首次生成): 无工件时 AI 生成入口走 insert_asset
+                     organize（渲染后登记为 deck 工件）；edit_deck_bytes 在无
+                     工件文档会拒绝（需先有 deck），故不能作为首次生成指令。 */
+                  onGenerateDeck={() => chat.sendChatText(t('writing.aiExportPptPrompt', '请把当前稿件生成可编辑的 PPT deck（调用 insert_asset：format="pptx"、organize=true，slides 由你按正文语义编排；生成后服务端会登记为画布工件，画布自动刷新）。'))}
                   /* #1113/#1114: AI 写回版本 + 轮边界（实时落地/整轮撤销/未保存排队）。 */
                   aiDeckVersion={chatSession?.lastDocDeckVersion ?? null}
                   turnBoundary={deckTurnBoundary}

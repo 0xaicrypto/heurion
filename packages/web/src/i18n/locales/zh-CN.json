@@ -572,7 +572,7 @@
     "deckCardEdit": "编辑",
     "deckMoreBlocks": "还有 {{n}} 段",
     "aiExportPpt": "AI 生成 PPT",
-    "aiExportPptPrompt": "请把当前稿件生成 PPT（调用 edit_deck_bytes 创建 deck 工件并编排分页）。",
+    "aiExportPptPrompt": "请把当前稿件生成可编辑的 PPT deck（调用 insert_asset：format=\"pptx\"、organize=true，slides 由你按正文语义编排；生成后服务端会登记为画布工件，画布自动刷新）。",
     "deckAssetBadge": "AI 编排 deck 资产 — 卡片内可直接编辑（改标题/调要点/删页），保存不会改动文档正文。",
     "deckRichEdit": "富编辑（画布）",
     "deckRichEditEntryHint": "进入 pptx 画布富编辑（返回时自动保存）",

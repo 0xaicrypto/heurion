@@ -572,7 +572,7 @@
     "deckCardEdit": "Edit",
     "deckMoreBlocks": "{{n}} more blocks",
     "aiExportPpt": "AI generate PPT",
-    "aiExportPptPrompt": "Please generate a PPT from the current draft (call edit_deck_bytes to create the deck artifact and lay out slides).",
+    "aiExportPptPrompt": "Please generate an editable PPT deck from the current draft (call insert_asset with format=\"pptx\" and organize=true; lay out the slides from the draft; the artifact is registered server-side and the canvas refreshes automatically).",
     "deckAssetBadge": "AI-organized deck asset — edit slides inline (title/bullets/delete); saving will not touch the document text.",
     "deckRichEdit": "Rich edit (canvas)",
     "deckRichEditEntryHint": "Enter pptx canvas rich editing (auto-saves on return)",
