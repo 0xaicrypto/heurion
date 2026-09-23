@@ -862,6 +862,7 @@ export function WritingEditorPage() {
     appliedDocDeck.current = key;
     lastSavedDeck.current = key;
     setDeckAsset(next as DeckWire);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- appliedDocDeck/lastSavedDeck 为稳定 ref（repo 惯例）
   }, [chatSession?.lastDocDeck, docId, doc, setDeckAsset]);
 
   /**
