@@ -1,0 +1,105 @@
+# Heurion staging — 与生产同 VPS 的独立 compose 栈（手工测试用）。
+#
+# 设计要点：
+# - 独立项目（`-p heurion-staging`）：自己的容器名/命名卷/数据库/进程，
+#   `down -v` 即整体销毁，绝不触碰生产（nexus-server 等）。
+# - 加入生产已创建的 docker 网络 heurion_nexus-net（external）——
+#   生产 Caddy 通过容器名 `nexus-server-staging:8001` 反代到本栈
+#   （Caddyfile 里的 staging.heurion.org 站点块）。
+# - 不暴露任何 host 端口：唯一入口是共享 Caddy（basic auth 保护）。
+# - ENVIRONMENT=staging（非 prod 语义）：main.ts 的 schema sync 走
+#   `prisma db push --accept-data-loss`，可丢弃的 staging 库随 schema 自愈；
+#   同时 auth 的 clear-test-data 端点仅在 staging host 开放（已有实现）。
+# - APP_ENV 刻意不设（非生产路径）。
+#
+# 部署：由 .github/workflows/deploy-staging.yml 调用
+# scripts/deploy-staging-compose.sh（VPS 上 /opt/heurion-staging）。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+    compress: "true"
+    tag: "{{.Name}}"
+
+services:
+  nexus-embedding-staging:
+    image: ${EMBEDDING_IMAGE:-ghcr.io/0xaicrypto/nexus-embedding-server:latest}
+    logging: *default-logging
+    container_name: nexus-embedding-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      - EMBEDDING_SERVER_HOST=0.0.0.0
+      - EMBEDDING_SERVER_PORT=8003
+    networks:
+      - nexus-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+
+  nexus-stats-staging:
+    image: ${STATS_IMAGE:-ghcr.io/0xaicrypto/nexus-stats-worker:latest}
+    logging: *default-logging
+    container_name: nexus-stats-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      - STATS_HOST=0.0.0.0
+      - STATS_PORT=8005
+    networks:
+      - nexus-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  nexus-server-staging:
+    image: ${NEXUS_IMAGE:-ghcr.io/0xaicrypto/nexus-server:staging}
+    logging: *default-logging
+    container_name: nexus-server-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      - SERVER_PORT=8001
+      - DATABASE_URL=file:/data/db/staging.db
+      - TWIN_BASE_DIR=/data/twins
+      - WEB_DIST_DIR=/app/web-dist
+      - STATS_WORKER_URL=http://nexus-stats-staging:8005
+    depends_on:
+      nexus-stats-staging:
+        condition: service_healthy
+    volumes:
+      - staging-data:/data
+      - staging-db-data:/data/db
+      - staging-files-data:/data/twins
+      # Web UI dist 由 staging 工作流按被测 revision 上传（与生产 dist 隔离）。
+      - ./web-dist:/app/web-dist:ro
+    networks:
+      - nexus-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  staging-data:
+  staging-db-data:
+  staging-files-data:
+
+networks:
+  nexus-net:
+    external: true
+    # 生产 compose（/opt/heurion，项目名 heurion）创建的桥接网络 —
+    # 共享后 Caddy 才能按容器名反代 staging。
+    name: heurion_nexus-net

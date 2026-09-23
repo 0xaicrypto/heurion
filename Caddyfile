@@ -47,6 +47,41 @@
 	}
 }
 
+# ── staging.heurion.org — 手工测试环境（独立 compose 栈，容器
+# nexus-server-staging）。与生产共用本 Caddy 实例（只读挂载，改完
+# validate + reload 即生效，无需重建容器）；staging 栈整体独立
+# （项目 heurion-staging：自己的卷/DB/进程），退出即删不影响生产。
+#
+# basic_auth：staging 长期在线且复用真实 LLM key，必须防止公网滥用与
+# 误触 clear-test-data；用户名 heurion，密码存 GitHub Secret
+# STAGING_PASSWORD（轮换后用 `caddy hash-password` 重算本哈希并重新部署）。
+staging.heurion.org {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+	basic_auth {
+		heurion $2a$10$Ga1AS7FCUuPRrYvC.g.aIuhgPdaMo84w9uohcbhkhaxNEZvicLDeu
+	}
+	reverse_proxy nexus-server-staging:8001 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+
+		# 与生产同款长连 SSE 语义（聊天流）。
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+	log {
+		output stderr
+		format json
+	}
+}
+
 # Optional: redirect any other hostname (e.g. someone hitting the raw
 # IP) to the canonical nip.io URL. Comment out if you want raw-IP
 # access to fail closed.

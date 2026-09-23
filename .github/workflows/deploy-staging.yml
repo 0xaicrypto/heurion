@@ -1,0 +1,172 @@
+name: Deploy Staging
+
+# 手工测试环境（staging.heurion.org，与生产同 VPS 的独立 compose 栈）。
+#
+# 触发：
+# - workflow_dispatch（推荐）：在 UI/CLI 选择任意 ref（功能分支/commit）部署 —
+#   server 镜像与 web dist 都从选中的 revision 构建，无需先合 main。
+# - push 到 staging 分支（可选集成流）：分支不存在则该触发器静默不生效，
+#   需要「合并到 staging 即自动部署」时再创建该分支。
+#
+# 生产零影响：staging 栈有独立项目/卷/DB，唯一共享物是 Caddy 的站点配置
+# （Caddyfile scp 后先 validate 再 reload；reload 失败旧配置继续生效）。
+on:
+  workflow_dispatch:
+    inputs:
+      deps_tag:
+        description: 'embedding/stats 镜像 tag（默认 latest；代码分支只需 server 自建）'
+        required: false
+        default: 'latest'
+      reset_db:
+        description: '部署前清空 staging 数据库与文件卷（数据重来）'
+        type: boolean
+        default: false
+  push:
+    branches: [staging]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  SERVER_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-server
+  EMBEDDING_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-embedding-server
+  STATS_IMAGE_NAME: ghcr.io/0xaicrypto/nexus-stats-worker
+
+jobs:
+  build-and-deploy:
+    name: Build staging images + deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with: { version: '10' }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: packages/web/pnpm-lock.yaml
+
+      # #917 先例：file: 依赖在 install 时快照目录，contracts/llm-markdown-fix
+      # 必须先 build 再 install web。
+      - name: Build web dist
+        run: |
+          cd packages/contracts && pnpm install --frozen-lockfile && pnpm build
+          cd ../llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build
+          cd ../web && pnpm install --frozen-lockfile && pnpm build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build and push staging server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/server-ts/Dockerfile
+          push: true
+          tags: ${{ env.SERVER_IMAGE_NAME }}:staging-${{ steps.vars.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Upload staging files (compose/script/web-dist/Caddyfile)
+        run: |
+          SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}"
+          $SSH "mkdir -p /opt/heurion-staging /opt/heurion"
+          scp -o StrictHostKeyChecking=no docker-compose.staging.yml scripts/deploy-staging-compose.sh \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion-staging/
+          $SSH "chmod +x /opt/heurion-staging/deploy-staging-compose.sh"
+          # web dist 与生产 dist 隔离（staging 测的是本 revision）
+          tar -C packages/web/dist -czf /tmp/web-dist.tgz .
+          scp -o StrictHostKeyChecking=no /tmp/web-dist.tgz \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/web-dist.tgz
+          $SSH "rm -rf /opt/heurion-staging/web-dist && mkdir -p /opt/heurion-staging/web-dist && tar -xzf /tmp/web-dist.tgz -C /opt/heurion-staging/web-dist && rm -f /tmp/web-dist.tgz"
+          # 共享 Caddy 站点配置（含 staging.heurion.org 站点块）
+          scp -o StrictHostKeyChecking=no Caddyfile \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion/Caddyfile
+
+      - name: Write staging env
+        env:
+          HOSTNAME: staging.heurion.org
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          EXECUTION_PLANE_URL: ${{ secrets.EXECUTION_PLANE_URL }}
+          WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
+        run: |
+          SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}"
+          # 复用既有 SERVER_SECRET（会话/加密数据连续性），没有则生成。
+          EXISTING=$($SSH "grep '^SERVER_SECRET=' /opt/heurion-staging/.env.staging 2>/dev/null | cut -d= -f2-" || true)
+          SECRET="${EXISTING:-$(openssl rand -hex 32)}"
+          cat > /tmp/heurion-staging.env <<EOF
+          HOSTNAME=${HOSTNAME}
+          SERVER_HOST=0.0.0.0
+          SERVER_PORT=8001
+          ENVIRONMENT=staging
+          LOG_LEVEL=INFO
+          SERVER_SECRET=${SECRET}
+          CORS_ALLOW_ORIGINS=https://${HOSTNAME}
+          DEFAULT_LLM_PROVIDER=opencode
+          DEFAULT_LLM_MODEL=glm-5.3-flash
+          LLM_TEXT_ONLY_MODELS=deepseek-v4-flash
+          OPENCODE_API_KEY=${OPENCODE_API_KEY}
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          NCBI_API_KEY=${NCBI_API_KEY}
+          EXECUTION_PLANE_URL=${EXECUTION_PLANE_URL}
+          WORKER_API_TOKEN=${WORKER_API_TOKEN}
+          EMBEDDING_PROVIDER=local
+          EMBEDDING_MODEL=BAAI/bge-m3
+          EMBEDDING_BATCH_SIZE=32
+          EMBEDDING_FALLBACK_PROVIDER=none
+          LOCAL_EMBEDDING_URL=http://nexus-embedding-staging:8003/embed
+          EOF
+          scp -o StrictHostKeyChecking=no /tmp/heurion-staging.env \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/heurion-staging/.env.staging
+          $SSH "chmod 600 /opt/heurion-staging/.env.staging" 
+
+      - name: Deploy staging stack
+        env:
+          NEXUS_IMAGE: ${{ env.SERVER_IMAGE_NAME }}:staging-${{ steps.vars.outputs.sha }}
+          EMBEDDING_IMAGE: ${{ env.EMBEDDING_IMAGE_NAME }}:${{ inputs.deps_tag || 'latest' }}
+          STATS_IMAGE: ${{ env.STATS_IMAGE_NAME }}:${{ inputs.deps_tag || 'latest' }}
+          RESET_DB: ${{ inputs.reset_db && '1' || '0' }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cd /opt/heurion-staging && NEXUS_IMAGE='$NEXUS_IMAGE' EMBEDDING_IMAGE='$EMBEDDING_IMAGE' STATS_IMAGE='$STATS_IMAGE' RESET_DB='$RESET_DB' bash deploy-staging-compose.sh"
+
+      - name: Smoke test (basic auth required)
+        env:
+          STAGING_PASSWORD: ${{ secrets.STAGING_PASSWORD }}
+        run: |
+          if [ -z "$STAGING_PASSWORD" ]; then
+            echo "::error::STAGING_PASSWORD secret is not set — cannot smoke test the basic-auth protected staging site"
+            exit 1
+          fi
+          for i in 1 2 3 4 5 6; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' -u "heurion:${STAGING_PASSWORD}" https://staging.heurion.org/healthz || true)
+            if [ "$CODE" = "200" ]; then echo "✓ staging healthy: https://staging.heurion.org"; exit 0; fi
+            echo "  smoke attempt $i/6 (HTTP $CODE), retrying in 10s…"
+            sleep 10
+          done
+          echo "::error::staging smoke test failed (last HTTP $CODE)"
+          exit 1
