@@ -228,7 +228,10 @@ export async function generatePptx(payload: unknown) {
   if (raw && typeof raw === 'object' && 'content_type' in payloadObj && !('slides' in raw)) {
     raw = payloadObj.data as Record<string, unknown>
   }
-  const legacyContent = (raw as { data?: { slides?: Array<{ content?: unknown }> } }).data?.slides?.[0]?.content
+  // #1133: raw 可能为 null/undefined(null payload,或只有 content_type 时
+  // payloadObj.data 为 undefined)— 必须可选链,否则 TypeError 直接失败,
+  // 走不到下面的占位 deck 降级。
+  const legacyContent = (raw as { data?: { slides?: Array<{ content?: unknown }> } } | null | undefined)?.data?.slides?.[0]?.content
   const check = validateRenderContent('sidecar.generate_pptx', raw)
   const input = (check.ok
     ? check.data

@@ -205,14 +205,24 @@ describe('doc-convert markdown round-trip (#837)', () => {
  * `EGFR_突变` 每次往返变成 `EGFR\_突变`,会让"未修改"的正文被当成有改动
  * (dirty → 自动保存),与下载链接 token 重签叠加成 409 冲突死循环。
  */
-describe('#1128 词内下划线转义还原', () => {
-  test('词内 _ 往返稳定(中文/字母两侧均不转义)', () => {
+describe('#1128/#1130 词内下划线转义还原(仅词字符相邻)', () => {
+  test('词内 _ 往返稳定(中文/字母/数字两侧均不转义)', () => {
     expect(roundTrip('EGFR_突变 与 KRAS_wildtype 分型')).toBe('EGFR_突变 与 KRAS_wildtype 分型')
     expect(roundTrip('EGFR_突变')).not.toContain('\\_')
+    expect(roundTrip('snake_case_name')).not.toContain('\\_')
+    expect(roundTrip('a_b_c 链式')).not.toContain('\\_')
   })
 
-  test('边界位置的 \\_ 保持转义(那里确实需要字面下划线)', () => {
-    expect(roundTrip('\\_开头下划线')).toContain('\\_')
-    expect(roundTrip('结尾下划线\\_')).toContain('\\_')
+  test('#1130 标点旁的下划线保持转义(还原会被解析成强调,静默改内容)', () => {
+    // 编辑器里是字面文本(HTML) — turndown 输出 \_ 防止重新解析成强调;
+    // 反转义仅限词字符相邻,这些位置必须保持转义。
+    for (const text of ['(_draft_)', '"_x_"', '_开头下划线', '结尾下划线_']) {
+      const html = `<p>${text}</p>`
+      const md = htmlToMarkdown(html)
+      expect(md, text).toContain('\\_')
+      const back = markdownToHtml(md)
+      expect(back, text).not.toMatch(/<em>/)
+      expect(back, text).toContain('_')
+    }
   })
 })

@@ -92,3 +92,25 @@ describe('generator contract (AI → JSON → file)', () => {
     expect(buf.length).toBeGreaterThan(500)
   })
 })
+
+/**
+ * #1133 — 边界 payload 必须降级为占位 deck,不得 TypeError。
+ * null/undefined,或只有 content_type 而无 data/slides 时,旧写法
+ * `(raw as ...).data` 读 null/undefined 直接抛错;契约校验失败本应走
+ * fallback 生成占位页。修复:legacyContent 补可选链。
+ */
+describe('#1133 generatePptx 边界 payload 降级', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  test('null / undefined / 仅 content_type → resolve 且生成含占位页的 pptx', async () => {
+    const { saveFile } = await import('../src/storage.js')
+    for (const payload of [null, undefined, { content_type: 'sidecar.generate_pptx' }]) {
+      (saveFile as ReturnType<typeof vi.fn>).mockClear()
+      const res = await generatePptx(payload as unknown)
+      expect(res.fileName, JSON.stringify(payload)).toBe('presentation.pptx')
+      const buf = ((saveFile as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]) as Buffer
+      // PPTX 是 zip — OOXML 签名
+      expect(buf.slice(0, 2).toString('hex'), JSON.stringify(payload)).toBe('504b')
+    }
+  })
+})

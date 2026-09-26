@@ -237,9 +237,14 @@ export async function documentsRouter(app: FastifyInstance) {
     }
 
     return {
-      // #1128: 保存响应正文与 GET 同口径(重签 token)— 前端把它当新基线,
-      // 若返回库内旧 token,展示层与基线永久不一致(dirty 抖动)。
-      id: doc!.id, title: doc!.title, body: refreshFileUrls(doc!.body, request.user!.userId), deck: parseDeck(doc!.deck),
+      // #1131: 回显客户端本次提交的正文(而非重签 token 的库内版本) —
+      // refreshFileUrls 每次签发新 exp,同一正文每次返回都不同;前端把响应
+      // 当新基线并 setBody → DocEditor 每次自动保存都 setContent 整篇重建
+      // (图片闪烁/撤销历史被打断)。未提交 body(title-only 保存)时回落到
+      // 库内正文(带 URL 自愈重签)。
+      id: doc!.id, title: doc!.title,
+      body: body !== undefined ? body : refreshFileUrls(doc!.body, request.user!.userId),
+      deck: parseDeck(doc!.deck),
       // review 复核#8a: 保存响应携带块投影 — 前端据此同步本地投影,
       // 「AI 正在编辑哪个节」的批次基线在手动保存后不再过期。
       block_projection: parseBlockProjection(doc!.blockProjection),

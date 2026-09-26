@@ -610,3 +610,52 @@ describe('#1128 下载链接 token 归一化 — 不再误判并发冲突', () =
     expect(retry.statusCode).toBe(200)
   })
 })
+
+/**
+ * #1131 — PUT 响应必须回显客户端提交的正文:此前保存响应经 refreshFileUrls
+ * 重签 token(每次 exp 不同),前端把它当新基线与本地正文不一致 → 每次自动
+ * 保存触发 DocEditor 整篇 setContent(图片闪烁/撤销历史被打断)。
+ */
+describe('#1131 保存响应回显提交正文(token 不再重签)', () => {
+  test('PUT 含 token 链接的正文 → 响应 body 与提交逐字节一致', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Echo Doc' },
+    })
+    const docId = JSON.parse(create.payload).id
+    const submitted = '下载：/api/v1/files/download/f_echo?token=client_side_sig'
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: submitted },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).body).toBe(submitted)
+  })
+
+  test('title-only 保存(未提交 body)→ 仍回落库内正文并自愈重签', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Title Only' },
+    })
+    const docId = JSON.parse(create.payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '附件 /api/v1/files/download/f_t' },
+    })
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Title Only v2' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload).body
+    expect(body).toContain('/api/v1/files/download/f_t')
+    expect(body).toContain('?token=')
+  })
+})

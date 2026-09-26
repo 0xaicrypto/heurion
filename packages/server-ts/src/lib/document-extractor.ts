@@ -9,7 +9,7 @@ import { MiniLruCache } from './lru-cache.js'
 // #777: pptx 解析导入 — zip-reader + OOXML 文本提取（零 XML 解析器依赖）。
 // pptx-extractor 仅以 type 引用本文件类型（无运行时环）。
 import { parsePptx, pptxSlidesToMarkdown, isPptx } from './pptx-extractor.js'
-import { assertZipBombSafe } from './zip-reader.js'
+import { assertDocxArchiveSafe } from './docx-guard.js'
 import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('documents.extract')
@@ -266,19 +266,6 @@ docxTurndown.addRule('table', {
   },
 })
 
-// #1074-4: mammoth 自身解压无上限 — 不可信 docx 先过 zip 炸弹预扫
-// （声明总量 + 逐条有界解压），畸形/炸弹直接拒绝，绝不交给第三方解压器。
-const DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
-const DOCX_MAX_ZIP_ENTRIES = 2000
-
-function assertDocxArchiveSafe(buffer: Buffer): void {
-  try {
-    assertZipBombSafe(buffer, { maxEntries: DOCX_MAX_ZIP_ENTRIES, maxTotalUncompressed: DOCX_MAX_UNCOMPRESSED_BYTES })
-  } catch (err) {
-    throw new Error(`DOCX archive rejected: ${(err as Error).message}`)
-  }
-}
-
 async function extractDocxText(buffer: Buffer, maxChars: number): Promise<string> {
   try {
     assertDocxArchiveSafe(buffer)
@@ -321,6 +308,15 @@ export async function extractDocxContentFromUpload(
   // #fix: 嗅探优先 — 文件头是 zip(docx 容器)即按 docx 处理,扩展名只兜底。
   const sniffed = sniffDocumentMime(buffer)
   if (!isDocx(originalName) && sniffed !== 'application/zip') return null
+
+  // #1129: 炸弹预扫必须前置到入口 — 文本路径的检查失败只返回失败字符串，
+  // 流程仍会走到下面的 vision 图片提取(同一 buffer 第二次 mammoth.convertToHtml)，
+  // 防护在多模态路径上等于没加。这里在任何 mammoth 调用前统一拒绝。
+  try {
+    assertDocxArchiveSafe(buffer)
+  } catch (err) {
+    return { text: `[DOCX extraction failed: ${(err as Error).message}]`, images: [] }
+  }
 
   const text = await extractDocxText(buffer, options.maxChars)
   const images: ExtractedPdfImage[] = []
