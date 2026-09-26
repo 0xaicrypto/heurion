@@ -70,18 +70,6 @@
       "@prisma/engines",
       "msgpackr-extract",
       "tesseract.js"
-    ],
-    "overrides": {
-      "ts-api-utils>typescript": "5.9.3",
-      "@typescript-eslint/typescript-estree>typescript": "5.9.3",
-      "@typescript-eslint/type-utils>typescript": "5.9.3",
-      "@typescript-eslint/utils>typescript": "5.9.3"
-    },
-    "packageExtensions": {
-      "ts-api-utils": { "dependencies": { "typescript": "5.9.3" } },
-      "@typescript-eslint/typescript-estree": { "dependencies": { "typescript": "5.9.3" } },
-      "@typescript-eslint/type-utils": { "dependencies": { "typescript": "5.9.3" } },
-      "@typescript-eslint/utils": { "dependencies": { "typescript": "5.9.3" } }
-    }
+    ]
   }
 }
