@@ -77,15 +77,20 @@ jobs:
       - name: Build shared contracts (drift guard)
         # #fix: contracts must be built BEFORE consumers install — pnpm
         # snapshots the file: dependency at install time (worker-ci.yml order).
-        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       # #1074-1: ssrf-guard 同为 file: 共享包 — install 前必须先建 dist
       #（pnpm file: 快照只拷 files:["dist"]）。
       - name: Build shared ssrf-guard (drift guard)
-        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: ESLint (server-ts)
+        # #973: server-ts 接上 ESLint（typescript-eslint 经 scripts/eslint-ts-patch.cjs
+        # 走 TS5 工具链 — tsgo 预览无 JS compiler API）。
+        run: pnpm run lint
 
       - name: Generate Prisma client
         run: pnpm exec prisma generate
@@ -130,12 +135,12 @@ jobs:
       - name: Build shared contracts (drift guard)
         # #fix: contracts must be built BEFORE consumers install — pnpm
         # snapshots the file: dependency at install time (worker-ci.yml order).
-        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       # #1074-1: ssrf-guard 同为 file: 共享包 — install 前必须先建 dist
       #（pnpm file: 快照只拷 files:["dist"]）。
       - name: Build shared ssrf-guard (drift guard)
-        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

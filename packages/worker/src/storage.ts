@@ -1,10 +1,10 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { mkdir, writeFile } from 'fs/promises'
-import { mkdirSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { v4 as uuid } from 'uuid'
-import { workerDataDir, loadJsonl, appendJsonl } from './data-dir.js'
+import { workerDataDir, loadJsonl, appendJsonl, atomicWriteFileSync } from './data-dir.js'
 
 // #795: renders used to land in os.tmpdir() (OS-cleanable, not volume-
 // mounted). They now live under the persistent worker data dir.
@@ -78,7 +78,7 @@ export function compactLocalFiles(): void {
     .map(([fileId, e]) =>
       JSON.stringify({ fileId, path: e.path, fileName: e.fileName, mimeType: e.mimeType } satisfies LocalFileManifestEntry))
     .join('\n')
-  writeFileSync(localFilesPath, lines ? lines + '\n' : '', 'utf-8')
+  atomicWriteFileSync(localFilesPath, lines ? lines + '\n' : '')
 }
 
 export async function saveFile(

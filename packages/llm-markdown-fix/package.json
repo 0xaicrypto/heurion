@@ -7,10 +7,15 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "node -r ./scripts/eslint-ts-patch.cjs ./node_modules/eslint/bin/eslint.js src --ext .ts --report-unused-disable-directives --max-warnings 0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@typescript-eslint/eslint-plugin": "^7.13.1",
+    "@typescript-eslint/parser": "^7.13.1",
+    "eslint": "^8.57.0",
+    "typescript-lint": "npm:typescript@5.9.3"
   }
 }

@@ -8,10 +8,26 @@ import {
 } from '@heurion/contracts'
 import { resolveImage, toBase64DataUri, base64InflatedBytes } from './remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
 
-const PptxGenJSCtor = PptxGenJS as unknown as new () => any
+/** pptxgenjs Slide 的结构子集 — NodeNext 下默认导入解析为模块命名空间,
+ *  命名空间内 Slide 类型取不到;只声明本文件实际用到的方法(渲染正确性由
+ *  golden 测试锁定,类型仅做编译期防错)。 */
+export interface Slide {
+  background?: unknown
+  addNotes(notes: string): void
+  addText(text: string | Array<{ text: string; options?: Record<string, unknown> }>, options?: Record<string, unknown>): void
+  addImage(options: Record<string, unknown>): void
+  addShape(shape: string, options?: Record<string, unknown>): void
+  addTable(rows: unknown[][], options?: Record<string, unknown>): void
+}
 
-/** pptxgenjs 幻灯片实例类型（模块级 — addNotesTruncated 等辅助函数共用）。 */
-export type Slide = ReturnType<typeof PptxGenJSCtor.prototype.addSlide>
+/** pptxgenjs 实例（同上 — 只收窄到实际用到的方法）。 */
+interface PptxInstance {
+  defineLayout(opts: { name: string; width: number; height: number }): void
+  layout: string
+  addSlide(): Slide
+  write(opts: { outputType: 'nodebuffer' }): Promise<Buffer>
+}
+const PptxGenJSCtor = PptxGenJS as unknown as new () => PptxInstance
 
 /** #1066-8: 单次导出内嵌图片总字节预算 — 图片以 base64 data URI 全驻留
  *  pptxgenjs（写文件前无法释放），20MB×30 页最坏 ~800MB 可致 worker OOM。
@@ -65,10 +81,6 @@ function layoutOf(slide: { layout?: string }): SlideLayout {
   return SLIDE_LAYOUTS.has(String(slide.layout)) ? (slide.layout as SlideLayout) : 'bullets'
 }
 
-function themeOf(name?: string) {
-  return THEMES[String(name || '')] ?? THEMES.clinical
-}
-
 /** 视觉长度：CJK 宽字符按 2 计。 */
 function visualLen(text: string): number {
   return [...text].reduce((n, ch) => n + (ch.codePointAt(0)! > 0x2e80 ? 2 : 1), 0)
@@ -83,12 +95,6 @@ function estHeight(text: string, fontSize: number, widthIn: number): number {
 
 function isImageBlock(b: ContentBlock): b is Extract<ContentBlock, { type: 'image' }> {
   return b.type === 'image'
-}
-
-function bulletItems(blocks: ContentBlock[]): Array<{ text: string; bullet: boolean }> {
-  return blocks
-    .filter((b) => b.type === 'paragraph')
-    .map((b) => ({ text: String((b as { text?: string }).text || ''), bullet: (b as { style?: string }).style === 'bullet' }))
 }
 
 /** 要点 autofit：字号候选递减取首个单页放下者；仍超页则拆续页（内容不再静默丢失）。 */
@@ -214,13 +220,15 @@ function toRunsOrString(text: string): string | Array<{ text: string; options: R
   }))
 }
 
-export async function generatePptx(payload: any) {
+export async function generatePptx(payload: unknown) {
   // The server now sends { schema_version, content_type, data: {schemaVersion,...} }.
   // Accept the legacy { template_id, data: {...} } and flat shapes too.
-  let raw = payload?.data ?? payload
-  if (raw && typeof raw === 'object' && 'content_type' in payload && !('slides' in raw)) {
-    raw = payload.data
+  const payloadObj = (payload ?? {}) as Record<string, unknown>
+  let raw = (payloadObj.data ?? payload) as Record<string, unknown>
+  if (raw && typeof raw === 'object' && 'content_type' in payloadObj && !('slides' in raw)) {
+    raw = payloadObj.data as Record<string, unknown>
   }
+  const legacyContent = (raw as { data?: { slides?: Array<{ content?: unknown }> } }).data?.slides?.[0]?.content
   const check = validateRenderContent('sidecar.generate_pptx', raw)
   const input = (check.ok
     ? check.data
@@ -229,7 +237,7 @@ export async function generatePptx(payload: any) {
         subtitle: undefined,
         presenter: undefined,
         theme: undefined,
-        slides: [{ title: '内容', content: [{ type: 'paragraph', text: String(raw?.data?.slides?.[0]?.content || '') }] }],
+        slides: [{ title: '内容', content: [{ type: 'paragraph', text: String(legacyContent || '') }] }],
       }) as unknown as GenDeck
 
   const theme = THEMES[String(input.theme || '')] ?? THEMES.clinical

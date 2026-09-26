@@ -32,10 +32,10 @@ export async function runBrowserTask(
   deps: BrowserTaskDeps,
 ): Promise<BrowserTaskResult> {
   const tools = createBrowserTools({
-    browser: deps.browser as any,
+    browser: deps.browser as Parameters<typeof createBrowserTools>[0]['browser'],
     // #485-followup: Worker Loaders(Dynamic Workers)需付费计划,loader 暂
     // 不可用 — CDP 会话可建立,但 agents 的代码执行层受限(已知限制)。
-    loader: undefined as any,
+    loader: undefined as unknown as Parameters<typeof createBrowserTools>[0]['loader'],
   })
 
   const system = `You are a browser automation agent. You MUST use the provided tools to drive a real
@@ -50,7 +50,7 @@ with tool calls and base your summary on real results. Keep the conclusion conci
     : `Task: ${input.instruction}`
 
   const result = await generateText({
-    model: deps.llm as any,
+    model: deps.llm as Parameters<typeof generateText>[0]['model'],
     tools,
     system,
     prompt,

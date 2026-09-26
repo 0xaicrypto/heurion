@@ -62,9 +62,9 @@ leaf 反向依赖）机读锁定。新边先改表再改代码；跨层依赖用
 **Definition of done**:
 
 ```
-cd packages/server-ts && pnpm test   # 控制面
-cd packages/worker && npx vitest run # 执行面
-cd packages/web && pnpm test         # 前端（eslint 0 warning 同门槛）
+cd packages/server-ts && pnpm lint && pnpm test   # 控制面（eslint 0 warning）
+cd packages/worker && pnpm lint && npx vitest run # 执行面（eslint 0 warning）
+cd packages/web && pnpm lint && pnpm test         # 前端（eslint 0 warning 同门槛）
 ```
 
 全绿才算完成；渲染产物类改动另附 golden（deck→pptx：`worker/tests/pptx-golden.test.ts`）。
@@ -103,8 +103,29 @@ cd packages/web && pnpm test         # 前端（eslint 0 warning 同门槛）
   预览版编译器，非经典 tsc。**当前构建/tsc 实跑正常**；注意它是
   preview，IDE（经典 tsserver）与 CI（tsgo）诊断可能不一致，出现
   "IDE 不报错、CI 报错"以此为准。
+- `packages/server-ts` 的 ESLint（`pnpm lint`）经 `scripts/eslint-ts-patch.cjs`
+  把 lint 进程的 `typescript` 解析重定向到 devDependency 别名
+  `typescript-lint`（经典 TS 5.9）：tsgo 预览无 JS compiler API，
+  typescript-eslint 无法直接运行。仅影响 lint 进程，构建/测试仍用 tsgo；
+  tsgo 稳定、typescript-eslint 支持后撤掉该垫片。**全部 TS 包**
+  （server-ts/worker/contracts/ssrf-guard/web/llm-markdown-fix/
+  embedding-server/cf-browser-agent）均按此接上 `pnpm lint` 并进入 CI。
 - `packages/web`: 固定 `5.4.5`。两套实现并存为**现状事实**；统一升级
   待 tsgo 稳定后另行评估。
+
+## P2 技术债棘轮（只减不增）
+
+技术债不做一次性大扫除，而是用机器可执行的"水位冻结"防止增长：
+
+- **any**: 新增文件禁止显式 `any`（`@typescript-eslint/no-explicit-any: error`）；
+  存量文件列在 `packages/{server-ts,web}/scripts/any-baseline.json` 白名单，
+  修完一个移除一条（白名单长度由 `debt-ratchet.test.ts` 冻结）。
+  worker 的 any 已清零，无白名单。
+- **大文件**: >500 行源文件的当前体积写入 `debt-ratchet.test.ts` 的
+  `LARGE_FILE_CAPS`（server-ts/web/worker 各一份）；文件增长或新增超限
+  文件即测试失败 — 先拆分再同步基线。
+- **吞错**: `.catch(() => {})` 计数在棘轮测试中冻结（server-ts 48 /
+  web 26 / worker 5），新增即失败；至少写日志或注释说明为何安全。
 
 ## Living document
 

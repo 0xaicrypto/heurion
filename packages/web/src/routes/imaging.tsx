@@ -65,24 +65,28 @@ export function ImagingPage() {
 
   const loadData = useCallback(() => {
     if (!hash) return;
+    // P1 竞态: 换患者时上一个患者晚到的响应不得写入新患者页面。
+    let cancelled = false;
     setLoading(true);
     setError(null);
     api
       .getPatientStudies(hash)
-      .then(setStudies)
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : String(err)))
-      .finally(() => setLoading(false));
+      .then((s) => { if (!cancelled) setStudies(s); })
+      .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.messageText : String(err)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
 
     setUploadsLoading(true);
     api
       .getUploads(hash)
-      .then(setUploads)
+      .then((u) => { if (!cancelled) setUploads(u); })
       .catch(() => {})
-      .finally(() => setUploadsLoading(false));
+      .finally(() => { if (!cancelled) setUploadsLoading(false); });
+    return () => { cancelled = true; };
   }, [hash]);
 
   useEffect(() => {
-    loadData();
+    const cancel = loadData();
+    return cancel;
   }, [loadData]);
 
   const toggleExpand = (studyId: string) => {

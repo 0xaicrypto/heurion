@@ -1,8 +1,12 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
+import { gzipSync } from 'node:zlib'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   isPrivateIp,
   assertPublicHttpUrl,
   downloadPdfFromUrl,
+  makePinnedLookup,
   UrlDownloadError,
   setUrlDownloadTransportForTest,
   type UrlTransportInit,
@@ -53,6 +57,36 @@ describe('isPrivateIp', () => {
       expect(isPrivateIp(ip), ip).toBe(true)
     }
     expect(isPrivateIp('2606:4700::1')).toBe(false)
+  })
+})
+
+describe('P0: makePinnedLookup 兼容 Node ≥20 的 options.all 调用', () => {
+  /** net.connect/happy-eyeballs（Node ≥20 默认开启）会以 { all: true } 调
+   *  lookup 并要求数组回调；旧实现恒回 (err, address, family) 字符串，
+   *  Node 22 下所有钉定连接直接报错（公网图片/OA PDF 下载全挂）。 */
+  function callAll(lookup: ReturnType<typeof makePinnedLookup>): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      ;(lookup as unknown as (
+        host: string,
+        opts: { all: boolean },
+        cb: (err: Error | null, addresses: unknown) => void,
+      ) => void)('ignored', { all: true }, (err, addresses) => (err ? reject(err) : resolve(addresses)))
+    })
+  }
+
+  test('all:true → 数组形状 [{ address, family }]（IPv4）', async () => {
+    expect(await callAll(makePinnedLookup('140.82.121.4'))).toEqual([{ address: '140.82.121.4', family: 4 }])
+  })
+
+  test('all:true → family=6（IPv6 钉定）', async () => {
+    expect(await callAll(makePinnedLookup('2606:4700::1'))).toEqual([{ address: '2606:4700::1', family: 6 }])
+  })
+
+  test('普通调用（无 all）→ 传统 (address, family) 形状', async () => {
+    const address = await new Promise<unknown>((resolve, reject) => {
+      makePinnedLookup('140.82.121.4')('ignored', {}, ((err: Error | null, addr: string) => (err ? reject(err) : resolve(addr))) as never)
+    })
+    expect(address).toBe('140.82.121.4')
   })
 })
 
@@ -165,5 +199,27 @@ describe('downloadPdfFromUrl', () => {
   test('Content-Length 超上限 → too_large(不发请求体读取)', async () => {
     setUrlDownloadTransportForTest(async () => pdfResponse(PDF, 200, { 'content-length': String(21 * 1024 * 1024) }))
     await expect(downloadPdfFromUrl('https://oa.example.com/huge.pdf', { lookup: okLookup })).rejects.toMatchObject({ code: 'too_large' })
+  })
+
+  test('P1 gzip 炸弹(线缆 ~5KB 展开 5MB) → 解压中途 too_large', async () => {
+    const bomb = gzipSync(Buffer.alloc(5 * 1024 * 1024, 0x41))
+    setUrlDownloadTransportForTest(async () => pdfResponse(bomb, 200, { 'content-encoding': 'gzip' }))
+    await expect(downloadPdfFromUrl('https://oa.example.com/bomb.pdf', { lookup: okLookup, maxBytes: 256 * 1024 }))
+      .rejects.toMatchObject({ code: 'too_large' })
+  })
+})
+
+/**
+ * P1 防复发锁 — ssrf-guard 的所有 zlib 便捷解压必须显式上限（maxOutputLength），
+ * 否则解压炸弹先物化超大 Buffer，二次长度检查只能救"已分配完"的内存峰值。
+ */
+describe('P1 解压炸弹防复发锁', () => {
+  test('decodeContentEncoding 的 gunzip/inflate/br 全部传 zlibOpts(maxOutputLength)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../ssrf-guard/src/index.ts'), 'utf8')
+    expect(src).toMatch(/const zlibOpts = \{ maxOutputLength:/)
+    expect(src).toMatch(/gunzipSync\(body, zlibOpts\)/)
+    expect(src).toMatch(/inflateSync\(body, zlibOpts\)/)
+    expect(src).toMatch(/inflateRawSync\(body, zlibOpts\)/)
+    expect(src).toMatch(/brotliDecompressSync\(body, zlibOpts\)/)
   })
 })

@@ -1,6 +1,5 @@
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
-import { platform } from 'os'
 
 export class OCRImageTool extends BaseTool {
   constructor(private ctx: ToolContext) { super() }
@@ -54,12 +53,7 @@ export class OCRImageTool extends BaseTool {
       if (text && text.length > 10) {
         return { success: true, output: text }
       }
-    } catch { }
-
-    if (platform() === 'darwin') {
-      try {
-      } catch { }
-    }
+    } catch { /* 提取失败 — 落到下方统一失败文案 */ }
 
     return { success: true, output: `Unable to OCR file ${fileId}. The file may not contain extractable text.` }
   }

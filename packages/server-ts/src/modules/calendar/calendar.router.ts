@@ -125,7 +125,7 @@ export async function calendarRouter(app: FastifyInstance) {
 }
 
 // Parse relative timing like "Day -28 to -1", "Day 1", "every 3 weeks" into absolute day offset
-function parseTiming(timing: string, studyStart: Date): number | null {
+function parseTiming(timing: string, _studyStart: Date): number | null {
   // "Day -28 to -1" → -28
   const dayMatch = timing.match(/Day\s+(-?\d+)/)
   if (dayMatch) return parseInt(dayMatch[1])

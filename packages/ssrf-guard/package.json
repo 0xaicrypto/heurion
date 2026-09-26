@@ -10,10 +10,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "node -r ./scripts/eslint-ts-patch.cjs ./node_modules/eslint/bin/eslint.js src --ext .ts --report-unused-disable-directives --max-warnings 0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "@typescript-eslint/eslint-plugin": "^7.13.1",
+    "@typescript-eslint/parser": "^7.13.1",
+    "eslint": "^8.57.0",
+    "typescript-lint": "npm:typescript@5.9.3"
   }
 }

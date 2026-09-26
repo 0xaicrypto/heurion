@@ -6,17 +6,21 @@
  */
 import { BaseTool, ToolResult } from './base-tool.js'
 import { McpClient, parseMcpServers } from './mcp-client.js'
+import type { ToolContext } from './tool-registry.js'
 
 function configuredMcpServers(): string[] {
   return Object.keys(parseMcpServers(process.env.MCP_SERVERS))
 }
 
 // #417: prefer DB-managed servers (frontend-configurable); env stays a fallback.
-async function dbServers(): Promise<Map<string, { url: string; capabilities: Array<'read' | 'write'>; token?: string }>> {
+// Rule 4: DB servers are per-user rows — filter by userId so user B can never
+// reach (or carry the token of) a server configured by user A. Env-configured
+// servers remain operator-owned and shared by design.
+async function dbServers(userId: string): Promise<Map<string, { url: string; capabilities: Array<'read' | 'write'>; token?: string }>> {
   try {
     const prisma = (await import('../common/prisma.js')).default
     const { decryptSettingValue } = await import('../common/settings-encryption.js')
-    const rows = await prisma.mcpServer.findMany({ where: { enabled: 1 } })
+    const rows = await prisma.mcpServer.findMany({ where: { enabled: 1, userId } })
     const map = new Map<string, { url: string; capabilities: Array<'read' | 'write'>; token?: string }>()
     for (const r of rows) {
       let caps: Array<'read' | 'write'> = ['read']
@@ -29,8 +33,8 @@ async function dbServers(): Promise<Map<string, { url: string; capabilities: Arr
   }
 }
 
-async function getClient(name: string): Promise<McpClient | null> {
-  const db = await dbServers()
+async function getClient(name: string, userId: string): Promise<McpClient | null> {
+  const db = await dbServers(userId)
   const dbCfg = db.get(name)
   if (dbCfg) return new McpClient({ url: dbCfg.url, capabilities: dbCfg.capabilities, token: dbCfg.token })
   const cfg = parseMcpServers(process.env.MCP_SERVERS)[name]
@@ -40,6 +44,8 @@ async function getClient(name: string): Promise<McpClient | null> {
 
 /** #299: list tools exposed by a configured external MCP server. */
 export class McpListToolsTool extends BaseTool {
+  constructor(private ctx: ToolContext) { super() }
+
   get name(): string { return 'mcp_list_tools' }
   get description(): string {
     const names = configuredMcpServers()
@@ -56,7 +62,7 @@ export class McpListToolsTool extends BaseTool {
   }
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const name = String(args.server || '')
-    const client = await getClient(name)
+    const client = await getClient(name, this.ctx.userId)
     if (!client) {
       return { success: false, error: `MCP server "${name}" is not configured (add it in Settings → Integrations, or set MCP_SERVERS env)` }
     }
@@ -77,6 +83,8 @@ export class McpListToolsTool extends BaseTool {
 
 /** #299: call a tool on a configured external MCP server. */
 export class McpCallToolTool extends BaseTool {
+  constructor(private ctx: ToolContext) { super() }
+
   get name(): string { return 'mcp_call_tool' }
   get description(): string {
     return 'Call a tool on an external system via MCP (EHR/imaging/lab connectors). Read tools execute immediately; write tools are NOT executed — they return an approval-required notice (Gatekeeper, #105). Use mcp_list_tools first to discover names and capabilities.'
@@ -96,7 +104,7 @@ export class McpCallToolTool extends BaseTool {
     const name = String(args.server || '')
     const tool = String(args.tool || '')
     const toolArgs = (args.arguments as Record<string, unknown>) || {}
-    const client = await getClient(name)
+    const client = await getClient(name, this.ctx.userId)
     if (!client) return { success: false, error: `MCP server "${name}" is not configured (add it in Settings → Integrations, or set MCP_SERVERS env)` }
 
     try {

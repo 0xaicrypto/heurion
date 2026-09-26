@@ -10,7 +10,6 @@ export interface EmbeddingConfig {
 }
 
 const SUPPORTED_DEVICES = ['cpu', 'cuda', 'mps', 'wasm'] as const
-const SUPPORTED_DTYPES = ['fp32', 'fp16', 'int8'] as const
 
 export function resolveDevice(value: string | undefined): EmbeddingConfig['device'] {
   if (value && (SUPPORTED_DEVICES as readonly string[]).includes(value)) {

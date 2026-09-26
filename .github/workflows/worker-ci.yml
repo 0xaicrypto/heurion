@@ -55,15 +55,18 @@ jobs:
           cache-dependency-path: packages/worker/pnpm-lock.yaml
 
       - name: Build shared contracts (drift guard)
-        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       # #1074-1: ssrf-guard 同为 file: 共享包 — install 前必须先建 dist
       #（pnpm file: 快照只拷 files:["dist"]）。
       - name: Build shared ssrf-guard (drift guard)
-        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../ssrf-guard && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: ESLint (worker)
+        run: pnpm run lint
 
       - name: Type check
         run: pnpm exec tsc --noEmit

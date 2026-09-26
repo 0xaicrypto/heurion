@@ -199,3 +199,20 @@ describe('doc-convert markdown round-trip (#837)', () => {
     expect(out).toMatch(/-\s+首次应用/)
   })
 })
+
+/**
+ * #1128 — 序列化稳定性:词内下划线不应被 turndown 转义。
+ * `EGFR_突变` 每次往返变成 `EGFR\_突变`,会让"未修改"的正文被当成有改动
+ * (dirty → 自动保存),与下载链接 token 重签叠加成 409 冲突死循环。
+ */
+describe('#1128 词内下划线转义还原', () => {
+  test('词内 _ 往返稳定(中文/字母两侧均不转义)', () => {
+    expect(roundTrip('EGFR_突变 与 KRAS_wildtype 分型')).toBe('EGFR_突变 与 KRAS_wildtype 分型')
+    expect(roundTrip('EGFR_突变')).not.toContain('\\_')
+  })
+
+  test('边界位置的 \\_ 保持转义(那里确实需要字面下划线)', () => {
+    expect(roundTrip('\\_开头下划线')).toContain('\\_')
+    expect(roundTrip('结尾下划线\\_')).toContain('\\_')
+  })
+})

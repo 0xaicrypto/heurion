@@ -4,6 +4,8 @@ import StarterKit from '@tiptap/starter-kit';
 import { TrackChangesExtension, getTrackedChanges, getBaseText, getResultText, getPendingChangeCount, type ChangeAuthor } from 'tiptap-track-changes';
 import { applyTrackedDiff, buildFlatIndex } from './doc-diff';
 import { markdownToHtml } from './doc-convert';
+// 源级防复发锁 — web 包 tsc 无 node types，用 Vite ?raw 导入源码文本。
+import docDiffSrc from './doc-diff.ts?raw';
 
 // TipTap needs a real selection API in jsdom
 class FakeRange {
@@ -88,6 +90,33 @@ describe('doc-diff (AI 编辑 → track-changes 标记)', () => {
     expect([...grouped.values()].some((v) => v >= 2)).toBe(true);
     expect(getResultText(editor)).toContain('135/85');
     expect(getBaseText(editor)).toContain('120/80');
+    editor.destroy();
+  });
+});
+
+/**
+ * P0 XSS 回归 — 文本投影不得把 markdown 灌进会加载资源的 DOM。
+ * 修复前 inlineToText 用 el.innerHTML = markdownToHtml(line)：正文里的
+ * <img src=x onerror=…> 在进入修改审阅（投影定位）时真实执行。
+ */
+describe('P0 doc-diff XSS: 文本投影用 inert 解析', () => {
+  beforeEach(() => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+  });
+
+  test('源级防复发锁: doc-diff 不再出现 innerHTML 赋值，使用 DOMParser(inert)', () => {
+    expect(docDiffSrc).not.toMatch(/\.innerHTML\s*=/);
+    expect(docDiffSrc).toContain('new DOMParser()');
+  });
+
+  test('含 raw HTML <img onerror> 的行：投影提取纯文本、不执行脚本', () => {
+    const oldMd = '段落一\n\n前<img src="https://evil.example/x.png" onerror="globalThis.__pwned=1">后\n\n段落三';
+    const newMd = `${oldMd}\n\n新增段落`;
+    const editor = makeEditor(markdownToHtml(oldMd));
+    expect(() => applyTrackedDiff(editor, markdownToHtml(oldMd), markdownToHtml(newMd), AI)).not.toThrow();
+    // 投影命中行内纯文本（前后拼接）— 修复前后都该如此；关键是下面的执行断言。
+    expect(getBaseText(editor)).toContain('前后');
+    expect((globalThis as { __pwned?: unknown }).__pwned).toBeUndefined();
     editor.destroy();
   });
 });

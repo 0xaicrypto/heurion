@@ -43,6 +43,10 @@ modules/*              may import common/core/memory/retrieval/tools;
                        cross-module edge list to a minimum and documented
 ```
 
+`lib/`（P2 纳入机器锁 `arch-layers.test.ts`）：可依赖 common/core，零 `modules/*`
+依赖；`tools → lib` 为允许方向（21 处调用方），`lib → tools` 冻结在存量白名单
+（`citation-migration.ts` / `deck-bytes.ts`，只减不增）。
+
 Enforcement so far (manual greps, #666/#672):
 - `common/` → zero imports from `modules/`, `tools/`, `memory/`, `retrieval/`
 - `tools/` → zero imports from `modules/` (port injection: `isPluginInstalled` /

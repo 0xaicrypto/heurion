@@ -318,20 +318,31 @@ async function makeSessionTitleResolver(): Promise<(sessionId: string) => Promis
 }
 
 export async function confirmApproval(userId: string, id: string) {
-  // #794: writes are always owner-scoped — no admin bypass. An approval may
-  // only be resolved by the user whose context produced it.
-  const where: any = { id, status: 'pending', userId }
-  const req = await prisma.approvalRequest.findFirst({ where })
-  if (!req) throw new Error('Approval request not found')
-
   const now = new Date().toISOString()
-
-  await applyTargetUpdate(req.targetType, req.targetId, { status: 'confirmed' }, userId, now)
-
-  const updated = await prisma.approvalRequest.update({
-    where: { id },
+  // #P0 原子抢占: 先 findFirst 再 update 的 check-then-act 下,两个并发确认
+  // 都会读到 pending 并各执行一次 target 更新(记忆提案重复落图/重复审计)。
+  // 单条 updateMany 抢占 pending → approved,只有 count===1 的调用者是
+  // 唯一执行者;失败者按"找不到"报错(与旧语义一致)。
+  const claim = await prisma.approvalRequest.updateMany({
+    where: { id, status: 'pending', userId },
     data: { status: 'approved', actorId: userId, resolvedAt: now },
   })
+  if (claim.count === 0) throw new Error('Approval request not found')
+
+  const req = await prisma.approvalRequest.findUnique({ where: { id } })
+  if (!req) throw new Error('Approval request not found')
+
+  try {
+    await applyTargetUpdate(req.targetType, req.targetId, { status: 'confirmed' }, userId, now)
+  } catch (err) {
+    // target 应用失败 → 回滚抢占(请求回到 pending 可重试),避免
+    // "已批准但目标未落地"的死状态。
+    await prisma.approvalRequest.updateMany({
+      where: { id, status: 'approved' },
+      data: { status: 'pending', actorId: null, resolvedAt: null },
+    }).catch(() => { /* 回滚 best-effort */ })
+    throw err
+  }
 
   await writeAuditLog({
     actor: userId,
@@ -344,24 +355,30 @@ export async function confirmApproval(userId: string, id: string) {
     createdAt: now,
   })
 
-  return serializeApproval(updated)
+  return serializeApproval(req)
 }
 
 export async function rejectApproval(userId: string, id: string, reason: string | null) {
-  // Reason is OPTIONAL — rejecting without a note is allowed.
-  // #794: owner-scoped like confirmApproval.
-  const where: any = { id, status: 'pending', userId }
-  const req = await prisma.approvalRequest.findFirst({ where })
-  if (!req) throw new Error('Approval request not found')
-
   const now = new Date().toISOString()
-
-  await applyTargetUpdate(req.targetType, req.targetId, { status: 'rejected', rejectedReason: reason || null }, userId, now)
-
-  const updated = await prisma.approvalRequest.update({
-    where: { id },
+  // #P0 原子抢占 — 语义同 confirmApproval(确认/拒绝并发时只有一个生效)。
+  const claim = await prisma.approvalRequest.updateMany({
+    where: { id, status: 'pending', userId },
     data: { status: 'rejected', actorId: userId, reason: reason || null, resolvedAt: now },
   })
+  if (claim.count === 0) throw new Error('Approval request not found')
+
+  const req = await prisma.approvalRequest.findUnique({ where: { id } })
+  if (!req) throw new Error('Approval request not found')
+
+  try {
+    await applyTargetUpdate(req.targetType, req.targetId, { status: 'rejected', rejectedReason: reason || null }, userId, now)
+  } catch (err) {
+    await prisma.approvalRequest.updateMany({
+      where: { id, status: 'rejected' },
+      data: { status: 'pending', actorId: null, reason: null, resolvedAt: null },
+    }).catch(() => { /* 回滚 best-effort */ })
+    throw err
+  }
 
   await writeAuditLog({
     actor: userId,
@@ -374,7 +391,7 @@ export async function rejectApproval(userId: string, id: string, reason: string 
     createdAt: now,
   })
 
-  return serializeApproval(updated)
+  return serializeApproval(req)
 }
 
 async function applyProposalViaGateway(userId: string, row: any): Promise<any> {

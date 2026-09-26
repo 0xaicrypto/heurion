@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeAll } from 'vitest'
 import crypto from 'crypto'
 import mammoth from 'mammoth'
+import { normalizeFileDownloadTokens } from '@heurion/contracts'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 import { deepseekStream } from '../../src/common/llm.js'
@@ -523,3 +524,89 @@ describe('Documents', () => {
   })
 })
 
+
+/**
+ * #1128 — 正文含下载链接时保存冲突死循环回归。
+ *
+ * 根因: 读取期 refreshFileUrls 按次重签 `?token=`,客户端把含新 token 的
+ * 响应当基线算 base_sha,服务端拿库内旧 token 正文比对 → 永远失配 409;
+ * 采用 AI 版本后又基于重签正文,下一次保存再 409。修复: 双方按
+ * normalizeFileDownloadTokens(剥 token/旧链形状归一)后的正文算指纹与
+ * 判变化,落库前也归一化。
+ */
+describe('#1128 下载链接 token 归一化 — 不再误判并发冲突', () => {
+  const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex')
+
+  async function createDocWithBody(app: Awaited<ReturnType<typeof getApp>>, rawBody: string): Promise<string> {
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Token Doc' },
+    })
+    const docId = JSON.parse(create.payload).id
+    const put = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: rawBody },
+    })
+    expect(put.statusCode).toBe(200)
+    return docId
+  }
+
+  test('GET 重签 token 后直接保存(base_sha 按归一化算)不出现 409', async () => {
+    const app = await getApp()
+    // 库内正文含下载链接(无 token 形态) — GET 会重签
+    const docId = await createDocWithBody(app, '报告下载：/api/v1/files/download/file_abc123?token=stale_old_sig')
+    const got = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })).payload)
+    expect(got.body).toContain('?token=') // 读取自愈:响应已重签
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: got.body, base_sha: sha1(normalizeFileDownloadTokens(got.body)) },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).body).toContain('?token=') // 保存响应与 GET 同口径
+  })
+
+  test('旧版链接形状与 canonical 形状归一后等价(不产生假变更)', async () => {
+    const app = await getApp()
+    const docId = await createDocWithBody(app, '旧链：/api/v1/files/legacy_1/download?token=old_sig')
+    const got = JSON.parse((await app.inject({ method: 'GET', url: `/api/v1/docs/${docId}`, headers: await authHeader() })).payload)
+    // 库内已归一化为 canonical;GET 重签
+    expect(got.body).toContain('/api/v1/files/download/legacy_1?token=')
+    const res = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: got.body.replace(got.body.match(/token=[^\s)"'\\]*/)?.[0] || '', 'token=another_sig'), base_sha: sha1(normalizeFileDownloadTokens(got.body)) },
+    })
+    expect(res.statusCode).toBe(200)
+  })
+
+  test('409 后「采用 AI 版本」(用 current.body + 归一化指纹)再保存不复发', async () => {
+    const app = await getApp()
+    const docId = await createDocWithBody(app, '版本一：/api/v1/files/download/f1')
+    // 另一窗口写入新内容 → 旧窗口视图过期
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '版本二：/api/v1/files/download/f2?token=ai_written_sig' },
+    })
+    // 旧窗口提交(基于旧视图的归一化指纹)→ 409 + current 完整态
+    const stale = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '旧窗口未保存内容', base_sha: sha1(normalizeFileDownloadTokens('版本一：/api/v1/files/download/f1')) },
+    })
+    expect(stale.statusCode).toBe(409)
+    const current = JSON.parse(stale.payload).current
+    expect(current.body).toContain('?token=')
+
+    // 前端「采用 AI 版本」= 用 current.body 作新基线 → 下一次保存必须 200
+    const retry = await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: current.body, base_sha: sha1(normalizeFileDownloadTokens(current.body)) },
+    })
+    expect(retry.statusCode).toBe(200)
+  })
+})

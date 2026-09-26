@@ -9,7 +9,22 @@
  */
 import PDFDocument from 'pdfkit'
 import fs from 'fs'
-import { saveFile } from '../storage.js'
+import { saveFile, type StorageResult } from '../storage.js'
+
+/**
+ * #fix: 控制面 job payload 是信封形态 `{ template_id, schema_version,
+ * content_type, data: <RenderContent> }`（asset-render-pipeline /
+ * plugin-capability 均如此）。此前 plot/table/pdf handler 直接读顶层字段
+ * → plot 画空图、table/pdf 必败。解包 data；直接调用（单测/legacy/外部
+ * sidecar）传裸内容对象时原样返回。
+ */
+export function unwrapRenderPayload(payload: unknown): unknown {
+  if (payload && typeof payload === 'object' && 'data' in payload) {
+    const data = (payload as { data?: unknown }).data
+    if (data && typeof data === 'object') return data
+  }
+  return payload
+}
 
 /** #fix 2026-09: PDF 导出中文全是方块 — pdfkit 默认 Helvetica 无 CJK 字形。
  *  注册单面 .ttf 中文字体并设为默认。注意 pdfkit 不能嵌 .ttc 集合
@@ -44,7 +59,7 @@ export function renderPdf(draw: (doc: PDFKit.PDFDocument, hasCjk: boolean) => vo
   const buffers: Buffer[] = []
   doc.on('data', (chunk: Buffer) => buffers.push(chunk))
 
-  return new Promise<any>((resolve, reject) => {
+  return new Promise<StorageResult>((resolve, reject) => {
     doc.on('end', async () => {
       try {
         const buffer = Buffer.concat(buffers)

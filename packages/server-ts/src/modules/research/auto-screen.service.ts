@@ -53,7 +53,8 @@ export async function autoScreenPatient(userId: string, patientHash: string): Pr
 
     // #701: ResearchStudy 无 status 字段 — 原过滤在运行时被 Prisma 拒绝
     // (try/catch 吞掉),整个自动筛选功能实际从未生效。
-    const studies = await prisma.researchStudy.findMany({ select: { id: true } })
+    // Rule 4: 研究归属过滤 — 此前全表扫描把 A 的患者筛查写进 B 的研究。
+    const studies = await prisma.researchStudy.findMany({ where: { userId }, select: { id: true } })
     if (!studies.length) return { studies: 0, eligible: 0 }
 
     const revision = await evidenceRevision(userId, patientHash)

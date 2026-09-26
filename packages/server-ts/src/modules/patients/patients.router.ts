@@ -5,7 +5,7 @@ import prisma from '../../common/prisma.js'
 import { findOwnedByHash } from '../../common/ownership.js'
 import crypto from 'crypto'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
-import { appendChiefComplaint, recordScanFindingsAsFacts } from './patient-record.service.js'
+import { recordScanFindingsAsFacts } from './patient-record.service.js'
 import { getUserContext } from '../shared/user-context.js'
 import { makeLogger } from '../../common/logger.js'
 
@@ -170,15 +170,11 @@ export async function patientsRouter(app: FastifyInstance) {
     return Buffer.alloc(1)
   })
 
-  // #2: Quick Scan + update patient profile (memory/record writes in
-  // patient-record.service — #687)
+  // #2: Quick Scan (findings → pending memory proposals; no direct patient
+  // record writes — P1 临床安全, memory writes in patient-record.service #687)
   app.post('/api/v1/dicom/studies/:studyId/quick-scan', async (request) => {
     const studyId = (request.params as any).studyId
     const userId = request.user!.userId
-    const body = (request.body as any) || {}
-    // The scan must be explicitly attached to a patient owned by the user —
-    // no implicit 'latest patient' (clinical data integrity).
-    const patientHash = body.patient_hash || null
     const findings = quickScanDicom(userId, studyId)
 
     // Gemini Vision analysis with timeout — AI FAILURES are telemetry only,
@@ -215,24 +211,19 @@ export async function patientsRouter(app: FastifyInstance) {
 
     if (aiFindings && !aiFailed) {
       findings.push({ type: 'ai_analysis', content: aiFindings })
-      await appendChiefComplaint(userId, patientHash, 'AI Vision', aiFindings).catch(() => {})
     }
 
-    // Update patient with scan data
-    const text = findings.filter((f: any) => f.type !== 'meta' && f.type !== 'error' && f.type !== 'ai_analysis')
-      .map((f: any) => f.content).join(' | ')
-    if (text && text.length > 5) {
-      await appendChiefComplaint(userId, patientHash, 'Scan', text).catch(() => {})
-    }
-
-    // Store findings as MemoryGraph facts so the LLM can reference them in chat
-    // (#839: async — lands as pending gate proposals, never blocks the scan response)
+    // P1 临床安全: 扫描/vision 结果绝不直接写患者 chiefComplaint —
+    // 未经审核的 AI 结论与 DICOM 头里的真实姓名（quickScanDicom 的
+    // patient finding）此前被无条件追加进主诉。脱敏/复核归属下游：
+    // 结果仅作为 findings 返回，并经 recordScanFindingsAsFacts 以
+    // pending 提案（审批闸门）进入记忆，医生确认后才可见。
     void recordScanFindingsAsFacts(userId, studyId, findings)
 
     return { ok: true, findings, study_id: studyId }
   })
 
-  app.post('/api/v1/dicom/send-to-agent', async (request) => {
+  app.post('/api/v1/dicom/send-to-agent', async () => {
     return { ok: true }
   })
 

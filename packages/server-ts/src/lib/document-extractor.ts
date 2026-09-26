@@ -9,6 +9,7 @@ import { MiniLruCache } from './lru-cache.js'
 // #777: pptx 解析导入 — zip-reader + OOXML 文本提取（零 XML 解析器依赖）。
 // pptx-extractor 仅以 type 引用本文件类型（无运行时环）。
 import { parsePptx, pptxSlidesToMarkdown, isPptx } from './pptx-extractor.js'
+import { assertZipBombSafe } from './zip-reader.js'
 import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('documents.extract')
@@ -265,8 +266,22 @@ docxTurndown.addRule('table', {
   },
 })
 
+// #1074-4: mammoth 自身解压无上限 — 不可信 docx 先过 zip 炸弹预扫
+// （声明总量 + 逐条有界解压），畸形/炸弹直接拒绝，绝不交给第三方解压器。
+const DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+const DOCX_MAX_ZIP_ENTRIES = 2000
+
+function assertDocxArchiveSafe(buffer: Buffer): void {
+  try {
+    assertZipBombSafe(buffer, { maxEntries: DOCX_MAX_ZIP_ENTRIES, maxTotalUncompressed: DOCX_MAX_UNCOMPRESSED_BYTES })
+  } catch (err) {
+    throw new Error(`DOCX archive rejected: ${(err as Error).message}`)
+  }
+}
+
 async function extractDocxText(buffer: Buffer, maxChars: number): Promise<string> {
   try {
+    assertDocxArchiveSafe(buffer)
     // #fix: 结构化优先 — 失败或空内容才回退 extractRawText(原行为)。
     // <img> 先替换为 [图] 占位,避免 base64 data URI 混进文本。
     const html = await mammoth.convertToHtml({ buffer })

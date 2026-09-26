@@ -318,9 +318,9 @@ export async function runConversationTurn(p: ConversationTurnParams): Promise<vo
   // (如「正在载入钉选参考…」),LLM 长思考/上游排队期间用户误以为还在
   // 读文件(实测 9-11 分钟黑盒后 600s 超时报错)。
   send({ type: 'context_info', text: '上下文就绪，AI 正在生成…（长任务可能需要数分钟）', kind: 'file_context' })
-  let systemPrompt = assembled.systemPrompt
-  let segmentState = assembled.segmentState
-  let segmentRenderFiltered = assembled.renderFiltered
+  const systemPrompt = assembled.systemPrompt
+  const segmentState = assembled.segmentState
+  const segmentRenderFiltered = assembled.renderFiltered
   // #511: content may carry multimodal parts (images) on the user turn.
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }> = [
     { role: 'system', content: systemPrompt },

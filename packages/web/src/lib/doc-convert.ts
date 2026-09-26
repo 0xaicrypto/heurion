@@ -180,5 +180,11 @@ export function markdownToHtml(md: string): string {
 
 export function htmlToMarkdown(html: string): string {
   if (!html) return '';
-  return turndown.turndown(html);
+  const md = turndown.turndown(html);
+  // #1128: turndown 对词内下划线也做保守转义（`EGFR_突变` → `EGFR\_突变`）—
+  // CommonMark 中词内 `_` 不构成强调，转义无意义，却让每次序列化都产生
+  // "内容变化"（dirty → 自动保存 → 与服务端 token 归一化叠加成 409 循环）。
+  // 仅还原「非空白字符之间」的转义；行首/空格边界的 `\_` 保持不变
+  // （那里确实需要转义才能表达字面下划线）。
+  return md.replace(/([^\s\\])\\_([^\s\\])/g, '$1_$2');
 }

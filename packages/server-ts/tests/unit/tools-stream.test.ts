@@ -261,3 +261,97 @@ describe('#1104 — 流式退化重试失败 → 明确错误上抛(不放行空
     )).rejects.toThrow(/非流式重取失败/)
   })
 })
+
+describe('#1127 — 单调用丢参（并行中一个带参一个空参）→ 非流式重取', () => {
+  const TOOLS_REQUIRED = [
+    { type: 'function', function: { name: 'search_citation', description: 'search', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  ]
+
+  beforeEach(() => {
+    process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    process.env.OPENCODE_API_KEY = 'test-key'
+    process.env.DEFAULT_LLM_MODEL = 'glm-5.3-flash'
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  test('并行两个 search_citation，第二个 argsLen=0 → 触发非流式重取，不放行空参调用', async () => {
+    // 第 1 次 fetch:流式只有第 1 个调用带参数(旧判定 argFrags>0 直接放行)
+    // 第 2 次 fetch(非流式降级):两个调用参数完整
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => sseChunks([
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'search_citation', arguments: '{"query":"PACIFIC durvalumab"}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, id: 'c2', function: { name: 'search_citation', arguments: '' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: 'stop' }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+      ]))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        choices: [{ message: { tool_calls: [
+          { type: 'function', function: { name: 'search_citation', arguments: '{"query":"PACIFIC durvalumab"}' } },
+          { type: 'function', function: { name: 'search_citation', arguments: '{"query":"NSCLC stage III"}' } },
+        ] }, finish_reason: 'tool_calls' }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream(
+      [{ role: 'user', content: '检索 PACIFIC 研究' }], {}, TOOLS_REQUIRED,
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // 退化重取走非流式快路径:blocks 文本里两个调用都带完整参数(工具循环
+    // 消费的是块文本),不再有 arguments:{} 的空参调用。
+    expect((r.text.match(/search_citation/g) || []).length).toBe(2)
+    expect((r.text.match(/"query"/g) || []).length).toBe(2)
+    expect(r.text).not.toContain('"arguments":{}')
+  })
+
+  test('无必填参数的工具空参调用不触发重取（{} 是合法输入）', async () => {
+    const fetchMock = vi.fn(async () => sseChunks([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'read_calendar', arguments: '{}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+      { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const TOOLS_OPTIONAL = [
+      { type: 'function', function: { name: 'read_calendar', description: 'read', parameters: { type: 'object', properties: {} } } },
+    ]
+    const r = await getLlmGateway().chatWithToolsStream([{ role: 'user', content: '看日程' }], {}, TOOLS_OPTIONAL)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(r.toolCalls).toHaveLength(1)
+    expect(r.toolCalls![0].arguments).toBe('{}')
+  })
+})
+
+describe('#1127 — 无 index 模式重复 id（结尾补发 id+name）不产生空参幽灵调用', () => {
+  beforeEach(() => {
+    process.env.DEFAULT_LLM_PROVIDER = 'opencode'
+    process.env.OPENCODE_API_KEY = 'test-key'
+    process.env.DEFAULT_LLM_MODEL = 'glm-5.3-flash'
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  test('同 id 再次出现（无 index）→ 并回原条目，只返回一个完整调用', async () => {
+    const fetchMock = vi.fn(async () => sseChunks([
+      { choices: [{ delta: { tool_calls: [{ id: 'call_a', function: { name: 'edit_document', arguments: '{"old_text":"A","new_text":"B"}' } }] } }] },
+      // 中转结尾补发同 id+name（无参数增量）— 旧逻辑按「带 id 就新开」生成
+      // 同名空参幽灵调用
+      { choices: [{ delta: { tool_calls: [{ id: 'call_a', function: { name: 'edit_document' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+      { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const r = await getLlmGateway().chatWithToolsStream([{ role: 'user', content: '改' }], {}, TOOLS)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(r.toolCalls).toHaveLength(1)
+    expect(JSON.parse(r.toolCalls![0].arguments)).toEqual({ old_text: 'A', new_text: 'B' })
+  })
+})

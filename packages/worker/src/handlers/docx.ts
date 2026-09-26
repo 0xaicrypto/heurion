@@ -1,6 +1,6 @@
-import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, AlignmentType, WidthType, ImageRun, convertMillimetersToTwip } from 'docx'
+import { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } from 'docx'
 import { saveFile } from '../storage.js'
-import { SCHEMA_VERSION, validateRenderContent, type ContentBlock, type DocumentContent } from '@heurion/contracts'
+import { SCHEMA_VERSION, validateRenderContent, type DocumentContent } from '@heurion/contracts'
 import { resolveImage } from './remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
 
 export interface DocxSection {
@@ -34,13 +34,13 @@ export function docxImageBudgetExceeded(embeddedBytes: number, incomingBytes: nu
   return embeddedBytes + incomingBytes > budget
 }
 
-export async function generateDocx(payload: any) {
+export async function generateDocx(payload: unknown) {
   // New validated contract: { schema_version, content_type, data: {schemaVersion, title, sections} }.
   // Legacy tolerance: when validation fails, sections are rebuilt from
   // whatever `sections` array arrived (top-level or nested under `data`,
   // flat or partial); a payload with no sections at all degrades to a
   // single placeholder section — never an empty document.
-  let raw = payload?.data ?? payload
+  const raw = (payload as { data?: unknown } | null)?.data ?? payload
   const check = validateRenderContent('sidecar.generate_docx', raw)
   let input: DocumentContent
   if (check.ok) {
@@ -48,25 +48,29 @@ export async function generateDocx(payload: any) {
   } else {
     // Build sections explicitly from whatever shape arrived (legacy flat or
     // partial) — never an empty document.
-    const rawSections: any[] = Array.isArray(raw?.sections) ? raw.sections
-      : (raw?.data?.sections as any[]) || []
-    const sections = rawSections.length > 0
-      ? rawSections.map((sec: any) => {
-          const paras = Array.isArray(sec?.paragraphs) ? sec.paragraphs : [String(sec?.paragraphs || sec?.content || '')]
+    const rawObj = (raw ?? {}) as Record<string, unknown>
+    const nested = (rawObj.data ?? {}) as Record<string, unknown>
+    const rawSections: unknown[] = Array.isArray(rawObj.sections)
+      ? rawObj.sections
+      : (Array.isArray(nested.sections) ? nested.sections : [])
+    const sections = (rawSections.length > 0
+      ? rawSections.map((secUnknown) => {
+          const sec = (secUnknown ?? {}) as Record<string, unknown>
+          const paras: unknown[] = Array.isArray(sec.paragraphs) ? sec.paragraphs : [String(sec.paragraphs || sec.content || '')]
           return {
-            heading: String(sec?.heading || 'Section'),
-            paragraphs: paras.map((p: any) => (typeof p === 'string' ? { type: 'paragraph' as const, text: p } : p)),
+            heading: String(sec.heading || 'Section'),
+            paragraphs: paras.map((p) => (typeof p === 'string' ? { type: 'paragraph' as const, text: p } : p)),
           }
         })
-      : [{ heading: '内容', paragraphs: [{ type: 'paragraph' as const, text: '（无内容）' }] }]
+      : [{ heading: '内容', paragraphs: [{ type: 'paragraph' as const, text: '（无内容）' }] }]) as DocumentContent['sections']
     input = {
       schemaVersion: SCHEMA_VERSION,
-      title: String(raw?.title || 'Document'),
+      title: String(rawObj.title || 'Document'),
       sections,
     }
   }
 
-  const children: any[] = []
+  const children: Paragraph[] = []
   children.push(
     new Paragraph({ text: input.title || 'Document', heading: 'Title', alignment: AlignmentType.CENTER }),
     new Paragraph({ spacing: { after: 200 }, children: [] }),
@@ -91,7 +95,7 @@ export async function generateDocx(payload: any) {
           } else {
             embeddedImageBytes += img.data.length
             try {
-              children.push(new Paragraph({ children: [new ImageRun({ type: 'png', data: img.data as any, transformation: { width: 240, height: 120 } })] }))
+              children.push(new Paragraph({ children: [new ImageRun({ type: 'png', data: img.data, transformation: { width: 240, height: 120 } })] }))
             } catch { /* skip broken image */ }
           }
         }

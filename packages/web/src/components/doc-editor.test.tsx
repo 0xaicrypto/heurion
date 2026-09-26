@@ -292,3 +292,45 @@ describe('#1066-5 事务订阅按渲染相关状态变化才重渲染', () => {
     expect(boldBtn.className).toContain('bg-surface');
   });
 });
+
+/**
+ * P1 回归 — 按键回流不得重建全文。
+ *
+ * 此前「退出审阅」effect 无守卫地在每次 value 变化时 applyExternalContent：
+ * 用户每按一键 → onChange → 父级 value 回流 → setContent 重建整篇文档，
+ * 带来性能损耗、撤销历史被污染、中文输入法组合被打断。
+ */
+describe('P1 编辑回流不重建文档', () => {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test('本地输入 → value 回流（内容等价）不再调用 setContent', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const ref: { current: Editor | null } = { current: null };
+    const onChange = vi.fn();
+    const { rerender } = render(<DocEditor value={'# 标题'} onChange={onChange} editorRef={ref} />);
+    await wait(300);
+    const ed = ref.current!;
+    expect(ed).toBeTruthy();
+    const setContentSpy = vi.spyOn(ed.commands as unknown as { setContent: (...a: unknown[]) => unknown }, 'setContent');
+
+    // 模拟一次用户输入事务 → onUpdate 上报 markdown。
+    ed.chain().focus().insertContent('新打的字').run();
+    await wait(80);
+    const md = String(onChange.mock.calls[onChange.mock.calls.length - 1]?.[0] ?? '');
+    expect(md).toContain('新打的字');
+
+    // 父级以等价内容回流 value（真实编辑链路）。
+    rerender(<DocEditor value={md} onChange={onChange} editorRef={ref} />);
+    await wait(150);
+    expect(setContentSpy).not.toHaveBeenCalled();
+  });
+
+  test('外部内容变化（AI 更新）仍正常应用', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const { rerender, container } = render(<DocEditor value={'# 旧'} onChange={() => {}} />);
+    await wait(200);
+    rerender(<DocEditor value={'# 新标题'} onChange={() => {}} />);
+    await wait(300);
+    expect(container.querySelector('.ProseMirror')?.textContent ?? '').toContain('新标题');
+  });
+});

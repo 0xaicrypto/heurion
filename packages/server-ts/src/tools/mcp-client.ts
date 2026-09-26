@@ -93,7 +93,11 @@ export class McpClient {
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,
-      isWrite: t.annotations?.readOnlyHint === false,
+      // Rule 4 fail-closed: only an EXPLICIT readOnlyHint === true runs
+      // immediately. Tools with no annotations (or readOnlyHint absent/false)
+      // are treated as writes and gated behind approval — previously a missing
+      // hint meant `isWrite=false` and the call executed straight away.
+      isWrite: t.annotations?.readOnlyHint !== true,
     }))
   }
 

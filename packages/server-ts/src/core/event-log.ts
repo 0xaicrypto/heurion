@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { makeLogger } from '../common/logger.js'
+import { atomicWriteFile, atomicWriteFileSync } from '../common/fs-atomic.js'
 
 const log = makeLogger('event-log')
 
@@ -42,10 +43,32 @@ export class EventLog {
   private load() {
     if (!fs.existsSync(this.filePath)) return
     const lines = fs.readFileSync(this.filePath, 'utf-8').split('\n').filter(Boolean)
-    this.cache = lines.map(line => JSON.parse(line))
+    // P1: 崩溃/断电可能在 JSONL 尾部留下半行 — 逐行容错跳过损坏行
+    // （此前整体 JSON.parse，一行截断就让整个账号的 EventLog 构造抛错 → 500），
+    // 有效事件与 nextIdx 仍以文件内最大 idx 续号。
+    let skipped = 0
+    const parsed: Event[] = []
+    for (const line of lines) {
+      try {
+        parsed.push(JSON.parse(line))
+      } catch {
+        skipped++
+      }
+    }
+    this.cache = parsed
     this.nextIdx = this.cache.length > 0
       ? Math.max(...this.cache.map(e => e.idx)) + 1
       : 1
+    if (skipped > 0) {
+      log.warn(`[event-log] skipped ${skipped} corrupt line(s) (partial write?) — rewriting clean log`)
+      // 自愈：半行若留在文件里，后续 append 会拼在它后面继续制造坏行 —
+      // 构造时用原子重写把有效事件固化回干净的 JSONL。
+      try {
+        atomicWriteFileSync(this.filePath, this.cache.map(e => JSON.stringify(e)).join('\n') + '\n')
+      } catch (err) {
+        log.error('[event-log] corrupt-tail rewrite failed:', (err as Error).message)
+      }
+    }
   }
 
   /** #199: enqueue a file write; ordering is preserved by the queue. */
@@ -88,8 +111,9 @@ export class EventLog {
     const removed = before - this.cache.length
     if (removed > 0) {
       // #199: full rewrite is async (rare operation; never blocks a turn).
+      // P1: 原子重写 — 临时文件 + rename，崩溃不会留下半截日志。
       const snapshot = this.cache.map(e => JSON.stringify(e)).join('\n') + '\n'
-      this.enqueueWrite(() => fs.promises.writeFile(this.filePath, snapshot, 'utf-8'))
+      this.enqueueWrite(() => atomicWriteFile(this.filePath, snapshot))
     }
     return removed
   }

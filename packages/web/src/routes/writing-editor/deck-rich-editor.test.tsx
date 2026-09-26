@@ -700,3 +700,57 @@ describe('#1101 DeckRichEditor 真实 viewer 挂载', () => {
     }
   });
 });
+
+/**
+ * P1 回归 — 拉取 AI 版本期间的用户编辑不得被覆盖。
+ *
+ * 此前 applyAiTurn 在 getDeckArtifact/fetch 返回后无条件 setContent：
+ * 请求在飞期间用户开始编辑（generation 前移），AI 旧字节仍会盖回画布并
+ * 清 dirty —— 用户刚打的编辑静默丢失。现在按编辑代数丢弃过期应用，
+ * 排队版本保留，本地保存落地后再冲刷。
+ */
+describe('P1 DeckRichEditor 拉取竞态', () => {
+  beforeEach(() => {
+    getDeckArtifactMock.mockReset();
+    putDeckArtifactMock.mockReset();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  test('AI 版本拉取在飞时用户编辑 → 画布保留用户字节，AI 版本排队不丢', async () => {
+    const v1 = await seedArtifact('v1');
+    const { rerender } = render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-stub');
+
+    // 第二个 getDeckArtifact（AI 版本）手动控制返回时机。
+    let releaseArtifact: (meta: unknown) => void = () => {};
+    getDeckArtifactMock.mockImplementationOnce(() => new Promise((resolve) => { releaseArtifact = resolve; }));
+    const aiBytes = new Uint8Array(777).fill(7);
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/f1/')
+        ? new Response(v1.buffer as ArrayBuffer, { status: 200 })
+        : new Response(aiBytes.buffer as ArrayBuffer, { status: 200 })));
+
+    rerender(<Harness docId="d1" aiDeckVersion="v2" turnBoundary={0} />);
+    await waitFor(() => expect(getDeckArtifactMock).toHaveBeenCalledTimes(2));
+
+    // 拉取未返回：用户编辑画布（字节 4 + dirty）。
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(/^4$/);
+
+    // AI 版本此刻才返回 — 不得覆盖用户编辑。
+    releaseArtifact({
+      artifact_id: 'art-2', version: 'v2',
+      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-02T00:00:00Z', download_url: '/api/v1/files/f2/download?token=t',
+    });
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(/^4$/);
+    // 本地编辑仍是未保存态（AI 应用不得清 dirty；顶部徽标 + 排队横幅均含
+    // "未保存" 字样，至少一处可见）。
+    expect(screen.getAllByText(/未保存/).length).toBeGreaterThan(0);
+  });
+});

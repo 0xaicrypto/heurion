@@ -58,12 +58,12 @@ jobs:
       - name: Build shared contracts (drift guard)
         # #fix: contracts built BEFORE consumers install — pnpm snapshots the
         # file: dependency at install time (see worker-ci.yml).
-        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../contracts && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       - name: Build llm-markdown-fix
         # #917: dist 不再入库 — web 的 file: 依赖在 install 时快照目录，
         # 必须先 build 产 dist 再 install（与 contracts 同理）。
-        run: cd ../llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build
+        run: cd ../llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

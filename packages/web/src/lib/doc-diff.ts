@@ -219,12 +219,14 @@ function mdLinesToFlatProjection(mdText: string): string {
   return out.join('\n')
 }
 
-/** 行内 md 标记 → 纯文本(与编辑器 textBetween 输出一致)。 */
+/** 行内 md 标记 → 纯文本(与编辑器 textBetween 输出一致)。
+ *  XSS: 用 DOMParser 构造 inert document 取 textContent — 此前把
+ *  markdownToHtml 结果写进 detach 元素的 innerHTML,正文里的
+ *  `<img src=x onerror=…>` 在进入修改审阅时会真实加载/执行。DOMParser
+ *  不执行脚本、不加载资源,文本提取语义不变。 */
 function inlineToText(line: string): string {
-  const html = markdownToHtml(line)
-  const el = document.createElement('div')
-  el.innerHTML = html
-  return (el.textContent ?? '').trim()
+  const parsed = new DOMParser().parseFromString(markdownToHtml(line), 'text/html')
+  return (parsed.body.textContent ?? '').trim()
 }
 
 /** 在旧 flat 文本中定位 needle(带游标前进;找不到 → 游标处,退化为追加)。 */

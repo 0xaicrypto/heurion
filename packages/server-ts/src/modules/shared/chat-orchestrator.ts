@@ -28,7 +28,7 @@ export class ChatOrchestrator {
 
   // #2: Extract facts automatically using DeepSeek (K1/K2: incremental
   // cursor + event-driven trigger, debounced 2s per scope).
-  async postTurn(userId: string, sessionId: string, userMessage: string, patientHash?: string) {
+  async postTurn(userId: string, sessionId: string, userMessage: string, _patientHash?: string) {
     const sessionEvents = this.eventLog.query({ sessionId })
     // Turns = user messages only; tool_call/tool_result events (R3) must
     // not inflate the count.

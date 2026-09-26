@@ -424,6 +424,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   const { t } = useTranslation();
   const applyMdRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
+  // P1: 审阅退出沿 — 仅在「刚退出审阅」时用外部 value 还原正文；常规编辑
+  // 期间 value 回流（每次按键）不得 setContent 重建全文。
+  const wasReviewingRef = useRef(false);
   const [reviewStats, setReviewStats] = useState<{ pending: number; accepted: number; rejected: number }>({ pending: 0, accepted: 0, rejected: 0 });
   const [selectedChange, setSelectedChange] = useState<{ id: string; text: string } | null>(null);
   // #996/#1002: 节折叠态（DocEditor 内部持有；与审阅互斥 — 审阅期间清空装饰）。
@@ -751,9 +754,14 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       // 退出审阅(含"放弃修改")→ 还原为当前正文。
       // #812: accept 后的落地也走位置保持 — 用户停在原选区/滚动处,
       // 不再被 setContent 甩到文档末尾。
-      applyExternalContent(value);
+      // P1 修复: 只在刚退出审阅的沿还原 — 此前无条件执行,普通编辑时
+      // value 每次变化(按键回流)都 setContent 重建全文:性能损耗、撤销
+      // 历史被污染、中文输入法组合被打断。
+      if (wasReviewingRef.current) applyExternalContent(value);
+      wasReviewingRef.current = false;
       return;
     }
+    wasReviewingRef.current = true;
     if (reviewKeyRef.current === diffReview.key) return;
     reviewKeyRef.current = diffReview.key;
     statsRef.current = { accepted: 0, rejected: 0 };

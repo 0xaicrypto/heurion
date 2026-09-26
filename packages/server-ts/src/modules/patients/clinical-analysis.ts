@@ -2,6 +2,9 @@ import { resolveTierModel } from '../../common/llm-gateway.js'
 import { deepseekChat, getApiKey, type LlmTelemetryContext} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import prisma from '../../common/prisma.js'
+import { makeLogger } from '../../common/logger.js'
+
+const log = makeLogger('patients.clinical-analysis')
 
 /**
  * Clinical Analysis Service — extracted from uploads and chats
@@ -91,9 +94,13 @@ ${messages.slice(0, 4000)}`
 }
 
 /**
- * #6: merge extracted sections into the patient's medical record —
- * upsert the latest record, preserving manual sections (only provided
- * keys are written).
+ * #6 / P0 病历覆盖修复: merge extracted sections into the patient's medical
+ * record — 版本化追加,绝不原地改写既有行:
+ *  - 读最新一条做合并基线(医生手写行保持原样,历史完整可回溯);
+ *  - 合并结果作为**新行**写入(每轮更新的版本,行即版本);
+ *  - 基线 sections JSON 损坏时中止(此前 current={} + 只写新键 =
+ *    把其他章节清空),不做任何写入;
+ *  - 无变化不写(避免每轮对话堆一行)。
  */
 export async function updateMedicalRecordFromChat(
   userId: string,
@@ -109,16 +116,32 @@ export async function updateMedicalRecordFromChat(
     orderBy: { createdAt: 'desc' },
   })
 
+  let current: Record<string, string> = {}
   if (existing) {
-    let current: Record<string, string> = {}
-    try { current = JSON.parse(existing.sections || '{}') } catch { /* invalid json */ }
-    for (const key of keys) current[key] = sections[key]!
-    await prisma.medicalRecord.update({
-      where: { id: existing.id },
-      data: { sections: JSON.stringify(current), updatedAt: now },
-    })
-    return true
+    try {
+      const parsed = JSON.parse(existing.sections || '{}') as unknown
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('sections is not a JSON object')
+      current = Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).filter(([, v]) => typeof v === 'string'),
+      ) as Record<string, string>
+    } catch (err) {
+      // 损坏 JSON 无法安全合并 — 中止。绝不把已有章节清空重写。
+      log.warn('medical record update skipped: existing sections JSON is corrupt', {
+        userId, patientHash, recordId: existing.id, reason: (err as Error).message.slice(0, 120),
+      })
+      return false
+    }
   }
+
+  const merged: Record<string, string> = { ...current }
+  let changed = false
+  for (const key of keys) {
+    const next = sections[key]!
+    if (merged[key] === next) continue
+    merged[key] = next
+    changed = true
+  }
+  if (!changed) return false
 
   await prisma.medicalRecord.create({
     data: {
@@ -126,7 +149,7 @@ export async function updateMedicalRecordFromChat(
       userId,
       patientHash,
       title: 'AI 自动更新病历',
-      sections: JSON.stringify(sections),
+      sections: JSON.stringify(merged),
       createdAt: now,
       updatedAt: now,
     },

@@ -18,7 +18,7 @@ export class ReadCalendarTool extends BaseTool {
     }
   }
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(_args: Record<string, unknown>): Promise<ToolResult> {
     if (platform() !== 'darwin') {
       return { success: false, error: 'read_calendar is only available on macOS. Ask the user to paste their calendar entries instead.' }
     }

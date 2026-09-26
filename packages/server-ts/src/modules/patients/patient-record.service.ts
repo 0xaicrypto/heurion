@@ -1,35 +1,14 @@
 /**
- * Patient record write service (#687) — the chiefComplaint append and the
- * scan-findings → MemoryGraph facts write that used to live inline in
- * patients.router.ts. The router only maps HTTP to these operations.
+ * Patient record write service (#687) — scan-findings → MemoryGraph facts
+ * that used to live inline in patients.router.ts. The router only maps HTTP
+ * to these operations.
+ *
+ * P1 临床安全: 原 appendChiefComplaint（把扫描/AI 结论直接追加进主诉）已
+ * 删除 — 未经审核的 AI 结论与 DICOM 头真实姓名不得无条件写入临床记录；
+ * 扫描结果统一走下方 pending 提案闸门（医生确认后才进记忆/视图）。
  */
-import prisma from '../../common/prisma.js'
 import { getUserContext } from '../shared/user-context.js'
 import { MemoryGraphGateway } from '../../memory/memory-gateway.js'
-
-/**
- * Append a labelled snippet to the patient's chiefComplaint. The target
- * patient must be EXPLICIT and owned by the user — a scan result must never
- * land in the 'latest patient' profile (multi-patient data integrity,
- * clinical safety). Idempotent per 50-char snippet prefix.
- */
-export async function appendChiefComplaint(
-  userId: string,
-  patientHash: string | undefined | null,
-  prefix: string,
-  text: string,
-): Promise<void> {
-  if (!patientHash || !text || text.length <= 5) return
-  const patient = await prisma.patientRecord.findFirst({ where: { hash: patientHash, userId } })
-  if (!patient) return
-  const existing = patient.chiefComplaint || ''
-  const snippet = text.slice(0, 50)
-  if (existing.includes(snippet)) return
-  await prisma.patientRecord.update({
-    where: { hash: patientHash },
-    data: { chiefComplaint: (existing + `\n[${prefix}] ` + text.slice(0, 300)).trim(), updatedAt: new Date().toISOString() },
-  })
-}
 
 /**
  * Store quick-scan findings as MemoryGraph facts so the LLM can reference

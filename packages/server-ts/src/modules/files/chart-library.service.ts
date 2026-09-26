@@ -102,7 +102,7 @@ export async function listGeneratedCharts(userId: string): Promise<GeneratedChar
     events = ctx.eventLog.query({ limit: 2000 })
   } catch { /* no context */ }
 
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   return files.map(({ file_id, stat, head }) => {
     const figure = figureMeta.get(file_id)
     if (figure) {

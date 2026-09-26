@@ -10,6 +10,7 @@ import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
 import { makeLogger } from './common/logger.js'
+import { assertProductionSecrets } from './common/secrets.js'
 import { ensureArticleSummaryRenameMigration } from './common/kb-rename-migration.js'
 import { ensureReferenceMigration } from './common/reference-migration.js'
 import { classifyGuidelineBySummaryTitle } from './modules/shared/summary-lookup.js'
@@ -103,6 +104,8 @@ async function assertSchema(): Promise<void> {
 }
 
 async function main() {
+  // Rule 4: 生产启动即校验密钥（缺失/仍为 dev 默认 → 拒绝启动）。
+  assertProductionSecrets()
   // #284: 先清理重复 display_name,否则 db push 建唯一索引失败(每次启动报错)。
   await dedupeDisplayNames()
   // Run Prisma schema migration at startup (see syncSchema — production is

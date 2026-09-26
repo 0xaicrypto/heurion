@@ -16,12 +16,12 @@
  * replayed as an id-less JobRecord, and crash-interrupted `pending` jobs
  * are recovered alongside `running` ones.
  */
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync } from 'fs'
 import { join } from 'path'
 import type { JobStatus } from '@heurion/contracts'
 // #795: path + JSONL helpers moved to the shared data-dir module so the
 // storage manifest and the job log share one location and one loader.
-import { workerDataDir, loadJsonl, appendJsonl } from './data-dir.js'
+import { workerDataDir, loadJsonl, appendJsonl, atomicWriteFileSync } from './data-dir.js'
 
 export interface JobRecord {
   id: string
@@ -128,7 +128,7 @@ export class PersistentJobStore {
     this.jobWritesSinceCompact = 0
     ensureDir()
     const lines = [...this.jobs.values()].map((j) => JSON.stringify(j)).join('\n')
-    writeFileSync(jobsPath, lines ? lines + '\n' : '', 'utf-8')
+    atomicWriteFileSync(jobsPath, lines ? lines + '\n' : '')
   }
 
   /** #915: files.jsonl same treatment — latest record per fileId; the map
@@ -139,6 +139,6 @@ export class PersistentJobStore {
     this.fileWritesSinceCompact = 0
     ensureDir()
     const lines = [...this.files.values()].map((e) => JSON.stringify(e)).join('\n')
-    writeFileSync(filesPath, lines ? lines + '\n' : '', 'utf-8')
+    atomicWriteFileSync(filesPath, lines ? lines + '\n' : '')
   }
 }

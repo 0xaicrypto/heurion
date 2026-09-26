@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "precache": "tsx src/precache.ts"
+    "precache": "tsx src/precache.ts",
+    "lint": "node -r ./scripts/eslint-ts-patch.cjs ./node_modules/eslint/bin/eslint.js src --ext .ts --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -17,9 +18,17 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "@typescript-eslint/eslint-plugin": "^7.13.1",
+    "@typescript-eslint/parser": "^7.13.1",
+    "eslint": "^8.57.0",
+    "typescript-lint": "npm:typescript@5.9.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp", "protobufjs"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "protobufjs"
+    ]
   }
 }

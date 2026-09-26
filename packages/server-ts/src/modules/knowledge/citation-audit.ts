@@ -50,6 +50,8 @@ function normalizeTitle(t: string): string {
  */
 export function titlesFromCitationLabels(labels: string[]): string[] {
   return labels
+    // emoji 装饰类含 VS16(️)组合符 — 匹配意图如此,误导性字符类告警为预期。
+    // eslint-disable-next-line no-misleading-character-class
     .map((l) => l.replace(/^[\s📌📍🔖📎📚🧠📖📄💡☑️✔✅]*[-–—]?\s*/u, '').trim())
     .filter((t) => t.length > 0)
 }

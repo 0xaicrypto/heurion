@@ -59,6 +59,72 @@ describe('#928 callback_url 校验与超时', () => {
 })
 
 /**
+ * P0 — 结果文件键归一化：saveFile 返回驼峰 StorageResult，而控制面只读
+ * 下划线的 file_id/file_name/mime_type/s3_key。此前 docx/pptx/table/pdf/plot
+ * 作业状态 completed 但控制面拿不到文件（no_file），figure 只能手工补 snake。
+ * 状态机单点归一化后，任何 handler 的驼峰结果都带 wire 键，索引也真正建立。
+ */
+describe('P0 结果文件键归一化（驼峰 → wire snake_case）', () => {
+  test('handler 返回 StorageResult 驼峰键 → job 结果含 snake_case 且建立文件索引', async () => {
+    const store = fakeStore()
+    await runJob({
+      jobStore: store,
+      id: 'j9',
+      type: 'sidecar.generate_docx',
+      payload: {},
+      handler: async () => ({
+        fileId: 'f_1',
+        fileName: 'document.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        s3Key: 'renders/f_1/document.docx',
+        downloadUrl: 'https://s3.example/presigned',
+      }),
+    })
+
+    expect(store.update).toHaveBeenCalledWith('j9', expect.objectContaining({
+      status: 'completed',
+      result: expect.objectContaining({
+        file_id: 'f_1',
+        file_name: 'document.docx',
+        mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        s3_key: 'renders/f_1/document.docx',
+        download_url: 'https://s3.example/presigned',
+      }),
+    }))
+    expect(store.indexFile).toHaveBeenCalledWith(expect.objectContaining({ fileId: 'f_1', jobId: 'j9', fileName: 'document.docx' }))
+  })
+
+  test('已带 snake 键的 figure 结果不被改写；驼峰兼容键保留给 worker 自身下载端点', async () => {
+    const store = fakeStore()
+    await runJob({
+      jobStore: store,
+      id: 'j10',
+      type: 'sidecar.render_figure',
+      payload: {},
+      handler: async () => ({ file_id: 'fig_1', fileId: 'fig_1', file_name: 'figure.svg', mime_type: 'image/svg+xml' }),
+    })
+    const completed = (store.update as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[1] as { status?: string }).status === 'completed',
+    ) as [string, { result: Record<string, unknown> }]
+    expect(completed[1].result.file_id).toBe('fig_1')
+    expect(completed[1].result.fileId).toBe('fig_1')
+    expect(store.indexFile).toHaveBeenCalledWith(expect.objectContaining({ fileId: 'fig_1' }))
+  })
+
+  test('无文件键的结果（preview pages）不误建索引', async () => {
+    const store = fakeStore()
+    await runJob({
+      jobStore: store,
+      id: 'j11',
+      type: 'sidecar.preview_file',
+      payload: {},
+      handler: async () => ({ pages: [], page_count: 0 }),
+    })
+    expect(store.indexFile).not.toHaveBeenCalled()
+  })
+})
+
+/**
  * #926 回归网 — 并发上限行为:MAX=2 时第 3 个作业必须排队,任一在跑作业
  * 完成后才启动。MAX_CONCURRENT_JOBS 是模块加载期常量(与 job-store.test.ts
  * 同一注入模式):resetModules + 环境变量注入 → 动态 import 取新模块实例。

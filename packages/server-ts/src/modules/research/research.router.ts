@@ -88,7 +88,7 @@ export async function researchRouter(app: FastifyInstance) {
     return studies.map(toStudy)
   })
 
-  app.post('/api/v1/research/studies', async (request, reply) => {
+  app.post('/api/v1/research/studies', async (request, _reply) => {
     const body = createStudySchema.parse(request.body)
     const s = await service.createStudy(request.user!.userId, body.display_name, body.short_code, body.study_type === 'basic' ? 'basic' : 'clinical')
     return toStudy(s)

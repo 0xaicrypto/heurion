@@ -20,6 +20,7 @@
  */
 import { existsSync } from 'fs'
 import path from 'path'
+import type { Browser } from 'puppeteer-core'
 import { figurePayloadSchema, type FigurePayload } from '@heurion/contracts'
 import { saveFile } from '../storage.js'
 
@@ -51,13 +52,13 @@ function resolveAssetsDir(): string | null {
 // ── browser singleton(有界回收) ────────────────────────────────
 
 interface BrowserState {
-  browser: any
+  browser: Browser
   jobs: number
 }
 let browserState: BrowserState | null = null
-let browserLaunch: Promise<any> | null = null
+let browserLaunch: Promise<Browser> | null = null
 
-async function getBrowser(chromePath: string): Promise<any> {
+async function getBrowser(chromePath: string): Promise<Browser> {
   if (browserState) {
     browserState.jobs += 1
     if (browserState.jobs >= BROWSER_RECYCLE_JOBS) {
@@ -76,7 +77,7 @@ async function getBrowser(chromePath: string): Promise<any> {
   return browser
 }
 
-async function launchBrowser(chromePath: string): Promise<any> {
+async function launchBrowser(chromePath: string): Promise<Browser> {
   const puppeteer = await import('puppeteer-core')
   return puppeteer.launch({
     executablePath: chromePath,
@@ -112,13 +113,20 @@ export function extractSvgSize(svg: string): { width?: number; height?: number }
   }
 }
 
-async function renderInPage(browser: any, assetsDir: string, input: FigurePayload): Promise<{ svg: string; warnings: string[] }> {
+/** 渲染 shell 注入的全局桥（shell.html 的 bundle 提供）。 */
+interface FigureRenderWindow {
+  __ready?: boolean
+  __renderMermaid: (src: string, theme?: string) => Promise<string>
+  __renderLatex: (src: string, display?: boolean) => Promise<string>
+}
+
+async function renderInPage(browser: Browser, assetsDir: string, input: FigurePayload): Promise<{ svg: string; warnings: string[] }> {
   const page = await browser.newPage()
   const warnings: string[] = []
   try {
     // 零外呼:仅放行 file:/data:,其余一律 abort(测试锁定)。
     await page.setRequestInterception(true)
-    page.on('request', (req: any) => {
+    page.on('request', (req) => {
       const url = String(req.url() || '')
       if (url.startsWith('file:') || url.startsWith('data:')) req.continue()
       else {
@@ -128,7 +136,7 @@ async function renderInPage(browser: any, assetsDir: string, input: FigurePayloa
     })
     const shellUrl = `file://${encodeURI(path.join(assetsDir, 'shell.html'))}`
     await page.goto(shellUrl, { waitUntil: 'load', timeout: FIGURE_TIMEOUT_MS })
-    const ready = await page.evaluate(() => (window as any).__ready === true)
+    const ready = await page.evaluate(() => (window as unknown as FigureRenderWindow).__ready === true)
     if (!ready) throw new Error('FIGURE_FAILED: render shell did not initialize (bundles missing?)')
 
     const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
@@ -141,11 +149,11 @@ async function renderInPage(browser: any, assetsDir: string, input: FigurePayloa
     let svg: string
     if (input.kind === 'mermaid') {
       svg = await withTimeout(page.evaluate(async (src: string, theme?: string) => {
-        return await (window as any).__renderMermaid(src, theme)
+        return await (window as unknown as FigureRenderWindow).__renderMermaid(src, theme)
       }, input.source, input.theme))
     } else {
       svg = await withTimeout(page.evaluate(async (src: string, display?: boolean) => {
-        return await (window as any).__renderLatex(src, display)
+        return await (window as unknown as FigureRenderWindow).__renderLatex(src, display)
       }, input.source, input.display))
     }
     if (typeof svg !== 'string' || !svg.includes('<svg')) {

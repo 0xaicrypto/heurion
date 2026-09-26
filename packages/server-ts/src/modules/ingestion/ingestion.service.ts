@@ -131,14 +131,27 @@ export async function getIngestionJob(id: string) {
 }
 
 export async function processIngestionJob(id: string) {
-  let job = await prisma.ingestionJob.findUnique({ where: { id } })
-  if (!job) throw new Error('Job not found')
-  if (job.status !== 'pending') return serializeJob(job)
-
   const now = () => new Date().toISOString()
 
-  // Extraction step
-  await updateJobStatus(job.id, 'extracting')
+  // #P0 原子抢占: 先 findUnique 查 pending 再逐段处理是 check-then-act —
+  // 两个并发调用(轮询 + 手动重试/多实例)都会通过 status 检查,分析跑两遍、
+  // 病历条目与审批请求双份落库。单条 updateMany 抢占 pending → extracting,
+  // 只有 count===1 的调用者继续;其余按当前状态原样返回。
+  const claim = await prisma.ingestionJob.updateMany({
+    where: { id, status: 'pending' },
+    data: { status: 'extracting', updatedAt: now() },
+  })
+  if (claim.count === 0) {
+    const current = await prisma.ingestionJob.findUnique({ where: { id } })
+    if (!current) throw new Error('Job not found')
+    return serializeJob(current)
+  }
+
+  const claimed = await prisma.ingestionJob.findUnique({ where: { id } })
+  if (!claimed) throw new Error('Job not found')
+  const job = claimed
+
+  // Extraction step（状态已在抢占时置为 extracting）
   if (!job.extractedText) {
     try {
       const extracted = await extractTextForJob(job)

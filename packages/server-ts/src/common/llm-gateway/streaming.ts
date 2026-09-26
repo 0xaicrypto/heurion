@@ -9,6 +9,15 @@ import { resolveDefaultMaxTokens, truncationRetryBudget, MAX_TRUNCATION_RETRY_DE
 import { fetchWithRetry, withBodyIdleTimeout, buildRequestHeaders } from './http.js'
 import { recordUsage, recordFailure, approximateTokensFromChars, promptChars } from './pricing.js'
 import { serializeMessages, stripImageParts, isImageUnsupportedError } from './vision.js'
+import { degenerateNonStreamRetry } from './streaming-degenerate.js'
+
+/** #1127: 工具是否声明了必填参数（JSON schema `required` 非空）。
+ *  空参调用对这类工具必是流式装配/中转丢参 — 不能放行给工具循环。 */
+function toolHasRequiredArgs(tools: LlmToolDefinition[] | undefined, name: string): boolean {
+  const def = tools?.find((t) => t.function?.name === name)
+  const required = def?.function?.parameters?.required
+  return Array.isArray(required) && required.length > 0
+}
 
 /**
  * #fix 2026-09 — 工具回合流式调用(治中转站模式非流式的结构性缺陷):
@@ -96,6 +105,8 @@ export async function chatWithToolsStreamImpl(
   const toolAcc = new Map<number, { id?: string; name: string; arguments: string }>()
 
   try {
+    // 流式读取循环以 done/异常收敛 — 常量条件是有意的。
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       let readResult: Awaited<ReturnType<typeof reader.read>>
       try {
@@ -141,11 +152,19 @@ export async function chatWithToolsStreamImpl(
             // 无名碎片全被丢弃 → 工具收到 {} 空参（模型自称"参数完整构造"
             // 属实 — 参数丢在流式装配层）。正确归属：带 index 用 index；
             // 无 index 时 id 出现=新调用，否则追加到当前调用。
+            // #1127: 无 index 且 id 与已存在条目相同时 — 中转在结尾补发
+            // id+name 会再次出现同 id，旧逻辑按「带 id 就新开」生成同名空参
+            // 幽灵调用；同 id 必须并回原条目（其后的 arguments 增量也随
+            // currentToolIdx 归位）。
             let idx: number
             if (typeof tc.index === 'number') {
               idx = tc.index
               currentToolIdx = idx
-            } else if (tc.id || currentToolIdx === null) {
+            } else if (tc.id) {
+              const existing = [...toolAcc.entries()].find(([, e]) => e.id === tc.id)
+              idx = existing ? existing[0] : toolAcc.size
+              currentToolIdx = idx
+            } else if (currentToolIdx === null) {
               idx = toolAcc.size
               currentToolIdx = idx
             } else {
@@ -186,10 +205,16 @@ export async function chatWithToolsStreamImpl(
   if (toolDeltaCount > 0) {
     const entries = [...toolAcc.values()].map((e) => ({ name: e.name || '(无名)', id: e.id || '-', argsLen: e.arguments.length, preview: e.arguments.slice(0, 120) }))
     log.info(`[LLM] tools-stream tool_calls shape: deltas=${toolDeltaCount} noIndex=${noIndexCount} noId=${noIdCount} argFrags=${argFragCount}(${argFragChars}B) reasoning=${reasoningChars}B entries=${JSON.stringify(entries)}`)
-    // 流式退化检测：增量出现过但参数字节为 0（中转流式通道丢参,生产实锤）
-    // → 非流式重取完整 tool_calls。非流式通道完好（doc-executor 兜底实证）。
-    if (argFragCount === 0 && toolAcc.size > 0) {
-      log.warn(`[LLM] tools-stream degenerate: deltas=${toolDeltaCount} argsFrags=0 — retrying non-streaming for complete tool_calls`)
+    // 流式退化检测（#979 全丢参 + #1127 单调用丢参）：
+    //  - 全丢参:增量出现过但整轮参数字节为 0(中转流式通道丢参,生产实锤);
+    //  - 单调用丢参:并行多调用中任一**必填参数工具**的调用参数为空 —
+    //    旧判定只看整轮字节,只要有一个调用带参就放行,丢参的那个带着 {}
+    //    进入工具循环(search_citation({}) → "query is required")。
+    // 两条都换非流式重取完整 tool_calls（非流式通道完好,doc-executor 实证）。
+    const emptyArgCalls = [...toolAcc.values()].filter((e) => e.name && !e.arguments.trim())
+    const hasEmptyRequiredCall = emptyArgCalls.some((e) => toolHasRequiredArgs(tools, e.name))
+    if ((argFragCount === 0 && toolAcc.size > 0) || hasEmptyRequiredCall) {
+      log.warn(`[LLM] tools-stream degenerate: deltas=${toolDeltaCount} argFrags=${argFragCount}(${argFragChars}B) emptyArgCalls=[${emptyArgCalls.map((e) => e.name).join(',')}] — retrying non-streaming for complete tool_calls`)
       // #1104: 降级重取失败 → 明确错误上抛（本模块错误约定：失败即 throw），
       // 绝不把参数为空的"退化结果"放行给下游 — 工具循环对抛错按失败处理
       // (回退非流式/上报)，拿到 tool_call 才执行；空参写类工具调用
@@ -240,66 +265,6 @@ export async function chatWithToolsStreamImpl(
     }
   }
   return { text, truncated: finishReason === 'length', toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined }
-}
-
-/**
- * #979 — 流式退化形态的非流式重取：上游中转的流式通道丢 tool_calls 参数
- * （生产实锤：480 个增量 argFrags=0B），服务端无法从空流恢复。流式保住
- * TTFB/心跳价值，但增量字节为零时换非流式一次（非流式 tool_calls 参数
- * 完整，doc-executor 兜底的生产实证）。
- */
-async function degenerateNonStreamRetry(
-  messages: ChatMessage[],
-  options: LlmChatOptions,
-  tools?: LlmToolDefinition[],
-  onReasoning?: (text: string) => void,
-): Promise<LlmChatResult> {
-  const model = resolveRequestModel(options, resolveLegacyChatModel())
-  const body: any = {
-    model,
-    messages: serializeMessages(messages, model),
-    max_tokens: options.maxTokens ?? resolveDefaultMaxTokens(model),
-    temperature: options.temperature ?? 0.7,
-    ...(options.thinking && model.toLowerCase().startsWith('glm') ? { thinking: { type: options.thinking } } : {}),
-  }
-  if (tools && tools.length > 0) {
-    body.tools = tools
-    body.tool_choice = 'auto'
-  }
-  const res = await fetchWithRetry(`${resolveLlmEndpoint().baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: buildRequestHeaders(options),
-    body: JSON.stringify(body),
-  }, { signal: options.signal, timeoutMs: options.timeoutMs })
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}: ${errBody.slice(0, 160)}`)
-  }
-  const json: any = await withBodyIdleTimeout(res.json(), 'LLM non-stream fallback body stalled')
-  const choice = json?.choices?.[0]
-  const reasoning = choice?.message?.reasoning_content
-  if (reasoning && onReasoning) onReasoning(reasoning)
-  const usage = json?.usage
-  if (usage && typeof usage.prompt_tokens === 'number' && typeof usage.completion_tokens === 'number') {
-    await recordUsage(model, options, usage.prompt_tokens, usage.completion_tokens, usage.prompt_cache_hit_tokens || 0, usage.prompt_cache_miss_tokens || 0)
-  }
-  // tool_calls → 块格式（与 parseChatResponse 同构）
-  if (choice?.message?.tool_calls?.length) {
-    const OPEN = '\u003ctool_call\u003e'
-    const CLOSE = '\u003c/tool_call\u003e'
-    const blocks: string[] = []
-    for (const tc of choice.message.tool_calls) {
-      if (tc.type !== 'function') continue
-      let args: unknown
-      try { args = JSON.parse(tc.function.arguments || '{}') } catch { args = { _raw: tc.function.arguments } }
-      blocks.push(`${OPEN}${JSON.stringify({ name: tc.function.name, arguments: args })}${CLOSE}`)
-    }
-    if (blocks.length > 0) {
-      const leadIn = (choice.message.content || '').trim()
-      return { text: (leadIn ? leadIn + '\n' : '') + blocks.join('\n'), truncated: false }
-    }
-  }
-  return { text: choice?.message?.content || '', truncated: choice?.finish_reason === 'length' }
 }
 
 export async function* streamImpl(

@@ -114,7 +114,7 @@ export class SearchNodeTool extends BaseTool {
       const idx = getGraphIndex(this.ctx.userId, this.ctx.memory.graph.currentVersion?.() ?? null, allNodes)
       const scoped = idx.byPatient.get(patientHash) || []
       const queryTokens = q.split(/[^a-z0-9一-龥]+/).filter((w) => w.length > 1)
-      let matched: any[] = []
+      const matched: any[] = []
       if (queryTokens.length > 0) {
         // Union of nodes that contain any query token, then exact-substring
         // check on the small candidate set (keeps behavior identical).
@@ -191,8 +191,10 @@ export class SearchEncounterTool extends BaseTool {
     const topK = Number(args.top_k || 8)
     if (!patientHash || !query) return { success: false, error: 'patient_hash and query required' }
 
+    // P1 修复: 过滤条件曾把 && 写成 || — 关键词命中会带出其他患者的
+    // 就诊事件（跨患者串数据）。患者归属与关键词必须同时满足。
     const events = this.ctx.eventLog.query({ limit: 200 }).filter(e =>
-      (e.metadata as any)?.patientHash === patientHash ||
+      (e.metadata as any)?.patientHash === patientHash &&
       e.content?.toLowerCase().includes(query.toLowerCase())
     )
 

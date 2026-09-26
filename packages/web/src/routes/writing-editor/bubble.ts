@@ -6,6 +6,7 @@ import { sanitizePolishOutput } from '@/lib/polish-sanitize';
 import { captureScrollContainer } from '@/lib/scroll-utils';
 import { api, ApiError } from '@/lib/api';
 import { markdownToHtml, htmlToMarkdown } from '@/lib/doc-convert';
+import { normalizeFileDownloadTokens } from '@heurion/contracts';
 // #907: base_sha 指纹 — 与 #882 saveDoc 同一 helper,服务端 #870 以其比对
 // 文档当前 body,不匹配 → 409 stale_base。
 import { sha1Hex } from '@/lib/hash';
@@ -344,7 +345,7 @@ export function usePolishBubble(input: {
     // 本地替换保留 — 本地替换与未保存正文同源,回滚只会制造状态歧义;
     // 明示用户重新选区重试,以不产生数据歧义为准。其他失败维持 best-effort。
     if (docId) {
-      void sha1Hex(preApplyMd)
+      void sha1Hex(normalizeFileDownloadTokens(preApplyMd))
         .then((base_sha) => api.createDocSnapshot(docId, htmlToMarkdown(editor.getHTML()), 'AI polish', base_sha))
         .catch((err) => {
           if (err instanceof ApiError && err.status === 409 && err.code === 'stale_base') {

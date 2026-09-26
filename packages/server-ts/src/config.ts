@@ -1,4 +1,5 @@
 import dotenv from 'dotenv'
+import { resolveServerSecret } from './common/secrets.js'
 dotenv.config()
 
 // #655/#441: env is read lazily, never frozen at import time. Values resolve
@@ -18,7 +19,8 @@ function lazyConfig<T extends Record<string, unknown>>(read: () => T): T {
 export const config = lazyConfig(() => ({
   port: parseInt(process.env.SERVER_PORT || '8001'),
   host: process.env.SERVER_HOST || '0.0.0.0',
-  secret: process.env.SERVER_SECRET || 'dev-secret-key',
+  // Rule 4: 缺配 fail-closed — 生产抛错，绝不回退公开默认值。
+  secret: resolveServerSecret(),
   environment: process.env.ENVIRONMENT || 'development',
   jwtAlgorithm: 'HS256' as const,
   jwtExpirationHours: parseInt(process.env.JWT_EXPIRATION_HOURS || '24'),

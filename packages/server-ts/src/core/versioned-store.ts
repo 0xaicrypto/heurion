@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { atomicWriteFileSync } from '../common/fs-atomic.js'
 
 export class VersionedStore {
   private baseDir: string
@@ -78,9 +79,8 @@ export class VersionedStore {
   }
 
   private writePointer(version: string) {
-    const tmp = this.pointerPath() + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify({ version, updatedAt: Date.now() / 1000 }))
-    fs.renameSync(tmp, this.pointerPath())
+    // P1: 原子写(临时文件 + fsync + rename)— 指针指向的版本必须完整可读。
+    atomicWriteFileSync(this.pointerPath(), JSON.stringify({ version, updatedAt: Date.now() / 1000 }))
   }
 
   private readVersion(version: string): unknown | null {
@@ -92,7 +92,8 @@ export class VersionedStore {
   private writeVersion(version: string, data: unknown) {
     const p = path.join(this.baseDir, `${version}.json`)
     if (fs.existsSync(p)) throw new Error(`Version ${version} already exists`)
-    fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8')
+    // P1: 版本文件原子落盘 — 崩溃不会留下半截 JSON 被当有效版本读走。
+    atomicWriteFileSync(p, JSON.stringify(data, null, 2))
   }
 
   private versionExists(version: string): boolean {

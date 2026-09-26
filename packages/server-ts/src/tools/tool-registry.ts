@@ -341,8 +341,8 @@ export class ToolRegistry {
     this.register(new LoadDataTableTool(ctx))
     this.register(new RenderSceneTool(ctx))
     this.register(new BrowserTaskTool(ctx))
-    this.register(new McpListToolsTool())
-    this.register(new McpCallToolTool())
+    this.register(new McpListToolsTool(ctx))
+    this.register(new McpCallToolTool(ctx))
     this.register(new GenerateImageTool(ctx))
   }
 

@@ -54,7 +54,7 @@ describe('quick-scan AI 失败不落入患者临床记录 (#1104-gap1)', () => {
     expect(body.chief_complaint).not.toContain('[AI Vision]')
   }, 30000)
 
-  test('vision 成功(ok:true)→ [AI Vision] 仍正常写入(正向对照,防修坏成功路径)', async () => {
+  test('vision 成功(ok:true)→ 结论只在 findings 返回，绝不写入 chiefComplaint（P1 未审核结论不落临床记录）', async () => {
     vi.mocked(analyzeWithGeminiVision).mockResolvedValue({
       ok: true,
       text: '右肺上叶小结节,建议随访',
@@ -78,11 +78,13 @@ describe('quick-scan AI 失败不落入患者临床记录 (#1104-gap1)', () => {
     expect(scan.statusCode).toBe(200)
     expect(JSON.parse(scan.payload).findings.find((f: any) => f.type === 'ai_analysis')?.content).toContain('右肺上叶小结节')
 
+    // P1: 成功结论同样不进主诉 — 只经 pending 提案闸门流转。
     const detail = await app.inject({
       method: 'GET', url: `/api/v1/dicom/patients/${hash}/detail`, headers: await authHeader(),
     })
     const body = JSON.parse(detail.payload)
-    expect(body.chief_complaint).toContain('[AI Vision]')
-    expect(body.chief_complaint).toContain('右肺上叶小结节')
+    expect(body.chief_complaint).toContain('cough')
+    expect(body.chief_complaint).not.toContain('[AI Vision]')
+    expect(body.chief_complaint).not.toContain('右肺上叶小结节')
   }, 30000)
 })

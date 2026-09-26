@@ -1,4 +1,4 @@
-import type { MarkdownFixRule, FixOptions } from '../index.js'
+import type { MarkdownFixRule } from '../index.js'
 
 /**
  * 单行表格展开 — 模型常把整个表格挤成一行

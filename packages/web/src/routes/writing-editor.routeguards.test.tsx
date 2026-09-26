@@ -11,6 +11,7 @@ import { sha1Hex } from '@/lib/hash';
 // #979: 源级接线守卫 — App.tsx 原文经 Vite ?raw 导入(避免 node fs 依赖,
 // web 包 tsc 无 node types)。
 import appSrc from '../App.tsx?raw';
+import { normalizeFileDownloadTokens } from '@heurion/contracts';
 
 /**
  * #979/#983 回归网 — writing-editor 路由守卫与统一写回心智模型。
@@ -502,5 +503,103 @@ describe('#1035 写作引用池与开局扫描', () => {
     await waitFor(() => {
       expect(apiMock.addSessionReference).toHaveBeenCalledWith('doc-d1', expect.objectContaining({ reference_id: 'pool1' }));
     });
+  });
+});
+
+/**
+ * P0 回归 — Cmd/Ctrl+S 不得用未加载/旧的空状态覆盖文档。
+ *
+ * 修复前两处叠加：keydown 监听只在 [docId] 时注册一次，捕获首渲染的
+ * handleSave 闭包（title/body 为空串）；handleSave 也没有 doc 加载守卫。
+ * 结果：文档加载前按 Cmd+S 会保存空正文新版本；加载后按键仍走旧闭包。
+ */
+describe('P0 Cmd+S 保存守卫(不落空内容)', () => {
+  test('getDoc 未返回前按 Cmd+S → 不调用 updateDoc（空正文绝不落盘）', async () => {
+    let releaseDoc: (v: unknown) => void = () => {};
+    apiMock.getDoc.mockImplementation(() => new Promise((resolve) => { releaseDoc = resolve; }));
+
+    renderEditor(false);
+    // 等挂载 effect 注册 keydown（文档仍在加载，title/body 初始为空）。
+    await act(async () => {});
+
+    fireEvent.keyDown(window, { key: 's', metaKey: true, ctrlKey: true });
+    await act(async () => {});
+    expect(apiMock.updateDoc).not.toHaveBeenCalled();
+
+    // 放行加载，避免悬挂 promise 泄漏到后续用例。
+    releaseDoc(DOC_A);
+    await act(async () => {});
+  });
+
+  test('文档已加载后 Cmd+S → 保存当前真实 title/body（latest-ref 非旧闭包）', async () => {
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+    // 等 lastSavedBody 基线 effect 完成，dirty 判据稳定。
+    await act(async () => {});
+
+    fireEvent.keyDown(window, { key: 's', metaKey: true, ctrlKey: true });
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
+    const payload = apiMock.updateDoc.mock.calls[0][1];
+    expect(payload.title).toBe('A doc');
+    expect(payload.body).toContain('A body');
+    expect(payload.body).not.toBe('');
+  });
+});
+
+/**
+ * P1 回归 — 保存响应不得覆盖保存进行中新打的字。
+ *
+ * 此前 handleSave 在 await saveDoc 后无条件 setBody/setTitle(updated.*)
+ * 并清 dirty：保存请求在飞期间用户新输入的内容被服务端旧快照回灌覆盖，
+ * 且不再触发自动保存 —— 输入静默丢失。
+ */
+describe('P1 保存竞态:在飞期间的输入不被回灌覆盖', () => {
+  test('保存在飞时修改标题 → 响应回灌后标题保留本地新值', async () => {
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+    await act(async () => {});
+
+    let resolveSave: (v: unknown) => void = () => {};
+    apiMock.updateDoc.mockImplementation(() => new Promise((resolve) => { resolveSave = resolve; }));
+
+    fireEvent.keyDown(window, { key: 's', metaKey: true, ctrlKey: true });
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
+    expect(apiMock.updateDoc.mock.calls[0][1].title).toBe('A doc');
+
+    // 保存请求在飞 — 用户改标题。
+    fireEvent.change(screen.getByDisplayValue('A doc'), { target: { value: 'A doc 编辑中' } });
+    expect(screen.getByDisplayValue('A doc 编辑中')).toBeTruthy();
+
+    // 服务端返回本次请求的旧快照（title 仍是 A doc）。
+    resolveSave({ ...DOC_A, title: 'A doc', body: 'A body', updated_at: '2026-01-03T00:00:00Z' });
+    await act(async () => {});
+
+    // 本地新输入必须原样保留（修复前被 setTitle(updated.title) 覆盖回 "A doc"）。
+    expect(screen.getByDisplayValue('A doc 编辑中')).toBeTruthy();
+  });
+});
+
+/**
+ * #1128 — 正文含下载链接时,保存指纹必须按去 token 归一化计算。
+ * 读取期服务端重签 `?token=`(只改响应),客户端若按含 token 的文本算
+ * base_sha,服务端按归一化正文比对 → 永远 409(采用 AI 版本后死循环)。
+ */
+describe('#1128 下载链接 token: base_sha 归一化', () => {
+  test('getDoc 返回带 token 的下载链接 → base_sha 用去 token 正文计算', async () => {
+    const rawBody = '报告下载：/api/v1/files/download/f_1?token=old_sig';
+    apiMock.getDoc.mockResolvedValue({ ...DOC_A, body: rawBody });
+
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+    await act(async () => {});
+
+    fireEvent.keyDown(window, { key: 's', metaKey: true, ctrlKey: true });
+    await waitFor(() => expect(apiMock.updateDoc).toHaveBeenCalledTimes(1));
+
+    const payload = apiMock.updateDoc.mock.calls[0][1];
+    // 提交正文保留展示层 token;指纹按归一化(无 token)算
+    expect(payload.body).toBe(rawBody);
+    expect(payload.base_sha).toBe(await sha1Hex(normalizeFileDownloadTokens(rawBody)));
+    expect(payload.base_sha).not.toBe(await sha1Hex(rawBody));
   });
 });

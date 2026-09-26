@@ -548,9 +548,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   appendMessage: (sessionId: string, msg: ChatMessage) => {
     set((state) => {
-      const s = state.sessions[sessionId];
-      const msgs = s ? [...s.messages, msg] : [msg];
-      return { sessions: { ...state.sessions, [sessionId]: { messages: msgs, abort: null, loading: false, compacting: false } } };
+      // #fix: 只追加,不重置会话 — 此前每次 append 都重建为
+      // { messages, abort:null, loading:false, compacting:false }:
+      // 流式回复期间上传附件(插入一条 [📎] 提示)会把 pendingQueue、
+      // contextUsage、在飞消息状态全部清空,排队指令与后续流内容丢失。
+      const s = state.sessions[sessionId] ?? emptySession();
+      return { sessions: { ...state.sessions, [sessionId]: { ...s, messages: [...s.messages, msg] } } };
     });
   },
 

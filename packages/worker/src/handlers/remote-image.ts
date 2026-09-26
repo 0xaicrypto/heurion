@@ -8,7 +8,6 @@
  * 薄封装，与 server 的差异项（timeoutMs/trustedOrigins/跨协议重定向/UA/
  * 内容校验）按现状显式传入（详见各参数注释与 #1074-1 迁移报告）。
  */
-import fs from 'fs'
 import path from 'path'
 import type { ContentBlock } from '@heurion/contracts'
 import {

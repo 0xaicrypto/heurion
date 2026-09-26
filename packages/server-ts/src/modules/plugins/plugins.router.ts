@@ -174,7 +174,7 @@ export async function pluginsRouter(app: FastifyInstance) {
     }
   })
 
-  app.put('/api/v1/plugins/:namespace/:name/settings', async (request, reply) => {
+  app.put('/api/v1/plugins/:namespace/:name/settings', async (request, _reply) => {
     const { namespace, name } = request.params as { namespace: string; name: string }
     const id = `${namespace}/${name}`
     const values = request.body as Record<string, unknown>

@@ -18,11 +18,14 @@ export interface CategoryQuality {
 }
 
 export async function getCategoryQuality(userId: string, days = 7): Promise<CategoryQuality[]> {
+  // days 此前是死参数(lint 抓出):统计窗口从未生效,全时段数据混入
+  // "近期"质量指引。现在落实为 resolvedAt 时间窗。
+  const since = new Date(Date.now() - days * 86400_000).toISOString()
   const rows = await prisma.memoryProposal.findMany({
     where: {
       userId,
       status: { in: ['approved', 'rejected'] },
-      resolvedAt: { not: null },
+      resolvedAt: { gte: since },
       category: { not: null },
     },
     select: { category: true, status: true },

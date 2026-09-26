@@ -544,3 +544,58 @@ describe('#1095 复审 #5/#6 — 交互 replace-last + 撤回 + 评论并发上�
     await p1;
   });
 });
+
+/**
+ * P0 回归 — appendMessage 只追加,不得重置会话状态。
+ *
+ * 流式回复期间上传附件会 append 一条 [📎] 提示(见 lib/upload-flow.ts)，
+ * 修复前该 action 把整个会话重建为 { messages, abort:null, loading:false,
+ * compacting:false } — pendingQueue(已排队指令)/contextUsage/abort 及流式
+ * 状态全部丢失，后续流内容无处可落。
+ */
+describe('P0 appendMessage 保留会话状态(上传附件不打断流式回复)', () => {
+  beforeEach(() => {
+    useChatStore.setState({ sessions: {} });
+  });
+
+  test('追加消息后 pendingQueue/contextUsage/abort/loading/compacting 原样保留', () => {
+    const abort = new AbortController();
+    const slot: PendingChatSlot = {
+      text: '排队指令',
+      opts: { sessionId: 's1', text: '排队指令', attachments: [], skills: [] },
+      turnId: 't1',
+    };
+    const existing: ChatMessage = { id: 'a1', role: 'assistant', text: '流式中', isStreaming: true };
+    useChatStore.setState({
+      sessions: {
+        s1: {
+          messages: [existing],
+          abort,
+          loading: true,
+          compacting: true,
+          pendingQueue: [slot],
+          contextUsage: { used: 100, limit: 1000 } as never,
+        },
+      },
+    });
+
+    useChatStore.getState().appendMessage('s1', { id: 'u2', role: 'user', text: '[📎] file.pdf' });
+
+    const s = useChatStore.getState().sessions.s1;
+    expect(s.messages.map((m) => m.id)).toEqual(['a1', 'u2']);
+    expect(s.messages[0].isStreaming).toBe(true);
+    expect(s.pendingQueue?.map((x) => x.turnId)).toEqual(['t1']);
+    expect(s.loading).toBe(true);
+    expect(s.compacting).toBe(true);
+    expect(s.abort).toBe(abort);
+    expect(s.contextUsage).toEqual({ used: 100, limit: 1000 });
+  });
+
+  test('会话不存在时用 emptySession 初始化（形状完整）', () => {
+    useChatStore.getState().appendMessage('s-new', { id: 'u1', role: 'user', text: 'hi' });
+    const s = useChatStore.getState().sessions['s-new'];
+    expect(s.messages.map((m) => m.id)).toEqual(['u1']);
+    expect(s.loading).toBe(false);
+    expect(s.abort).toBeNull();
+  });
+});

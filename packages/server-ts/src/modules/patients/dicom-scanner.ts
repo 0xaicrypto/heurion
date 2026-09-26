@@ -54,7 +54,7 @@ export function quickScanDicom(userId: string, fileId: string): DicomFinding[] {
   try {
     const text = fs.readFileSync(filepath, 'utf-8').slice(0, 5000)
     if (text.trim()) return [{ type: 'text_content', content: text }]
-  } catch {}
+  } catch { /* 不可读 — 按失败返回 */ }
   return [{ type: 'error', content: 'Cannot read' }]
 }
 

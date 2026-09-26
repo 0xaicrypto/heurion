@@ -54,9 +54,9 @@ async function main() {
           model: service.getModelName(),
           dimensions: result.dimensions,
         }
-      } catch (err: any) {
+      } catch (err) {
         request.log.error(err, 'embedding failed')
-        return reply.status(500).send({ error: err.message || 'Embedding failed' })
+        return reply.status(500).send({ error: (err as Error).message || 'Embedding failed' })
       }
     },
   )

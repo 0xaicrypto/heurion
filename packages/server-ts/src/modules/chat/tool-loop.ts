@@ -343,7 +343,7 @@ export async function runToolCallLoop(params: {
   // #1106: 提取至 tool-event-log.ts（截断/溢写策略独立可测）。
   const appendToolEvent = createToolEventAppender({ ctx, userId, sessionId })
 
-  let messages = [...currentMessages]
+  const messages = [...currentMessages]
   const MAX_TOOL_ROUNDS = params.maxRounds ?? 5
   // #1106: 生命周期标志收口 — docWriteExecuted/exitedByRoundCap/exitedByBudget/
   // writeFailStreakExit/lastRoundHadFailure/reasoningOverBudget 等全部迁入
@@ -503,13 +503,12 @@ export async function runToolCallLoop(params: {
         }
         const toolName = String(toolCall.name || toolCall.tool || '')
         const toolArgs = (toolCall.arguments || toolCall.args || {}) as Record<string, unknown>
-        // #979 诊断:空参工具调用 — 记录到达 tool-loop 的原始块文本,
-        // 二分「网关装配层丢参」vs「模型/中转产出即空」。
-        if (
-          (DOC_WRITE_TOOLS.has(toolName) || toolName === 'set_task_plan')
-          && Object.keys(toolArgs).length === 0
-        ) {
-          log.warn(`[tool-loop] empty-args tool call — raw block: ${block.slice(0, 300)}`)
+        // #979/#1127 诊断:空参工具调用 — 记录到达 tool-loop 的原始块文本,
+        // 二分「网关装配层丢参」vs「模型/中转产出即空」。此前只覆盖
+        // DOC_WRITE_TOOLS/set_task_plan,检索类空参(search_citation({}))
+        // 在生产排查时没有原始块;现在覆盖全部工具。
+        if (Object.keys(toolArgs).length === 0) {
+          log.warn(`[tool-loop] empty-args tool call — tool=${toolName || '(unknown)'} raw block: ${block.slice(0, 300)}`)
         }
         plan.push({
           kind: 'call',

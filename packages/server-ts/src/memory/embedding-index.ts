@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { atomicWriteFileSync } from '../common/fs-atomic.js'
 
 /**
  * Per-user embedding index (JSONL). Keeps a normalized vector per memory node
@@ -63,21 +64,30 @@ export class EmbeddingIndex {
 
   private load(): void {
     if (!fs.existsSync(this.filePath)) return
-    try {
-      const lines = fs.readFileSync(this.filePath, 'utf-8').split('\n').filter(Boolean)
-      this.records = lines.map((l) => JSON.parse(l))
-      // KB 重命名(article→summary)兼容:旧 index.jsonl 里的 type 归一化,
-      // 下一次 persist() 落盘即为新形态(幂等)。
-      for (const r of this.records) {
-        if ((r as any).type === 'article') (r as any).type = 'summary'
+    const lines = fs.readFileSync(this.filePath, 'utf-8').split('\n').filter(Boolean)
+    // P1: 逐行容错 — 尾部半行（崩溃/断电）不再让整个索引退化为空
+    // （此前整体 try/catch 把 records 重置为 []，静默丢掉全部向量）。
+    const records: EmbeddingRecord[] = []
+    let skipped = 0
+    for (const line of lines) {
+      try {
+        records.push(JSON.parse(line))
+      } catch {
+        skipped++
       }
-    } catch {
-      this.records = []
+    }
+    if (skipped > 0) console.warn(`[embedding-index] skipped ${skipped} corrupt line(s)`)
+    this.records = records
+    // KB 重命名(article→summary)兼容:旧 index.jsonl 里的 type 归一化,
+    // 下一次 persist() 落盘即为新形态(幂等)。
+    for (const r of this.records) {
+      if ((r as any).type === 'article') (r as any).type = 'summary'
     }
   }
 
   private persist(): void {
-    fs.writeFileSync(this.filePath, this.records.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    // P1: 原子重写(临时文件 + rename)— 写入中途崩溃旧索引保持完整。
+    atomicWriteFileSync(this.filePath, this.records.map((r) => JSON.stringify(r)).join('\n') + '\n')
   }
 
   upsert(record: EmbeddingRecord): void {

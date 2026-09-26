@@ -63,7 +63,9 @@ export async function screenPatient(
   patientHash: string,
   userId: string,
 ): Promise<ScreeningResult> {
-  const study = await prisma.researchStudy.findUnique({ where: { id: studyId } })
+  // Rule 4: 研究归属校验 — 仅允许筛查本用户名下的研究(id 由调用方
+  // 传入;findUnique 不校验归属时,任意 studyId 都能触发跨用户筛查写入)。
+  const study = await prisma.researchStudy.findFirst({ where: { id: studyId, userId } })
   if (!study) throw new Error('Study not found')
 
   const rules = await prisma.studyProtocolRule.findMany({
@@ -162,6 +164,10 @@ export async function screenAllEnrolled(
   studyId: string,
   userId: string,
 ): Promise<ScreeningResult[]> {
+  // Rule 4: 先校验研究归属 — 否则会枚举他人研究的入组名单。
+  const study = await prisma.researchStudy.findFirst({ where: { id: studyId, userId }, select: { id: true } })
+  if (!study) throw new Error('Study not found')
+
   const enrollments = await prisma.researchEnrollment.findMany({
     where: { studyId, unenrolledAt: null },
   })

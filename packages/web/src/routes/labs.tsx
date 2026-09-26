@@ -78,18 +78,36 @@ export function LabsPage() {
     loadFiles();
   }, [loadFiles]);
 
-  // Poll ingestion job status while any job is still in flight.
+  // Poll ingestion job status while the page is open.
+  // P1 修复: 旧实现对首个 tick 用**闭包里的初始 jobs=[]** 判 hasActive →
+  // 首轮即 clearInterval(轮询第一次就停,后续状态永不刷新)。现在按每次
+  // 拉取到的响应判定(非空且全部终态才停),并在切患者时取消在途 setState。
   useEffect(() => {
     if (!hash) return;
-    loadJobs();
-    const hasActive = () => jobs.some((j) => !TERMINAL_STATUSES.includes(j.status));
-    const timer = setInterval(() => {
-      loadJobs();
-      if (!hasActive()) clearInterval(timer);
-    }, 3000);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash, loadJobs]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const tick = async () => {
+      try {
+        const res = await api.listIngestionJobs(hash);
+        if (cancelled) return;
+        setJobs(res.jobs);
+        if (timer && res.jobs.length > 0 && res.jobs.every((j) => TERMINAL_STATUSES.includes(j.status))) {
+          clearInterval(timer);
+          timer = null;
+        }
+      } catch {
+        /* polling — transient errors keep the loop alive */
+      } finally {
+        if (!cancelled) setJobsLoading(false);
+      }
+    };
+    void tick();
+    timer = setInterval(() => { void tick(); }, 3000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [hash]);
 
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 

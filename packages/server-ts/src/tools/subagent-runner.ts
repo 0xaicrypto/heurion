@@ -87,7 +87,7 @@ Rules:
 - Answer concisely with the findings; note gaps as "not found".
 - Output must end with a line: SUBAGENT_SUMMARY: <your final summary>`
 
-  let messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
     { role: 'user', content: `${system}\n\nTask: ${input.task}${input.context ? `\n\nContext:\n${input.context.slice(0, 3000)}` : ''}` },
   ]
   let toolCalls = 0

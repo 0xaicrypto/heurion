@@ -23,12 +23,15 @@ export function ReportPage() {
 
   useEffect(() => {
     if (!hash) return;
+    // P1 竞态: 换患者时上一个患者晚到的 detail 响应不得覆盖新患者页。
+    let cancelled = false;
     setPatientLoading(true);
     api
       .getPatientDetail(hash)
-      .then(setPatient)
+      .then((d) => { if (!cancelled) setPatient(d); })
       .catch(() => {})
-      .finally(() => setPatientLoading(false));
+      .finally(() => { if (!cancelled) setPatientLoading(false); });
+    return () => { cancelled = true; };
   }, [hash]);
 
   /** #724: 拉取记忆投影并预填三个文本域。 */

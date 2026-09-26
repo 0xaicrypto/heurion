@@ -172,7 +172,21 @@ export type PinnedLookup = (hostname: string, options: dns.LookupOptions, cb: (e
 /** #1057: 校验解析出的公网 IP → 钉定 lookup。 */
 export function makePinnedLookup(ip: string): PinnedLookup {
   const family = isIP(ip) === 6 ? 6 : 4
-  return (_hostname, _options, cb) => { cb(null, ip, family) }
+  return (_hostname, options, cb) => {
+    // Node ≥ 20 的 happy-eyeballs(autoSelectFamily)/net.connect 会以
+    // `{ all: true }` 调用 lookup,此时回调必须回数组形状 — 旧实现恒回
+    // (err, address, family) 字符串,Node 22 下直接报错,所有公网图片/OA
+    // PDF 下载失败。两种调用约定都按 Node 语义满足。
+    if (options?.all) {
+      const allCb = cb as unknown as (
+        err: NodeJS.ErrnoException | null,
+        addresses: Array<{ address: string; family: number }>,
+      ) => void
+      allCb(null, [{ address: ip, family }])
+      return
+    }
+    cb(null, ip, family)
+  }
 }
 
 /* ── 传输层 ──────────────────────────────────────────────────────────── */
@@ -316,6 +330,9 @@ export interface GuardDownloadOptions {
   trustedOrigins?: readonly string[]
   /** 每消费方 User-Agent（现状不同：worker 导出器 / server 研究代理）。 */
   userAgent?: string
+  /** 额外请求头（Accept / Accept-Language 等）— 在 User-Agent 之前合并，
+   *  不允许覆盖 User-Agent。 */
+  headers?: Record<string, string>
   /** #1074-1 drift 显式参数：worker 拒绝重定向跨协议（防 https 降级与
    *  scheme 混淆，false）；server 迁移前不校验跨协议（true，保持现状）。
    *  建议后续把 server 也收紧为 false（见迁移报告）— 本批不改 server
@@ -331,32 +348,43 @@ export interface GuardDownloadResult {
   buffer: Buffer
   /** 最终（重定向链尾）URL — server 侧据此派生文件名。 */
   finalUrl: URL
+  /** 最终跳的 Content-Type（原样）— 消费方据此拒绝非预期媒体类型。
+   *  缺失（无 header）时为 ''。 */
+  contentType: string
 }
 
 /** #1072-4: 按 Content-Encoding 显式解压响应体 — 裸 node:http 传输不像
  *  fetch 会自动解压，压缩响应若不解压会被 magic bytes 误判（gzip 头
  *  1f8b 开头既不是图片也不是 %PDF-）。identity/缺省原样返回；解压失败
- *  fail-closed（内容无法用于校验，按 fetch_failed 处理）。 */
-function decodeContentEncoding(body: Buffer, encodingHeader: string | null): Buffer {
+ *  fail-closed（内容无法用于校验，按 fetch_failed 处理）。
+ *  #1074-4 zip 炸弹：所有 zlib 便捷方法显式传 maxOutputLength —
+ *  线缆字节很小、展开数 GB 的响应在解压中途即被 zlib 截断报错
+ *  （ERR_BUFFER_TOO_LARGE → too_large），不会先物化超大 Buffer 再于
+ *  调用方的二次上限检查里才拒绝（那条检查只能救"已分配完"的内存峰值）。 */
+function decodeContentEncoding(body: Buffer, encodingHeader: string | null, maxOutputLength: number): Buffer {
   const encoding = (encodingHeader || '').trim().toLowerCase()
   if (!encoding || encoding === 'identity') return body
+  const zlibOpts = { maxOutputLength: Math.max(1, maxOutputLength) }
   try {
     switch (encoding) {
       case 'gzip':
       case 'x-gzip':
-        return gunzipSync(body)
+        return gunzipSync(body, zlibOpts)
       case 'deflate':
         // 容错：deflate 实现常混淆 zlib 头与裸 deflate — 先按 zlib 头试，
         // 失败再试 raw。
-        try { return inflateSync(body) } catch { return inflateRawSync(body) }
+        try { return inflateSync(body, zlibOpts) } catch { return inflateRawSync(body, zlibOpts) }
       case 'deflate-raw':
-        return inflateRawSync(body)
+        return inflateRawSync(body, zlibOpts)
       case 'br':
-        return brotliDecompressSync(body)
+        return brotliDecompressSync(body, zlibOpts)
       default:
         throw new Error(`不支持的 content-encoding: ${encoding}`)
     }
   } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ERR_BUFFER_TOO_LARGE') {
+      throw new GuardError('too_large', `解压后超过上限 ${Math.round(maxOutputLength / 1024 / 1024)}MB(zip 炸弹防护，解压中途已中止)`)
+    }
     throw new GuardError('fetch_failed', `响应体解码失败(content-encoding: ${encoding}): ${(err as Error).message.slice(0, 120)}`)
   }
 }
@@ -378,6 +406,7 @@ export async function downloadViaGuard(raw: string, opts: GuardDownloadOptions):
   const transport = overrideTransport ?? defaultTransport
   const trustedOrigins = opts.trustedOrigins ?? []
   const userAgent = opts.userAgent ?? 'Heurion-SSRF-Guard/1.0'
+  const extraHeaders = opts.headers ?? {}
   const allowCrossScheme = opts.allowCrossSchemeRedirect ?? false
 
   // #1072-3: 总 deadline 信号 — 每一跳的 DNS 解析（resolvePublicHttpUrl
@@ -402,7 +431,7 @@ export async function downloadViaGuard(raw: string, opts: GuardDownloadOptions):
           // 连接期不存在第二次 DNS 解析，rebinding 时序无法切换连接目标。
           res = await transport(target.url, {
             signal: controller.signal,
-            headers: { 'User-Agent': userAgent },
+            headers: { ...extraHeaders, 'User-Agent': userAgent },
             lookup: target.address ? makePinnedLookup(target.address) : null,
           })
         } catch (err) {
@@ -470,13 +499,13 @@ export async function downloadViaGuard(raw: string, opts: GuardDownloadOptions):
         const wire = Buffer.concat(chunks)
         // #1072-4: 显式 Content-Encoding 处理 — gzip/deflate/br 解压后再做
         // magic bytes 判定；解压后二次上限（防解压炸弹：线缆字节小、展开大）。
-        const content = decodeContentEncoding(wire, res.headers.get('content-encoding'))
+        const content = decodeContentEncoding(wire, res.headers.get('content-encoding'), maxBytes)
         if (content.length > maxBytes) {
           throw new GuardError('too_large', `解压后 ${Math.round(content.length / 1024 / 1024)}MB 超过上限 ${Math.round(maxBytes / 1024 / 1024)}MB`)
         }
         const verdict = opts.validate(content)
         if (verdict) throw new GuardError(verdict.code, verdict.message)
-        return { buffer: content, finalUrl: target.url }
+        return { buffer: content, finalUrl: target.url, contentType: res.headers.get('content-type') || '' }
       } finally {
         clearTimeout(timer)
       }

@@ -1,5 +1,5 @@
 import { validateRenderContent, type DocumentContent } from '@heurion/contracts'
-import { renderPdf } from './common.js'
+import { renderPdf, unwrapRenderPayload } from './common.js'
 
 /**
  * #686: convert_to_pdf 入口契约化 — 控制面（insert_asset export / 插件
@@ -19,6 +19,8 @@ function isDocumentContent(payload: unknown): payload is DocumentContent {
 }
 
 export async function convertToPdf(payload: unknown) {
+  // #fix: 控制面信封 { data: DocumentContent } 解包（见 common.unwrapRenderPayload）。
+  payload = unwrapRenderPayload(payload)
   let title: string | undefined
   if (isDocumentContent(payload)) {
     const doc = payload

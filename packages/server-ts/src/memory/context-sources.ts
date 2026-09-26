@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { twinsBaseDir } from '../lib/upload-path.js'
+import { atomicWriteFileSync } from '../common/fs-atomic.js'
 
 /**
  * R1 — typed context sources (BRAIN2_MEMORY_LIFECYCLE §4.3, #98).
@@ -52,7 +53,8 @@ export function loadSnapshot(userId: string): Record<string, SegmentState> | nul
 export function saveSnapshot(userId: string, state: Record<string, SegmentState>): void {
   try {
     fs.mkdirSync(path.dirname(snapshotPath(userId)), { recursive: true })
-    fs.writeFileSync(snapshotPath(userId), JSON.stringify(state), 'utf-8')
+    // P1: 原子写 — 半截快照会让下次 loadSnapshot 解析失败并触发全量重建。
+    atomicWriteFileSync(snapshotPath(userId), JSON.stringify(state))
   } catch {
     // snapshot persistence is best-effort
   }

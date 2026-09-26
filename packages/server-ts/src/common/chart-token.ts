@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { makeLogger } from './logger.js'
+import { resolveChartTokenSecret } from './secrets.js'
 
 /**
  * Generated-chart/scene download tokens (#176/#213/#440): <img src> cannot
@@ -10,11 +11,11 @@ import { makeLogger } from './logger.js'
  * Pure crypto utility — lives in `common/` so the tools layer can issue
  * tokens without importing from `modules/*` (layering, #666).
  */
-const CHART_TOKEN_SECRET = process.env.CHART_TOKEN_SECRET || process.env.SERVER_SECRET || 'dev-secret-key'
 const CHART_TOKEN_TTL_MS = parseInt(process.env.CHART_TOKEN_TTL_MS || (90 * 24 * 3600 * 1000).toString(), 10)
 
 function signChartToken(fileId: string, userId: string, exp: number): string {
-  return crypto.createHmac('sha256', CHART_TOKEN_SECRET)
+  // Rule 4: 每次签名时解析（生产缺配抛错）— 不再冻结公开默认密钥。
+  return crypto.createHmac('sha256', resolveChartTokenSecret())
     .update(`${fileId}\n${exp}\n${userId}`)
     .digest('base64url')
 }

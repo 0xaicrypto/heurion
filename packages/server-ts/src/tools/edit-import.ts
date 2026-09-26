@@ -19,7 +19,7 @@ export async function executeImportReference(
 ): Promise<ToolResult> {
   try {
     const labels = await resolveImportTargets(userId, docId)
-    const hit = labels.find(({ r, label }) => label.includes(reference) || reference.includes(label))
+    const hit = labels.find(({ label }) => label.includes(reference) || reference.includes(label))
     if (!hit) {
       const available = labels.map((l) => l.label).slice(0, 5).join('、') || '(无)'
       return { success: false, error: `未找到参考材料 "${reference}"。当前参考材料:${available}。请用参考材料的名称(label)作为 import_reference。` }

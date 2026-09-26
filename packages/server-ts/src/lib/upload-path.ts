@@ -40,6 +40,8 @@ export function safeUploadPath(userId: string, fileId: string): string | null {
 export function sanitizeFilename(name: string | undefined): string {
   if (!name) return 'file'
   const base = path.basename(name.replace(/\\/g, '/'))
+  // 控制字符(文件名净化)是匹配目标本身 — 规则告警为预期。
+  // eslint-disable-next-line no-control-regex
   const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, '').trim()
   return cleaned || 'file'
 }

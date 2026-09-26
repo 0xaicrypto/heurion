@@ -6,6 +6,7 @@
  */
 import { BaseTool, ToolResult } from './base-tool.js'
 import type { ToolContext } from './tool-registry.js'
+import { downloadViaGuard } from '@heurion/ssrf-guard'
 
 const MAX_RESULTS = 10
 
@@ -251,32 +252,37 @@ export function clearBlockedHosts(): void {
 
 const DIRECT_FETCH_TIMEOUT_MS = 15000
 const DIRECT_FETCH_MIN_CHARS = 300
+/** 页面正文上限 — 超过按读取失败处理（转 Browser Run 兜底）。 */
+const DIRECT_FETCH_MAX_BYTES = 5 * 1024 * 1024
+const DIRECT_FETCH_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 
 /**
  * 直连抓取:普通 HTTP GET + turndown HTML→markdown。
  * 不走浏览器 — 快(15s 超时内)、免费、且对服务端渲染页(ALOOC/指南/NCT 页等)
  * 命中率高;被反爬或返回空时返回空串,由调用方降级到 Browser Run。
+ *
+ * #SSRF: 统一走 @heurion/ssrf-guard(公网校验 + 钉定 DNS + 逐跳重定向校验
+ * + 流式大小上限),不再裸 fetch 模型给的 URL — 此前可被诱导访问云元数据
+ * (169.254.169.254)或内网服务,且无响应体上限。
  */
-async function directFetchMarkdown(url: string, ctx: ToolContext): Promise<string> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DIRECT_FETCH_TIMEOUT_MS)
-  const signal = ctx.signal && typeof AbortSignal.any === 'function'
-    ? AbortSignal.any([controller.signal, ctx.signal])
-    : controller.signal
+async function directFetchMarkdown(url: string): Promise<string> {
   try {
-    const res = await fetch(url, {
+    const { buffer, contentType } = await downloadViaGuard(url, {
+      timeoutMs: DIRECT_FETCH_TIMEOUT_MS,
+      maxBytes: DIRECT_FETCH_MAX_BYTES,
+      // server 面向任意用户提供的 URL — 不允许任何 origin 绕过校验。
+      trustedOrigins: [],
+      userAgent: DIRECT_FETCH_UA,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
       },
-      redirect: 'follow',
-      signal,
+      // 与迁移前 server 行为一致(不校验重定向跨协议);worker 侧仍拒绝。
+      allowCrossSchemeRedirect: true,
+      validate: () => null,
     })
-    if (!res.ok) return ''
-    const ct = res.headers.get('content-type') || ''
-    if (!/text\/html|application\/xhtml|text\/plain/.test(ct)) return ''
-    const body = await res.text()
+    if (!/text\/html|application\/xhtml|text\/plain/.test(contentType)) return ''
+    const body = buffer.toString('utf-8')
     if (body.length < 500) return ''
     const { default: TurndownService } = await import('turndown')
     const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' })
@@ -284,8 +290,6 @@ async function directFetchMarkdown(url: string, ctx: ToolContext): Promise<strin
     return markdown.trim().length >= DIRECT_FETCH_MIN_CHARS ? markdown.slice(0, 20000) : ''
   } catch {
     return ''
-  } finally {
-    clearTimeout(timer)
   }
 }
 
@@ -358,7 +362,7 @@ async function fetchMedicalPageMarkdown(url: string, ctx: ToolContext, auditLabe
     } catch { /* 缓存故障降级直连 */ }
   }
   // ① 直连抓取
-  const direct = await directFetchMarkdown(url, ctx)
+  const direct = await directFetchMarkdown(url)
   if (direct) {
     if (cacheEnabled) cacheSet('page_md', normalizeCacheKey(url), direct, pageTtlMs)
     try {

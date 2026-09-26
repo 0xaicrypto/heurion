@@ -1,5 +1,5 @@
 import { validateRenderContent, SCHEMA_VERSION, type TableContent } from '@heurion/contracts'
-import { renderPdf } from './common.js'
+import { renderPdf, unwrapRenderPayload } from './common.js'
 
 /** #中-14: 行越界截断的纯函数（导出供单测钉住可见提示的触发条件）。 */
 export function normalizeTableRows(colCount: number, rows: string[][]): {
@@ -21,7 +21,8 @@ export function normalizeTableRows(colCount: number, rows: string[][]): {
  * 兜底,非法输入给出明确错误而不是 pdfkit 内部异常。
  */
 export async function renderTable(payload: unknown) {
-  const p = (payload || {}) as Record<string, unknown>
+  // #fix: 控制面信封 { data: TableContent } 解包（见 common.unwrapRenderPayload）。
+  const p = (unwrapRenderPayload(payload) || {}) as Record<string, unknown>
 
   // Legacy 容错:无 schemaVersion 的旧形状(title 缺省/headers 单列)。
   if (!p.schemaVersion) {
@@ -51,7 +52,7 @@ export async function renderTable(payload: unknown) {
     const drawRow = (cells: string[], isHeader: boolean) => {
       let x = 50
       const cellHeight = isHeader ? rowHeight + 5 : rowHeight
-      cells.forEach((cell, i) => {
+      cells.forEach((cell) => {
         doc.rect(x, y, colWidth, cellHeight).stroke()
         // #fix 2026-09: 'cjk' 单字体统一——表头中文不能用 Helvetica（CJK
         // 全方块）。粗体视觉由字号/底纹弥补。

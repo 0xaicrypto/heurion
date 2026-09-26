@@ -240,4 +240,35 @@ describe('#679 模块分层规则', () => {
     )
     expect(offenders, `leaf 层依赖 modules/*(port 注入或下移,分层 #672):\n${offenders.join('\n')}`).toEqual([])
   })
+
+  /**
+   * P2 — lib/ 纳入分层规则（报告 🟡: lib 未在分层内,已出现 lib ↔ tools 循环）。
+   * 规则: lib 零 modules 依赖;lib→tools 依赖冻结在存量文件白名单(只减不增),
+   * tools→lib 是允许方向(21 处调用方不动)。清掉一个文件即从白名单移除。
+   */
+  test('#P2 lib 零 modules 依赖 + tools 依赖冻结白名单', () => {
+    const libDir = path.join(MODULES_DIR, '..', 'lib')
+    const LIB_TOOLS_FROZEN = new Set(['citation-migration.ts', 'deck-bytes.ts'])
+    const moduleOffenders = leafScan(libDir, new Set(['modules']))
+    expect(moduleOffenders, `lib 依赖 modules/*(下移或端口注入):\n${moduleOffenders.join('\n')}`).toEqual([])
+
+    const toolsOffenders: string[] = []
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name)
+        if (e.isDirectory()) { walk(p); continue }
+        if (!e.name.endsWith('.ts')) continue
+        const src = fs.readFileSync(p, 'utf-8')
+        const rel = path.relative(libDir, p)
+        for (const re of [STATIC_FROM_RE, DYNAMIC_IMPORT_RE]) {
+          for (const m of src.matchAll(re)) {
+            const seg = resolveImportedSegment(p, m, SRC_DIR)
+            if (seg === 'tools' && !LIB_TOOLS_FROZEN.has(rel)) toolsOffenders.push(`lib/${rel} -> ${m[2]}/`)
+          }
+        }
+      }
+    }
+    walk(libDir)
+    expect(toolsOffenders, `新增 lib→tools 依赖(白名单只减不增;新代码走 common/ 或端口注入):\n${toolsOffenders.join('\n')}`).toEqual([])
+  })
 })

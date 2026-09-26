@@ -166,7 +166,7 @@ export function stripDeckCitationMarkers(deckJson: string, citationId: string): 
       if (Array.isArray(slide?.content)) {
         for (const block of slide.content) {
           if (block && typeof block === 'object' && (block as { type?: string }).type === 'paragraph' && typeof (block as { text?: unknown }).text === 'string') {
-            ;(block as { text: string }).text = stripText((block as { text: string }).text)
+            (block as { text: string }).text = stripText((block as { text: string }).text)
           }
         }
       }

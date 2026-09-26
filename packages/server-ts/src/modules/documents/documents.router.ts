@@ -3,8 +3,8 @@ import { authGuard } from '../../common/auth.guard.js'
 import prisma from '../../common/prisma.js'
 import { findOwned } from '../../common/ownership.js'
 import crypto from 'crypto'
-import type { Doc, DocSnapshot, ResearchStudy } from '@prisma/client'
-import { SCHEMA_VERSION, findSectionAtOffset } from '@heurion/contracts'
+import type { DocSnapshot, ResearchStudy } from '@prisma/client'
+import { SCHEMA_VERSION, findSectionAtOffset, normalizeFileDownloadTokens } from '@heurion/contracts'
 import type { PolishStreamChunk } from '@heurion/contracts'
 import { renderDocxBuffer, renderPdfBuffer, isExportFormat } from './markdown-export.js'
 import { polishSelection, polishSelectionFallback, writeMethodsSection, writePaperBackground, MAX_POLISH_CHARS, resolvePolishModel, resolvePolishDeadlineMs } from './document-writing.service.js'
@@ -50,6 +50,7 @@ async function loadSectionMeta(docId: string): Promise<SectionMetaMap | undefine
 import { loadProjection } from '../../lib/block-projection.js'
 import { makeLogger } from '../../common/logger.js'
 import { refreshFileUrls } from '../../common/chart-token.js'
+import { buildConflictCurrent, parseBlockProjection, parseDeck, refreshDeckUrls } from './documents-response.js'
 import { lintDocument } from '../../common/doc-lint.js'
 // #790: polish 流复用共享 SSE 传输。
 import { createRawSseSender } from '../chat/chat-sse.js'
@@ -66,37 +67,8 @@ interface StudyParams { studyId: string }
 
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
-/** #773: Doc.deck 存 JSON 字符串 — 线上返回解析后的对象（损坏容错为 null）。 */
-function parseDeck(deck: unknown): unknown {
-  if (typeof deck !== 'string' || !deck) return null
-  try { return JSON.parse(deck) } catch { return null }
-}
-
-/** #fix: deck 内嵌图片 URL 自愈（refreshFileUrls 的 JSON 结构包装）。 */
-function refreshDeckUrls(deck: unknown, userId: string): unknown {
-  if (!deck) return deck
-  try { return JSON.parse(refreshFileUrls(JSON.stringify(deck), userId)) } catch { return deck }
-}
-
-/** #989 Phase 3: 投影 JSON 解析（损坏容错为 null，同 parseDeck 口径）。 */
-function parseBlockProjection(raw: unknown): unknown {
-  if (typeof raw !== 'string' || !raw) return null
-  try { return JSON.parse(raw) } catch { return null }
-}
-
-/** #996/#997: 409 冲突响应携带服务端当前完整态 — 旧契约只有
- *  current_updated_at，前端渲染「Yours / AI's」双栏对照需再发一次 GET 全文；
- *  现将当前 title/body/deck/投影一次性随 409 下发，双栏零额外请求。
- *  口径与 GET /docs/:docId 一致（refreshFileUrls/refreshDeckUrls 自愈文件 URL）。 */
-function buildConflictCurrent(doc: Doc, userId: string) {
-  return {
-    title: doc.title,
-    body: refreshFileUrls(String(doc.body ?? ''), userId),
-    deck: refreshDeckUrls(parseDeck(doc.deck), userId),
-    block_projection: parseBlockProjection(doc.blockProjection),
-    updated_at: doc.updatedAt,
-  }
-}
+// #P2: 响应形状辅助(parseDeck/refreshDeckUrls/parseBlockProjection/
+// buildConflictCurrent)拆到 documents-response.ts — 棘轮约束体积。
 
 export async function documentsRouter(app: FastifyInstance) {
   app.addHook('preHandler', authGuard)
@@ -182,14 +154,21 @@ export async function documentsRouter(app: FastifyInstance) {
 
     // 查重:body/deck 未变化时不产生快照、不刷新 updatedAt(避免重复保存
     // 产生空版本/列表跳动)。
-    const bodyChanged = body !== undefined && body !== existing.body
+    // #1128: 比对前先归一化下载 URL token — 读取期重签只改响应不落库,
+    // 客户端基线(含新 token)与库里旧 token 若直接字符串比对,每次保存都
+    // 被当成「有修改」;归一化后 token 差异不算内容变化。
+    const existingBodyNorm = normalizeFileDownloadTokens(String(existing.body))
+    const incomingBody = body !== undefined ? normalizeFileDownloadTokens(body) : undefined
+    const bodyChanged = incomingBody !== undefined && incomingBody !== existingBodyNorm
     if (bodyChanged) {
       // #882: 并发保护(僵尸 tab)— base_sha 是客户端最后同步的服务端正文
       // 指纹(sha1)。不匹配 = 客户端视图过期,整篇覆盖会静默丢失另一窗口的
       // 修改(AI 写回/新 tab 编辑)。显式 force: true 跳过(冲突横幅的
       // 「保留我的版本」)。不带 base_sha 的旧客户端不受影响(向后兼容)。
+      // #1128: 指纹同样按归一化正文计算 — 客户端(saveDoc)同口径,否则
+      // 重签 token 会让 base_sha 永远失配(409 死循环)。
       if (!force && typeof base_sha === 'string' && base_sha.length > 0 &&
-          crypto.createHash('sha1').update(String(existing.body)).digest('hex') !== base_sha) {
+          crypto.createHash('sha1').update(existingBodyNorm).digest('hex') !== base_sha) {
         // #996/#997: existing 即服务端当前态 — 直接随 409 下发完整 current,
         // 前端双栏对照(Yours=本地 dirty / AI's=已保存版)不再二次拉全文。
         return reply.status(409).send({
@@ -215,7 +194,7 @@ export async function documentsRouter(app: FastifyInstance) {
       const written = await writeDocVersion({
         userId: request.user!.userId,
         docId,
-        ...(bodyChanged ? { body } : {}),
+        ...(bodyChanged ? { body: incomingBody } : {}),
         ...(deckChanged ? { deck: deck as Record<string, unknown> | null } : {}),
         ...(titleChanged ? { title } : {}),
         baseBody: String(existing.body),
@@ -258,7 +237,9 @@ export async function documentsRouter(app: FastifyInstance) {
     }
 
     return {
-      id: doc!.id, title: doc!.title, body: doc!.body, deck: parseDeck(doc!.deck),
+      // #1128: 保存响应正文与 GET 同口径(重签 token)— 前端把它当新基线,
+      // 若返回库内旧 token,展示层与基线永久不一致(dirty 抖动)。
+      id: doc!.id, title: doc!.title, body: refreshFileUrls(doc!.body, request.user!.userId), deck: parseDeck(doc!.deck),
       // review 复核#8a: 保存响应携带块投影 — 前端据此同步本地投影,
       // 「AI 正在编辑哪个节」的批次基线在手动保存后不再过期。
       block_projection: parseBlockProjection(doc!.blockProjection),
@@ -341,11 +322,12 @@ export async function documentsRouter(app: FastifyInstance) {
     // apply 静默覆盖丢改动。未提供 base_sha 的旧客户端不受影响（向后兼容，
     // 前端接入由并行任务完成）。
     if (typeof base_sha === 'string' && base_sha.length > 0 &&
-        crypto.createHash('sha1').update(String(doc.body)).digest('hex') !== base_sha) {
+        crypto.createHash('sha1').update(normalizeFileDownloadTokens(String(doc.body))).digest('hex') !== base_sha) {
       return reply.status(409).send({ error: 'stale_base' })
     }
     // #999: AI 润色写回 — 变更节作者轴 ai(pending 交终态化器)。
-    const written = await writeDocVersion({ userId, docId, body, writeSource: 'ai', snapshotLabel: String(label || 'AI polish').slice(0, 40) })
+    // #1128: 落库前归一化下载 URL token — DB 永远存稳定形态,读取时再签发。
+    const written = await writeDocVersion({ userId, docId, body: normalizeFileDownloadTokens(body), writeSource: 'ai', snapshotLabel: String(label || 'AI polish').slice(0, 40) })
     // #904: writer 乐观锁冲突（服务端视角正文在读取后又变）→ 409 可重试。
     if (written.error) return reply.status(written.conflict ? 409 : 400).send({ error: written.error })
     return { ok: true }
@@ -701,7 +683,7 @@ export async function documentsRouter(app: FastifyInstance) {
     }
   })
 
-  app.get<{ Params: DocParams }>('/api/v1/docs/:docId/references', async (request, reply) => {
+  app.get<{ Params: DocParams }>('/api/v1/docs/:docId/references', async (request, _reply) => {
     const { docId } = request.params
     const userId = request.user!.userId
     const refs = await prisma.docReference.findMany({

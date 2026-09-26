@@ -1,9 +1,15 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { McpListToolsTool, McpCallToolTool } from '../../src/tools/mcp-tools.js'
 import { parseMcpServers } from '../../src/tools/mcp-client.js'
+import type { ToolContext } from '../../src/tools/tool-registry.js'
 
 function jsonRpcResponse(body: string): { ok: boolean; status: number; text: () => Promise<string> } {
   return { ok: true, status: 200, text: async () => body }
+}
+
+/** P0 Rule 4: MCP 工具按 ctx.userId 过滤数据库服务器 — 构造带身份的 ctx。 */
+function ctx(userId = 'u_test'): ToolContext {
+  return { userId, eventLog: { append: vi.fn() } } as unknown as ToolContext
 }
 
 /**
@@ -34,12 +40,12 @@ describe('MCP connector (#299)', () => {
       .mockResolvedValueOnce(jsonRpcResponse(JSON.stringify({
         jsonrpc: '2.0', id: 1,
         result: { tools: [
-          { name: 'get_lab_results', description: 'Fetch lab results', inputSchema: {} },
+          { name: 'get_lab_results', description: 'Fetch lab results', inputSchema: {}, annotations: { readOnlyHint: true } },
           { name: 'write_note', description: 'Write a note', inputSchema: {}, annotations: { readOnlyHint: false } },
         ] },
       })) as any)
 
-    const tool = new McpListToolsTool()
+    const tool = new McpListToolsTool(ctx())
     const res = await tool.execute({ server: 'ehr' })
     expect(res.success).toBe(true)
     expect(res.output).toContain('get_lab_results')
@@ -52,14 +58,14 @@ describe('MCP connector (#299)', () => {
       .mockResolvedValueOnce(jsonRpcResponse(JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} })) as any)
       .mockResolvedValueOnce(jsonRpcResponse(JSON.stringify({
         jsonrpc: '2.0', id: 1,
-        result: { tools: [{ name: 'get_lab_results', description: 'x' }] },
+        result: { tools: [{ name: 'get_lab_results', description: 'x', annotations: { readOnlyHint: true } }] },
       })) as any)
       .mockResolvedValueOnce(jsonRpcResponse(JSON.stringify({
         jsonrpc: '2.0', id: 1,
         result: { content: [{ type: 'text', text: '{"wbc": 8.1}' }] },
       })) as any)
 
-    const tool = new McpCallToolTool()
+    const tool = new McpCallToolTool(ctx())
     const res = await tool.execute({ server: 'ehr', tool: 'get_lab_results', arguments: { patient: 'p1' } })
     expect(res.success).toBe(true)
     expect(res.output).toContain('wbc')
@@ -78,7 +84,7 @@ describe('MCP connector (#299)', () => {
         result: { tools: [{ name: 'write_note', description: 'w', annotations: { readOnlyHint: false } }] },
       })) as any)
 
-    const tool = new McpCallToolTool()
+    const tool = new McpCallToolTool(ctx())
     const res = await tool.execute({ server: 'ehr', tool: 'write_note', arguments: { text: 'x' } })
     expect(res.success).toBe(true)
     expect(res.output).toContain('WRITE-GATED')
@@ -88,7 +94,7 @@ describe('MCP connector (#299)', () => {
   })
 
   test('unconfigured server degrades with a clear error', async () => {
-    const tool = new McpListToolsTool()
+    const tool = new McpListToolsTool(ctx())
     const res = await tool.execute({ server: 'missing' })
     expect(res.success).toBe(false)
     expect(res.error).toContain('not configured')

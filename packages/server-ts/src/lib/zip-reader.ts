@@ -27,6 +27,8 @@ export interface ZipReadOptions {
   maxTotalUncompressed?: number
   /** 只读取命中过滤器的条目（先查名再解压）。 */
   filter?: (name: string) => boolean
+  /** false → 逐条解压校验但丢弃数据（炸弹预扫，峰值内存 = 单条目）。 */
+  retainData?: boolean
 }
 
 export class ZipReadError extends Error {}
@@ -72,7 +74,7 @@ export function readZipEntries(buf: Buffer, options: ZipReadOptions = {}): ZipEn
 
     const wanted = options.filter ? options.filter(name) : true
     if (wanted) {
-      // eslint-disable-next-line no-bitwise
+       
       if (gpFlags & 0x1) throw new ZipReadError(`entry "${name}" is encrypted (加密压缩包不受支持 — 请解除密码后重新上传)`)
       if (method !== 0 && method !== 8) throw new ZipReadError(`entry "${name}" uses unsupported compression method ${method}`)
       // 本地头长度可能与中央目录不同 — 数据偏移必须用本地头自己的字段。
@@ -89,10 +91,43 @@ export function readZipEntries(buf: Buffer, options: ZipReadOptions = {}): ZipEn
         throw new ZipReadError(`zip expands beyond ${Math.round(maxTotal / 1024 / 1024)}MB (zip bomb protection)`)
       }
       const compressed = buf.slice(dataStart, dataEnd)
-      const data = method === 0 ? Buffer.from(compressed) : zlib.inflateRawSync(compressed)
-      out.push({ name, data })
+      // #1074-4 zip 炸弹：maxOutputLength = 中央目录声明的大小 — 声明造假的
+      // 条目（声称 10B 实际展开 1GB）在解压中途即被 zlib 中止，不会先物化
+      // 超大 Buffer；实际长度再与声明比对，伪造/损坏条目一律拒绝。
+      let data: Buffer
+      try {
+        data = method === 0
+          ? Buffer.from(compressed)
+          : zlib.inflateRawSync(compressed, { maxOutputLength: Math.max(1, uncompressedSize) })
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === 'ERR_BUFFER_TOO_LARGE') {
+          throw new ZipReadError(`entry "${name}" expands beyond its declared size ${uncompressedSize} bytes (zip bomb protection)`)
+        }
+        throw new ZipReadError(`entry "${name}" failed to decompress: ${(err as Error).message.slice(0, 120)}`)
+      }
+      if (data.length !== uncompressedSize) {
+        throw new ZipReadError(`entry "${name}" size mismatch (declared ${uncompressedSize}, actual ${data.length}) — corrupted or spoofed zip`)
+      }
+      if (options.retainData !== false) out.push({ name, data })
     }
     cdOffset = nextCd
   }
   return out
+}
+
+/**
+ * #1074-4: 解压炸弹预扫 — 不保留数据地逐条解压校验（声明总量上限 +
+ * 单条 maxOutputLength + 实际/声明尺寸比对）。mammoth 等第三方解压器
+ * 没有这些上限，处理不可信 docx 前先过一次本扫描（畸形/炸弹 → ZipReadError）。
+ */
+export function assertZipBombSafe(
+  buf: Buffer,
+  options: { maxEntries?: number; maxTotalUncompressed?: number } = {},
+): void {
+  readZipEntries(buf, {
+    maxEntries: options.maxEntries,
+    maxTotalUncompressed: options.maxTotalUncompressed,
+    filter: () => true,
+    retainData: false,
+  })
 }

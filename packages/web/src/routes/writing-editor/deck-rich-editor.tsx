@@ -447,11 +447,21 @@ export function DeckRichEditor(input: {
     try {
       while (queuedAiVersionRef.current && queuedAiVersionRef.current !== lastVersionRef.current) {
         const target = queuedAiVersionRef.current;
+        // P1 竞态: 拉取 AI 版本前记录本地编辑代数 — 拉取期间用户开始编辑
+        // 时不得把 AI 字节盖到画布上（用户手改优先）。
+        const generationAtFetch = generationRef.current;
         try {
           const artifact = await api.getDeckArtifact(docId);
           const r = await fetch(artifact.download_url);
           if (!r.ok) throw new ApiError(r.status, '', artifact.download_url);
           const bytes = new Uint8Array(await r.arrayBuffer());
+          if (generationRef.current !== generationAtFetch) {
+            // 用户在拉取期间编辑了 — 保留排队版本（本地保存落地后由下方
+            // dirty→false effect 自动冲刷），不做任何画布写入。
+            queuedAiVersionRef.current = target;
+            setAiQueued(true);
+            return;
+          }
           if (snapshotTurnRef.current !== turnBoundaryRef.current && bytesRef.current) {
             // 新一轮：捕获「AI 修改前」字节（本轮所有写回共用同一份快照）。
             turnUndoRef.current = {

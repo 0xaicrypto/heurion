@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -102,5 +102,31 @@ describe('worker job store persistence (#915)', () => {
     reloaded.indexFile({ fileId: 'f4', jobId: 'job', fileName: 'v1.bin', mimeType: 'application/octet-stream' })
     expect(readJsonl('files.jsonl').length).toBe(4)
     expect(reloaded.getFileEntry('f4')).not.toBeNull()
+  })
+
+  /**
+   * P1 — 压缩（整体重写）必须原子 + 不留临时文件。
+   * 修复前 writeFileSync 原地覆盖：写入中途崩溃会把 jobs.jsonl 截成半截，
+   * 压缩等于删记录。现在临时文件 + fsync + rename。
+   */
+  test('P1 atomicWriteFileSync 原语：覆盖写完整且无 .tmp 残留', async () => {
+    vi.resetModules()
+    const { atomicWriteFileSync } = await import('../src/data-dir.js')
+    const target = join(dir, 'x.jsonl')
+    atomicWriteFileSync(target, 'a\n')
+    atomicWriteFileSync(target, 'b\n')
+    expect(readFileSync(target, 'utf-8')).toBe('b\n')
+    expect(readdirSync(dir)).toEqual(['x.jsonl'])
+  })
+
+  test('P1 jobs.jsonl 压缩后：内容可完整解析、无 .tmp 残留', async () => {
+    vi.resetModules()
+    const { PersistentJobStore } = await import('../src/job-store.js')
+    const store = new PersistentJobStore()
+    for (let i = 0; i < 201; i++) store.create(`job_${i}`, 'sidecar.render_table')
+    expect(readdirSync(dir).filter((f) => f.includes('.tmp-'))).toEqual([])
+    const lines = readJsonl('jobs.jsonl')
+    expect(lines.length).toBe(201)
+    expect(lines.every((l) => typeof l.id === 'string')).toBe(true)
   })
 })

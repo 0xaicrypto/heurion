@@ -83,8 +83,7 @@ export async function* polishSelection(
   // 注意:空正文不再在此抛错 — 由 router 的 textChunks===0 fallback
   // (非流式 chatWithMeta,#548 双倍额度重试)接管,此前 throw 恰好绕过
   // 了该兜底,导致用户看到空结果错误。
-  let reasoningChars = 0
-  const trackReasoning = (t: string) => { reasoningChars += t.length; onReasoning?.(t) }
+  const trackReasoning = (t: string) => { onReasoning?.(t) }
   for await (const chunk of deepseekStream([{ role: 'user', content: prompt }], apiKey, {
     model,
     // #869: 随选区自适应(下限 4096,上限模型原生预算)。

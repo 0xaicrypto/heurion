@@ -8,6 +8,22 @@ import { loginSchema, registerSchema } from './auth.dto'
 import { evictUserContext } from '../shared/user-context.js'
 import { twinsBaseDir } from '../../lib/upload-path.js'
 
+/**
+ * P1: clear-test-data 的生产闸门此前只看请求 Host 头 — 任何客户端发
+ * `Host: localhost` 就能在生产绕过。现在以环境判定为准（#989：生产走
+ * 显式 APP_ENV/NODE_ENV=production），Host 白名单只作为非生产环境的
+ * 防御纵深保留。
+ */
+export function isClearTestDataAllowed(
+  hostHeader: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const isProd = env.NODE_ENV === 'production' || env.APP_ENV === 'production'
+  if (isProd) return false
+  const host = (hostHeader || '').split(':')[0]
+  return host === 'localhost' || host === '127.0.0.1' || host.startsWith('staging')
+}
+
 export async function authRouter(app: FastifyInstance) {
   app.post('/api/v1/auth/register', async (request, reply) => {
     const body = registerSchema.parse(request.body)
@@ -183,10 +199,10 @@ export async function authRouter(app: FastifyInstance) {
   })
 
   // CI/Staging: clear test data for the authenticated user only.
-  // Must NOT run on production — only localhost/staging hostnames accepted.
-  app.post('/api/v1/auth/clear-test-data', { preHandler: authGuard }, async (request, reply) => {
-    const host = (request.headers.host || '').split(':')[0]
-    if (host !== 'localhost' && host !== '127.0.0.1' && !host.startsWith('staging')) {
+  // Must NOT run on production — gated by environment (P1: Host header alone
+  // was spoofable with `Host: localhost`).
+  app.post('/api/v1/auth/clear-test-data', { preHandler: [authGuard] }, async (request, reply) => {
+    if (!isClearTestDataAllowed(request.headers.host)) {
       return reply.status(403).send({ error: 'clear-test-data is only available on staging' })
     }
     const userId = request.user!.userId

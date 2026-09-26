@@ -47,7 +47,7 @@ export class GapService extends MemoryNodeService {
     return gap
   }
 
-  answerGap(gapStableId: string, answerNode: MemoryNode, answeredBy: MemoryCreatedBy = 'user'): Result<GapNode> {
+  answerGap(gapStableId: string, answerNode: MemoryNode, _answeredBy: MemoryCreatedBy = 'user'): Result<GapNode> {
     const gap = this.c.graph.getLatestByStableId(gapStableId) as GapNode | undefined
     if (!gap || isNodeSuperseded(gap)) return err('gap not found or superseded')
 

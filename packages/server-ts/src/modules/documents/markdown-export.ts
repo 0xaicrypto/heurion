@@ -187,7 +187,7 @@ function parseTableBlock(lines: string[]): ExportBlock | null {
 
 export function parseInlineMarkdown(text: string): any[] {
   const runs: any[] = []
-  let remaining = text
+  const remaining = text
   // Bold **text** or __text__
   const boldRegex = /\*\*(.+?)\*\*|__(.+?)__/g
   // Italic *text* or _text_
@@ -619,7 +619,7 @@ function renderPdfTable(doc: PDFKit.PDFDocument, baseFont: string, headers: stri
 
   const drawRow = (cells: string[], isHeader: boolean) => {
     const pad = 4
-    const heights = cells.map((c, i) =>
+    const heights = cells.map((c) =>
       doc.font(baseFont).fontSize(isHeader ? 11 : 10)
         .heightOfString(c || '', { width: colW - pad * 2 }),
     )

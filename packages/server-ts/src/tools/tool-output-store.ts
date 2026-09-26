@@ -82,7 +82,7 @@ export function boundToolOutput(
     const halfBytes = Math.floor(maxBytes / 2)
     const byteLines = output.split('\n')
     let headSize = 0
-    let headLines: string[] = []
+    const headLines: string[] = []
     for (const l of byteLines) {
       const b = Buffer.byteLength(l, 'utf-8') + 1
       if (headSize + b > halfBytes) break
@@ -90,7 +90,7 @@ export function boundToolOutput(
       headSize += b
     }
     let tailSize = 0
-    let tailLines: string[] = []
+    const tailLines: string[] = []
     for (let i = byteLines.length - 1; i >= 0; i--) {
       const b = Buffer.byteLength(byteLines[i], 'utf-8') + 1
       if (tailSize + b > halfBytes) break
