@@ -4,97 +4,78 @@ import { Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
 
 export function SecurityPage() {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language.startsWith('zh');
+  const { t } = useTranslation();
 
   const T = {
-    title: isZh ? '安全与隔离架构' : 'Security & isolation architecture',
-    subtitle: isZh
-      ? 'Heurion 从设计之初就把临床数据的隐私、可审计与最小权限放在第一位。'
-      : 'Heurion was designed from the ground up with clinical data privacy, auditability, and least privilege in mind.',
+    title: t('security.title', '安全与隔离架构'),
+    subtitle: t('security.subtitle', 'Heurion 从设计之初就把临床数据的隐私、可审计与最小权限放在第一位。'),
 
-    planesTitle: isZh ? '双平面隔离' : 'Two-plane isolation',
+    planesTitle: t('security.planesTitle', '双平面隔离'),
     planes: [
       {
         icon: <Server size={24} />,
-        title: isZh ? '控制面 Control Plane' : 'Control Plane',
-        desc: isZh
-          ? '承载认证、授权、患者、研究、知识库与插件管理；插件无法直接访问核心数据。'
-          : 'Hosts authentication, patients, research, the knowledge base, and plugin management; plugins cannot reach core data directly.',
+        title: t('security.planeControl', '控制面 Control Plane'),
+        desc: t('security.planeControlDesc', '承载认证、授权、患者、研究、知识库与插件管理；插件无法直接访问核心数据。'),
       },
       {
         icon: <Cpu size={24} />,
-        title: isZh ? '执行面 Execution Plane' : 'Execution Plane',
-        desc: isZh
-          ? '承载报告渲染、插件沙箱与文件交付；与核心数据隔离。'
-          : 'Hosts report rendering, the plugin sandbox, and file delivery; isolated from core data.',
+        title: t('security.planeExecution', '执行面 Execution Plane'),
+        desc: t('security.planeExecutionDesc', '承载报告渲染、插件沙箱与文件交付；与核心数据隔离。'),
       },
     ],
 
-    principlesTitle: isZh ? '核心安全原则' : 'Core security principles',
+    principlesTitle: t('security.principlesTitle', '核心安全原则'),
     principles: [
       {
         icon: <Lock size={22} />,
-        title: isZh ? '租户隔离' : 'Tenant isolation',
-        desc: isZh ? '每个用户的事件日志、事实、知识与文件都按 workspace 隔离存储。' : 'Each user\'s event log, facts, knowledge, and files are stored in an isolated workspace.',
+        title: t('security.principalTenant', '租户隔离'),
+        desc: t('security.principalTenantDesc', '每个用户的事件日志、事实、知识与文件都按 workspace 隔离存储。'),
       },
       {
         icon: <Users size={22} />,
-        title: isZh ? '角色访问控制' : 'Role-based access',
-        desc: isZh ? '普通用户与管理员拥有不同侧边栏入口与 API 权限。' : 'Regular users and admins see different sidebar entries and API permissions.',
+        title: t('security.principalRbac', '角色访问控制'),
+        desc: t('security.principalRbacDesc', '普通用户与管理员拥有不同侧边栏入口与 API 权限。'),
       },
       {
         icon: <Eye size={22} />,
-        title: isZh ? '可审计' : 'Auditable',
-        desc: isZh ? '不可变 EventLog 记录每次聊天、文件生成与事实变更，支持导出。' : 'An immutable EventLog records every chat, file generation, and fact change, and supports export.',
+        title: t('security.principalAudit', '可审计'),
+        desc: t('security.principalAuditDesc', '不可变 EventLog 记录每次聊天、文件生成与事实变更，支持导出。'),
       },
       {
         icon: <FileKey size={22} />,
-        title: isZh ? '最小权限' : 'Least privilege',
-        desc: isZh ? '插件与自动化任务只拥有完成任务所需的最小访问范围。' : 'Plugins and automated tasks have only the minimum access needed to complete their work.',
+        title: t('security.principalLeastPrivilege', '最小权限'),
+        desc: t('security.principalLeastPrivilegeDesc', '插件与自动化任务只拥有完成任务所需的最小访问范围。'),
       },
     ],
 
-    contextTitle: isZh ? '患者上下文强制注入' : 'Mandatory patient context injection',
-    contextBody: isZh
-      ? '当对话关联到具体患者时，系统会把年龄、性别、主诉、最近文件等上下文强制拼接到 Prompt 中。这降低了模型“遗忘”患者信息而给出通用建议的风险。'
-      : 'When a conversation is linked to a specific patient, the system forcibly appends age, sex, chief complaint, recent files, and other context to the prompt. This reduces the risk of the model "forgetting" the patient and giving generic advice.',
+    contextTitle: t('security.contextTitle', '患者上下文强制注入'),
+    contextBody: t('security.contextBody', '当对话关联到具体患者时，系统会把年龄、性别、主诉、最近文件等上下文强制拼接到 Prompt 中。这降低了模型“遗忘”患者信息而给出通用建议的风险。'),
 
     // #514: 法规映射 — 面向医院信息科/合规角色的具体承诺。
-    regulationsTitle: isZh ? '法规与合规映射' : 'Regulatory & compliance mapping',
+    regulationsTitle: t('security.regulationsTitle', '法规与合规映射'),
     regulations: [
       {
-        framework: isZh ? '个人信息保护法（PIPL）' : 'PIPL (China)',
-        mechanisms: isZh
-          ? '最小必要收集（仅存储任务所需字段）；数据本地化部署；用户数据导出与删除能力'
-          : 'Minimal-collection (only task-required fields); on-premise data residency; user export & deletion',
+        framework: t('security.regPiplFramework', '个人信息保护法（PIPL）'),
+        mechanisms: t('security.regPiplMechanisms', '最小必要收集（仅存储任务所需字段）；数据本地化部署；用户数据导出与删除能力'),
       },
       {
-        framework: 'HIPAA（美国）',
-        mechanisms: isZh
-          ? '租户级数据隔离；不可变审计日志（EventLog）记录访问与生成；角色访问控制；传输加密（TLS）'
-          : 'Tenant-level data isolation; immutable audit log (EventLog) of access & generation; RBAC; TLS in transit',
+        framework: t('security.regHipaaFramework', 'HIPAA（美国）'),
+        mechanisms: t('security.regHipaaMechanisms', '租户级数据隔离；不可变审计日志（EventLog）记录访问与生成；角色访问控制；传输加密（TLS）'),
       },
       {
-        framework: 'GDPR（欧盟）',
-        mechanisms: isZh
-          ? '数据主体导出/删除（隐私权）；事件日志保留策略可配置；最小化处理原则'
-          : 'Data-subject export/erasure; configurable log retention; minimization principle',
+        framework: t('security.regGdprFramework', 'GDPR（欧盟）'),
+        mechanisms: t('security.regGdprMechanisms', '数据主体导出/删除（隐私权）；事件日志保留策略可配置；最小化处理原则'),
       },
       {
-        framework: isZh ? '医疗数据分级分类' : 'Medical data classification',
-        mechanisms: isZh
-          ? '敏感字段（诊断、基因、影像）按用途分级；科研计算沙箱与核心病历库物理隔离'
-          : 'Sensitive fields (diagnosis, genetics, imaging) classified by use; research sandbox physically isolated from core records',
+        framework: t('security.regClassificationFramework', '医疗数据分级分类'),
+        mechanisms: t('security.regClassificationMechanisms', '敏感字段（诊断、基因、影像）按用途分级；科研计算沙箱与核心病历库物理隔离'),
       },
     ],
 
-    selfHostTitle: isZh ? '自托管友好' : 'Self-host friendly',
-    selfHostBody: isZh
-      ? '支持在本地或私有云中完整部署，敏感数据不出境；无需依赖外部服务即可运行全部功能。'
-      : 'Deploy fully in a private cloud or on-premises so sensitive data never leaves your environment; all features run without external dependencies.',
+    selfHostTitle: t('security.selfHostTitle', '自托管友好'),
+    selfHostBody: t('security.selfHostBody', '支持在本地或私有云中完整部署，敏感数据不出境；无需依赖外部服务即可运行全部功能。'),
 
-    ctaTitle: isZh ? '查看开源代码与安全说明' : 'Review the open-source code and security notes',
+    ctaTitle: t('security.ctaTitle', '查看开源代码与安全说明'),
   };
 
   return (
@@ -151,19 +132,19 @@ export function SecurityPage() {
             <div className="space-y-3 text-sm text-text-secondary">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-success" />
-                {isZh ? '当前患者 demographics 注入' : 'Current patient demographics injected'}
+                {t('security.contextItemDemographics', '当前患者 demographics 注入')}
               </div>
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-success" />
-                {isZh ? '最近 5 份文件上下文' : 'Last 5 file contexts'}
+                {t('security.contextItemFiles', '最近 5 份文件上下文')}
               </div>
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-success" />
-                {isZh ? '患者列表（Roster）始终可见' : 'Patient roster always visible'}
+                {t('security.contextItemRoster', '患者列表（Roster）始终可见')}
               </div>
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-success" />
-                {isZh ? '相关 Facts / Knowledge 加权投影' : 'Weighted projection of relevant facts/knowledge'}
+                {t('security.contextItemFacts', '相关 Facts / Knowledge 加权投影')}
               </div>
             </div>
           </Card>
@@ -178,8 +159,8 @@ export function SecurityPage() {
             <table className="w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface-elevated">
-                  <th className="px-4 py-3 font-semibold text-text-primary">{isZh ? '法规 / 框架' : 'Framework'}</th>
-                  <th className="px-4 py-3 font-semibold text-text-primary">{isZh ? 'Heurion 对应机制' : 'Heurion mechanisms'}</th>
+                  <th className="px-4 py-3 font-semibold text-text-primary">{t('security.regulationsFrameworkCol', '法规 / 框架')}</th>
+                  <th className="px-4 py-3 font-semibold text-text-primary">{t('security.regulationsMechanismsCol', 'Heurion 对应机制')}</th>
                 </tr>
               </thead>
               <tbody>

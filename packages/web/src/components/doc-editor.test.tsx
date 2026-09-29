@@ -334,3 +334,43 @@ describe('P1 编辑回流不重建文档', () => {
     expect(container.querySelector('.ProseMirror')?.textContent ?? '').toContain('新标题');
   });
 });
+
+/**
+ * #1150-followup — 外部写入后必须清空 lastEmitted 短路标记:
+ * 用户输入得到 A → AI 写回 B → 恢复回 A 时,旧实现因 value===lastEmitted
+ * 直接跳过,编辑器停留在 B,下一次按键又把 B 写回。
+ */
+describe('#1150-followup DocEditor 外部写入后的短路标记', () => {
+  test('emit A → 外部 B → 外部回 A:恢复必须生效', async () => {
+    vi.spyOn(document, 'createRange' as any).mockImplementation(() => new FakeRange() as any);
+    const onChange = vi.fn();
+    const editorRef = { current: null as Editor | null };
+    const { rerender, container } = render(<DocEditor value="# A" onChange={onChange} editorRef={editorRef} />);
+    await new Promise((r) => setTimeout(r, 120));
+
+    const prose = () => container.querySelector('.ProseMirror')?.textContent ?? '';
+
+    // 1) 用户输入 → onUpdate 发出内容(记录 lastEmitted)
+    editorRef.current!.commands.insertContent('X');
+    await new Promise((r) => setTimeout(r, 80));
+    expect(onChange.mock.calls.length).toBeGreaterThan(0);
+    const emitted = String(onChange.mock.calls[onChange.mock.calls.length - 1][0]);
+    expect(emitted).toContain('X');
+
+    // 2) 外部写回 B — 外部写入不得再泄漏 onChange(B)(否则父级 body 被回写成
+    //    外部值,lastEmitted 也被刷掉,后续恢复判断失真)。
+    const callsBefore = onChange.mock.calls.length;
+    rerender(<DocEditor value="# B" onChange={onChange} editorRef={editorRef} />);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(prose()).toContain('B');
+    const leaked = onChange.mock.calls.slice(callsBefore).map((c) => String(c[0]));
+    expect(leaked).toEqual([]);
+
+    // 3) 外部恢复到曾发出过的内容 → 必须应用(修复前 lastEmitted 仍是该值
+    //    或已被泄漏刷成 B 后再被短路,两种旧路径都会失败)。
+    rerender(<DocEditor value={emitted} onChange={onChange} editorRef={editorRef} />);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(prose()).toContain('X');
+    expect(prose()).not.toContain('B');
+  });
+});

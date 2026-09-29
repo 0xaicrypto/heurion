@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
@@ -43,6 +44,7 @@ export function useSpotHint(id: string): [boolean, () => void] {
 }
 
 export function SpotHint({ id, icon = '✨', children }: SpotHintProps) {
+  const { t } = useTranslation();
   const [visible, dismiss] = useSpotHintInternal(id);
   if (!visible) return null;
   return (
@@ -51,7 +53,7 @@ export function SpotHint({ id, icon = '✨', children }: SpotHintProps) {
         <span aria-hidden className="shrink-0">{icon}</span>
         <span>{children}</span>
       </span>
-      <button onClick={dismiss} aria-label="知道了不再显示" className="shrink-0 text-text-tertiary hover:text-text-primary">
+      <button onClick={dismiss} aria-label={t('writing.spotHintDismiss', '知道了不再显示')} className="shrink-0 text-text-tertiary hover:text-text-primary">
         <X size={14} />
       </button>
     </div>

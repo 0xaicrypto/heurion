@@ -17,6 +17,8 @@ export interface Provenance {
   extractionModel?: string
   extractionPromptId?: string
   confidence?: number
+  /** #1146: 审批提案 id — 幂等落图(重试检测已落节点),非展示字段。 */
+  proposalId?: string
 }
 
 export interface MemoryNodeBase {

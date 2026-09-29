@@ -17,10 +17,12 @@ describe('worker job store persistence (#915)', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'heurion-jobstore-test-'))
     process.env.WORKER_DATA_DIR = dir
+    process.env.WORKER_JOB_TTL_DAYS = '0' // #1148: 本组用例面向加载/压缩语义，关闭 TTL 淘汰
   })
 
   afterEach(() => {
     delete process.env.WORKER_DATA_DIR
+    delete process.env.WORKER_JOB_TTL_DAYS
     rmSync(dir, { recursive: true, force: true })
     vi.resetModules()
   })
@@ -128,5 +130,62 @@ describe('worker job store persistence (#915)', () => {
     const lines = readJsonl('jobs.jsonl')
     expect(lines.length).toBe(201)
     expect(lines.every((l) => typeof l.id === 'string')).toBe(true)
+  })
+})
+
+/**
+ * #1148 — 作业记录 TTL:终态作业(completed/failed)超 TTL 在启动加载后淘汰,
+ * running/pending 永不淘汰;无主 files 索引条目随之剪除;显式 0 关闭。
+ */
+describe('worker job store TTL (#1148)', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'heurion-jobstore-ttl-'))
+    process.env.WORKER_DATA_DIR = dir
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.WORKER_DATA_DIR
+    delete process.env.WORKER_JOB_TTL_DAYS
+    rmSync(dir, { recursive: true, force: true })
+    vi.resetModules()
+  })
+
+  test('过期终态淘汰;running/pending/近期 completed 保留;files 索引随剪', async () => {
+    const { appendJsonl } = await import('../src/data-dir.js')
+    const nowSec = Date.now() / 1000
+    const old = nowSec - 8 * 86_400
+    const recent = nowSec - 3600
+    appendJsonl(join(dir, 'jobs.jsonl'), { id: 'old-done', type: 'x', status: 'completed', created_at: old, completed_at: old })
+    appendJsonl(join(dir, 'jobs.jsonl'), { id: 'old-run', type: 'x', status: 'running', created_at: old })
+    appendJsonl(join(dir, 'jobs.jsonl'), { id: 'recent', type: 'x', status: 'completed', created_at: recent, completed_at: recent })
+    appendJsonl(join(dir, 'files.jsonl'), { fileId: 'f-old', jobId: 'old-done', fileName: 'a.pptx', mimeType: 'application/vnd.ms-powerpoint' })
+    appendJsonl(join(dir, 'files.jsonl'), { fileId: 'f-new', jobId: 'recent', fileName: 'b.pptx', mimeType: 'application/vnd.ms-powerpoint' })
+
+    const { PersistentJobStore } = await import('../src/job-store.js')
+    const store = new PersistentJobStore()
+    expect(store.get('old-done')).toBeNull()
+    expect(store.get('recent')?.status).toBe('completed')
+    expect(store.get('old-run')?.status).toBe('running')
+    // #1150-followup: job 过期不再级联删文件索引 — 产物保留 30 天,第 7~30
+    // 天的 fileId 下载必须仍可查(此前级联删除导致 404)。
+    expect(store.getFileEntry('f-old')).not.toBeNull()
+    expect(store.getFileEntry('f-new')).not.toBeNull()
+    // 磁盘已重写(不复活)
+    const lines = readFileSync(join(dir, 'jobs.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines.some((j) => j.id === 'old-done')).toBe(false)
+  })
+
+  test('WORKER_JOB_TTL_DAYS=0 → 关闭淘汰(全量保留)', async () => {
+    process.env.WORKER_JOB_TTL_DAYS = '0'
+    const { appendJsonl } = await import('../src/data-dir.js')
+    const old = Date.now() / 1000 - 90 * 86_400
+    appendJsonl(join(dir, 'jobs.jsonl'), { id: 'ancient', type: 'x', status: 'completed', created_at: old, completed_at: old })
+    const { PersistentJobStore, resolveJobTtlSeconds } = await import('../src/job-store.js')
+    expect(resolveJobTtlSeconds()).toBe(0)
+    const store = new PersistentJobStore()
+    expect(store.get('ancient')).not.toBeNull()
   })
 })

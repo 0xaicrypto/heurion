@@ -14,7 +14,9 @@ services:
         max-file: "5"
         compress: "true"
         tag: "{{.Name}}"
-    image: ghcr.io/0xaicrypto/heurion-worker:${WORKER_IMAGE_TAG:-latest}
+    # #1150: 禁止浮动 :latest 默认 — 未显式给 tag 时 compose 解析即失败，
+    # 部署脚本（deploy-worker.yml）始终传 sha。
+    image: ghcr.io/0xaicrypto/heurion-worker:${WORKER_IMAGE_TAG:?WORKER_IMAGE_TAG required}
     build:
       # Dockerfile 以 repo 根为 context（contracts file: 依赖需要整仓可见），
       # 见 packages/worker/Dockerfile 头注释。worker VPS 走 image pull，
@@ -22,6 +24,8 @@ services:
       context: .
       dockerfile: packages/worker/Dockerfile
     container_name: heurion-worker
+    # #1150: 内存上限（puppeteer/soffice 峰值高，但失控时封顶）。
+    mem_limit: 6g
     restart: unless-stopped
     ports:
       - "8001:8001"

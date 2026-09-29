@@ -304,3 +304,36 @@ export const SectionCardsExtension = Extension.create({
     ];
   },
 });
+
+/**
+ * #996/#1001/#1144: 移动端默认折叠计算（自 DocEditor 拆出 — P2 大文件棘轮）。
+ * 桌面返回空数组（不自动折叠）；无节返回 null（调用方保持一次性初始化标志）。
+ * 收起全部节，保留正在编辑节（AI 编辑中）或最近改动节（section_meta.updatedAt）
+ * 或第一节，并按大纲语义级联保留祖先节。
+ */
+export function computeMobileDefaultCollapsedKeys(data: SectionCardsData): string[] | null {
+  const sections = (data.projection?.nodes ?? []).filter((n) => n.kind === 'section');
+  if (sections.length === 0) return null;
+  if (!window.matchMedia('(max-width: 767px)').matches) return [];
+  const editingFirst = data.editingIds?.[0];
+  let keepId = editingFirst;
+  if (!keepId) {
+    const latest = Object.entries(data.meta ?? {})
+      .sort((a, b) => (b[1].updated_at || '').localeCompare(a[1].updated_at || ''));
+    keepId = latest[0]?.[0] ?? sections[0]?.id;
+  }
+  const keepIds = new Set<string>();
+  const keep = sections.find((s) => s.id === keepId);
+  if (keep) {
+    keepIds.add(keep.id);
+    for (const s of sections) {
+      if (s.id !== keep.id && (s.level ?? 0) < (keep.level ?? 0) &&
+          s.start <= keep.start && s.end >= keep.end) {
+        keepIds.add(s.id);
+      }
+    }
+  } else if (keepId) {
+    keepIds.add(keepId);
+  }
+  return sections.map((s) => s.id).filter((id) => !keepIds.has(id));
+}

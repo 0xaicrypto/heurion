@@ -9,6 +9,7 @@ import { createApprovalRequest } from '../approvals/approval.service.js'
 import { twinsBaseDir } from '../../lib/upload-path.js'
 // §5.4 (#197): persona lives in common/persona.ts (shared with memory gateway).
 import { buildScenePersona, type ChatScene } from '../../common/persona.js'
+import { getRequestScope } from '../../common/request-context.js'
 // #939: graph → PersonaSource 投影在 memory 层(modules 可依赖 memory)。
 import { graphPersonaSource } from '../../memory/persona-source.js'
 export { buildPersona } from '../../common/persona.js'
@@ -22,6 +23,8 @@ interface UserContext {
   memory: MemoryService
   orchestrator: ChatOrchestrator
   lastAccess: number
+  /** #1146: 请求内引用计数 — 引用中不驱逐(长回合跨 TTL 写同一 JSONL)。 */
+  refCount: number
 }
 
 const contexts = new Map<string, UserContext>()
@@ -103,23 +106,52 @@ export async function flushAllUserContexts(): Promise<void> {
   await Promise.all([...contexts.values()].map((ctx) => ctx.eventLog.flush().catch(() => { /* best-effort */ })))
 }
 
+/** #1146: 请求内取用的 ctx 记引用（同一请求重复取用只记一次）。 */
+function acquireContextRef(userId: string, ctx: UserContext): void {
+  const scope = getRequestScope()
+  if (!scope || scope.contextRefs.has(userId)) return
+  scope.contextRefs.add(userId)
+  ctx.refCount++
+}
+
+/** 请求结束(onResponse)释放引用。引用计数只影响驱逐时机，不影响读写。 */
+export function releaseUserContext(userId: string): void {
+  const ctx = contexts.get(userId)
+  if (ctx && ctx.refCount > 0) ctx.refCount--
+}
+
+/** #1146: TTL 清扫（导出供测试注入时钟）。引用中的 ctx 不驱逐。 */
+export function sweepUserContexts(now: number = Date.now()): number {
+  let evicted = 0
+  for (const [id, ctx] of contexts) {
+    if (ctx.refCount > 0) continue
+    if (now - ctx.lastAccess > TTL_MS) {
+      ctx.eventLog.close()
+      contexts.delete(id)
+      evicted++
+    }
+  }
+  return evicted
+}
+
+/** 测试钩子:注入 lastAccess / 读取引用数。 */
+export function __setUserContextLastAccess(userId: string, ts: number): void {
+  const ctx = contexts.get(userId)
+  if (ctx) ctx.lastAccess = ts
+}
+export function __userContextRefCount(userId: string): number | undefined {
+  return contexts.get(userId)?.refCount
+}
+
 function ensureGC() {
   if (gcTimer) return
-  gcTimer = setInterval(() => {
-    const now = Date.now()
-    for (const [id, ctx] of contexts) {
-      if (now - ctx.lastAccess > TTL_MS) {
-        ctx.eventLog.close()
-        contexts.delete(id)
-      }
-    }
-  }, GC_INTERVAL_MS).unref()
+  gcTimer = setInterval(() => { sweepUserContexts() }, GC_INTERVAL_MS).unref()
 }
 
 export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> {
   ensureGC()
   const existing = contexts.get(userId)
-  if (existing) { existing.lastAccess = Date.now(); return existing }
+  if (existing) { existing.lastAccess = Date.now(); acquireContextRef(userId, existing); return existing }
   const baseDir = twinsBaseDir(userId)
   fs.mkdirSync(baseDir, { recursive: true })
   const eventLog = new EventLog(baseDir, userId)
@@ -148,8 +180,9 @@ export function getUserContext(userId: string): Omit<UserContext, 'lastAccess'> 
     },
   })
   const orchestrator = new ChatOrchestrator(eventLog, facts, episodes, skills, knowledge, telemetry, memory)
-  const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now() }
+  const ctx = { eventLog, facts, episodes, skills, knowledge, memory, orchestrator, lastAccess: Date.now(), refCount: 0 }
   contexts.set(userId, ctx)
+  acquireContextRef(userId, ctx)
 
   return ctx
 }

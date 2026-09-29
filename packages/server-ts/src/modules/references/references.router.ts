@@ -20,7 +20,7 @@ import {
 } from '../../lib/reference-store.js'
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
 // #1009: 语义索引 + 对话中建议（pending 列表 / 接受或忽略）。
-import { indexReferenceItem } from '../../memory/reference-embedding.js'
+import { indexReferenceItem, removeReferenceIndex } from '../../memory/reference-embedding.js'
 import { detectOpeningSuggestions, listPendingSuggestions, resolveSuggestedReference } from '../shared/suggested-reference.service.js'
 // #1014: 摘要登记为引用材料 → 使用反馈（referenced）。
 import { recordMemoryUsage } from '../../memory/memory-usage-bus.js'
@@ -323,6 +323,16 @@ export async function referencesRouter(app: FastifyInstance): Promise<void> {
       if (!mounted) return reply.status(404).send({ error: 'Reference not mounted in this session' })
       // 只删会话挂载 — item 本体保留（设计红线：取消引用 ≠ 删除内容）。
       await removeSessionReference(userId, sessionId, referenceId)
+      // #1146: 该 item 已不被任何会话（含 doc- 会话的 legacy 回退表）引用
+      // 时,清理语义索引 — 旧实现 removeReferenceIndex 从未被调用,取消引用
+      // 后检索/建议仍会命中幽灵条目。本体保留,重新挂载时 add 路径会重建索引。
+      const stillMounted = await prisma.sessionReference.count({ where: { userId, referenceId } })
+      const legacyRows = sessionId.startsWith('doc-')
+        ? await prisma.docReference.count({ where: { userId, docId: sessionId.slice(4) } })
+        : 0
+      if (stillMounted === 0 && legacyRows === 0) {
+        removeReferenceIndex(userId, referenceId)
+      }
       // #1017: 取消引用的层级留痕（reference 层 demote）。
       await new ReferenceTierStore(userId)
         .demote(referenceId, 'reference', 'reference', `unmounted from session ${sessionId}`)

@@ -14,12 +14,16 @@ on:
     paths:
       - 'packages/worker/**'
       - 'packages/contracts/**'
+      - 'packages/ssrf-guard/**'
+      - 'packages/llm-markdown-fix/**'
       - '.github/workflows/worker-ci.yml'
   push:
     branches: [main]
     paths:
       - 'packages/worker/**'
       - 'packages/contracts/**'
+      - 'packages/ssrf-guard/**'
+      - 'packages/llm-markdown-fix/**'
       - '.github/workflows/worker-ci.yml'
   workflow_dispatch:
 

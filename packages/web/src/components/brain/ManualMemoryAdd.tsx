@@ -5,17 +5,17 @@ import { api } from '@/lib/api';
 import { Button, Input } from '@/components/ui';
 
 const CATEGORIES = [
-  { value: 'fact', label: '一般事实' },
-  { value: 'preference', label: '偏好' },
-  { value: 'constraint', label: '约束' },
-  { value: 'goal', label: '目标' },
-  { value: 'context', label: '背景' },
-  { value: 'diagnosis', label: '诊断' },
-  { value: 'symptom', label: '症状' },
-  { value: 'exam', label: '检查' },
-  { value: 'medication', label: '用药' },
-  { value: 'allergy', label: '过敏' },
-  { value: 'plan', label: '计划' },
+  { value: 'fact', key: 'brain.catFact', def: '一般事实' },
+  { value: 'preference', key: 'brain.catPreference', def: '偏好' },
+  { value: 'constraint', key: 'brain.catConstraint', def: '约束' },
+  { value: 'goal', key: 'brain.catGoal', def: '目标' },
+  { value: 'context', key: 'brain.catContext', def: '背景' },
+  { value: 'diagnosis', key: 'brain.catDiagnosis', def: '诊断' },
+  { value: 'symptom', key: 'brain.catSymptom', def: '症状' },
+  { value: 'exam', key: 'brain.catExam', def: '检查' },
+  { value: 'medication', key: 'brain.catMedication', def: '用药' },
+  { value: 'allergy', key: 'brain.catAllergy', def: '过敏' },
+  { value: 'plan', key: 'brain.catPlan', def: '计划' },
 ];
 
 /**
@@ -77,7 +77,7 @@ export function ManualMemoryAdd({ onAdded }: { onAdded?: () => void }) {
           className="h-9 w-32 rounded-lg border border-border bg-surface-elevated px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="category"
         >
-          {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{t(c.key, c.def)}</option>)}
         </select>
         <select
           value={importance}

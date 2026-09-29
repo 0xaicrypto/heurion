@@ -6,6 +6,9 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+// #1145: katex 样式表随 MarkdownRenderer 的 chunk 按需加载（此前仅在
+// DocEditor 路由引入 — 聊天里渲染的公式没有样式，且入口包不必要地背 katex）。
+import 'katex/dist/katex.min.css';
 import { Check, Copy } from 'lucide-react';
 import { SmartImg } from './SmartImg';
 import { MermaidBlock } from './MermaidBlock';

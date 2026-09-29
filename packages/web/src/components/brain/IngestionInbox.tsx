@@ -66,7 +66,7 @@ function localizeReason(reason: string, t: TFunction): string {
   if (synth) return t('brain.reasonSynthesized', '基于 {{n}} 条已确认事实合成', { n: synth[1] })
   const comp = reason.match(/^Compaction extraction \((.+?), source: (.+?)\)$/)
   if (comp) {
-    const roleMap: Record<string, string> = { doctor: '医生', patient: '患者', research: '研究', user: '用户' }
+    const roleMap: Record<string, string> = { doctor: t('brain.roleDoctor', '医生'), patient: t('brain.rolePatient', '患者'), research: t('brain.roleResearch', '研究'), user: t('brain.roleUser', '用户') }
     return t('brain.reasonCompaction', '会话压缩提取（{{cat}}，来源：{{role}}）', {
       cat: comp[1],
       role: roleMap[comp[2]] || comp[2],
@@ -83,7 +83,7 @@ function localizeReason(reason: string, t: TFunction): string {
  * 文件名取自提案 reason(pipeline 固定写 "extracted from file <name>"),
  * 会话名取自服务端 enrichment 的 sourceSession;解析失败回退裸 ID。
  */
-function partitionFactGroups(rows: InboxRow[]): { groups: FactFileGroup[]; rest: InboxRow[] } {
+function partitionFactGroups(rows: InboxRow[], t: TFunction): { groups: FactFileGroup[]; rest: InboxRow[] } {
   const groups = new Map<string, FactFileGroup>()
   const rest: InboxRow[] = []
   for (const r of rows) {
@@ -104,7 +104,7 @@ function partitionFactGroups(rows: InboxRow[]): { groups: FactFileGroup[]; rest:
       // #836-followup: session:<id>#<quote> — 引号证据在 '#' 后,分组与回退
       // 标签只取 id 部分,否则每个事实各成一组。
       key = sr.split('#')[0]
-      label = r.proposal.sourceSession || `会话 ${key.slice(SESSION_SOURCE_PREFIX.length).slice(-8)}`
+      label = r.proposal.sourceSession || t('brain.sessionSourceLabel', '会话 {{id}}', { id: key.slice(SESSION_SOURCE_PREFIX.length).slice(-8) })
       icon = 'session'
     }
     if (!key || !label) {
@@ -400,9 +400,8 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
                         </ol>
                       )}
                       <p className="mt-1 text-text-tertiary">
-                        证据:{skillCard.evidence?.observationCount ?? 0} 次观察 ·
-                        修正率 {Math.round((skillCard.evidence?.correctionRate ?? 0) * 100)}% ·
-                        {skillCard.evidence?.trajectoryCount ?? 0} 条轨迹 · 遵循率 {skillCard.followRate}
+                        {/* prettier-ignore */}
+                        {t('brain.skillEvidence', '证据:{{obs}} 次观察 · 修正率 {{rate}}% · {{traj}} 条轨迹 · 遵循率 {{follow}}', { obs: skillCard.evidence?.observationCount ?? 0, rate: Math.round((skillCard.evidence?.correctionRate ?? 0) * 100), traj: skillCard.evidence?.trajectoryCount ?? 0, follow: skillCard.followRate })}
                       </p>
                     </div>
                   );
@@ -579,7 +578,7 @@ export function IngestionInbox({ onChanged }: IngestionInboxProps) {
       ) : (
         <div className="space-y-5">
           {groupedRows.map((group) => {
-            const { groups: factGroups, rest } = partitionFactGroups(group.rows);
+            const { groups: factGroups, rest } = partitionFactGroups(group.rows, t);
             return (
               <div key={group.key}>
                 <div className="mb-2 flex items-center gap-2">

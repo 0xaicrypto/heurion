@@ -948,3 +948,42 @@ describe('#171 edit_document tool', () => {
     expect(doc.body).not.toContain('原始摘要内容。')
   }, 30000)
 })
+
+/**
+ * #1134 — 库内正文无 token(#1128 落库剥离),doc_updated SSE 推送前端前必须
+ * 重签,否则 AI 写回后图片/下载链接 401。工具输出(给 LLM)保持无 token。
+ */
+test('#1134 doc_updated SSE: 库内无 token 正文推送前重签', async () => {
+  const app = await getApp()
+  const userId = await getAuthUserId()
+  const docId = await createDoc(app, '原文 图：/api/v1/files/download/f_sse')
+  const sessionId = `doc-${docId}`
+
+  let calls = 0
+  vi.mocked(deepseekChat).mockImplementation((messages: any) => {
+    const text = JSON.stringify(messages)
+    if (text.includes('intent classifier')) return Promise.resolve('mixed\n')
+    calls++
+    if (calls === 1) {
+      return Promise.resolve(`<tool_call>${JSON.stringify({ name: 'edit_document', arguments: { full_text: '新文档 图：/api/v1/files/download/f_sse', summary: '重写' } })}</tool_call>`)
+    }
+    return Promise.resolve('已更新。')
+  })
+
+  const res = await app.inject({
+    method: 'POST', url: '/api/v1/agent/chat',
+    headers: { ...await authHeader(), 'content-type': 'application/json' },
+    payload: JSON.stringify({ text: '重写文档', session_id: sessionId }),
+  })
+  expect(res.statusCode).toBe(200)
+
+  // 落库正文为无 token 规范形态
+  const doc = await (prisma as any).doc.findFirst({ where: { id: docId, userId } })
+  expect(doc.body).toBe('新文档 图：/api/v1/files/download/f_sse')
+
+  // SSE 推送的 doc_updated body 带可验证 token
+  const m = res.payload.match(/\/api\/v1\/files\/download\/f_sse\?token=([^"\\]+)/)
+  expect(m, 'doc_updated SSE body 应带 ?token=').toBeTruthy()
+  const { verifyChartToken } = await import('../../src/common/chart-token.js')
+  expect(verifyChartToken('f_sse', m![1])).toBeTruthy()
+}, 30000)

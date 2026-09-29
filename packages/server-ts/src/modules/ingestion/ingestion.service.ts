@@ -3,6 +3,9 @@ import { createMedicalRecordEntry } from '../medical-records/medical-record-entr
 import { extractDocumentText } from '../../lib/document-extractor.js'
 import { uploadsBaseDir } from '../../lib/upload-path.js'
 import { analyzerRegistry, registerAnalyzer } from './analyzer-registry.js'
+// #1146 循环依赖:共享类型下沉叶子模块,这里 import + re-export 兼容旧路径。
+import type { IngestionJob, IngestionResult } from './ingestion-types.js'
+export type { IngestionJob, IngestionAnalyzer, IngestionResult, MedicalRecordEntryDraft } from './ingestion-types.js'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
@@ -10,51 +13,6 @@ import path from 'path'
 function uid() { return crypto.randomBytes(8).toString('hex') }
 
 export { analyzerRegistry, registerAnalyzer }
-
-export interface MedicalRecordEntryDraft {
-  type: string
-  title: string
-  date: string
-  content: string
-  aiSummary?: string
-  status?: string
-  createdBy?: 'system' | 'user' | 'agent'
-  extractedText?: string
-  rawJson?: Record<string, any>
-}
-
-export interface IngestionResult {
-  confidence: 'high' | 'medium' | 'low'
-  reasoning: string
-  entries: MedicalRecordEntryDraft[]
-  errors?: string[]
-}
-
-export interface IngestionJob {
-  id: string
-  userId: string
-  fileId: string
-  fileName: string
-  mimeType: string
-  patientHash?: string
-  studyId?: string
-  uploadedBy: string
-  extractedText?: string
-  extractedJson?: any
-  status: string
-  confidence?: string
-  reasoning?: string
-  resultPayload?: any
-  retryCount: number
-  failedReason?: string
-  createdAt: string
-  updatedAt: string
-}
-
-export interface IngestionAnalyzer {
-  name: string
-  analyze(job: IngestionJob): Promise<IngestionResult>
-}
 
 // Default note analyzer: creates a single raw note entry from extracted text.
 analyzerRegistry['text/plain'] = {

@@ -410,3 +410,36 @@ describe('#996/#999 — 节级元数据（作者轴+可信度轴,写回单点挂
     expect(res.sectionMeta).toBeUndefined()
   })
 })
+
+/**
+ * #1146 — DB 故障不得伪装并发冲突:此前 title/deck 指针条件更新
+ * `.catch(() => undefined)`,抛错与 0 行同路径 → 谎报"文档已被并发修改"。
+ */
+describe('#1146 条件更新区分 DB 故障与并发冲突', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.txDocUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.txDocSnapshotCreate.mockResolvedValue({})
+    mocks.docUpdateMany.mockResolvedValue({ count: 1 })
+  })
+
+  test('title 更新 DB 抛错 → writeDocVersion 抛错（不返回 conflict）', async () => {
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    const fresh = JSON.stringify(buildBlockProjection('A'))
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', title: 'Old', deck: null, blockProjection: fresh })
+    mocks.docUpdateMany.mockRejectedValueOnce(new Error('db down'))
+    await expect(
+      writeDocVersion({ userId: USER, docId: DOC, title: 'New', snapshotLabel: 't' }),
+    ).rejects.toThrow('db down')
+  })
+
+  test('title 更新 0 行 → 仍按并发冲突返回（语义保留）', async () => {
+    const { buildBlockProjection } = await import('../../src/lib/block-projection.js')
+    const fresh = JSON.stringify(buildBlockProjection('A'))
+    mocks.docFindFirst.mockResolvedValue({ id: DOC, body: 'A', title: 'Old', deck: null, blockProjection: fresh })
+    mocks.docUpdateMany.mockResolvedValueOnce({ count: 0 })
+    const res = await writeDocVersion({ userId: USER, docId: DOC, title: 'New', snapshotLabel: 't' })
+    expect(res.conflict).toBe(true)
+    expect(String(res.error)).toContain('并发修改')
+  })
+})

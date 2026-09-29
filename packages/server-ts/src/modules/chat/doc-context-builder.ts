@@ -30,7 +30,7 @@ import { buildSessionReferenceBlocks, findUploadFileByName } from '../shared/cha
 import { loadSessionReferenceItems } from '../../lib/reference-store.js'
 import { docSessionId } from '../../lib/reference-store.js'
 import { classifyGuidelineBySummaryTitle } from '../shared/summary-lookup.js'
-import type { EditHint } from '../../tools/tool-registry.js'
+import type { EditHint } from '../../tools/tool-context.js'
 // #699: 文档场景规则外置 — 本文件只做组装。
 import { refUnresolvedHint, refSourceRule, documentRules, FORMAT_RULE, CHART_RULE, REVISION_RULE, CITATION_RULE, CONFIRM_RULE, PLAN_RULE, SECTION_EDIT_RULE } from './writing-prompts.js'
 // #976: 任务清单状态与稳定段渲染（common 层,tools/modules 共用）。

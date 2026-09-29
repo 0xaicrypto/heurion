@@ -129,6 +129,18 @@ gap 检测仅存一处：`knowledge-gap.service.ts`（含 `detectFromChat`，纯
 See `docs/design/CONFIG_AND_PORTS.md` (#441). Control plane owns 8001;
 worker defaults to 8002; env is read lazily, never frozen at import time.
 
+## Deployment topology: single instance + scheduler leases (#1154)
+
+server-ts 目前按**单实例**设计部署：调度器（gap-research / experience-synthesis /
+skill-induction）与在飞回合状态都在 API 进程内，生产 compose 只跑一个
+`nexus-server` 容器。滚动发布重叠窗口或误扩副本时：
+
+- 调度器通过 `SchedulerLease`（SQLite 表 `scheduler_leases`）做**DB 租约防重入**：
+  同名调度器同一时刻只有一个持有者执行，过期租约可被接管
+  （`common/scheduler-lease.ts`，TTL=调度间隔）；竞争失败仅跳过本轮。
+- 回合状态（active-turns/内存缓存）仍是进程本地的 — **多副本前必须先把
+  这些状态外置**（设计议题 #1153/#1154 后续），不要直接把副本数调到 >1。
+
 ## Known debt (tracked)
 
 - Storage dual-write (graph JSONL + legacy facts) has compensation-based

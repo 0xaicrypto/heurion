@@ -19,6 +19,8 @@ import { shouldApplyDocRev } from '@/lib/chat-reducer';
 import { onChatTurnComplete } from '@/stores/chat';
 import type { SessionState } from '@/stores/chat';
 import type { CommentsAi } from './comments-ai';
+import { normalizeFileDownloadTokens } from '@heurion/contracts';
+import { reuseLocalFileTokens } from '@/lib/file-url-tokens';
 import type { DocDetail } from './types';
 import type { SaveConflictState, SaveDocResult, ServerDocState } from './persistence';
 
@@ -193,7 +195,7 @@ export function useDocWriteBack(input: UseDocWriteBackInput): DocWriteBackContro
     // #1060: 按该轮写回自带的指纹关联,而非全量消费。
     const reviewKey = `rev_${Date.now()}`;
     attachCommentSourcesToReview(reviewKey, entry.fp);
-    setDiffReview({ key: reviewKey, old: currentMd, next: merged });
+    setDiffReview({ key: reviewKey, old: currentMd, next: reuseLocalFileTokens(currentMd, merged) });
     if (remaining > 0) showNotice(t('writing.reviewQueuedNext', '已呈现下一轮 AI 修改（队列中还有 {{n}} 轮）', { n: remaining }), 4000);
   }, [showNotice, t, attachCommentSourcesToReview, failCommentTurnsByFp, setDiffReview]);
 
@@ -222,7 +224,8 @@ export function useDocWriteBack(input: UseDocWriteBackInput): DocWriteBackContro
     // user 消息）— 冲刷时精确匹配,排队轮换/无关 turn 的写回不再误挂评论。
     const reviewKey = `rev_${Date.now()}`;
     attachCommentSourcesToReview(reviewKey, currentTurnInstruction());
-    setDiffReview({ key: reviewKey, old: bodyRef.current, next: pend.body, source: 'ai_edit' });
+    // #1134: diff next 复用本地 token — token 轮换不显示为改动。
+    setDiffReview({ key: reviewKey, old: bodyRef.current, next: reuseLocalFileTokens(bodyRef.current, pend.body), source: 'ai_edit' });
     // #693: 审阅模式下编辑器选中的是 diff 内容,不再构成引用。
     setChatSelection('');
     // #837-ux: deck 视图下 markdown 审阅不可见 — 写回时自动切回文档视图。
@@ -270,27 +273,42 @@ export function useDocWriteBack(input: UseDocWriteBackInput): DocWriteBackContro
   useEffect(() => {
     if (!docId || !chatSession?.lastDocBody) return;
     if (!shouldApplyDocRev(appliedDocRevRef.current, chatSession.lastDocRev)) return;
-    if (appliedDocBodyRef.current === chatSession.lastDocBody) return;
-    if (chatSession.lastDocBody === bodyRef.current) return;
+    const incoming = chatSession.lastDocBody;
+    const incomingNorm = normalizeFileDownloadTokens(incoming);
+    // #1134: 库内无 token(#1128 落库剥离)、SSE 推送前重签 — 前端持有旧
+    // token。仅 token 轮换不构成写回:不进批次/审阅,只推进基线引用(本地
+    // 保持旧 token 仍有效,避免 setContent 整篇重建)。
+    if (appliedDocBodyRef.current && normalizeFileDownloadTokens(appliedDocBodyRef.current) === incomingNorm) {
+      appliedDocBodyRef.current = incoming;
+      serverBodyRef.current = incoming;
+      if (typeof chatSession.lastDocRev === 'number') appliedDocRevRef.current = chatSession.lastDocRev;
+      return;
+    }
+    if (bodyRef.current && normalizeFileDownloadTokens(bodyRef.current) === incomingNorm) {
+      appliedDocBodyRef.current = incoming;
+      serverBodyRef.current = incoming;
+      if (typeof chatSession.lastDocRev === 'number') appliedDocRevRef.current = chatSession.lastDocRev;
+      return;
+    }
     if (!pendingWriteBackRef.current) {
       // 批次起点:记录本批第一个写回的服务端基线。
       const base = serverBodyRef.current ?? bodyRef.current;
       pendingWriteBackRef.current = {
         base,
-        body: chatSession.lastDocBody,
+        body: incoming,
         timer: setTimeout(() => flushPendingWriteBack(), BATCH_FALLBACK_MS),
       };
       // #989 Phase 3: 批开始 — 清空上轮「正在编辑」残留(基线已在 turn
       // 开始沿冻结;批内 diff 在下方逐事件更新)。
       setEditingSections([]);
     } else {
-      pendingWriteBackRef.current.body = chatSession.lastDocBody;
+      pendingWriteBackRef.current.body = incoming;
       // 活动重置兜底计时(纯流丢失保险,正常路径由 turn 结束冲刷)。
       if (pendingWriteBackRef.current.timer) clearTimeout(pendingWriteBackRef.current.timer);
       pendingWriteBackRef.current.timer = setTimeout(() => flushPendingWriteBack(), BATCH_FALLBACK_MS);
     }
-    appliedDocBodyRef.current = chatSession.lastDocBody;
-    serverBodyRef.current = chatSession.lastDocBody;
+    appliedDocBodyRef.current = incoming;
+    serverBodyRef.current = incoming;
     if (typeof chatSession.lastDocRev === 'number') appliedDocRevRef.current = chatSession.lastDocRev;
     // #989 Phase 3: 流式可见 — 每笔写回到达即更新「正在编辑」节列表
     // (对照批次基线投影;无投影的旧后端事件不影响既有行为)。
@@ -304,7 +322,7 @@ export function useDocWriteBack(input: UseDocWriteBackInput): DocWriteBackContro
       const rows: Record<string, SectionCardRow[]> = {};
       for (const sec of dbg) {
         const oldText = extractSectionText(baseBodyStr, baseProj, sec.id);
-        const newText = extractSectionText(chatSession.lastDocBody, chatSession.lastDocProjection, sec.id);
+        const newText = extractSectionText(incoming, chatSession.lastDocProjection, sec.id);
         if (oldText === null || newText === null || oldText === newText) continue;
         rows[sec.id] = lineDiffRows(oldText, newText);
       }

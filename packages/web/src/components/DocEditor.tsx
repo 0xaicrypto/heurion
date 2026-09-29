@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRafCallback } from '@/hooks/useRaf';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -19,7 +19,7 @@ import { applyTrackedDiff, cleanupEmptyBlocks } from '@/lib/doc-diff';
 import { captureScrollContainer } from '@/lib/scroll-utils';
 import { SelectionBubble, editorUiStateSignature } from './selection-bubble';
 import { ProposalCard, type ProposalSource } from './ProposalCard';
-import { SectionCardsExtension, setSectionCards, type SectionCardsData } from '@/lib/section-cards';
+import { SectionCardsExtension, setSectionCards, computeMobileDefaultCollapsedKeys, type SectionCardsData } from '@/lib/section-cards';
 // #1040: 评论锚点高亮(decoration-only,不动 schema)。
 import { CommentAnchorExtension, setCommentAnchors, type CommentAnchorsData } from '@/lib/comment-anchor';
 // #1077: 正文引用 shortcode 渲染(decoration-only,[cite:id] 保持纯文本契约)。
@@ -420,9 +420,12 @@ export type { BubbleRunState } from './selection-bubble';
  * the editor converts on load (md → HTML) and on save (HTML → md).
  * 审阅模式下:AI 编辑以绿(插入)/红(删除)标记呈现,逐条或全部接受/拒绝。
  */
-export function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards, comments, onStartComment, citations, onCitationClick }: DocEditorProps) {
+export const DocEditor = memo(function DocEditor({ value, onChange, className, editorRef, diffReview, onDiffResolve, onSelectionChange, onBubbleAction, bubble, reviewTitle, queuedRounds, sectionCards, comments, onStartComment, citations, onCitationClick }: DocEditorProps) {
   const { t } = useTranslation();
   const applyMdRef = useRef<string | null>(null);
+  // #1144: 自己 onChange 发出的 md — value 回流时 effect 直接短路,免去每次
+  // 按键的第二次全文 HTML→Markdown 转换(中低端设备 IME 掉字根因之一)。
+  const lastEmittedRef = useRef<string | null>(null);
   const reviewKeyRef = useRef<string | null>(null);
   // P1: 审阅退出沿 — 仅在「刚退出审阅」时用外部 value 还原正文；常规编辑
   // 期间 value 回流（每次按键）不得 setContent 重建全文。
@@ -442,7 +445,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
   }), [sectionCards, collapsedKeys]);
   // 折叠态随文档切换/重挂载清零（value 全量替换即新文档形态）。
   useEffect(() => {
-    setCollapsedKeys([]);
+    // #1144: 已空时返回原引用 — 否则每次 value 回流都 setState 新数组,
+    // sectionCardsData memo 失稳 → setSectionCards 额外 dispatch → 全组件重渲染。
+    setCollapsedKeys((prev) => (prev.length === 0 ? prev : []));
     mobileDefaultDoneRef.current = false;
   }, [value]);
   /** #752: bubble 动作点击时读取当前选区后分发给父组件。 */
@@ -580,7 +585,9 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     onUpdate: ({ editor }) => {
       // Programmatic AI updates bypass the onChange round-trip.
       if (applyMdRef.current !== null || reviewKeyRef.current !== null) return;
-      onChange(htmlToMarkdown(editor.getHTML()));
+      const md = htmlToMarkdown(editor.getHTML());
+      lastEmittedRef.current = md;
+      onChange(md);
     },
     onSelectionUpdate: ({ editor }) => {
       const sel = editor.state.selection;
@@ -648,7 +655,15 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     const sc = captureScroll();
     applyMdRef.current = md;
     editor.commands.setContent(markdownToHtml(md), { emitUpdate: false });
-    applyMdRef.current = null;
+    // #1150-followup: setContent 的 update 事件在部分 Tiptap 版本异步到达
+    // (实测泄漏一次 onChange(外部值),并把 lastEmitted 刷成外部值) — 守护
+    // 延迟到下一个宏任务再释放,确保泄漏 update 被 applyMdRef 拦下。
+    window.setTimeout(() => {
+      if (applyMdRef.current === md) applyMdRef.current = null;
+    }, 0);
+    // #1150-followup: 外部写入后清空「自己发出的 md」标记 — 否则之后 value
+    // 回到曾发出过的旧内容(如恢复 A)会被短路跳过,编辑器停留在 B。
+    lastEmittedRef.current = null;
     const size = editor.state.doc.content.size;
     editor.commands.setTextSelection({
       from: Math.min(from, size),
@@ -695,10 +710,11 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
     if (!editor) return;
     // 审阅中不响应外部 value 更新(审阅内容由 diffReview 驱动)
     if (reviewKeyRef.current !== null) return;
-    // #752-cursor: round-trip no-op guard — 自己的 insertContentAt 已更新
-    // 文档,onChange → 父组件 setBody → value 回流;若此处再 setContent 会
-    // 重建文档并把光标冲到文末(AI apply 后跳到文档末尾的根因)。
-    // incoming 与当前编辑器内容等价时直接跳过。
+    // #1144: 自己刚发出的 md 回流 — 编辑器即来源,直接短路（修复前此处再做
+    // 一次全文转换比较,叠加 onUpdate 的转换 = 每次按键两次）。
+    if (lastEmittedRef.current === value) return;
+    // 非自己回流（AI apply / 文档装载）仍做等价比较 — 避免重复 setContent
+    // 重建文档把光标冲走（#752-cursor round-trip no-op guard 保留）。
     const currentMd = htmlToMarkdown(editor.getHTML());
     if (currentMd === value) return;
     applyExternalContent(value);
@@ -706,36 +722,11 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
 
   useEffect(() => {
     if (!editor || mobileDefaultDoneRef.current) return;
-    const sections = (sectionCardsData.projection?.nodes ?? []).filter((n) => n.kind === 'section');
-    if (sections.length === 0) return;
+    // #1144: 折叠计算自本文件拆出（P2 大文件棘轮），行为不变。
+    const collapsed = computeMobileDefaultCollapsedKeys(sectionCardsData);
+    if (collapsed === null) return;
     mobileDefaultDoneRef.current = true;
-    // 桌面不自动折叠（设计口径为移动端扫读形态）。
-    if (!window.matchMedia('(max-width: 767px)').matches) return;
-    const editingFirst = sectionCardsData.editingIds?.[0];
-    let keepId = editingFirst;
-    if (!keepId) {
-      const latest = Object.entries(sectionCardsData.meta ?? {})
-        .sort((a, b) => (b[1].updated_at || '').localeCompare(a[1].updated_at || ''));
-      keepId = latest[0]?.[0] ?? sections[0]?.id;
-    }
-    // #996-followup: 折叠按大纲语义级联隐藏子孙 — keepId 的祖先节必须一并
-    // 保持展开,否则父节折叠会把正在编辑的嵌套子节整段盖住(移动端自动
-    // 折叠本意是聚焦当前节,反而看不见 AI 正在改哪儿)。祖先判定用投影 span
-    // 包含关系(父节 span 含子树)+ level 更浅。
-    const keepIds = new Set<string>();
-    const keep = sections.find((s) => s.id === keepId);
-    if (keep) {
-      keepIds.add(keep.id);
-      for (const s of sections) {
-        if (s.id !== keep.id && (s.level ?? 0) < (keep.level ?? 0) &&
-            s.start <= keep.start && s.end >= keep.end) {
-          keepIds.add(s.id);
-        }
-      }
-    } else if (keepId) {
-      keepIds.add(keepId);
-    }
-    setCollapsedKeys(sections.map((s) => s.id).filter((id) => !keepIds.has(id)));
+    setCollapsedKeys(collapsed);
   }, [editor, sectionCardsData]);
 
     // 审阅模式:应用 AI diff 并进入只读审阅
@@ -959,7 +950,7 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
         </Button>
         {/* #1037: 工具栏补齐 — Link(弹层输入)/ TaskList / Blockquote / CodeBlock(带语言)。 */}
         <LinkMenuButton editor={editor} />
-        <Button size="sm" variant="ghost" className={isActive('taskList') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleTaskList().run()} title="任务列表">
+        <Button size="sm" variant="ghost" className={isActive('taskList') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleTaskList().run()} title={t('writing.toolbarTaskList', '任务列表')}>
           <ListTodo size={14} />
         </Button>
         <Button size="sm" variant="ghost" className={isActive('blockquote') ? 'bg-surface' : ''} onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Blockquote">
@@ -1031,4 +1022,4 @@ export function DocEditor({ value, onChange, className, editorRef, diffReview, o
       </div>
     </div>
   );
-}
+});

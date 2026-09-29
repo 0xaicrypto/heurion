@@ -7,6 +7,9 @@ import {
   type SlideLayout,
 } from '@heurion/contracts'
 import { resolveImage, toBase64DataUri, base64InflatedBytes } from './remote-image.js' // #1074-2: remote-image 职责自 common.ts 拆出
+import { resolveImageBudget, resolveImageTimeBudget, imageBudgetExceeded } from './image-budgets.js'
+// 兼容既有导入点（测试/handler 边界）— 预算实现见 image-budgets.ts。
+export { MAX_EMBEDDED_IMAGE_BYTES, resolveImageBudget, imageBudgetExceeded, MAX_IMAGE_RESOLVE_MS, resolveImageTimeBudget } from './image-budgets.js'
 
 /** pptxgenjs Slide 的结构子集 — NodeNext 下默认导入解析为模块命名空间,
  *  命名空间内 Slide 类型取不到;只声明本文件实际用到的方法(渲染正确性由
@@ -28,24 +31,6 @@ interface PptxInstance {
   write(opts: { outputType: 'nodebuffer' }): Promise<Buffer>
 }
 const PptxGenJSCtor = PptxGenJS as unknown as new () => PptxInstance
-
-/** #1066-8: 单次导出内嵌图片总字节预算 — 图片以 base64 data URI 全驻留
- *  pptxgenjs（写文件前无法释放），20MB×30 页最坏 ~800MB 可致 worker OOM。
- *  超预算后跳过后续图片块（log 可观测），封顶内存峰值；仅伤恶意超大 deck
- *  的自身导出，正常 deck 远低于该阈值。可用 PPTX_IMAGE_BUDGET_BYTES 覆盖
- *  （部署调优/测试）。 */
-export const MAX_EMBEDDED_IMAGE_BYTES = 100 * 1024 * 1024
-
-/** #1066-8: 解析生效预算（env 覆盖非法值回退默认）。 */
-export function resolveImageBudget(): number {
-  const raw = Number(process.env.PPTX_IMAGE_BUDGET_BYTES)
-  return Number.isFinite(raw) && raw > 0 ? raw : MAX_EMBEDDED_IMAGE_BYTES
-}
-
-/** #1066-8: 累计已嵌入字节 + 本张字节是否超预算。 */
-export function imageBudgetExceeded(embeddedBytes: number, incomingBytes: number, budget: number = resolveImageBudget()): boolean {
-  return embeddedBytes + incomingBytes > budget
-}
 
 /**
  * #958 — 布局母版化渲染器。
@@ -265,12 +250,22 @@ export async function generatePptx(payload: unknown) {
   // resolved Buffer 转 data URI 后即成为垃圾（本地引用随迭代结束释放），
   // 真正的全驻留发生在 pptxgenjs 内部 — 预算封顶是对其唯一可行的内存上界。
   const budget = resolveImageBudget() // #1072-1: 单次导出生效预算（env 覆盖）
+  const imageDeadline = Date.now() + resolveImageTimeBudget() // #1141
   let embeddedImageBytes = 0
+  let timeBudgetWarned = false
   const addImageBounded = async (
     s: Slide,
     box: { x: number; y: number; w: number; h: number },
     img: Extract<ContentBlock, { type: 'image' }>,
   ): Promise<boolean> => {
+    // #1141: 超时预算 — 不再发起远程解析（返回 false → 调用方回退要点渲染）。
+    if (Date.now() >= imageDeadline) {
+      if (!timeBudgetWarned) {
+        console.warn('[PPTX] #1141 图片解析时间预算用尽 — 跳过后续图片解析')
+        timeBudgetWarned = true
+      }
+      return false
+    }
     const resolved = await resolveImage(img)
     if (!resolved) return false
     // #1072-1: base64 后字节计 — 与 addImage 实际驻留的 data URI 一致。

@@ -92,3 +92,29 @@ describe('KbPicker grouping by type (#932)', () => {
     expect(screen.queryByText(/文件 \(/)).toBeNull();
   });
 });
+
+/**
+ * #1147 — 防抖搜索过期响应回归：慢的旧请求后到不覆盖新结果。
+ */
+describe('KbPicker stale response (#1147)', () => {
+  test('旧搜索的迟到响应不覆盖新结果', async () => {
+    const oldItem: KbPickerItem = { id: 'old', title: '旧结果', summary: 's', kind: 'summary' };
+    const newItem: KbPickerItem = { id: 'new', title: '新结果', summary: 's', kind: 'summary' };
+    let resolveOld!: (v: { summaries: KbPickerItem[] }) => void;
+    pickerMock
+      .mockImplementationOnce(() => new Promise((r) => { resolveOld = r; })) // 打开时的首个搜索
+      .mockImplementationOnce(async () => ({ summaries: [newItem] }));
+
+    render(<KbPicker open onClose={() => {}} onConfirm={() => {}} />);
+    fireEvent.change(screen.getByPlaceholderText(/搜索知识库/), { target: { value: '新' } });
+
+    // debounce 300ms 后第二次搜索落地
+    expect(await screen.findByText('新结果', {}, { timeout: 3000 })).toBeTruthy();
+
+    // 首个（旧）请求现在才返回 — 修复前会覆盖新结果。
+    resolveOld({ summaries: [oldItem] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText('旧结果')).toBeNull();
+    expect(screen.getByText('新结果')).toBeTruthy();
+  });
+});

@@ -16,11 +16,15 @@ on:
   pull_request:
     paths:
       - 'packages/web/**'
+      - 'packages/contracts/**'
+      - 'packages/llm-markdown-fix/**'
       - '.github/workflows/web-ci.yml'
   push:
     branches: [main]
     paths:
       - 'packages/web/**'
+      - 'packages/contracts/**'
+      - 'packages/llm-markdown-fix/**'
       - '.github/workflows/web-ci.yml'
   workflow_dispatch:
 
@@ -63,7 +67,7 @@ jobs:
       - name: Build llm-markdown-fix
         # #917: dist 不再入库 — web 的 file: 依赖在 install 时快照目录，
         # 必须先 build 产 dist 再 install（与 contracts 同理）。
-        run: cd ../llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build && pnpm run lint
+        run: cd ../llm-markdown-fix && pnpm install --frozen-lockfile && pnpm build && pnpm run lint && pnpm test
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -81,6 +85,10 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # #1145: 入口包体积预算 — 路由/依赖静态 import 回潮即失败。
+      - name: Bundle size budget
+        run: pnpm bundle:check
 
       # #947: i18n key 存在性校验 — 报告模式（缺失不阻塞,131 key 批量补全
       # 后切为门禁模式；脚本无参 = 阻塞校验）。

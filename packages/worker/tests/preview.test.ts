@@ -152,3 +152,36 @@ describe('#771 preview_file', () => {
     expect(mocks.writtenInputPath!.endsWith('input.bin')).toBe(true)
   })
 })
+
+/**
+ * #1140 — 并发预览隔离:每作业独立 LibreOffice profile(避免共用 profile
+ * 锁/请求转交),pdftoppm 像素上限(scale-to 防极端页面内存放大)。
+ */
+describe('#1140 preview 并发隔离与像素上限', () => {
+  test('soffice 携带每作业独立的 -env:UserInstallation profile;pdftoppm 带 -scale-to', async () => {
+    mocks.execFileAsync.mockImplementation(async (cmd: string, args: string[]) => {
+      if (cmd === 'which') return { stdout: '/usr/bin/x', stderr: '' }
+      if (cmd === 'soffice') mocks.pdfProduced = true
+      if (cmd === 'pdftoppm') {
+        mocks.existingFiles.add('page-1.png')
+      }
+      return { stdout: '', stderr: '' }
+    })
+
+    const payload = { data_base64: Buffer.from('fake pptx bytes').toString('base64'), file_name: 'deck.pptx' as const, max_pages: 3 }
+    await previewFile(payload)
+    mocks.pdfProduced = false
+    mocks.existingFiles.clear()
+    await previewFile(payload)
+
+    const sofficeCalls = mocks.execFileAsync.mock.calls.filter((c) => c[0] === 'soffice')
+    expect(sofficeCalls.length).toBe(2)
+    const profiles = sofficeCalls.map((c) => (c[1] as string[]).find((a) => a.startsWith('-env:UserInstallation=file://')))
+    for (const p of profiles) expect(p, 'soffice 必须带独立 profile').toBeTruthy()
+    expect(profiles[0]).not.toBe(profiles[1]) // 每作业独立目录
+
+    const pdftoppmCall = mocks.execFileAsync.mock.calls.find((c) => c[0] === 'pdftoppm')
+    expect(pdftoppmCall?.[1]).toContain('-scale-to')
+    expect(pdftoppmCall?.[1]).toContain('1600')
+  })
+})

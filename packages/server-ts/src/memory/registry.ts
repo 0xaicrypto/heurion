@@ -97,6 +97,16 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
       log.warn('conflict supersede skipped', { reason: (err as Error).message.slice(0, 120) })
     }
   }
+  // #1146: 幂等 — 上次尝试在"落图成功、提案行标记 approved"之间失败时,
+  // approvals 会把审批回滚为 pending,重试会再次落图(重复节点)。先按
+  // proposalId 查已落节点:命中直接返回,不重复写图/不重复写 legacy。
+  if (proposal.kind === 'fact' || proposal.kind === 'summary' || proposal.kind === 'skill') {
+    const existing = ctx.memory.graph.findNodeByProposal(proposal.id)
+    if (existing) {
+      log.info('proposal already applied — idempotent replay', { proposalId: proposal.id })
+      return existing
+    }
+  }
   if (proposal.kind === 'fact') {
     // 溯源保留(#836-followup):文件管道的 fact 提案带 sourceRange `file:<fileId>#w`,
     // 聊天/压缩管道带 `session:<sessionId>#<quote>` — 审批通过写入图谱时必须保留,
@@ -116,6 +126,7 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
         provenance: {
           sourceKind: fileRange ? 'document' : sessionRange ? 'session' : 'proposal',
           sourceRef: fileRange ?? sessionRange ?? proposal.id,
+          proposalId: proposal.id,
         },
       },
       'system',
@@ -139,7 +150,7 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
         title: proposal.content.split('\n')[0].slice(0, 120) || '知识总结',
         content: proposal.content,
         sourceFactStableIds,
-        provenance: { sourceKind: 'proposal', sourceRef: proposal.id },
+        provenance: { sourceKind: 'proposal', sourceRef: proposal.id, proposalId: proposal.id },
       },
       'system',
     )
@@ -151,6 +162,8 @@ export function defaultProposalApplier(userId: string, proposal: MemoryProposalR
     try {
       const parsed = parseSkillPayload(proposal.payload || '')
       const node = buildSkillNode(userId, parsed.skill)
+      // #1146: 幂等标记(重试不重复落图)。
+      node.provenance = { ...node.provenance, proposalId: proposal.id }
       ctx.memory.graph.addNode(node)
       return node // SkillNode 本就是 MemoryNode 联合成员 — 无需强转(#840-r5)
     } catch (err) {

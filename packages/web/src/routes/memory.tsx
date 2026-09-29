@@ -35,8 +35,7 @@ function countField(value: unknown): number {
 }
 
 export function MemoryPage() {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language.startsWith('zh');
+  const { t } = useTranslation();
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [coverage, setCoverage] = useState<CoverageView | null>(null);
   const [loading, setLoading] = useState(false);
@@ -64,52 +63,48 @@ export function MemoryPage() {
   }, []);
 
   const T = {
-    title: isZh ? '四层记忆 + 一次投影' : 'Four-layer memory + one projection',
-    subtitle: isZh
-      ? 'Heurion 不会把整段聊天历史塞进模型。它把原始输入提炼成越来越抽象的记忆层，每次对话前只投影最相关的片段。'
-      : 'Heurion does not feed the whole chat history into the model. It distills raw inputs into increasingly abstract memory layers and projects only the most relevant fragments before each turn.',
+    title: t('memory.title', '四层记忆 + 一次投影'),
+    subtitle: t('memory.subtitle', 'Heurion 不会把整段聊天历史塞进模型。它把原始输入提炼成越来越抽象的记忆层，每次对话前只投影最相关的片段。'),
 
-    layersTitle: isZh ? '记忆的四层抽象' : 'Four abstraction layers',
+    layersTitle: t('memory.layersTitle', '记忆的四层抽象'),
     layers: [
       {
         icon: <MessageSquare size={24} />,
-        title: isZh ? '原始输入' : 'Raw input',
-        desc: isZh ? '用户消息、上传文件、助手回复、确认动作，全部追加到不可变事件日志。' : 'User messages, uploaded files, assistant replies, and confirmations are appended to an immutable event log.',
+        title: t('memory.layerRaw', '原始输入'),
+        desc: t('memory.layerRawDesc', '用户消息、上传文件、助手回复、确认动作，全部追加到不可变事件日志。'),
       },
       {
         icon: <Activity size={24} />,
         title: 'Facts',
-        desc: isZh ? '每 5 轮对话自动提取一次，带 category、importance、sourceType 与 patientHash。' : 'Auto-extracted every 5 turns with category, importance, sourceType, and patientHash.',
+        desc: t('memory.layerFactsDesc', '每 5 轮对话自动提取一次，带 category、importance、sourceType 与 patientHash。'),
       },
       {
         icon: <BookOpen size={24} />,
         title: 'Knowledge',
-        desc: isZh ? '当 ≥3 条相关 Facts 累积后，自动合成为可读的知识总结并版本化。' : 'When ≥3 related facts accumulate, they are synthesized into versioned summaries.',
+        desc: t('memory.layerKnowledgeDesc', '当 ≥3 条相关 Facts 累积后，自动合成为可读的知识总结并版本化。'),
       },
       {
         icon: <Brain size={24} />,
         title: 'Persona',
-        desc: isZh ? '每次聊天前根据全部 Facts 与 Knowledge 动态生成系统人设。' : 'A dynamic system identity generated before each chat from all facts and knowledge.',
+        desc: t('memory.layerPersonaDesc', '每次聊天前根据全部 Facts 与 Knowledge 动态生成系统人设。'),
       },
     ],
 
-    projectionTitle: isZh ? '六层记忆投影优先级' : 'Six-layer projection priority',
+    projectionTitle: t('memory.projectionTitle', '六层记忆投影优先级'),
     projectionItems: [
-      isZh ? 'Persona：你是谁、关心什么、偏好何种表达方式' : 'Persona: who you are, what you care about, and how you prefer to communicate',
-      isZh ? '当前患者上下文（最高优先级，永不遗忘）' : 'Current patient context (highest priority, never forgotten)',
-      isZh ? '最近 3 轮完整对话（不压缩，保留细节）' : 'Last 3 full turns (uncompressed, preserving detail)',
-      isZh ? '近期会话 Episodes 摘要（压缩远期历史）' : 'Recent session episode summaries (compressed long-term history)',
-      isZh ? '加权 Facts / Knowledge：attention = 重要性 × e^(-0.3×天数)' : 'Weighted facts/knowledge: attention = importance × e^(-0.3×days)',
-      isZh ? 'Skills：被验证过并可复用的策略与工具' : 'Skills: validated, reusable strategies and tools',
+      t('memory.projectionItem1', 'Persona：你是谁、关心什么、偏好何种表达方式'),
+      t('memory.projectionItem2', '当前患者上下文（最高优先级，永不遗忘）'),
+      t('memory.projectionItem3', '最近 3 轮完整对话（不压缩，保留细节）'),
+      t('memory.projectionItem4', '近期会话 Episodes 摘要（压缩远期历史）'),
+      t('memory.projectionItem5', '加权 Facts / Knowledge：attention = 重要性 × e^(-0.3×天数)'),
+      t('memory.projectionItem6', 'Skills：被验证过并可复用的策略与工具'),
     ],
 
-    decayTitle: isZh ? '时间衰减让记忆有重点' : 'Time decay keeps memory focused',
-    decayBody: isZh
-      ? '一条 importance=5 的事实，7 天后注意力衰减到约 12%；importance=1 的事实几乎不再进入上下文。老知识不会消失，只是让位给更新、更相关的内容。'
-      : 'A fact with importance=5 decays to ~12% attention after 7 days; importance=1 facts nearly drop out. Old knowledge is not deleted — it just yields to newer, more relevant content.',
+    decayTitle: t('memory.decayTitle', '时间衰减让记忆有重点'),
+    decayBody: t('memory.decayBody', '一条 importance=5 的事实，7 天后注意力衰减到约 12%；importance=1 的事实几乎不再进入上下文。老知识不会消失，只是让位给更新、更相关的内容。'),
 
-    ctaTitle: isZh ? '查看记忆图谱' : 'View the memory graph',
-    ctaBody: isZh ? '在应用内打开 Memory Graph，直观浏览患者、事实与知识点之间的关联。' : 'Open the Memory Graph inside the app to visually explore links between patients, facts, and knowledge.',
+    ctaTitle: t('memory.ctaTitle', '查看记忆图谱'),
+    ctaBody: t('memory.ctaBody', '在应用内打开 Memory Graph，直观浏览患者、事实与知识点之间的关联。'),
   };
 
   return (
@@ -129,7 +124,7 @@ export function MemoryPage() {
         <section className="border-b border-border bg-surface">
           <div className="mx-auto max-w-7xl px-4 py-10">
             <h2 className="mb-6 text-center text-sm font-medium uppercase tracking-wider text-text-tertiary">
-              {isZh ? '您的记忆统计' : 'Your memory stats'}
+              {t('memory.statsTitle', '您的记忆统计')}
             </h2>
             {loading && (
               <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
@@ -143,16 +138,16 @@ export function MemoryPage() {
             )}
             {stats && !loading && (
               <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-                <StatCard value={stats.facts} label={isZh ? 'Facts' : 'Facts'} />
-                <StatCard value={stats.episodes} label={isZh ? 'Episodes' : 'Episodes'} />
-                <StatCard value={stats.knowledge} label={isZh ? 'Summaries' : 'Summaries'} />
-                <StatCard value={stats.events} label={isZh ? '事件' : 'Events'} />
+                <StatCard value={stats.facts} label="Facts" />
+                <StatCard value={stats.episodes} label="Episodes" />
+                <StatCard value={stats.knowledge} label="Summaries" />
+                <StatCard value={stats.events} label={t('memory.statEvents', '事件')} />
               </div>
             )}
             {/* #816: facts→summary 覆盖率 — 记忆沉淀健康度 */}
             {coverage && !loading && (
               <div className="mx-auto mt-8 max-w-3xl">
-                <CoveragePanel coverage={coverage} isZh={isZh} />
+                <CoveragePanel coverage={coverage} />
               </div>
             )}
           </div>
@@ -180,7 +175,7 @@ export function MemoryPage() {
                 <Layers size={24} />
               </div>
               <h2 className="text-2xl font-bold text-text-primary">{T.projectionTitle}</h2>
-              <p className="mt-4 text-text-secondary">{isZh ? '投影不是简单拼接，而是按优先级与注意力权重把不同记忆层组合成系统 Prompt。' : 'Projection is not simple concatenation. It composes different memory layers into the system prompt by priority and attention weight.'}</p>
+              <p className="mt-4 text-text-secondary">{t('memory.projectionIntro', '投影不是简单拼接，而是按优先级与注意力权重把不同记忆层组合成系统 Prompt。')}</p>
             </div>
             <div className="space-y-4">
               {T.projectionItems.map((item, idx) => (
@@ -203,9 +198,9 @@ export function MemoryPage() {
             </div>
             <div className="mt-6 space-y-3">
               {[
-                { label: isZh ? 'importance=5，7 天后' : 'importance=5 after 7 days', v: '~12%' },
-                { label: isZh ? 'importance=3，7 天后' : 'importance=3 after 7 days', v: '~3%' },
-                { label: isZh ? 'importance=1，7 天后' : 'importance=1 after 7 days', v: '~0.7%' },
+                { label: t('memory.decayRow5', 'importance=5，7 天后'), v: '~12%' },
+                { label: t('memory.decayRow3', 'importance=3，7 天后'), v: '~3%' },
+                { label: t('memory.decayRow1', 'importance=1，7 天后'), v: '~0.7%' },
               ].map((row, idx) => (
                 <div key={idx} className="flex items-center justify-between border-b border-border pb-3 last:border-0 last:pb-0">
                   <span className="text-text-secondary">{row.label}</span>
@@ -230,7 +225,7 @@ export function MemoryPage() {
           <p className="mx-auto mt-3 max-w-xl text-text-secondary">{T.ctaBody}</p>
           <div className="mt-6">
             <Link to="/app/today" className="inline-flex items-center font-medium text-accent hover:underline">
-              {isZh ? '进入应用' : 'Open the app'}
+              {t('memory.ctaOpenApp', '进入应用')}
               <ArrowRight size={16} className="ml-1" />
             </Link>
           </div>
@@ -250,7 +245,8 @@ function StatCard({ value, label }: { value: number; label: string }) {
 }
 
 /** #816: 覆盖率面板 — ratio 条 + 低覆盖提示(沉淀/手动合成)。 */
-function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boolean }) {
+function CoveragePanel({ coverage }: { coverage: CoverageView }) {
+  const { t } = useTranslation();
   const pct = (r: number) => `${Math.round(r * 100)}%`;
   const rows = [coverage.global, ...coverage.patients].filter((r) => r.confirmedFacts > 0);
   if (rows.length === 0) return null;
@@ -258,14 +254,14 @@ function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boole
     <Card className="p-6 text-left">
       <div className="mb-4 flex items-center gap-2 text-accent">
         <Gauge size={18} />
-        <span className="font-semibold">{isZh ? '知识覆盖率（facts → summary）' : 'Knowledge coverage (facts → summaries)'}</span>
+        <span className="font-semibold">{t('memory.coverageTitle', '知识覆盖率（facts → summary）')}</span>
       </div>
       <div className="space-y-3">
         {rows.map((r) => (
           <div key={`${r.scope}-${r.patientHash || 'global'}`}>
             <div className="flex items-center justify-between text-sm">
               <span className="text-text-secondary">
-                {r.scope === 'global' ? (isZh ? '全局知识库' : 'Global') : `${isZh ? '患者' : 'Patient'} ${r.patientHash?.slice(0, 12)}`}
+                {r.scope === 'global' ? t('memory.coverageGlobal', '全局知识库') : `${t('memory.coveragePatient', '患者')} ${r.patientHash?.slice(0, 12)}`}
               </span>
               <span className="font-mono text-text-primary">
                 {r.coveredFacts}/{r.confirmedFacts} · {pct(r.ratio)}
@@ -279,9 +275,7 @@ function CoveragePanel({ coverage, isZh }: { coverage: CoverageView; isZh: boole
             </div>
             {r.ratio < coverage.hintThreshold && (
               <p className="mt-1 text-xs text-text-tertiary">
-                {isZh
-                  ? `覆盖率偏低 — 可在对话中说"总结知识库"或对相关事实手动合成总结（如：${r.uncoveredSample[0]?.slice(0, 40) || '…'}）`
-                  : `Coverage below threshold — ask the assistant to summarize the knowledge base or synthesize an summary from uncovered facts (e.g. "${r.uncoveredSample[0]?.slice(0, 40) || '…'}")`}
+                {t('memory.coverageLow', '覆盖率偏低 — 可在对话中说"总结知识库"或对相关事实手动合成总结（如：{{sample}}）', { sample: r.uncoveredSample[0]?.slice(0, 40) || '…' })}
               </p>
             )}
           </div>

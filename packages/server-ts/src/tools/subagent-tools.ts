@@ -1,6 +1,6 @@
 import { resolveTierModel } from '../common/llm-gateway.js'
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 import type { SubagentEvent } from '@heurion/contracts'
 
 export class DelegateTool extends BaseTool {
@@ -207,7 +207,6 @@ async function runPool<T, R>(items: T[], limit: number, fn: (item: T, index: num
   let next = 0
   const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
     // 固定大小 worker 池 — 取空即返回,常量条件是有意的。
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const idx = next++
       if (idx >= items.length) return

@@ -154,15 +154,29 @@ export function looksLikeImage(buf: Buffer): boolean {
   return false
 }
 
-/** #1053: magic bytes → mime。pptxgenjs 的 addImage 仅接受带 base64 头的
- *  字符串（传 Buffer 走 console.error 后被静默丢弃），嵌入前统一转 data URI。 */
-export function imageMimeOf(buf: Buffer): string {
+/**
+ * #1150-followup: 严格 magic 识别 — 未识别的字节返回 null。
+ * 旧实现 imageMimeOf 对未知输入默认 'image/svg+xml',docx 的"不支持格式"
+ * 分支永远走不到(任意字节都被当 SVG 内嵌成损坏图)。
+ * 支持: PNG/JPEG/GIF/WebP/BMP/SVG。
+ */
+export function detectImageMime(buf: Buffer): string | null {
   if (buf.length >= 8 && buf.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') return 'image/png'
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg'
   if (buf.length >= 4 && buf.subarray(0, 4).toString('ascii') === 'GIF8') return 'image/gif'
   if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
   if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp'
-  return 'image/svg+xml'
+  const head = buf.length >= 256 ? buf.subarray(0, 256).toString('utf8').trimStart().toLowerCase() : buf.toString('utf8').trimStart().toLowerCase()
+  if (head.startsWith('<?xml') || head.startsWith('<svg')) return 'image/svg+xml'
+  return null
+}
+
+/** #1053: magic bytes → mime。pptxgenjs 的 addImage 仅接受带 base64 头的
+ *  字符串（传 Buffer 走 console.error 后被静默丢弃），嵌入前统一转 data URI。
+ *  #1150-followup: 未知类型仍按历史语义回落 svg(仅用于 data URI 前缀),
+ *  docx 等需要类型判定的调用方请用 detectImageMime。 */
+export function imageMimeOf(buf: Buffer): string {
+  return detectImageMime(buf) ?? 'image/svg+xml'
 }
 
 /** #1053: Buffer → pptxgenjs 可用的 data URI（image/png;base64,...）。 */

@@ -7,8 +7,14 @@
  * so no separate Workers AI binding is required to run the POC.
  */
 import { createBrowserTools } from 'agents/browser/ai'
-import { generateText } from 'ai'
+import { generateText, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
+
+/** #1149: ai@6 的 generateText 默认 stopWhen = stepCountIs(1) — 模型发一个
+ *  工具调用就结束，根本看不到工具结果，text 为空时旧代码回退「任务完成」
+ *  并返回 success（假成功）。显式多步 + 超时，空结论按失败处理。 */
+export const BROWSER_TASK_MAX_STEPS = 12
+export const BROWSER_TASK_TIMEOUT_MS = 120_000
 
 export interface BrowserTaskInput {
   instruction: string
@@ -54,10 +60,18 @@ with tool calls and base your summary on real results. Keep the conclusion conci
     tools,
     system,
     prompt,
+    stopWhen: stepCountIs(BROWSER_TASK_MAX_STEPS),
+    abortSignal: AbortSignal.timeout(BROWSER_TASK_TIMEOUT_MS),
   })
 
+  if (!result.text || !result.text.trim()) {
+    throw new Error(
+      `browser task produced no conclusion (model returned empty text; maxSteps=${BROWSER_TASK_MAX_STEPS}, timeoutMs=${BROWSER_TASK_TIMEOUT_MS})`,
+    )
+  }
+
   return {
-    conclusion: result.text || '任务完成',
+    conclusion: result.text,
     dom_summary: '',
     steps: [],
     screenshot_url: '',

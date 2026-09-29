@@ -50,7 +50,9 @@ import { evolutionRouter } from './modules/evolution/evolution.router.js'
 import { workflowsRouter } from './modules/workflows/workflows.router.js'
 import { memorizationRouter } from './modules/memorization/memorization.router.js'
 import { practitionerRouter } from './modules/practitioner/practitioner.router.js'
-import { ZodError } from 'zod'
+import { releaseRequestScope, requestScopes, runWithRequestScope } from './common/request-context.js'
+import { mapErrorToHttp } from './common/error-mapping.js'
+import { releaseUserContext } from './modules/shared/user-context.js'
 
 export interface AppOptions {
   evolutionQueue?: EvolutionQueue
@@ -66,18 +68,38 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   const evolutionQueue = opts.evolutionQueue ?? (await createDefaultEvolutionQueue())
   evolutionQueue.setProcessor?.(processEvolutionTurn)
 
+  // #1146: 请求级作用域 — requestId 关联日志;contextRefs 记录本请求取用的
+  // user-context(长回合跨 TTL 不被 GC 驱逐,避免新旧 EventLog 双写)。
+  app.addHook('onRequest', (request, _reply, done) => {
+    const scope = { requestId: request.id, contextRefs: new Set<string>() }
+    requestScopes.set(request, scope)
+    // #1150-followup: 客户端中途断开(SSE 取消/网络断)时 onResponse 不触发,
+    // 仅靠它释放会让该用户的 context 引用计数永不归零 → 永不 GC。
+    // raw close 与 onResponse 共用幂等释放。
+    const releaseOnce = () => {
+      releaseRequestScope(scope, releaseUserContext)
+      requestScopes.delete(request)
+    }
+    request.raw.on('close', releaseOnce)
+    runWithRequestScope(scope, done)
+  })
+  app.addHook('onResponse', (request, _reply, done) => {
+    const scope = requestScopes.get(request)
+    if (scope) {
+      releaseRequestScope(scope, releaseUserContext)
+      requestScopes.delete(request)
+    }
+    done()
+  })
+
   // ── Global error handler ──
-  app.setErrorHandler((err: Error, _req: FastifyRequest, reply: FastifyReply) => {
-    if (err instanceof ZodError) {
-      return reply.status(400).send({ error: 'Validation failed', details: err.errors })
-    }
-    // #fix: 超限上传(multipart fileSize=100MB)此前落成裸 500,前端又静默
-    // 吞错,用户完全不知道文件没传上去。改成 413 + 可读提示。
-    const code = (err as any)?.code
-    if (code === 'FST_REQ_FILE_TOO_LARGE' || (err as any)?.statusCode === 413) {
-      return reply.status(413).send({ error: '上传文件超过 100MB 上限,请压缩后再试 (file exceeds the 100MB upload limit)' })
-    }
-    reply.status(500).send({ error: err.message || 'Internal error' })
+  // #1155: 映射规则集中到 common/error-mapping（可单测）— 4xx/领域错误 →
+  // 原状态码;5xx 记录日志并回通用文案(不回传内部细节)。
+  app.setErrorHandler((err: Error, req: FastifyRequest, reply: FastifyReply) => {
+    const mapped = mapErrorToHttp(err)
+    if (mapped) return reply.status(mapped.status).send(mapped.body)
+    req.log.error({ err }, 'unhandled server error')
+    return reply.status(500).send({ error: 'Internal server error' })
   })
 
   // ── Plugins ──
@@ -127,7 +149,7 @@ export async function createApp(opts: AppOptions = {}): Promise<FastifyInstance>
   await app.register(memorizationRouter)
   await app.register(practitionerRouter)
 
-  // ── Serve web frontend for staging/testing (SPA fallback on non-/api routes) ──
+  // ── Serve web frontend for local/dev/testing (SPA fallback on non-/api routes) ──
   const webDistDir = process.env.WEB_DIST_DIR || './web-dist'
   const resolvedDistDir = webDistDir.startsWith('/') ? webDistDir : require('path').resolve(webDistDir)
   if (existsSync(resolvedDistDir)) {

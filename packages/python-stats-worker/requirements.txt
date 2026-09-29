@@ -7,3 +7,5 @@ statsmodels>=0.14,<0.15
 lifelines>=0.28,<0.30
 numpy>=1.26,<3.0
 pydantic>=2.6,<3.0
+# #1157: zod 生成的 JSON Schema 校验（scripts/check-stats-schema-alignment.sh）。
+jsonschema>=4.20,<5.0

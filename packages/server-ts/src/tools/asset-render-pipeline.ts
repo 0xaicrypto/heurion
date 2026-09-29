@@ -6,7 +6,7 @@
  */
 import fs from 'fs'
 import path from 'path'
-import type { ToolExecutionPlane } from './tool-registry.js'
+import type { ToolExecutionPlane } from './tool-context.js'
 import { issueChartToken } from '../common/chart-token.js'
 import { uploadsBaseDir } from '../lib/upload-path.js'
 

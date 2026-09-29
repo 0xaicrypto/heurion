@@ -1,12 +1,14 @@
 import type { MarkdownFixRule } from '../index.js'
+import { mapOutsideFences } from './table-utils.js'
 
 /**
  * 单行表格展开 — 模型常把整个表格挤成一行
  * (On-Chain Reality| Asset |...| |---|---| | WETH |...|| WMNT |...)。
  * 检测"管道密集 + 分隔段"的行,按分隔段/表头列数拆分为标准多行表格。
+ * #1149: 代码围栏内不展开。
  */
 export const fixSingleLineTables: MarkdownFixRule = (md: string) => {
-  return md.split('\n').map((line) => expandSingleLineTable(line) ?? line).join('\n')
+  return mapOutsideFences(md, (line) => expandSingleLineTable(line) ?? line)
 }
 
 function expandSingleLineTable(line: string): string | null {

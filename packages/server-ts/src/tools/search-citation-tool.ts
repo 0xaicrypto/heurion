@@ -1,7 +1,10 @@
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 import { externalRequest, resetExternalFetchState } from './external-fetch.js'
 import { crossrefSearchBibliographic } from './crossref.client.js'
+import { formatAma, type CitationRecord } from './citation-format.js'
+export type { CitationRecord } from './citation-format.js'
+export { formatAma } from './citation-format.js'
 
 /**
  * #807 — search_citation: 引用实体化第一块。学术写作零容忍编造：References
@@ -41,32 +44,6 @@ export async function eutilsRequest(
 ): Promise<string> {
   return externalRequest('eutils', path, params, opts)
 }
-
-export interface CitationRecord {
-  pmid: string
-  title: string
-  authors: string[]
-  journal: string
-  year: string
-  volume?: string
-  pages?: string
-  doi?: string
-  /** #836: Crossref 记录附字段(设计 L733 Citation 形状)。 */
-  url?: string
-  abstract?: string
-  /** AMA 格式（作者 ≤3 全列,>3 前三+et al.） */
-  ama: string
-}
-
-export function formatAma(r: Omit<CitationRecord, 'ama'>): string {
-  const a = r.authors.filter(Boolean)
-  const authors = a.length === 0 ? '' : a.length <= 3 ? `${a.join(', ')}.` : `${a.slice(0, 3).join(', ')}, et al.`
-  const doi = r.doi ? (r.pmid ? ` doi: ${r.doi}` : ` doi: ${r.doi}.`) : ''
-  // #836: Crossref 记录无 PMID — 只有存在时输出,AMA 串保持可核对。
-  const pmid = r.pmid ? ` PMID: ${r.pmid}.` : ''
-  return `${authors} ${r.title}. ${r.journal}. ${r.year}${r.volume ? `;${r.volume}` : ''}${r.pages ? `:${r.pages}` : ''}.${doi}${pmid}`
-}
-
 
 /**
  * #807 → #1076: PubMed esearch → esummary 检索段 — search_citation 与

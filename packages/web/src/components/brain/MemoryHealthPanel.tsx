@@ -70,7 +70,7 @@ export function MemoryHealthPanel() {
         <StatCard
           icon={<Archive size={14} />}
           label={t('brain.healthStale', '超期 pending')}
-          value={`${data.stale.pending_over_7d}${data.stale.high_importance_pinned ? `（${data.stale.high_importance_pinned} 置顶）` : ''}`}
+          value={data.stale.pending_over_7d + (data.stale.high_importance_pinned ? t('brain.healthStalePinned', '（{{n}} 置顶）', { n: data.stale.high_importance_pinned }) : '')}
           tone={data.stale.pending_over_7d > 0 ? 'warn' : 'good'}
         />
         <StatCard

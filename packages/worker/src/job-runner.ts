@@ -24,6 +24,51 @@ export function parseMaxConcurrentJobs(raw: string | undefined): number {
 }
 
 const MAX_CONCURRENT_JOBS = parseMaxConcurrentJobs(process.env.WORKER_MAX_CONCURRENT)
+
+/**
+ * #1141: 队列上限 — 此前 jobQueue 无界:worker 挂起/积压时每个请求都排进
+ * 内存队列,调用方无超时地等,进程内存无上界。队满 → 立即失败(调用方
+ * 收到明确错误而非无限等待)。
+ */
+const DEFAULT_QUEUE_LIMIT = 32
+
+export function parseQueueLimit(raw: string | undefined): number {
+  const value = Number.parseInt(raw ?? '', 10)
+  if (!Number.isFinite(value) || value <= 0) {
+    if (raw !== undefined) console.warn(`[JOB-RUNNER] WORKER_QUEUE_LIMIT=${JSON.stringify(raw)} is not a positive integer — falling back to ${DEFAULT_QUEUE_LIMIT}`)
+    return DEFAULT_QUEUE_LIMIT
+  }
+  return value
+}
+
+/**
+ * #1141: 单作业总时限 — handler 内部各自有 I/O 超时,但异常路径(死循环、
+ * 挂起的外部进程、未设超时的下载)可让槽位永久占用。超时统一标记 failed
+ * 并释放槽位；handler 本身无法强制取消,依赖其内部超时自然收敛。
+ */
+const DEFAULT_JOB_TIMEOUT_MS = 300_000
+
+export function parseJobTimeoutMs(raw: string | undefined): number {
+  const value = Number.parseInt(raw ?? '', 10)
+  if (!Number.isFinite(value) || value <= 0) {
+    if (raw !== undefined) console.warn(`[JOB-RUNNER] WORKER_JOB_TIMEOUT_MS=${JSON.stringify(raw)} is not a positive integer — falling back to ${DEFAULT_JOB_TIMEOUT_MS}`)
+    return DEFAULT_JOB_TIMEOUT_MS
+  }
+  return value
+}
+
+const QUEUE_LIMIT = parseQueueLimit(process.env.WORKER_QUEUE_LIMIT)
+const JOB_TIMEOUT_MS = parseJobTimeoutMs(process.env.WORKER_JOB_TIMEOUT_MS)
+
+/** #1141: 队满拒绝 — runJob 捕获后直接把作业标记 failed(不排队等待)。 */
+export class JobQueueFullError extends Error {
+  readonly code = 'QUEUE_FULL'
+  constructor() {
+    super(`worker job queue is full (limit ${QUEUE_LIMIT}) — rejecting job`)
+    this.name = 'JobQueueFullError'
+  }
+}
+
 let activeJobs = 0
 const jobQueue: Array<() => void> = []
 
@@ -31,6 +76,9 @@ function whenSlotFree(): Promise<void> {
   if (activeJobs < MAX_CONCURRENT_JOBS) {
     activeJobs++
     return Promise.resolve()
+  }
+  if (jobQueue.length >= QUEUE_LIMIT) {
+    return Promise.reject(new JobQueueFullError())
   }
   return new Promise((resolve) => jobQueue.push(() => {
     activeJobs++
@@ -42,6 +90,19 @@ function releaseSlot(): void {
   activeJobs--
   const next = jobQueue.shift()
   if (next) next()
+}
+
+/** #1141: 总时限 race — 超时 reject 明确文案;timer 在任一结果后清理。 */
+async function withJobTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`job timed out after ${timeoutMs}ms`)), timeoutMs)
+  })
+  try {
+    return await Promise.race([work, timedOut])
+  } finally {
+    clearTimeout(timer!)
+  }
 }
 
 export type JobHandler = (payload: unknown) => Promise<unknown>
@@ -75,10 +136,18 @@ export async function runJob(input: {
   callbackUrl?: string
 }): Promise<void> {
   const { jobStore, id, payload, handler, callbackUrl } = input
-  await whenSlotFree()
+  try {
+    await whenSlotFree()
+  } catch (err) {
+    // #1141: 队满 — 不占槽位,直接 failed(与 handler 失败同路径)。
+    const message = (err as Error).message || 'queue full'
+    jobStore.update(id, { status: 'failed', error: message, completed_at: Date.now() / 1000 })
+    notify(callbackUrl, { job_id: id, status: 'failed', error: message })
+    return
+  }
   try {
     jobStore.update(id, { status: 'running' })
-    const result = await handler(payload)
+    const result = await withJobTimeout(handler(payload), JOB_TIMEOUT_MS)
     // #fix: saveFile 返回驼峰 StorageResult(fileId/fileName/mimeType/s3Key),
     // 但控制面/索引只读下划线的 file_id/file_name/mime_type/s3_key —
     // 此前 docx/pdf/table/plot 的结果都拿不到文件(任务 completed 但

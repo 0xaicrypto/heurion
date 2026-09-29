@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
-import { makeLogger } from '../../src/common/logger.js'
+import { makeLogger, runWithRequestId } from '../../src/common/logger.js'
 
 describe('structured logger (§5.5 #198)', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -22,5 +22,28 @@ describe('structured logger (§5.5 #198)', () => {
     makeLogger('chat').error('boom')
     expect(JSON.parse(warn.mock.calls[0][0]).level).toBe('warn')
     expect(JSON.parse(err.mock.calls[0][0]).level).toBe('error')
+  })
+})
+
+describe('#1146 保留字段与 requestId', () => {
+  test('调用方 meta 不能覆盖 level/msg/ts/module', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    makeLogger('real.module').error('real msg', { level: 'info', msg: 'fake msg', ts: '1970', module: 'hacked' })
+    const line = JSON.parse(spy.mock.calls[0][0])
+    expect(line.level).toBe('error')
+    expect(line.msg).toBe('real msg')
+    expect(line.module).toBe('real.module')
+    expect(line.ts).not.toBe('1970')
+    spy.mockRestore()
+  })
+
+  test('请求上下文内日志带 requestId，上下文外不带', () => {
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    runWithRequestId('req-42', () => { makeLogger('m').info('inside') })
+    expect(JSON.parse(spy.mock.calls[0][0]).requestId).toBe('req-42')
+
+    makeLogger('m').info('outside')
+    expect(JSON.parse(spy.mock.calls[1][0]).requestId).toBeUndefined()
+    spy.mockRestore()
   })
 })

@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
+import crypto from 'crypto'
 import fs from 'fs'
 import prisma from '../../common/prisma'
 import { signToken } from '../../common/jwt'
@@ -20,14 +21,24 @@ export function isClearTestDataAllowed(
 ): boolean {
   const isProd = env.NODE_ENV === 'production' || env.APP_ENV === 'production'
   if (isProd) return false
-  const host = (hostHeader || '').split(':')[0]
-  return host === 'localhost' || host === '127.0.0.1' || host.startsWith('staging')
+  // #staging-removal: 仅本地回环主机 — staging 环境已下线，白名单不再含
+  // staging.*；生产环境仍由上面的环境判定直接拒绝。
+  const raw = (hostHeader || '').trim()
+  const host = raw.startsWith('[') ? raw.slice(1, raw.indexOf(']')) : raw.split(':')[0]
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
 }
 
 export async function authRouter(app: FastifyInstance) {
   app.post('/api/v1/auth/register', async (request, reply) => {
     const body = registerSchema.parse(request.body)
-    const existing = await prisma.user.findFirst({ where: { displayName: body.username } })
+    const username = String(body.username).trim()
+    const displayName = String(body.display_name || body.displayName || username).trim()
+
+    // #1136: 唯一性校验以「登录标识 username + 展示名 displayName」两列为准
+    // (此前查 displayName 却把 username 丢了 → 填显示名的用户无法用用户名登录)。
+    const existing = await prisma.user.findFirst({
+      where: { OR: [{ username }, { displayName }] },
+    })
     if (existing) return reply.status(409).send({ error: 'Username taken' })
 
     // #283: optional email binding at registration — when provided, the
@@ -42,28 +53,43 @@ export async function authRouter(app: FastifyInstance) {
     }
 
     const hash = await bcrypt.hash(body.password, 10)
-    const id = `user_${Math.random().toString(36).slice(2, 12)}`
+    // #1137: id 用 crypto.randomUUID(可预测的 Math.random 碰撞面 + 非标准)。
+    const id = `user_${crypto.randomUUID()}`
     const now = new Date().toISOString()
-    const userCount = await prisma.user.count()
-    const role = userCount === 0 ? 'admin' : 'user'
-    const displayName = body.display_name || body.displayName || body.username
 
-    await prisma.user.create({
-      data: {
-        id, displayName, passwordHash: hash, role,
-        email: email ?? null,
-        emailVerified: email ? 1 : 0,
-        createdAt: now, updatedAt: now,
-      },
-    })
+    // #1137: 首个用户 admin 判定必须在事务内与 create 原子 — count 与
+    // create 分离时并发注册会双双读到 0 而产出多个 admin;SQLite 单连接
+    // 事务串行化,count→create 无竞态窗口。唯一约束冲突(P2002)映射 409,
+    // 不再 500(并发同名注册的最后一道闸)。
+    let created: { id: string; role: string }
+    try {
+      created = await prisma.$transaction(async (tx) => {
+        const userCount = await tx.user.count()
+        const role = userCount === 0 ? 'admin' : 'user'
+        const user = await tx.user.create({
+          data: {
+            id, username, displayName, passwordHash: hash, role,
+            email: email ?? null,
+            emailVerified: email ? 1 : 0,
+            createdAt: now, updatedAt: now,
+          },
+        })
+        return { id: user.id, role: user.role }
+      })
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'P2002') {
+        return reply.status(409).send({ error: 'Username taken' })
+      }
+      throw err
+    }
 
-    const token = signToken({ userId: id, role, displayName })
+    const token = signToken({ userId: created.id, role: created.role, displayName })
     // Match Python backend snake_case format expected by frontend
     return {
-      user_id: id,
+      user_id: created.id,
       jwt_token: token,
       created_at: now,
-      role,
+      role: created.role,
       display_name: displayName,
       expires_in_seconds: 86400,
     }
@@ -71,14 +97,17 @@ export async function authRouter(app: FastifyInstance) {
 
   app.post('/api/v1/auth/login', async (request, reply) => {
     const body = loginSchema.parse(request.body)
-    // #283: identifier lookup — email OR phone OR displayName.
-    const identifier = String(body.username || '').trim().toLowerCase()
-    const user = await prisma.user.findFirst({
+    // #1136: 登录标识 = username(独立列,改名不失效);email/phone/displayName
+    // 保留为存量/兼容通道 — 先精确 username,未命中再回退 OR 查找。
+    const raw = String(body.username || '').trim()
+    const identifier = raw.toLowerCase()
+    const byUsername = await prisma.user.findFirst({ where: { username: raw } })
+    const user = byUsername ?? await prisma.user.findFirst({
       where: {
         OR: [
-          { displayName: body.username },
+          { displayName: raw },
           { email: identifier },
-          { phone: body.username },
+          { phone: raw },
         ],
       },
     })
@@ -181,14 +210,23 @@ export async function authRouter(app: FastifyInstance) {
     }
   })
 
-  app.patch('/api/v1/user/profile', { preHandler: [authGuard] }, async (request) => {
+  app.patch('/api/v1/user/profile', { preHandler: [authGuard] }, async (request, reply) => {
     const { display_name, displayName, organization, intended_use } = request.body as any
     const name = display_name || displayName
     const data: any = { updatedAt: new Date().toISOString() }
+    // #1136: 仅改展示名 — username 登录标识不随改名失效。
     if (name) data.displayName = name
     if (organization !== undefined) data.organization = organization
     if (intended_use !== undefined) data.intendedUse = intended_use
-    await prisma.user.update({ where: { id: request.user!.userId }, data })
+    try {
+      await prisma.user.update({ where: { id: request.user!.userId }, data })
+    } catch (err) {
+      // #1137: 改成与他人重名 → 唯一约束冲突映射 409(此前 500)。
+      if ((err as { code?: string })?.code === 'P2002') {
+        return reply.status(409).send({ error: 'Display name already taken' })
+      }
+      throw err
+    }
     const user = await prisma.user.findUnique({ where: { id: request.user!.userId } })
     return {
       user_id: user!.id,
@@ -198,12 +236,12 @@ export async function authRouter(app: FastifyInstance) {
     }
   })
 
-  // CI/Staging: clear test data for the authenticated user only.
+  // CI/本地开发: clear test data for the authenticated user only.
   // Must NOT run on production — gated by environment (P1: Host header alone
   // was spoofable with `Host: localhost`).
   app.post('/api/v1/auth/clear-test-data', { preHandler: [authGuard] }, async (request, reply) => {
     if (!isClearTestDataAllowed(request.headers.host)) {
-      return reply.status(403).send({ error: 'clear-test-data is only available on staging' })
+      return reply.status(403).send({ error: 'clear-test-data is only available on a local/test instance' })
     }
     const userId = request.user!.userId
     // Delete research data linked to this user's studies.

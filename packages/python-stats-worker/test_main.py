@@ -44,3 +44,25 @@ def test_single_observation_is_http_400_not_nan():
 def test_valid_small_group_report_is_finite():
     out = run_analysis(AnalyzeRequest(test="t-test", group_a=[1, 2, 3], group_b=[4, 5, 6]))["report"]
     assert math.isfinite(out["p_value"])
+
+
+# ── #1149: 严格类型（与 zod z.number()/z.boolean() 镜像）+ 数组上限 ──
+
+def test_rejects_coerced_types_like_zod():
+    # 宽松模式此前接受字符串数字/bool→float，与 zod 行为漂移。
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(test="describe", values=["5", "6"])
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(test="describe", values=[5, True])
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(test="describe", values=[1.5, "2.5"])
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(test="kaplan-meier", survival_a=[{"time": 1, "event": "yes"}])
+    # 合法 JSON number（含整数）仍接受 — zod z.number() 同口径。
+    assert run_analysis(AnalyzeRequest(test="describe", values=[1, 2]))["report"]["n"] == 2
+
+
+def test_rejects_oversized_series():
+    from main import MAX_SERIES_LEN
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(test="describe", values=[1.0] * (MAX_SERIES_LEN + 1))

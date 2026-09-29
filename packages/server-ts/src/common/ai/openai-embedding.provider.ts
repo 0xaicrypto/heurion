@@ -1,5 +1,5 @@
-import type { AiProvider, AiProviderConfig, EmbedOptions } from './ai-provider.js'
-import { AiProviderError } from './ai-provider.js'
+import type { AiProvider, AiProviderConfig, EmbedOptions } from './ai-types.js'
+import { AiProviderError } from './ai-types.js'
 
 export class OpenAIEmbeddingProvider implements Pick<AiProvider, 'embed'> {
   constructor(private config: AiProviderConfig = {}) {}

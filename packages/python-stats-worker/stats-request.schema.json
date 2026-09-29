@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StatsRequest",
+  "type": "object",
+  "properties": {
+    "test": {
+      "type": "string",
+      "minLength": 1
+    },
+    "group_a": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 100000
+    },
+    "group_b": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 100000
+    },
+    "table": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "maxItems": 1000
+      },
+      "maxItems": 10000
+    },
+    "values": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 100000
+    },
+    "survival_a": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "number"
+          },
+          "event": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "time",
+          "event"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 100000
+    },
+    "survival_b": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "number"
+          },
+          "event": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "time",
+          "event"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 100000
+    },
+    "group": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100000
+    },
+    "factor_a": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100000
+    }
+  },
+  "required": [
+    "test"
+  ],
+  "additionalProperties": false
+}

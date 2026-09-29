@@ -103,7 +103,7 @@ export async function documentsRouter(app: FastifyInstance) {
     try {
       await prisma.doc.create({ data: { id, userId, title: title || 'Untitled', body: '', studyId: study_id || null, createdAt: now, updatedAt: now } })
     } catch (err: any) {
-      // If FK constraint fails (user not in DB yet — staging/CI), retry without FK.
+      // If FK constraint fails (user not in DB yet — test/CI), retry without FK.
       // #980: PRAGMA 是连接级状态 — fallback insert 抛错时必须恢复 ON,
       // 否则连接池复用后外键约束对后续无关请求保持关闭(约束失效扩散)。
       if (err?.message?.includes('foreign key')) {
@@ -433,23 +433,21 @@ export async function documentsRouter(app: FastifyInstance) {
     // #797: 产出端过契约 — 发送形状由 PolishStreamChunk 编译期锁定。
     const send = (d: PolishStreamChunk) => sse.send(d)
 
-    // S3+S5: 取消传导 — 客户端断开或总超时(随选区放宽,#869)都 abort 上游生成
-    const controller = new AbortController()
+    // #1146: 客户端断开 + 总超时合并为一个上游取消信号 — createRawSseSender
+    // 已自带 15s 心跳与 close→abort，旧实现另起 heartbeat + close 监听，
+    // 每 15s 向同一连接写两次 ping。
+    const deadlineController = new AbortController()
+    const signal = AbortSignal.any([sse.signal, deadlineController.signal])
     let finished = false
     const finish = () => { if (!finished) { finished = true; sse.end() } }
-    reply.raw.on('close', () => controller.abort())
     // #869: 150s 基线 + 10ms/字符,上限 600s — 大选区+思维链不再被掐。
-    const deadline = setTimeout(() => controller.abort(), resolvePolishDeadlineMs(selection.length))
-    // S4: 心跳 — 长思考静默期防代理空闲掐断(SSE 注释行,客户端解析器自动忽略)
-    const heartbeat = setInterval(() => {
-      try { reply.raw.write(': ping\n\n') } catch { /* closed */ }
-    }, 15_000)
+    const deadline = setTimeout(() => deadlineController.abort(), resolvePolishDeadlineMs(selection.length))
 
     try {
       let textChunks = 0
       for await (const chunk of polishSelection(selection, instruction, userId, (reasoning) => {
         send({ type: 'reasoning', text: reasoning })
-      }, controller.signal)) {
+      }, signal)) {
         textChunks++
         send({ text: chunk })
       }
@@ -457,12 +455,12 @@ export async function documentsRouter(app: FastifyInstance) {
         // 空流自动降级:非流式 chatWithMeta(#548 双倍额度重试)—
         // #687: LLM 调用与净化都在 writing service,router 只做 SSE 映射。
         slog.warn(`[polish] empty stream, falling back to non-streaming (model=${resolvePolishModel()}, selection=${selection.length}c)`)
-        const text = await polishSelectionFallback(selection, instruction, userId, controller.signal, (reasoning) => send({ type: 'reasoning', text: reasoning }))
+        const text = await polishSelectionFallback(selection, instruction, userId, signal, (reasoning) => send({ type: 'reasoning', text: reasoning }))
         send({ text })
       }
       send({ done: true })
     } catch (err: any) {
-      if (controller.signal.aborted) {
+      if (signal.aborted) {
         // 客户端取消/总超时 — 连接已死,仅记日志
         slog.info(`[polish] aborted (${err?.name === 'AbortError' ? 'client/timeout' : err?.message?.slice(0, 80)})`)
       } else {
@@ -476,7 +474,6 @@ export async function documentsRouter(app: FastifyInstance) {
       }
     } finally {
       clearTimeout(deadline)
-      clearInterval(heartbeat)
       finish()
     }
   })
@@ -797,7 +794,9 @@ export async function documentsRouter(app: FastifyInstance) {
     const updated = await prisma.doc.findFirst({ where: { id: doc.id }, select: { updatedAt: true } })
     return {
       ok: true,
-      body: written.body,
+      // #1134: 库内正文是无 token 规范形态 — 返回给客户端前必须重签,
+      // 否则 <img>/下载链接 401;前端与本地正文比较也会因 token 缺失误判改动。
+      body: refreshFileUrls(written.body, request.user!.userId),
       block_projection: written.projection,
       ...(written.sectionMeta ? { section_meta: written.sectionMeta } : {}),
       updated_at: updated?.updatedAt ?? null,

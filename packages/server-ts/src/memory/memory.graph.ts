@@ -75,6 +75,17 @@ export class MemoryGraph {
     }
   }
 
+  /** #1146: 按来源提案查节点 — 审批在"落图成功、提案行标记失败"之间崩溃后
+   *  会回滚 pending 并重试,重试前用本查询判重,不重复落图。 */
+  findNodeByProposal(proposalId: string): MemoryNode | undefined {
+    for (const node of this.nodes.values()) {
+      if ((node as { provenance?: { proposalId?: string } }).provenance?.proposalId === proposalId) {
+        return node
+      }
+    }
+    return undefined
+  }
+
   getNode(id: string): MemoryNode | undefined {
     return this.nodes.get(id)
   }

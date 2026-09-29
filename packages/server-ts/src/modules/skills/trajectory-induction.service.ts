@@ -23,6 +23,7 @@ import { parseLlmJson } from '../../common/llm-json.js'
 import { scanSkillPii } from '../../common/pii-scanner.js'
 import prisma from '../../common/prisma.js'
 import { makeLogger } from '../../common/logger.js'
+import { acquireSchedulerLease } from '../../common/scheduler-lease.js'
 
 const log = makeLogger('skills.trajectory-induction')
 
@@ -263,6 +264,11 @@ export function createSkillInductionScheduler(intervalMs: number): SkillInductio
       if (timer) return
       timer = setInterval(async () => {
         try {
+          // #1154: DB 租约防重入（多实例/滚动发布）。
+          if (!(await acquireSchedulerLease('skill-induction', intervalMs))) {
+            log.info('[SKILL-INDUCTION] tick skipped — lease held elsewhere')
+            return
+          }
           // 轨迹在 per-user eventLog(JSONL)— 枚举用户,归纳器内部自查薄数据。
           const rows = await prisma.user.findMany({ select: { id: true }, take: 50 }).catch(() => [] as Array<{ id: string }>)
           let proposed = 0

@@ -1,43 +1,55 @@
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { ErrorBoundary, RouteBoundary } from '@/components/ErrorBoundary';
-import { ChatPage } from '@/routes/chat';
+// #1145: 代码分割 — 只有营销/登录入口急加载（首屏不需要业务依赖）。
+// 入口包曾 3.1MB（静态 import 30+ 页面,连带 cytoscape/katex/tiptap 进
+// 首屏）；业务路由一律 React.lazy,按访问按需拉 chunk。
 import { LandingPage } from '@/routes/landing';
 import { LoginPage } from '@/routes/login';
-import { TodayPage } from '@/routes/today';
-import { MemoryKnowledgePage } from '@/routes/memory-knowledge';
-import { PatientsLayout, PatientSummaryPage, PatientChatPage } from '@/routes/patients';
-import { ImagingPage } from '@/routes/imaging';
-import { LabsPage } from '@/routes/labs';
-import { MemoryGraphPage } from '@/routes/memory-graph';
-import { MemoryGraphVizPage } from '@/routes/memory-graph-viz';
-import { MemoryPage } from '@/routes/memory';
-import { SidecarPage } from '@/routes/sidecar';
-import { KnowledgeLandingPage } from '@/routes/knowledge-landing';
-import { SecurityPage } from '@/routes/security';
 
-import { ReportPage } from '@/routes/report-page';
-import { MedicalRecordsPage } from '@/routes/medical-records';
-import { ViewerPage } from '@/routes/viewer';
-import { SettingsPage } from '@/routes/settings';
-import { AdminUsersPage } from '@/routes/admin/users';
-import { AdminMetricsPage } from '@/routes/admin/metrics';
-import { ResearchPage } from '@/routes/research';
-
-import { ResearchDetailPage } from '@/routes/research-detail';
-import { WritingPage } from '@/routes/writing';
-import { WritingEditorPage } from '@/routes/writing-editor';
-import { SkillsPage } from '@/routes/skills';
-import { FilesPage } from '@/routes/files';
-import { SchedulePage } from '@/routes/schedule';
-import { ExportPage } from '@/routes/export-data';
-import { PluginsPage } from '@/routes/plugins';
-import { PluginSettingsPage } from '@/routes/plugin-settings';
-
+const ChatPage = lazy(() => import('@/routes/chat').then((m) => ({ default: m.ChatPage })));
+const TodayPage = lazy(() => import('@/routes/today').then((m) => ({ default: m.TodayPage })));
+const MemoryKnowledgePage = lazy(() => import('@/routes/memory-knowledge').then((m) => ({ default: m.MemoryKnowledgePage })));
+const PatientsLayout = lazy(() => import('@/routes/patients').then((m) => ({ default: m.PatientsLayout })));
+const PatientSummaryPage = lazy(() => import('@/routes/patients').then((m) => ({ default: m.PatientSummaryPage })));
+const PatientChatPage = lazy(() => import('@/routes/patients').then((m) => ({ default: m.PatientChatPage })));
+const ImagingPage = lazy(() => import('@/routes/imaging').then((m) => ({ default: m.ImagingPage })));
+const LabsPage = lazy(() => import('@/routes/labs').then((m) => ({ default: m.LabsPage })));
+const MemoryGraphPage = lazy(() => import('@/routes/memory-graph').then((m) => ({ default: m.MemoryGraphPage })));
+const MemoryGraphVizPage = lazy(() => import('@/routes/memory-graph-viz').then((m) => ({ default: m.MemoryGraphVizPage })));
+const MemoryPage = lazy(() => import('@/routes/memory').then((m) => ({ default: m.MemoryPage })));
+const SidecarPage = lazy(() => import('@/routes/sidecar').then((m) => ({ default: m.SidecarPage })));
+const KnowledgeLandingPage = lazy(() => import('@/routes/knowledge-landing').then((m) => ({ default: m.KnowledgeLandingPage })));
+const SecurityPage = lazy(() => import('@/routes/security').then((m) => ({ default: m.SecurityPage })));
+const ReportPage = lazy(() => import('@/routes/report-page').then((m) => ({ default: m.ReportPage })));
+const MedicalRecordsPage = lazy(() => import('@/routes/medical-records').then((m) => ({ default: m.MedicalRecordsPage })));
+const ViewerPage = lazy(() => import('@/routes/viewer').then((m) => ({ default: m.ViewerPage })));
+const SettingsPage = lazy(() => import('@/routes/settings').then((m) => ({ default: m.SettingsPage })));
+const AdminUsersPage = lazy(() => import('@/routes/admin/users').then((m) => ({ default: m.AdminUsersPage })));
+const AdminMetricsPage = lazy(() => import('@/routes/admin/metrics').then((m) => ({ default: m.AdminMetricsPage })));
+const ResearchPage = lazy(() => import('@/routes/research').then((m) => ({ default: m.ResearchPage })));
+const ResearchDetailPage = lazy(() => import('@/routes/research-detail').then((m) => ({ default: m.ResearchDetailPage })));
+const WritingPage = lazy(() => import('@/routes/writing').then((m) => ({ default: m.WritingPage })));
+const WritingEditorPage = lazy(() => import('@/routes/writing-editor').then((m) => ({ default: m.WritingEditorPage })));
+const SkillsPage = lazy(() => import('@/routes/skills').then((m) => ({ default: m.SkillsPage })));
+const FilesPage = lazy(() => import('@/routes/files').then((m) => ({ default: m.FilesPage })));
+const SchedulePage = lazy(() => import('@/routes/schedule').then((m) => ({ default: m.SchedulePage })));
+const ExportPage = lazy(() => import('@/routes/export-data').then((m) => ({ default: m.ExportPage })));
+const PluginsPage = lazy(() => import('@/routes/plugins').then((m) => ({ default: m.PluginsPage })));
+const PluginSettingsPage = lazy(() => import('@/routes/plugin-settings').then((m) => ({ default: m.PluginSettingsPage })));
 
 import { useAuthStore } from '@/stores/auth';
 import { PluginUIProvider } from '@/components/plugins/PluginUIRegistry';
+
+/** #1145: 懒加载路由的轻量占位（无文案 — 首屏不依赖 i18n 初始化时序）。 */
+function RouteFallback() {
+  return (
+    <div data-testid="route-loading" className="flex h-screen w-full items-center justify-center">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-accent" />
+    </div>
+  );
+}
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -95,6 +107,7 @@ export default function App() {
       <AuthEvents />
       <ErrorBoundary>
         <PluginUIProvider>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
@@ -311,6 +324,7 @@ export default function App() {
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+          </Suspense>
         </PluginUIProvider>
       </ErrorBoundary>
     </>

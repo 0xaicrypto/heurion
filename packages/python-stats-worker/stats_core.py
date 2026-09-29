@@ -35,7 +35,9 @@ def _require_finite(**stats_: float) -> None:
 
 
 def describe(values: List[float]) -> Dict[str, Any]:
-    a = _finite_array(values, "values")
+    # #1149: n<2 时 sd(ddof=1) 是 0/0 → NaN 序列化成 null、HTTP 200 过不了
+    # statsResponseSchema（静默产出畸形报告）；单观测无法报告离散度,明确拒绝。
+    a = _finite_array(values, "values", min_size=2)
     q1, med, q3 = np.percentile(a, [25, 50, 75])
     return {
         "method": "descriptive",

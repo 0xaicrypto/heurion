@@ -3,6 +3,15 @@ import { getApp, authHeader, getAuthUserId } from '../setup.js'
 import { createIngestionJob, processIngestionJob } from '../../src/modules/ingestion/ingestion.service.js'
 import prisma from '../../src/common/prisma.js'
 
+// #1150-followup: 协议提取走 createAiProvider — 直接 mock 模块,测试不再
+// 依赖真实网络/AI key(此前 deepseek 分支若未命中会落到真实外网,401 亦可能
+// 被上层捕获掩盖)。
+const aiMocks = vi.hoisted(() => ({ chat: vi.fn() }))
+vi.mock('../../src/common/ai/index.js', () => ({
+  createAiProvider: () => ({ chat: aiMocks.chat }),
+}))
+
+
 const protocolText = `
 Study: NSCLC Phase II Trial
 Inclusion:
@@ -28,6 +37,15 @@ function mockJsonResponse(body: any, status = 200): Response {
 
 beforeEach(() => {
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+  aiMocks.chat.mockResolvedValue({ content: JSON.stringify({
+    inclusion: ['Histologically confirmed NSCLC', 'Age 18-75', 'ECOG 0-1'],
+    exclusion: ['Active brain metastases', 'Severe cardiac disease'],
+    safety: [{ name: 'DLT', rule: 'Grade >= 3 neutropenia lasting >7 days', grade: 3 }],
+    schedule: [
+      { visit: 'Screening', timing: 'Day -28 to -1', assessments: ['CT chest', 'labs', 'ECG'] },
+      { visit: 'Cycle 1 Day 1', timing: 'Day 1', assessments: ['Pembrolizumab infusion'] },
+    ],
+  }) })
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string | URL | Request) => {
@@ -58,6 +76,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+  aiMocks.chat.mockReset()
 })
 
 describe('Protocol ingestion', () => {

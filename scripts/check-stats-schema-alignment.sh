@@ -22,7 +22,7 @@ GOLDEN="$ROOT/packages/python-stats-worker/golden/stats_golden.json"
 PY="$ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY=python3
 
-echo "── 1/4 TS zod 端（contracts dist）…"
+echo "── 1/5 TS zod 端（contracts dist）…"
 node --input-type=module -e "
 import { statsRequestSchema } from '$ROOT/packages/contracts/dist/index.js'
 import fs from 'fs'
@@ -35,7 +35,7 @@ if (!r.success) {
 console.log('  ✓ zod 解析通过（' + Object.keys(fixture.request).length + ' 字段）')
 "
 
-echo "── 2/4 pydantic 端（python-stats-worker）…"
+echo "── 2/5 pydantic 端（python-stats-worker）…"
 "$PY" - "$FIXTURE" << 'PYEOF'
 import json, sys, os
 os.chdir(os.path.dirname(os.path.abspath(sys.argv[1])))
@@ -45,7 +45,23 @@ AnalyzeRequest(**fixture['request'])
 print('  ✓ pydantic 解析通过（%d 字段）' % len(fixture['request']))
 PYEOF
 
-echo "── 3/4 双端拒绝负样本（形状漂移会被拦截）…"
+echo "── 3/5 JSON Schema 单一真相（zod→schema→python jsonschema, #1157）…"
+# 3a: 提交的 JSON Schema 必须与 zod 契约一致（漂移即失败）。
+node "$ROOT/packages/contracts/scripts/generate-json-schema.mjs" --check
+# 3b: fixture 必须通过 zod 生成的 JSON Schema（Python jsonschema 校验）。
+"$PY" - "$FIXTURE" "$ROOT/packages/python-stats-worker/stats-request.schema.json" << 'PYEOF'
+import json, sys
+try:
+    import jsonschema
+except ImportError:
+    sys.exit('jsonschema 未安装 — pip install -r packages/python-stats-worker/requirements.txt')
+schema = json.load(open(sys.argv[2], 'r'))
+request = json.load(open(sys.argv[1], 'r'))['request']
+jsonschema.validate(instance=request, schema=schema)
+print('  ✓ fixture 通过 zod 生成的 JSON Schema（draft-07）')
+PYEOF
+
+echo "── 4/5 双端拒绝负样本（形状漂移会被拦截）…"
 # fixture_stats_request.bad.json        — test 类型错误
 # fixture_stats_request.survival-missing.bad.json — survival 记录缺 time/event
 # （#严重-2：缺字段曾因 Optional 被静默补成 t=0/删失，必须两端都拒绝）
@@ -58,21 +74,31 @@ import fs from 'fs'
 const r = statsRequestSchema.safeParse(JSON.parse(fs.readFileSync('$BAD', 'utf8')).request)
 if (r.success) { console.error('zod 端接受了本应拒绝的负样本: $BAD'); process.exit(1) }
 "
-"$PY" - "$BAD" << 'PYEOF'
+"$PY" - "$BAD" "$ROOT/packages/python-stats-worker/stats-request.schema.json" << 'PYEOF'
 import json, sys, os
 os.chdir(os.path.dirname(os.path.abspath(sys.argv[1])))
 from pydantic import ValidationError
 from main import AnalyzeRequest
+request = json.load(open(sys.argv[1], 'r'))['request']
 try:
-    AnalyzeRequest(**json.load(open(sys.argv[1], 'r'))['request'])
+    AnalyzeRequest(**request)
 except ValidationError:
+    pass
+else:
+    sys.exit('pydantic 端接受了本应拒绝的负样本: ' + sys.argv[1])
+# #1157: JSON Schema（zod 生成）也必须拒绝同一负样本。
+import jsonschema
+schema = json.load(open(sys.argv[2], 'r'))
+try:
+    jsonschema.validate(instance=request, schema=schema)
+except jsonschema.ValidationError:
     sys.exit(0)
-sys.exit('pydantic 端接受了本应拒绝的负样本: ' + sys.argv[1])
+sys.exit('JSON Schema 接受了本应拒绝的负样本: ' + sys.argv[1])
 PYEOF
 done
-echo "  ✓ 类型错误 + survival 缺字段负样本双端均被拒绝"
+echo "  ✓ 类型错误 + survival 缺字段负样本 zod/pydantic/JSON Schema 三端均被拒绝"
 
-echo "── 4/4 报告形状对齐（golden → statsReportSchema, #1109）…"
+echo "── 5/5 报告形状对齐（golden → statsReportSchema, #1109）…"
 node --input-type=module -e "
 import { statsReportSchema } from '$ROOT/packages/contracts/dist/index.js'
 import fs from 'fs'

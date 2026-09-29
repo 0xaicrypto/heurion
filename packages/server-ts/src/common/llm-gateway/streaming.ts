@@ -106,7 +106,6 @@ export async function chatWithToolsStreamImpl(
 
   try {
     // 流式读取循环以 done/异常收敛 — 常量条件是有意的。
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       let readResult: Awaited<ReturnType<typeof reader.read>>
       try {

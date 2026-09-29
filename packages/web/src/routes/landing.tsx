@@ -73,9 +73,11 @@ function CheckIcon({ className }: { className?: string }) {
  * 数据为演示示例,仅用于展示图表样式(诚实原则:不冒充真实结果)。
  */
 function EfficacyBarChartSample() {
+  const { t } = useTranslation();
+  // prettier-ignore
   const bars = [
-    { label: 'A 组', n: 42, value: 75, ciLow: 65, ciHigh: 85 },
-    { label: 'B 组', n: 45, value: 82, ciLow: 73, ciHigh: 91 },
+    { label: t('landing.groupA', 'A 组'), n: 42, value: 75, ciLow: 65, ciHigh: 85 },
+    { label: t('landing.groupB', 'B 组'), n: 45, value: 82, ciLow: 73, ciHigh: 91 },
   ];
   const chartW = 480;
   const chartH = 300;
@@ -91,8 +93,8 @@ function EfficacyBarChartSample() {
   const ticks = [0, 25, 50, 75, 100];
 
   return (
-    <svg viewBox={`0 0 ${chartW} ${chartH}`} role="img" aria-label="两组治疗有效率对比示例图" className="mx-auto block max-w-[440px]">
-      <title>两组治疗有效率对比(示例数据)</title>
+    <svg viewBox={`0 0 ${chartW} ${chartH}`} role="img" aria-label={t('landing.chartAria', '两组治疗有效率对比示例图')} className="mx-auto block max-w-[440px]">
+      <title>{t('landing.chartTitle', '两组治疗有效率对比(示例数据)')}</title>
       {/* axes + grid */}
       {ticks.map((t) => (
         <line key={t} x1={padL} y1={y(t)} x2={chartW - 20} y2={y(t)} stroke="hsl(var(--border))" strokeWidth={t === 0 ? 1 : 0.6} strokeDasharray={t === 0 ? undefined : '3 3'} />
@@ -128,20 +130,21 @@ function EfficacyBarChartSample() {
 }
 
 /** Hero 右侧产品示意 — 一句话指令 → 沙箱执行 → 交付物,浮动卡片展示溯源与失效传播。 */
-function ProductMockup({ isZh }: { isZh: boolean }) {
+function ProductMockup() {
+  const { t } = useTranslation();
   const M = {
-    userMsg: isZh ? '把 2024 年随访数据清洗后画一组 KM 曲线，顺手导出 DOCX 报告' : 'Clean the 2024 follow-up data, plot KM curves, and export a DOCX report',
-    aiHead: isZh ? 'Execution Plane · 隔离沙箱' : 'Execution Plane · Sandbox',
-    done: isZh ? '已完成' : 'Done',
-    kmA: 'A 组 67%',
-    kmB: 'B 组 58%',
+    userMsg: t('landing.userMsg', '把 2024 年随访数据清洗后画一组 KM 曲线，顺手导出 DOCX 报告'),
+    aiHead: t('landing.aiHead', 'Execution Plane · 隔离沙箱'),
+    done: t('landing.done', '已完成'),
+    kmA: t('landing.kmA', 'A 组 67%'),
+    kmB: t('landing.kmB', 'B 组 58%'),
     chip1: 'Table 1',
-    chip2: isZh ? 'KM 曲线 ×2' : 'KM curves ×2',
-    chip3: isZh ? '随访报告.docx' : 'Follow-up report.docx',
-    srcTitle: isZh ? '结论可溯源' : 'Provenance',
-    srcDesc: isZh ? '该结论来源：2024-03-12 化验单 #A2291' : 'Source: lab report #A2291, 2024-03-12',
-    staleTitle: isZh ? '失效传播' : 'Stale propagation',
-    staleDesc: isZh ? '底层数据已变更 → 2 份报告自动标记失效' : 'Underlying data changed → 2 reports auto-marked stale',
+    chip2: t('landing.chip2', 'KM 曲线 ×2'),
+    chip3: t('landing.chip3', '随访报告.docx'),
+    srcTitle: t('landing.srcTitle', '结论可溯源'),
+    srcDesc: t('landing.srcDesc', '该结论来源：2024-03-12 化验单 #A2291'),
+    staleTitle: t('landing.staleTitle', '失效传播'),
+    staleDesc: t('landing.staleDesc', '底层数据已变更 → 2 份报告自动标记失效'),
   };
   return (
     <div className="relative">
@@ -171,7 +174,7 @@ function ProductMockup({ isZh }: { isZh: boolean }) {
               </span>
             </div>
             {/* KM 曲线示意 */}
-            <svg viewBox="0 0 440 150" className="block w-full" role="img" aria-label="KM 曲线示意">
+            <svg viewBox="0 0 440 150" className="block w-full" role="img" aria-label={t('landing.kmChartAria', 'KM 曲线示意')}>
               <line x1="36" y1="12" x2="36" y2="126" stroke="hsl(var(--border-strong))" />
               <line x1="36" y1="126" x2="428" y2="126" stroke="hsl(var(--border-strong))" />
               <text x="28" y="18" fontSize="9" fill="hsl(var(--text-tertiary))" textAnchor="end">1.0</text>
@@ -214,216 +217,178 @@ function ProductMockup({ isZh }: { isZh: boolean }) {
 }
 
 export function LandingPage() {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language.startsWith('zh');
+  const { t } = useTranslation();
 
   const T = {
-    tagline: isZh ? '面向临床科研的数字化医疗助手' : 'A digital medical research assistant',
-    title1: isZh ? '让 AI 拥有临床记忆' : 'Give AI clinical memory —',
-    title2: isZh ? '与执行能力' : 'hands that deliver',
-    subtitle: isZh
-      ? 'Heurion 以「双平面架构」重建医疗 AI 的大脑与双手：Control Plane 沉淀可溯源、可失效传播的 DAG 临床记忆；Execution Plane 在隔离沙箱中直接生成 DOCX、PPTX 与统计图表。'
-      : 'Heurion rebuilds medical AI with a dual-plane architecture: a Control Plane of traceable, stale-propagating DAG clinical memory, and an Execution Plane that generates DOCX, PPTX and statistical figures in an isolated sandbox.',
-    startFree: isZh ? '免费开始使用' : 'Start Free',
-    startFreeShort: isZh ? '免费开始' : 'Start Free',
-    github: isZh ? '在 GitHub 查看' : 'View on GitHub',
+    tagline: t('landing.tagline', '面向临床科研的数字化医疗助手'),
+    title1: t('landing.title1', '让 AI 拥有临床记忆'),
+    title2: t('landing.title2', '与执行能力'),
+    subtitle: t('landing.subtitle', 'Heurion 以「双平面架构」重建医疗 AI 的大脑与双手：Control Plane 沉淀可溯源、可失效传播的 DAG 临床记忆；Execution Plane 在隔离沙箱中直接生成 DOCX、PPTX 与统计图表。'),
+    startFree: t('landing.startFree', '免费开始使用'),
+    startFreeShort: t('landing.startFreeShort', '免费开始'),
+    github: t('landing.github', '在 GitHub 查看'),
     trustItems: [
-      { icon: <Lock size={15} strokeWidth={2.2} />, label: isZh ? '数据不出院' : 'Data stays on-prem' },
-      { icon: <History size={15} strokeWidth={2.2} />, label: isZh ? '全量可审计' : 'Fully auditable' },
-      { icon: <Server size={15} strokeWidth={2.2} />, label: isZh ? '支持本地化部署' : 'Self-hosted ready' },
+      { icon: <Lock size={15} strokeWidth={2.2} />, label: t('landing.label', '数据不出院') },
+      { icon: <History size={15} strokeWidth={2.2} />, label: t('landing.label2', '全量可审计') },
+      { icon: <Server size={15} strokeWidth={2.2} />, label: t('landing.label3', '支持本地化部署') },
     ],
 
     pillars: [
       {
         icon: <Network size={22} />,
-        title: isZh ? 'DAG 临床记忆' : 'DAG clinical memory',
-        desc: isZh ? '知识单元按依赖关系组成图谱，随诊疗持续生长。' : 'Knowledge units form a dependency graph that grows with care.',
+        title: t('landing.title', 'DAG 临床记忆'),
+        desc: t('landing.desc10', '知识单元按依赖关系组成图谱，随诊疗持续生长。'),
       },
       {
         icon: <Box size={22} />,
-        title: isZh ? '隔离执行沙箱' : 'Isolated sandbox',
-        desc: isZh ? '崩溃与风险都被限制在沙箱内，核心病历库不受影响。' : 'Crashes stay in the sandbox; core records are never touched.',
+        title: t('landing.title3', '隔离执行沙箱'),
+        desc: t('landing.desc11', '崩溃与风险都被限制在沙箱内，核心病历库不受影响。'),
       },
       {
         icon: <Link2 size={22} />,
-        title: isZh ? '完整溯源' : 'Complete provenance',
-        desc: isZh ? '每个结论一键追溯到具体日期的病历原文。' : 'Every conclusion links back to its source record.',
+        title: t('landing.title4', '完整溯源'),
+        desc: t('landing.desc12', '每个结论一键追溯到具体日期的病历原文。'),
       },
       {
         icon: <FileText size={22} />,
-        title: isZh ? '科研级交付' : 'Publication-grade delivery',
-        desc: isZh ? 'DOCX、PPTX、Table 1、KM 曲线，开箱即用。' : 'DOCX, PPTX, Table 1 and KM curves, out of the box.',
+        title: t('landing.title5', '科研级交付'),
+        desc: t('landing.desc13', 'DOCX、PPTX、Table 1、KM 曲线，开箱即用。'),
       },
     ],
 
-    painsEyebrow: isZh ? '临床现场的真实痛点' : 'Real clinical pain',
-    painsTitle: isZh ? '医疗大模型在临床场景的三大失效模式' : 'Three failure modes of medical LLMs in clinical practice',
-    painQuote: isZh
-      ? '“复诊时，医生得把过去三年的化验单、基因突变、影像记录重新粘贴一遍。”'
-      : '“Before every follow-up, doctors re-paste years of labs, mutations and imaging.”',
-    painQuoteSource: isZh ? '— 来自 12 家合作科室的访谈' : '— From interviews with 12 partner departments',
+    painsEyebrow: t('landing.painsEyebrow', '临床现场的真实痛点'),
+    painsTitle: t('landing.painsTitle', '医疗大模型在临床场景的三大失效模式'),
+    painQuote: t('landing.painQuote', '“复诊时，医生得把过去三年的化验单、基因突变、影像记录重新粘贴一遍。”'),
+    painQuoteSource: t('landing.painQuoteSource', '— 来自 12 家合作科室的访谈'),
     pains: [
       {
         num: '01',
         icon: <History size={18} />,
-        title: isZh ? '会话级记忆缺失' : 'No persistent memory',
-        desc: isZh
-          ? '每次打开对话框，AI 都不认识患者。复诊、写总结前，医生得把过去 3 年的化验单、基因突变、影像记录重新粘贴一遍。'
-          : 'Every session starts from scratch. Before a follow-up or summary, doctors must re-paste years of labs, mutations, and imaging.',
+        title: t('landing.title6', '会话级记忆缺失'),
+        desc: t('landing.desc', '每次打开对话框，AI 都不认识患者。复诊、写总结前，医生得把过去 3 年的化验单、基因突变、影像记录重新粘贴一遍。'),
       },
       {
         num: '02',
         icon: <EyeOff size={18} />,
-        title: isZh ? '幻觉与黑盒' : 'Hallucination & black box',
-        desc: isZh
-          ? 'AI 生成的病例总结很漂亮，但医生不敢用：指标可能是编造的，且无法点击追溯到具体日期的病历。'
-          : 'Generated summaries look polished, but doctors cannot trust them: metrics may be invented, and sources cannot be traced.',
+        title: t('landing.title7', '幻觉与黑盒'),
+        desc: t('landing.desc2', 'AI 生成的病例总结很漂亮，但医生不敢用：指标可能是编造的，且无法点击追溯到具体日期的病历。'),
       },
       {
         num: '03',
         icon: <MessageSquare size={18} />,
-        title: isZh ? '缺乏执行能力：仅限对话' : 'No execution: chat only',
-        desc: isZh
-          ? '“帮我把随访数据清洗一下，画一张 KM 曲线。”通用 AI 只能回答：“抱歉，我是一个语言模型，无法作图。”'
-          : '"Clean this follow-up data and plot a KM curve." Generic AI replies: "Sorry, I am a language model and cannot generate charts."',
+        title: t('landing.title8', '缺乏执行能力：仅限对话'),
+        desc: t('landing.desc3', '“帮我把随访数据清洗一下，画一张 KM 曲线。”通用 AI 只能回答：“抱歉，我是一个语言模型，无法作图。”'),
       },
     ],
 
-    dualPlaneEyebrow: isZh ? 'Heurion 的答案' : 'The Heurion answer',
-    dualPlaneTitle: isZh ? '双平面架构：大脑 + 双手' : 'Dual-Plane Architecture: brain + hands',
-    dualPlaneSubtitle: isZh
-      ? '无需理解底层实现：Heurion 由具备持久临床记忆的智能大脑，与在隔离沙箱中完成执行与交付的执行引擎构成。'
-      : 'No implementation details required: Heurion pairs a brain with persistent clinical memory and an execution engine that delivers results inside an isolated sandbox.',
-    archCmd: isZh ? '医生的自然语言指令' : "The physician's natural-language command",
+    dualPlaneEyebrow: t('landing.dualPlaneEyebrow', 'Heurion 的答案'),
+    dualPlaneTitle: t('landing.dualPlaneTitle', '双平面架构：大脑 + 双手'),
+    dualPlaneSubtitle: t('landing.dualPlaneSubtitle', '无需理解底层实现：Heurion 由具备持久临床记忆的智能大脑，与在隔离沙箱中完成执行与交付的执行引擎构成。'),
+    archCmd: t('landing.archCmd', '医生的自然语言指令'),
     controlPlane: {
-      label: isZh ? 'Control Plane · 记忆引擎' : 'Control Plane · Memory Engine',
-      title: isZh ? '持久记忆与完整溯源' : 'Persistent memory & full provenance',
+      label: t('landing.label4', 'Control Plane · 记忆引擎'),
+      title: t('landing.title9', '持久记忆与完整溯源'),
       points: [
-        isZh ? '临床原始输入被不可变记录' : 'Raw clinical inputs recorded immutably',
-        isZh ? '记忆以可组合的知识单元组织成 DAG 图谱' : 'Memory organized as a DAG of composable knowledge units',
-        isZh ? '底层数据变更时，上层报告自动标记失效' : 'Downstream reports auto-mark stale on data changes',
-        isZh ? '数据缺失时主动提问，而非编造' : 'Asks when data is missing, instead of hallucinating',
+        t('landing.item', '临床原始输入被不可变记录'),
+        t('landing.item2', '记忆以可组合的知识单元组织成 DAG 图谱'),
+        t('landing.item3', '底层数据变更时，上层报告自动标记失效'),
+        t('landing.item4', '数据缺失时主动提问，而非编造'),
       ],
     },
     executionPlane: {
-      label: isZh ? 'Execution Plane · 执行沙箱' : 'Execution Plane · Sandbox',
-      title: isZh ? '执行与交付引擎' : 'Execution & delivery engine',
+      label: t('landing.label5', 'Execution Plane · 执行沙箱'),
+      title: t('landing.title10', '执行与交付引擎'),
       points: [
-        isZh ? '自然语言指令触发隔离沙箱' : 'Natural-language commands trigger the sandbox',
-        isZh ? '自动执行数据分析、清洗与图表渲染' : 'Automated analysis, cleaning, and figure rendering',
-        isZh ? '沙箱崩溃不影响核心患者数据库' : 'Sandbox crashes never touch core patient data',
-        isZh ? '数据不出院，算力可本地化部署' : 'Data never leaves the hospital; compute can be on-premise',
+        t('landing.item5', '自然语言指令触发隔离沙箱'),
+        t('landing.item6', '自动执行数据分析、清洗与图表渲染'),
+        t('landing.item7', '沙箱崩溃不影响核心患者数据库'),
+        t('landing.item8', '数据不出院，算力可本地化部署'),
       ],
     },
-    deliverLabel: isZh ? '直接交付：' : 'Directly delivers:',
-    deliverItems: isZh ? ['DOCX', 'PPTX', 'Table 1', 'KM 曲线', '统计图'] : ['DOCX', 'PPTX', 'Table 1', 'KM curves', 'figures'],
+    deliverLabel: t('landing.deliverLabel', '直接交付：'),
+    deliverItems: [
+      t('landing.deliverDocx', 'DOCX'), t('landing.deliverPptx', 'PPTX'), t('landing.deliverTable1', 'Table 1'),
+      t('landing.deliverKm', 'KM 曲线'), t('landing.deliverPlot', '统计图'),
+    ],
 
     uniqueCards: [
       {
         icon: <Globe size={24} />,
-        title: isZh ? '浏览器自动化' : 'Browser automation',
-        desc: isZh
-          ? '用自然语言指令让 AI 登录系统、查询与采集网页信息（Agent Browser），也可模拟真实用户旅程做回归测试。'
-          : 'Tell the AI to log in, query, and collect web information (Agent Browser). Also powers regression testing that simulates real user journeys.',
+        title: t('landing.title11', '浏览器自动化'),
+        desc: t('landing.desc4', '用自然语言指令让 AI 登录系统、查询与采集网页信息（Agent Browser），也可模拟真实用户旅程做回归测试。'),
       },
       {
         icon: <ImageIcon size={24} />,
-        title: isZh ? '上传即解读' : 'Upload & interpret',
-        desc: isZh
-          ? '上传化验单、影像截图或手写记录，AI 直接解读并结构化（视觉模型支持，非视觉模型走 OCR 并明确标注来源）。'
-          : 'Upload lab reports, imaging snapshots, or notes and the AI interprets them directly (vision models; OCR fallback with explicit sourcing).',
+        title: t('landing.title12', '上传即解读'),
+        desc: t('landing.desc5', '上传化验单、影像截图或手写记录，AI 直接解读并结构化（视觉模型支持，非视觉模型走 OCR 并明确标注来源）。'),
       },
       {
         icon: <Puzzle size={24} />,
-        title: isZh ? '可扩展的插件生态' : 'Extensible plugin ecosystem',
-        desc: isZh
-          ? '统计图表（chart）、3D 生物场景（bioscene）、网页操作（browser-agent）等能力按需安装启用，核心平台保持轻量。'
-          : 'Statistical charts (chart), 3D bioscience scenes (bioscene), and web operations (browser-agent) install on demand — the core stays lean.',
+        title: t('landing.title13', '可扩展的插件生态'),
+        desc: t('landing.desc6', '统计图表（chart）、3D 生物场景（bioscene）、网页操作（browser-agent）等能力按需安装启用，核心平台保持轻量。'),
       },
     ],
 
-    stepsEyebrow: isZh ? '三步上手' : 'Three steps',
-    stepsTitle: isZh ? '从病历到科研交付物' : 'From records to research deliverables',
+    stepsEyebrow: t('landing.stepsEyebrow', '三步上手'),
+    stepsTitle: t('landing.stepsTitle', '从病历到科研交付物'),
     steps: [
       {
-        title: isZh ? '上传病历与随访数据' : 'Upload records & follow-up data',
-        desc: isZh ? '化验单、影像、手写记录均可直接上传，自动结构化入库。' : 'Labs, imaging, and handwritten notes are structured automatically.',
+        title: t('landing.title14', '上传病历与随访数据'),
+        desc: t('landing.desc14', '化验单、影像、手写记录均可直接上传，自动结构化入库。'),
       },
       {
-        title: isZh ? 'AI 构建可溯源临床记忆' : 'AI builds traceable memory',
-        desc: isZh ? '知识单元沉淀为 DAG 图谱，随诊疗持续生长，结论可一键溯源。' : 'Knowledge settles into a DAG graph that grows with care, every conclusion traceable.',
+        title: t('landing.title15', 'AI 构建可溯源临床记忆'),
+        desc: t('landing.desc15', '知识单元沉淀为 DAG 图谱，随诊疗持续生长，结论可一键溯源。'),
       },
       {
-        title: isZh ? '一句话生成科研级交付物' : 'One sentence → publication-grade output',
-        desc: isZh ? '清洗、统计、作图、成文一次完成，直接导出 DOCX 与 PPTX。' : 'Cleaning, statistics, figures and writing in one pass — export DOCX and PPTX.',
+        title: t('landing.title16', '一句话生成科研级交付物'),
+        desc: t('landing.desc16', '清洗、统计、作图、成文一次完成，直接导出 DOCX 与 PPTX。'),
       },
     ],
 
-    figEyebrow: isZh ? '方法学严谨性' : 'Methodological rigor',
-    figTitle: isZh ? '正式统计图表,方法学完整标注' : 'Formal statistical figures, methodology annotated',
-    figDesc: isZh
-      ? '科研级图表可直接交付：误差棒、置信区间、P 值与样本量一应俱全，风格符合期刊规范。'
-      : 'Deliver publication-ready figures: error bars, CIs, p-values and sample sizes in journal style.',
+    figEyebrow: t('landing.figEyebrow', '方法学严谨性'),
+    figTitle: t('landing.figTitle', '正式统计图表,方法学完整标注'),
+    figDesc: t('landing.figDesc', '科研级图表可直接交付：误差棒、置信区间、P 值与样本量一应俱全，风格符合期刊规范。'),
     figChecks: [
-      isZh ? '误差棒标注 95% 置信区间' : 'Error bars denote 95% CIs',
-      isZh ? 'P 值与显著性标注规范呈现' : 'Formal p-value and significance annotation',
-      isZh ? '示例数据明确标注，诚实原则' : 'Sample data explicitly labeled — honest by design',
+      t('landing.item9', '误差棒标注 95% 置信区间'),
+      t('landing.item10', 'P 值与显著性标注规范呈现'),
+      t('landing.item11', '示例数据明确标注，诚实原则'),
     ],
-    figBadge: isZh ? 'Figure 1 · 示例' : 'Figure 1 · Example',
-    figCaption: isZh
-      ? 'Figure 1. 两组治疗有效率对比，误差棒表示 95% 置信区间；显著性检验为双侧 t 检验。'
-      : 'Figure 1. Treatment response rates by group; error bars denote 95% CIs; two-sided t-test.',
-    figWarn: isZh
-      ? '示例数据：仅用于演示图表样式，不代表真实研究结果'
-      : 'Sample data for style demonstration only — not real study results',
+    figBadge: t('landing.figBadge', 'Figure 1 · 示例'),
+    figCaption: t('landing.figCaption', 'Figure 1. 两组治疗有效率对比，误差棒表示 95% 置信区间；显著性检验为双侧 t 检验。'),
+    figWarn: t('landing.figWarn', '示例数据：仅用于演示图表样式，不代表真实研究结果'),
 
-    complianceIntro: isZh
-      ? 'Heurion 是面向临床科研的辅助工具，不提供诊断或治疗决策建议。所有 AI 输出必须由执业医师审阅确认。'
-      : 'Heurion is a clinical research assistance tool. It does not provide diagnoses or treatment decisions — every AI output must be reviewed and confirmed by a licensed physician.',
+    complianceIntro: t('landing.complianceIntro', 'Heurion 是面向临床科研的辅助工具，不提供诊断或治疗决策建议。所有 AI 输出必须由执业医师审阅确认。'),
     compliancePoints: [
       {
         icon: <ShieldCheck size={19} />,
-        title: isZh ? '科研辅助定位' : 'Research-assistance positioning',
-        desc: isZh
-          ? 'AI 生成内容仅供参考，不作为临床决策依据。'
-          : 'AI content is reference-only, never a basis for clinical decisions.',
+        title: t('landing.title17', '科研辅助定位'),
+        desc: t('landing.desc7', 'AI 生成内容仅供参考，不作为临床决策依据。'),
       },
       {
         icon: <Lock size={19} />,
-        title: isZh ? '数据不出院' : 'Data stays inside',
-        desc: isZh
-          ? '纯本地化部署，隔离沙箱与核心病历库物理分离。'
-          : 'On-premise deployment; sandbox isolated from core records.',
+        title: t('landing.title18', '数据不出院'),
+        desc: t('landing.desc8', '纯本地化部署，隔离沙箱与核心病历库物理分离。'),
       },
       {
         icon: <FileKey size={19} />,
-        title: isZh ? '可审计溯源' : 'Auditable provenance',
-        desc: isZh
-          ? '不可变 EventLog 记录每一次访问与生成。'
-          : 'An immutable EventLog records every access and generation.',
+        title: t('landing.title19', '可审计溯源'),
+        desc: t('landing.desc9', '不可变 EventLog 记录每一次访问与生成。'),
       },
     ],
-    complianceFootnote: isZh
-      ? '* Heurion 不构成医疗器械，不用于诊断、治疗或预后判断；部署前请按机构法规完成评估。'
-      : '* Heurion is not a medical device and is not intended for diagnosis, treatment, or prognosis. Evaluate against your institution\u2019s regulations before deployment.',
+    complianceFootnote: t('landing.complianceFootnote', '* Heurion 不构成医疗器械，不用于诊断、治疗或预后判断；部署前请按机构法规完成评估。'),
 
-    partnersTitle: isZh ? '临床合作与医学伙伴' : 'Clinical & Medical Partners',
-    partnersIntro: isZh
-      ? 'Heurion 与临床科室和医学数据生态同行，让能力生长在真实诊疗场景中。'
-      : 'Heurion grows with clinicians and medical data ecosystems — built for real-world care.',
-    hospitalName: isZh ? '中国科学技术大学附属第一医院（安徽省立医院）' : 'The First Affiliated Hospital of USTC (Anhui Provincial Hospital)',
-    reactomeDesc: isZh ? '通路数据（CC BY 4.0）' : 'Pathway data (CC BY 4.0)',
-    ncbiDesc: isZh ? 'PubMed 文献与医学检索数据' : 'PubMed literature & medical search data',
-    openalexDesc: isZh ? '2.5 亿+ 学术作品开放索引（全文检索/引文数据）' : 'Open index of 250M+ scholarly works (fulltext search & citations)',
-    techLine: isZh
-      ? '技术生态致谢：Cloudflare Workers · Vercel AI SDK · GitHub 开源社区，以及所有为开源与医疗信息化做出贡献的开发者。'
-      : 'Built on Cloudflare Workers · Vercel AI SDK · GitHub open source — and every developer contributing to open source and health informatics.',
+    partnersTitle: t('landing.partnersTitle', '临床合作与医学伙伴'),
+    partnersIntro: t('landing.partnersIntro', 'Heurion 与临床科室和医学数据生态同行，让能力生长在真实诊疗场景中。'),
+    hospitalName: t('landing.hospitalName', '中国科学技术大学附属第一医院（安徽省立医院）'),
+    reactomeDesc: t('landing.reactomeDesc', '通路数据（CC BY 4.0）'),
+    ncbiDesc: t('landing.ncbiDesc', 'PubMed 文献与医学检索数据'),
+    openalexDesc: t('landing.openalexDesc', '2.5 亿+ 学术作品开放索引（全文检索/引文数据）'),
+    techLine: t('landing.techLine', '技术生态致谢：Cloudflare Workers · Vercel AI SDK · GitHub 开源社区，以及所有为开源与医疗信息化做出贡献的开发者。'),
 
-    ctaTitle: isZh ? '把科室的隐性经验，沉淀为可继承的数据资产' : 'Turn tacit expertise into inheritable data assets',
-    ctaSubtitle: isZh
-      ? '免费开始，或在您的服务器上自托管完整平台。'
-      : 'Start free or self-host the full platform on your own servers.',
-    docsCta: isZh ? '查看用户指南' : 'User Guide',
+    ctaTitle: t('landing.ctaTitle', '把科室的隐性经验，沉淀为可继承的数据资产'),
+    ctaSubtitle: t('landing.ctaSubtitle', '免费开始，或在您的服务器上自托管完整平台。'),
+    docsCta: t('landing.docsCta', '查看用户指南'),
   };
 
   return (
@@ -472,7 +437,7 @@ export function LandingPage() {
             </div>
           </div>
           <Reveal>
-            <ProductMockup isZh={isZh} />
+            <ProductMockup />
           </Reveal>
         </div>
       </section>
@@ -501,7 +466,7 @@ export function LandingPage() {
           <Reveal className="relative min-h-[300px] overflow-hidden rounded-lg shadow-md lg:min-h-[440px]">
             <img
               src="/photos/clinician-tablet.jpg"
-              alt={isZh ? '医生正在平板上查看患者数据' : 'Clinician reviewing patient data on a tablet'}
+              alt={t('landing.item12', '医生正在平板上查看患者数据')}
               loading="lazy"
               className="absolute inset-0 h-full w-full object-cover"
             />
@@ -570,9 +535,9 @@ export function LandingPage() {
                     <circle cx="248" cy="46" r="11" fill="hsl(var(--background))" stroke="#0ea5e9" strokeWidth="2" />
                     <circle cx="344" cy="24" r="11" fill="hsl(var(--background))" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3 3" />
                     <circle cx="344" cy="70" r="11" fill="hsl(var(--background))" stroke="#0ea5e9" strokeWidth="2" />
-                    <text x="56" y="50" fontSize="9" textAnchor="middle" fill="hsl(var(--text-tertiary))" fontWeight="600">{isZh ? '输入' : 'Input'}</text>
-                    <text x="248" y="50" fontSize="9" textAnchor="middle" fill="hsl(var(--text-tertiary))" fontWeight="600">{isZh ? '结论' : 'Claim'}</text>
-                    <text x="380" y="28" fontSize="9" fill="#f59e0b" fontWeight="700" textAnchor="middle">{isZh ? '失效' : 'Stale'}</text>
+                    <text x="56" y="50" fontSize="9" textAnchor="middle" fill="hsl(var(--text-tertiary))" fontWeight="600">{t('landing.item13', '输入')}</text>
+                    <text x="248" y="50" fontSize="9" textAnchor="middle" fill="hsl(var(--text-tertiary))" fontWeight="600">{t('landing.item14', '结论')}</text>
+                    <text x="380" y="28" fontSize="9" fill="#f59e0b" fontWeight="700" textAnchor="middle">{t('landing.item15', '失效')}</text>
                   </svg>
                 </div>
                 <ul className="space-y-2.5">

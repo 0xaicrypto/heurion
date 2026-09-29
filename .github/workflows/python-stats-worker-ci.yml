@@ -1,0 +1,42 @@
+# Python Stats Worker CI — #1150: pytest 此前不在 CI（scipy 契约漂移只在
+# 运行时暴露）。statistics 请求/响应形状的跨端对齐由 deploy-server.yml 的
+# golden-crosscheck + scripts/check-stats-schema-alignment.sh 覆盖。
+name: Python Stats Worker CI
+
+on:
+  pull_request:
+    paths:
+      - 'packages/python-stats-worker/**'
+      - '.github/workflows/python-stats-worker-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/python-stats-worker/**'
+      - '.github/workflows/python-stats-worker-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: python-stats-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python-stats-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: packages/python-stats-worker/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -q -r requirements.txt pytest
+
+      - name: Run tests
+        run: python -m pytest test_main.py test_stats.py -q

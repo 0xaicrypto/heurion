@@ -1,5 +1,9 @@
 import { BaseTool, ToolDefinition, ToolResult } from './base-tool.js'
-import type { SubagentEvent } from '@heurion/contracts'
+// #1146 循环依赖收口:共享类型/常量/工具函数下沉叶子模块,本文件只做
+// 聚合与 re-export(旧导入路径保持兼容)。
+import type { ToolContext } from './tool-context.js'
+import { parseDocSessionId } from '../lib/doc-session.js'
+import { registerToolRegistryFactory } from './registry-port.js'
 import prisma from '../common/prisma.js'
 import { SearchNodeTool, SearchEncounterTool } from './clinical-graph-tools.js'
 import { SearchPastChatsTool } from './memory-tools.js'
@@ -32,9 +36,6 @@ import { RenderSceneTool } from './bioscene/render-scene-tool.js'
 import { BrowserTaskTool } from './browser-agent-tool.js'
 import { McpListToolsTool, McpCallToolTool } from './mcp-tools.js'
 import { GenerateImageTool } from './generate-image-tool.js'
-import type { MemoryService } from '../memory/memory.service.js'
-import type { FactsStore, EpisodesStore, SkillsStore, KnowledgeStore } from '../evolution/stores.js'
-import type { EventLog } from '../core/event-log.js'
 import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('tools')
@@ -118,105 +119,17 @@ async function executeWithGuard(
 }
 
 /**
- * #766: execution-plane port (structural — tools stay decoupled from
- * modules/). conversation-turn provides createExecutionPlaneService().
- */
-export interface ToolExecutionPlane {
-  enqueue(job: { type: string; payload: Record<string, unknown>; tenant?: { userId?: string; workspaceId?: string } }): Promise<{ job_id: string; status: string }>
-  getStatus(jobId: string): Promise<{ job_id: string; status: string; error?: unknown; result?: Record<string, unknown> } | null>
-  fetchFile?(fileId: string): Promise<Buffer | null>
-}
-
-export interface ToolContext {
-  userId: string
-  memory: MemoryService
-  facts: FactsStore
-  episodes: EpisodesStore
-  skills: SkillsStore
-  knowledge: KnowledgeStore
-  eventLog: EventLog
-  /** Current session id — write tools (edit_document) derive doc-{docId}. */
-  sessionId?: string
-  /**
-   * #666: plugin availability port — provided by the modules layer
-   * (conversation-turn), keeps `tools/` free of `modules/*` imports.
-   * Absent port ⇒ gated tools are treated as unavailable.
-   */
-  isPluginInstalled?: (pluginId: string) => Promise<boolean>
-  /**
-   * #766: execution-plane port for insert_asset plot rendering
-   * (enqueue → poll → fetchFile → chart-token 落盘). Absent ⇒ plot branch
-   * degrades to a readable error.
-   */
-  executionPlane?: ToolExecutionPlane
-  /**
-   * #666: plugin config port (browser-agent worker url/token/approval) —
-   * same layering rationale; absent port ⇒ defaults are used.
-   */
-  getPluginConfig?: (pluginId: string) => Promise<Record<string, unknown>>
-  /**
-   * #939: figure 渲染管线 port（mermaid 围栏/公式行 → 托管图片行）—
-   * 由 modules/figures 提供，tools 零 modules import（#672 分层）。
-   * Absent ⇒ 导出跳过 figure 解析（原文本降级，不阻塞导出）。
-   * #960: ensureFigure 面向 figure block（deck v2）——source→托管 image 块。
-   */
-  figurePipeline?: {
-    resolveBody: (userId: string, body: string) => Promise<string>
-    ensureFigure: (userId: string, source: string, kind: 'mermaid' | 'latex_math', caption?: string) => Promise<{ ref: string; caption?: string; data: string } | null>
-  }
-  /**
-   * #828: turn abort signal (client disconnect / stop / watchdog) — tools
-   * and sub-agents observe it so a dead client stops burning tokens.
-   * Absent ⇒ tools run to completion as before.
-   */
-  signal?: AbortSignal
-  /**
-   * #831: sub-agent visibility port — spawn_subagent/deep-analysis report
-   * started/progress/done through it (typed SubagentEvent from contracts).
-   * Absent ⇒ sub-agents run silently (old behavior).
-   */
-  emitSubagentEvent?: (ev: SubagentEvent) => void
-  /**
-   * #866-868: 编辑定位提示 — rangeEdit 焦点优先匹配用。conversation-turn
-   * 在上下文组装期间回填(组装期写、工具执行期读的 holder),工具层保持
-   * 对 modules 层无依赖。Absent ⇒ 全文匹配(旧行为)。
-   */
-  editHint?: EditHint
-}
-
-/** #866-868: 焦点段/选中文本定位提示。 */
-export interface EditHint {
-  /** 当前焦点段原文(#866 分段内容,未截断版) — rangeEdit 先在段内匹配。 */
-  focusSectionContent?: string | null
-  focusIndex?: number | null
-  focusTitle?: string | null
-  /** 用户选中文本(#693) — 比焦点段更具体,匹配优先级最高。 */
-  selectionText?: string | null
-}
-
-/**
- * #905: doc- 会话的 docId 解析与格式校验 — sessionId 形如 `doc-<docId>`,
- * docId 必须匹配 documents.router 的生成格式(`doc_` + 16 hex,uid() =
- * crypto.randomBytes(8).toString('hex'))。不匹配的会话(伪造/遗留格式)
- * 按 general 场景处理:不暴露 doc 工具、不注入 document_context、工具层
- * 拒绝执行 — 杜绝用任意 sessionId 前缀拼出 docId 的盲取。
- */
-const DOC_SESSION_DOC_ID_RE = /^doc_[a-f0-9]{16}$/
-
-export function parseDocSessionId(sessionId: string | null | undefined): string | null {
-  if (!sessionId || !sessionId.startsWith('doc-')) return null
-  const docId = sessionId.slice(4)
-  return DOC_SESSION_DOC_ID_RE.test(docId) ? docId : null
-}
-
-/**
  * #454-followup: tools whose availability is gated by an installable plugin.
  * The renderer implementation stays in-process (zero latency), but the tool
  * only appears in the LLM's tool list while the user has the plugin
  * installed + enabled — everything else (marketplace, uninstall cascade,
  * audit) is the standard plugin lifecycle.
  */
-export const PLUGIN_GATED_TOOLS: Record<string, string> = {
+export type { ToolContext, ToolExecutionPlane, EditHint } from './tool-context.js'
+export { READ_ONLY_TOOLS, BEST_EFFORT_RETRIEVAL_TOOLS } from './tool-categories.js'
+export { parseDocSessionId } from '../lib/doc-session.js'
+
+const PLUGIN_GATED_TOOLS: Record<string, string> = {
   render_chart: 'heurion/chart',
   render_scene: 'heurion/bioscene',
   browser_task: 'heurion/browser-agent',
@@ -234,51 +147,6 @@ export const SCENE_OMIT_TOOLS: Record<string, Set<string>> = {
   document: PATIENT_RETRIEVAL_TOOLS,
   chart: PATIENT_RETRIEVAL_TOOLS,
 }
-
-/**
- * #829: side-effect-free tools — the tool loop may run these in parallel
- * within one model round (they only read external state). Everything else
- * (write-backs, sends, renders that enqueue jobs, sub-agents, background
- * deferrals) stays serial to preserve ordering-sensitive flows.
- */
-export const READ_ONLY_TOOLS = new Set([
-  'search_node',
-  'search_encounter',
-  'search_past_chats',
-  'search_medical_web',
-  'fetch_article_summary',
-  'visit_medical_site',
-  'extract_fulltext',
-  'search_citation',
-  'load_data_table',
-  'load_skill',
-  'query_logs',
-  'mcp_list_tools',
-  'stat_describe',
-  'stat_ttest',
-  'stat_chisq',
-  'stat_km',
-  'stat_plot',
-  'stat_ai',
-])
-
-/**
- * #835: 尽最大努力检索(best-effort retrieval)策略集 — 这些只读检索工具的
- * 失败不应阻断回合:连续失败 ≥2 次后从后续轮次的 tools 列表移除(模型物理
- * 上无法再重试),配合注入的错误指引,让模型基于已有上下文/自身知识继续
- * 完成任务,而不是烧完 5 轮后空手而归。写回/渲染/子代理工具绝不入集。
- */
-export const BEST_EFFORT_RETRIEVAL_TOOLS = new Set([
-  'search_node',
-  'search_encounter',
-  'search_past_chats',
-  'search_medical_web',
-  'fetch_article_summary',
-  'visit_medical_site',
-  'extract_fulltext',
-  'search_citation',
-  'load_data_table',
-])
 
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map()
@@ -532,3 +400,6 @@ export class ToolRegistry {
     return sanitized
   }
 }
+
+// #1146: 注册工厂供 subagent-runner 等使用(经 registry-port 叶子转发)。
+registerToolRegistryFactory((ctx) => new ToolRegistry(ctx as ToolContext))

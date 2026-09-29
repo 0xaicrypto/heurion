@@ -12,12 +12,12 @@ import { normalizeFileDownloadTokens } from '@heurion/contracts';
 import { sha1Hex } from '@/lib/hash';
 
 // #792: 润色预设提为模块级常量 — 此前定义在组件体内,每次渲染重建数组。
-export const POLISH_PRESETS: Array<{ id: string; icon: string; label: string; instruction: string }> = [
-  { id: 'academic', icon: '🔬', label: '学术语气强化', instruction: '强化学术语气:使用正式、客观、精确的学术表达,避免口语化措辞。' },
-  { id: 'concise', icon: '📐', label: '压缩至字数限制', instruction: '在保留全部关键信息的前提下压缩篇幅,删除冗余表述与重复论证。' },
-  { id: 'terminology', icon: '🧪', label: '方法学术语统一', instruction: '统一方法学部分的术语与单位表达,确保同一概念前后用词一致。' },
-  { id: 'hedging', icon: '⚖️', label: '结论弱化限定', instruction: '为结论添加适当的学术限定语(hedging),避免超出证据强度的断言。' },
-  { id: 'proofread', icon: '✅', label: '语法标点检查', instruction: '只修正语法错误、标点与格式问题,不改写句子结构。' },
+export const POLISH_PRESETS: Array<{ id: string; icon: string; instruction: string }> = [
+  { id: 'academic', icon: '🔬', instruction: '强化学术语气:使用正式、客观、精确的学术表达,避免口语化措辞。' },
+  { id: 'concise', icon: '📐', instruction: '在保留全部关键信息的前提下压缩篇幅,删除冗余表述与重复论证。' },
+  { id: 'terminology', icon: '🧪', instruction: '统一方法学部分的术语与单位表达,确保同一概念前后用词一致。' },
+  { id: 'hedging', icon: '⚖️', instruction: '为结论添加适当的学术限定语(hedging),避免超出证据强度的断言。' },
+  { id: 'proofread', icon: '✅', instruction: '只修正语法错误、标点与格式问题,不改写句子结构。' },
 ];
 
 export interface PolishBubble {
@@ -240,7 +240,7 @@ export function usePolishBubble(input: {
     try {
       for await (const chunk of api.polishDoc(docId, selection.slice(0, 20000), instruction || undefined, controller.signal)) {
         // #797: PolishStreamChunk 契约收窄 — 不再 as any。
-        if (chunk.type === 'error') throw new Error(String(chunk.message || 'AI 服务返回错误'));
+        if (chunk.type === 'error') throw new Error(String(chunk.message || t('writing.aiServiceError', 'AI 服务返回错误')));
         if (chunk.type === 'reasoning') {
           reasoningText += String(chunk.text ?? '');
           schedule();

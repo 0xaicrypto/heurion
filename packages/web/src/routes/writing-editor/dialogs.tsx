@@ -42,11 +42,12 @@ export function HistoryDialog(input: {
   onRestore: (snapshotId: string) => void;
 }) {
   const { snapshots, snapshotsLoading, restoring, reviewBlocked, onClose, onRestore } = input;
+  const { t } = useTranslation();
   return (
     <Modal open onClose={onClose} backdropClose escClose backdropClassName="bg-black/50">
       <div className="flex max-h-[70vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface-elevated p-6 shadow-xl m-4">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-text-primary">历史版本 (Snapshots)</h2>
+          <h2 className="text-lg font-semibold text-text-primary">{t('writing.historySnapshotsTitle', '历史版本 (Snapshots)')}</h2>
           <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">
             <X size={18} />
           </button>
@@ -67,7 +68,7 @@ export function HistoryDialog(input: {
                   <p className="mt-1 truncate text-sm text-text-secondary">{s.body_preview || '(empty)'}</p>
                 </div>
                 {/* #910: 审阅未决时 Restore 禁用 — 避免 Restore diff 顶掉正在进行的 AI 修改审阅。 */}
-                <Button size="sm" variant="ghost" onClick={() => onRestore(s.snapshot_id)} disabled={restoring === s.snapshot_id || reviewBlocked} isLoading={restoring === s.snapshot_id} title={reviewBlocked ? '请先处理当前的 AI 修改审阅' : undefined}>
+                <Button size="sm" variant="ghost" onClick={() => onRestore(s.snapshot_id)} disabled={restoring === s.snapshot_id || reviewBlocked} isLoading={restoring === s.snapshot_id} title={reviewBlocked ? t('writing.restoreBlockedReview', '请先处理当前的 AI 修改审阅') : undefined}>
                   Restore
                 </Button>
               </div>

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
@@ -12,6 +13,7 @@ interface NewPatientDialogProps {
 }
 
 export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [initials, setInitials] = useState('');
@@ -27,11 +29,11 @@ export function NewPatientDialog({ open, onClose, onCreated }: NewPatientDialogP
     e.preventDefault();
     // #715: 校验带明确解释 — 姓名/缩写二选一,年龄 0-120。
     if (!name.trim() && !initials.trim()) {
-      setError('姓名与缩写至少填一项');
+      setError(t('patients.nameOrInitialsRequired', '姓名与缩写至少填一项'));
       return;
     }
     if (age && (parseInt(age, 10) < 0 || parseInt(age, 10) > 120 || !/^\d+$/.test(age.trim()))) {
-      setError('年龄须为 0–120 之间的整数');
+      setError(t('patients.ageRangeInvalid', '年龄须为 0–120 之间的整数'));
       return;
     }
     setLoading(true);

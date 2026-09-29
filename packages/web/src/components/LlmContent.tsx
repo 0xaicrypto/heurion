@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { cn, normalizeLlmText } from '@/lib/utils';
 import { useRafValue } from '@/hooks/useRaf';
 import { MarkdownRenderer, CodeBlock } from './MarkdownRenderer';
@@ -127,6 +128,7 @@ function LiveTail({ text }: { text: string }) {
 }
 
 export function StreamingLlmContent({ content, isStreaming, className }: { content: string; isStreaming?: boolean; className?: string }) {
+  const { t } = useTranslation();
   // #949: RAF 合帧抽为共享 hook（useRafValue），与 DocEditor 选区上报同模式。
   const display = useRafValue(content, !!isStreaming);
 
@@ -146,7 +148,7 @@ export function StreamingLlmContent({ content, isStreaming, className }: { conte
             <span key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 150}ms` }} />
           ))}
         </span>
-        <span className="animate-pulse">正在分析…</span>
+        <span className="animate-pulse">{t('chat.analyzing', '正在分析…')}</span>
       </span>
     );
   }

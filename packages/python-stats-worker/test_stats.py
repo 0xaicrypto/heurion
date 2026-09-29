@@ -80,3 +80,15 @@ def test_kaplan_meier_rejects_all_censored():
 def test_kaplan_meier_rejects_length_mismatch():
     with pytest.raises(StatsInputError, match="length mismatch"):
         kaplan_meier([1, 2], [True], [3], [True])
+
+
+# ── #1149: describe 单观测 sd(ddof=1)=NaN 必须 400，不得静默 null ──
+
+def test_describe_rejects_single_observation():
+    with pytest.raises(StatsInputError):
+        describe([5])
+
+
+def test_describe_two_observations_sd_finite():
+    out = describe([1, 2])
+    assert out["sd"] > 0

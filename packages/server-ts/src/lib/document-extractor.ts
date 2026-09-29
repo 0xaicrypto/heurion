@@ -8,6 +8,8 @@ import { safeUploadPath } from './upload-path.js'
 import { MiniLruCache } from './lru-cache.js'
 // #777: pptx 解析导入 — zip-reader + OOXML 文本提取（零 XML 解析器依赖）。
 // pptx-extractor 仅以 type 引用本文件类型（无运行时环）。
+import type { ExtractedPdfImage } from './extractor-types.js'
+export type { ExtractedPdfImage } from './extractor-types.js'
 import { parsePptx, pptxSlidesToMarkdown, isPptx } from './pptx-extractor.js'
 import { assertDocxArchiveSafe } from './docx-guard.js'
 import { makeLogger } from '../common/logger.js'
@@ -678,12 +680,6 @@ const MAX_PDF_IMAGE_BYTES = 4 * 1024 * 1024
 // (OOM kill → SSE 连接重置 → 前端 "network error")。大文件通常是文字
 // 为主的稿件,图对 LLM 的意义有限,直接省掉。
 const MAX_PDF_IMAGE_FILE_BYTES = 50 * 1024 * 1024
-
-export interface ExtractedPdfImage {
-  mime: string
-  dataBase64: string
-  page: number
-}
 
 export interface ExtractedPdfContent {
   text: string

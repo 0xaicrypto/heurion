@@ -13,6 +13,9 @@ datasource db {
 
 model User {
   id              String    @id
+  // #1136: 登录标识与显示名分离 — username 唯一,displayName 仅展示。
+  // nullable: 存量行先加列,启动迁移回填 username = display_name(后者唯一)。
+  username        String?   @unique
   displayName     String    @unique @map("display_name")
   passwordHash    String?   @map("password_hash")
   role            String    @default("user")
@@ -790,11 +793,16 @@ model KnowledgeGap {
   status      String  @default("open")
   answerId    String? @map("answer_id")
   answerText  String? @map("answer_text")
+  // #1143: 调度退避/认领观测 — lastAttemptAt 升序(空值优先)避免老 gap 队首
+  // 阻塞;attempts 记录尝试次数。认领用 status open→researching 原子抢占。
+  lastAttemptAt String? @map("last_attempt_at")
+  attempts      Int     @default(0)
   createdAt   String  @map("created_at")
   updatedAt   String  @map("updated_at")
 
   user User @relation(fields: [userId], references: [id])
   @@index([userId, status, createdAt(sort: Desc)])
+  @@index([status, lastAttemptAt])
   @@index([workspaceId, status])
   @@index([workspaceId, source])
   @@index([workspaceId, createdAt(sort: Desc)])
@@ -1094,4 +1102,15 @@ model ClinicalReport {
   @@unique([userId, patientHash])
   @@index([userId, updatedAt(sort: Desc)])
   @@map("clinical_reports")
+}
+
+/// #1154: 调度器 DB 租约 — 单实例约束下的防重入安全网(滚动发布/误扩副本
+/// 时同名调度器只有一个持有者执行;过期租约可被接管)。
+model SchedulerLease {
+  name      String @id
+  holder    String
+  expiresAt String @map("expires_at")
+  updatedAt String @map("updated_at")
+
+  @@map("scheduler_leases")
 }

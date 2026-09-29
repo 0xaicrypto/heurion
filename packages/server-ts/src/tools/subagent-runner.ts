@@ -12,7 +12,9 @@ import { resolveTierModel } from '../common/llm-gateway.js'
  * single-task (one id per run).
  */
 import { deepseekChat, getApiKey} from '../common/llm.js'
-import { ToolRegistry, READ_ONLY_TOOLS, type ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
+import { READ_ONLY_TOOLS } from './tool-categories.js'
+import { createToolRegistry } from './registry-port.js'
 
 export interface SubAgentInput {
   task: string
@@ -71,7 +73,7 @@ export async function runSubAgent(input: SubAgentInput, ctx: ToolContext): Promi
   let turns = 0
 
   // Read-only by default: every allowed tool must pass the white-list.
-  const registry = new ToolRegistry(ctx)
+  const registry = createToolRegistry(ctx)
   const allowed = toolNames.filter((n) => registry.get(n))
 
   const scopeNote = isPatientScope

@@ -358,3 +358,23 @@ describe('#895 审阅未决时保存守卫', () => {
     expect(apiMock.updateDoc).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * #1134 — token-only 的 doc_updated 不构成写回:库内无 token、推送前重签,
+ * 前端本地持旧 token。仅 token 轮换时不得进入 diff 审阅/整篇重建。
+ */
+describe('#1134 token-only 写回不触发审阅', () => {
+  test('doc_updated 仅 token 不同(内容等价)→ 不进审阅、编辑器正文不变', async () => {
+    const bodyWithOldToken = 'Base 图 /api/v1/files/download/f_1?token=old_sig';
+    apiMock.getDoc.mockResolvedValue({ ...BASE_DOC, body: bodyWithOldToken });
+    const { container } = renderEditor();
+    await screen.findByDisplayValue('Original');
+    await waitFor(() => expect(editorText(container)).toContain('Base 图'));
+    const before = editorText(container);
+
+    await sendTurn([{ body: 'Base 图 /api/v1/files/download/f_1?token=new_sig', rev: 1 }]);
+
+    expect(screen.queryByText(/AI updated this section|AI 更新了这个节/)).toBeNull();
+    expect(editorText(container)).toBe(before);
+  });
+});

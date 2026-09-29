@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { usePluginIframeFallbacks, usePluginRegistrations } from './PluginUIRegistry';
 
 interface PluginExtensionPointProps {
@@ -49,16 +49,32 @@ function PluginHost({
   inline?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // #1135: closed shadow root 下 host.shadowRoot 恒为 null — 旧守卫失效,
+  // 父组件重渲染(调用方均传内联 context 对象)/StrictMode 双跑 effect 会
+  // 二次 attachShadow 抛 NotSupportedError,RouteBoundary 捕获后整页崩。
+  // 缓存 root 实例复用(closed 模式没有可查询句柄,只能靠 ref)。
+  const shadowRef = useRef<ShadowRoot | null>(null);
+  // #1135: context 身份不稳定(内联字面量每次渲染新引用)→ 用内容 key 稳定
+  // effect 依赖;内容不变时插件 DOM 不重建(每键重挂载的抖动一并消除)。
+  const contextRef = useRef(context);
+  contextRef.current = context;
+  const contextKey = useMemo(() => {
+    try {
+      return JSON.stringify(context) ?? String(context);
+    } catch {
+      return String(context);
+    }
+  }, [context]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    if (host.shadowRoot) return;
 
-    const shadow = host.attachShadow({ mode: 'closed' });
+    const shadow = shadowRef.current ?? (shadowRef.current = host.attachShadow({ mode: 'closed' }));
 
     let mounted = true;
-    Promise.resolve(registration.factory(context))
+    shadow.innerHTML = '';
+    Promise.resolve(registration.factory(contextRef.current))
       .then((node) => {
         if (!mounted) return;
         shadow.appendChild(node);
@@ -74,7 +90,7 @@ function PluginHost({
       mounted = false;
       shadow.innerHTML = '';
     };
-  }, [registration, context]);
+  }, [registration, contextKey]);
 
   return (
     <div

@@ -1,7 +1,11 @@
 import { execSync } from 'child_process'
-import { unlinkSync, renameSync } from 'fs'
+import { unlinkSync, renameSync, rmSync } from 'fs'
 
 export function setup() {
+  // #1146-followup: 测试用户 twins 目录每轮清空 — 历史累积曾达 15 万文件/
+  // 782MB,把整套测试拖到 25 分钟以上(每文件 fs 创建/扫描爆炸)。
+  try { rmSync('./.nexus/test-twins', { recursive: true, force: true }) } catch { /* best-effort */ }
+
   // Move .env aside so vitest env vars take priority
   try { renameSync('./.env', './.env.test-bak') } catch {}
 

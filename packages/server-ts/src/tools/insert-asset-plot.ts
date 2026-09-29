@@ -4,7 +4,7 @@
  */
 import { validateRenderContent, SCHEMA_VERSION } from '@heurion/contracts'
 import type { ToolResult } from './base-tool.js'
-import type { ToolExecutionPlane } from './tool-registry.js'
+import type { ToolExecutionPlane } from './tool-context.js'
 import { runRenderJob } from './asset-render-pipeline.js'
 
 /** plot 归一化 + 契约校验(纯) — 单测可直达。 */

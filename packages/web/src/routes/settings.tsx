@@ -346,7 +346,7 @@ function LlmSection() {
               className="max-w-xs font-mono text-xs"
             />
             <Button size="sm" onClick={saveGlobalModel} isLoading={savingGlobal} disabled={!globalModel.trim() || savingGlobal}>
-              {globalSaved ? <><Check size={13} className="mr-1" />已生效</> : t('settings.apply', '应用')}
+              {globalSaved ? <><Check size={13} className="mr-1" />{t('settings.applied', '已生效')}</> : t('settings.apply', '应用')}
             </Button>
             {status.globalModelOverride && (
               <Button size="sm" variant="ghost" onClick={async () => { try { const r = await api.clearGlobalLlmModel(); if (r.ok && status) setStatus({ ...status, model: r.activeModel, globalModelOverride: null }); setGlobalModel(r.activeModel); } catch { /* ignore */ } }}>

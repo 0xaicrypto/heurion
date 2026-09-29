@@ -14,8 +14,8 @@ import { unescapeLiteralNewlines, ensureBlockBoundaries } from '../lib/document-
 import { executeImportReference } from './edit-import.js'
 // #868: 落点章节透明化 + 焦点段定位提示类型。
 import { nearestHeadingBefore, splitDocumentSections } from '../lib/doc-sections.js'
-import type { EditHint } from './tool-registry.js'
-import { parseDocSessionId } from './tool-registry.js'
+import type { EditHint } from './tool-context.js'
+import { parseDocSessionId } from '../lib/doc-session.js'
 import { CONTEXT_CONFIG } from '../common/context-config.js'
 import { executeImportFromUrl } from './doc-import.js'
 // #1020/#1022: 锚点失败结构化诊断（最接近候选 + 可用节清单）— 纯函数可单测。

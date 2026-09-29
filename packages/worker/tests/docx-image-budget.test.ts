@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, afterEach } from 'vitest'
 import JSZip from 'jszip'
-import { generateDocx, MAX_DOCX_EMBEDDED_IMAGE_BYTES, resolveDocxImageBudget } from '../src/handlers/docx.js'
+import { generateDocx, MAX_DOCX_EMBEDDED_IMAGE_BYTES, MAX_DOCX_IMAGE_RESOLVE_MS, resolveDocxImageBudget, resolveDocxImageTimeBudget } from '../src/handlers/docx.js'
 
 vi.mock('../src/storage.js', () => ({
   saveFile: vi.fn(async (buffer: Buffer, name: string, mime: string) => ({ fileId: 'f1', fileName: name, mimeType: mime, buffer })),
@@ -114,5 +114,42 @@ describe('#1090-4 docx 图片内存预算（镜像 pptx #1066-8 机制）', () =
     const media = Object.keys(parts).filter((n) => /^word\/media\//.test(n))
     expect(media.length).toBe(2)
     expect(parts['word/document.xml']).not.toContain('图片已省略')
+  })
+})
+
+/**
+ * #1141 — 图片解析时间预算:超预算不再发起远程解析,正文留可见注记
+ * (与字节预算跳过同口径)。0 = 立即过期(测试/极端降级)。
+ */
+describe('#1141 docx 图片解析时间预算', () => {
+  afterEach(() => {
+    delete process.env.DOCX_IMAGE_TIME_BUDGET_MS
+  })
+
+  test('resolveDocxImageTimeBudget:默认 60s,0 合法(立即过期),非法值回退', () => {
+    expect(resolveDocxImageTimeBudget()).toBe(MAX_DOCX_IMAGE_RESOLVE_MS)
+    process.env.DOCX_IMAGE_TIME_BUDGET_MS = '0'
+    expect(resolveDocxImageTimeBudget()).toBe(0)
+    process.env.DOCX_IMAGE_TIME_BUDGET_MS = '5000'
+    expect(resolveDocxImageTimeBudget()).toBe(5000)
+    process.env.DOCX_IMAGE_TIME_BUDGET_MS = 'nope'
+    expect(resolveDocxImageTimeBudget()).toBe(MAX_DOCX_IMAGE_RESOLVE_MS)
+  })
+
+  test('预算为 0 → 图片不解析不内嵌,正文可见注记', async () => {
+    process.env.DOCX_IMAGE_TIME_BUDGET_MS = '0'
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await generateDocx({
+      data: {
+        schemaVersion: 1,
+        title: 'T',
+        sections: [{ heading: '图', paragraphs: [IMG(pngOf(128)), IMG(pngOf(128, 0x62))] }],
+      },
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('#1141'))
+    const parts = await unzip((res as { buffer: Buffer }).buffer)
+    const docXml = parts['word/document.xml'] || ''
+    expect((docXml.match(/图片已省略：超出导出时间预算/g) || []).length).toBe(2)
+    expect(Object.keys(parts).filter((n) => /^word\/media\//.test(n)).length).toBe(0)
   })
 })

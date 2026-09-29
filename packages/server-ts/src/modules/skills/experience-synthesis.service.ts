@@ -17,6 +17,7 @@ import { getApiKey, deepseekChat} from '../../common/llm.js'
 import { parseLlmJson } from '../../common/llm-json.js'
 import type { LlmTelemetryContext } from '../../common/llm.js'
 import { makeLogger } from '../../common/logger.js'
+import { acquireSchedulerLease } from '../../common/scheduler-lease.js'
 
 const log = makeLogger('skills.experience-synthesis')
 
@@ -153,6 +154,53 @@ export interface ExperienceSynthesisScheduler {
   stop(): void
 }
 
+/** #1146: 每页用户数 — 旧实现 take:50 无游标,第 51 个用户永远轮不到。 */
+export const EXPERIENCE_USER_PAGE_SIZE = 100
+
+export interface ExperienceTickDeps {
+  listUserPage?: (cursor: string | undefined, take: number) => Promise<Array<{ id: string }>>
+  synthesize?: typeof synthesizeExperience
+}
+
+/**
+ * #1146: 单轮经验归纳（导出供测试注入依赖）。
+ *  - 游标分页遍历全部用户（orderBy id 保证稳定）；
+ *  - 单个用户失败不中止整轮（旧实现一个用户抛错 → 后续用户全部跳过）。
+ */
+export async function runExperienceSynthesisTick(
+  opts: { minFacts?: number; maxCandidates?: number } = {},
+  deps: ExperienceTickDeps = {},
+): Promise<{ users: number; created: number; failed: number }> {
+  const listUserPage = deps.listUserPage ?? ((cursor, take) => prisma.user.findMany({
+    select: { id: true },
+    orderBy: { id: 'asc' },
+    take,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  }))
+  const synthesize = deps.synthesize ?? synthesizeExperience
+  let cursor: string | undefined
+  let users = 0
+  let created = 0
+  let failed = 0
+  for (;;) {
+    const rows = await listUserPage(cursor, EXPERIENCE_USER_PAGE_SIZE).catch(() => [] as Array<{ id: string }>)
+    if (rows.length === 0) break
+    cursor = rows[rows.length - 1].id
+    for (const { id: userId } of rows) {
+      users++
+      try {
+        const r = await synthesize(userId, opts)
+        created += r.candidates.length
+      } catch (err) {
+        failed++
+        log.warn(`[EXPERIENCE-SYNTHESIS] user ${userId} failed: ${(err as Error).message.slice(0, 120)}`)
+      }
+    }
+    if (rows.length < EXPERIENCE_USER_PAGE_SIZE) break
+  }
+  return { users, created, failed }
+}
+
 /** Periodic synthesis over all users with enough material (every 24h). */
 export function createExperienceSynthesisScheduler(
   intervalMs: number,
@@ -165,19 +213,15 @@ export function createExperienceSynthesisScheduler(
       if (timer) return
       timer = setInterval(async () => {
         try {
-          // Facts live in per-user JSONL (memory graph), not Prisma —
-          // enumerate users and let synthesizeExperience skip thin graphs.
-          const rows = await prisma.user.findMany({
-            select: { id: true },
-            take: 50,
-          }).catch(() => [] as Array<{ id: string }>)
-          const userIds = (rows as Array<{ id: string }>).map((r) => r.id)
-          let created = 0
-          for (const userId of userIds) {
-            const r = await synthesizeExperience(userId, opts)
-            created += r.candidates.length
+          // #1154: DB 租约防重入（多实例/滚动发布）。
+          if (!(await acquireSchedulerLease('experience-synthesis', intervalMs))) {
+            log.info('[EXPERIENCE-SYNTHESIS] tick skipped — lease held elsewhere')
+            return
           }
-          log.info(`[EXPERIENCE-SYNTHESIS] tick: ${userIds.length} users, ${created} candidates`)
+          // #1146: 分页遍历全量用户 + 逐用户容错（旧实现 take:50 无排序/游标，
+          // 且单用户抛错中止整轮）。
+          const { users, created, failed } = await runExperienceSynthesisTick(opts)
+          log.info(`[EXPERIENCE-SYNTHESIS] tick: ${users} users, ${created} candidates, ${failed} failed`)
         } catch (err) {
           log.error('[EXPERIENCE-SYNTHESIS] tick failed:', (err as Error).message.slice(0, 200))
         }

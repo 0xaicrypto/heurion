@@ -17,14 +17,15 @@
  *  - 保护前缀可用 WORKER_ARTIFACT_PROTECTED_PREFIXES 覆盖(逗号分隔)。
  *  - S3 镜像走同一 TTL:仅清理 renders/ 与 previews/ 前缀下的过期对象。
  */
-import { readdir, readFile, stat, unlink, writeFile } from 'fs/promises'
+import { readdir, stat, unlink } from 'fs/promises'
+import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
   ListObjectsV2Command,
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3'
 import { DECK_FILE_ID_PREFIX } from '@heurion/contracts'
-import { parseJsonlContent, workerDataDir } from './data-dir.js'
+import { atomicWriteFileSync, parseJsonlContent, workerDataDir } from './data-dir.js'
 import { getS3 } from './storage.js'
 
 const DEFAULT_TTL_DAYS = 30
@@ -82,26 +83,28 @@ interface LocalFileManifestEntry {
   mimeType: string
 }
 
-/** #1108: 清单剪枝 — 被删文件的 local-files.jsonl 条目一并移除,
- *  否则清单只增不减(重载时靠存在性检查剔除是软防御,这里硬清理)。
- *  fs/promises 异步实现;逐行解析复用 data-dir.ts 的 parseJsonlContent
- *  (跳过空行/损坏行 — 单一实现,复审轮 2 收敛)。 */
-async function pruneManifest(dataDir: string, deletedPaths: Set<string>): Promise<void> {
+/** #1108/#1148: 清单剪枝 — 被删文件的 local-files.jsonl 条目一并移除。
+ *  #1148: 同步 readFileSync → atomicWriteFileSync。旧实现 async readFile→
+ *  writeFile 在 read 与 write 之间让出事件循环,saveFile 的 appendJsonl
+ *  写入的新产物条目被整份覆盖(清理期间的新文件重启后 404)。单线程下
+ *  同步段不可被打断,与 appendJsonl 互斥;写回仍走原子重写。逐行解析复用
+ *  data-dir.ts 的 parseJsonlContent(跳过空行/损坏行 — 单一实现)。 */
+function pruneManifest(dataDir: string, deletedPaths: Set<string>): void {
   if (deletedPaths.size === 0) return
   const manifestPath = join(dataDir, 'local-files.jsonl')
   let raw: string
   try {
-    raw = await readFile(manifestPath, 'utf-8')
+    raw = readFileSync(manifestPath, 'utf-8')
   } catch {
     return
   }
-    const entries: LocalFileManifestEntry[] = parseJsonlContent<LocalFileManifestEntry>(raw)
+  const entries: LocalFileManifestEntry[] = parseJsonlContent<LocalFileManifestEntry>(raw)
   const kept = entries.filter((e) => !e.path || !deletedPaths.has(e.path))
   if (kept.length === entries.length) return
   const lines = kept
     .map((e) => JSON.stringify({ fileId: e.fileId, path: e.path, fileName: e.fileName, mimeType: e.mimeType }))
     .join('\n')
-  await writeFile(manifestPath, lines ? lines + '\n' : '', 'utf-8')
+  atomicWriteFileSync(manifestPath, lines ? lines + '\n' : '')
 }
 
 /**
@@ -164,7 +167,7 @@ export async function cleanupArtifacts(opts: {
       summary.errors++
     }
   }
-  await pruneManifest(dataDir, deletedPaths)
+  pruneManifest(dataDir, deletedPaths)
   return summary
 }
 

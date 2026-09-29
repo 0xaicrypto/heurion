@@ -17,6 +17,17 @@ import { makeLogger } from './logger.js'
 
 const log = makeLogger('chat.plan-store')
 
+/** #1146: DB 故障不再静默吞成"无计划" — 记 error 后原样上抛,调用方
+ *  （chat 装配链）已有降级 catch,可观测性在源头保留。 */
+async function withDbErrorLog<T>(op: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    log.error(`plan-store ${op} failed`, { reason: (err as Error).message?.slice(0, 150) })
+    throw err
+  }
+}
+
 const STEP_MARK: Record<TaskPlanStepStatus, string> = { done: 'x', pending: ' ', failed: '!', skipped: '-' }
 
 function parseSteps(stepsJson: string): TaskPlanStep[] {
@@ -43,10 +54,10 @@ function toWire(row: { id: string; sessionId: string; title: string; stepsJson: 
 
 /** 当前会话的活跃清单（一活跃：status='active' 最新一条）。 */
 export async function loadActivePlan(userId: string, sessionId: string): Promise<TaskPlan | null> {
-  const row = await prisma.taskPlan.findFirst({
+  const row = await withDbErrorLog('loadActivePlan', () => prisma.taskPlan.findFirst({
     where: { userId, sessionId, status: 'active' },
     orderBy: { updatedAt: 'desc' },
-  }).catch(() => null)
+  }))
   if (!row) return null
   const plan = toWire(row)
   return plan.steps.length > 0 ? plan : null
@@ -54,10 +65,10 @@ export async function loadActivePlan(userId: string, sessionId: string): Promise
 
 /** 创建清单（同会话旧活跃清单置 cancelled — 新 create 语义上取代）。 */
 export async function createPlan(userId: string, sessionId: string, title: string, steps: Array<{ title: string; tool?: string; note?: string; section?: string }>): Promise<TaskPlan> {
-  await prisma.taskPlan.updateMany({
+  await withDbErrorLog('createPlan.cancelPrevious', () => prisma.taskPlan.updateMany({
     where: { userId, sessionId, status: 'active' },
     data: { status: 'cancelled', updatedAt: new Date().toISOString() },
-  }).catch(() => undefined)
+  }))
   const now = new Date().toISOString()
   const planSteps: TaskPlanStep[] = steps.map((s, i) => ({
     index: i + 1,
@@ -83,23 +94,23 @@ export async function createPlan(userId: string, sessionId: string, title: strin
 }
 
 async function updateSteps(userId: string, sessionId: string, mutate: (steps: TaskPlanStep[]) => { steps: TaskPlanStep[]; status?: TaskPlan['status'] } | null): Promise<TaskPlan | null> {
-  const row = await prisma.taskPlan.findFirst({
+  const row = await withDbErrorLog('updateSteps.load', () => prisma.taskPlan.findFirst({
     where: { userId, sessionId, status: 'active' },
     orderBy: { updatedAt: 'desc' },
-  }).catch(() => null)
+  }))
   if (!row) return null
   const steps = parseSteps(row.stepsJson)
   const mutated = mutate(steps)
   if (!mutated) return null
-  const updated = await prisma.taskPlan.update({
+  const updated = await withDbErrorLog('updateSteps.write', () => prisma.taskPlan.update({
     where: { id: row.id },
     data: {
       stepsJson: JSON.stringify(mutated.steps),
       ...(mutated.status ? { status: mutated.status } : {}),
       updatedAt: new Date().toISOString(),
     },
-  }).catch(() => null)
-  return updated ? toWire(updated) : null
+  }))
+  return toWire(updated)
 }
 
 /** 模型推进非写回步骤（advance）— 写回步骤（带 tool）由系统推进，手动 advance 静默 no-op。 */
@@ -178,10 +189,10 @@ export async function completePlan(userId: string, sessionId: string): Promise<{
 }
 
 export async function cancelPlan(userId: string, sessionId: string): Promise<void> {
-  await prisma.taskPlan.updateMany({
+  await withDbErrorLog('createPlan.cancelPrevious', () => prisma.taskPlan.updateMany({
     where: { userId, sessionId, status: 'active' },
     data: { status: 'cancelled', updatedAt: new Date().toISOString() },
-  }).catch(() => undefined)
+  }))
 }
 
 /**

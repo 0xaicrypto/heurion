@@ -11,6 +11,8 @@ import type { ThemeCatalogEntry } from 'pptx-react-viewer';
 import pptxViewerCssRaw from 'pptx-react-viewer/styles.css?raw';
 import { Button } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+import { DeckConflictBanner } from './DeckConflictBanner';
+import { useDeckConflict } from './deck-conflict';
 import i18n from '@/i18n';
 
 /**
@@ -215,6 +217,13 @@ export function DeckRichEditor(input: {
     onDirtyChangeRef.current?.(next);
   }, []);
 
+  // #1142: 409 冲突决策流（拆出 — P2 棘轮）。旧行为自动 rebase+重试会静默
+  // 覆盖服务端新版本；现拉快照交用户显式选择，绝不自动覆盖。
+  const { conflict, captureConflict, keepMine, loadLatest, saveSnapshot } = useDeckConflict({
+    docId, bytesRef, lastVersionRef, generationRef, savingRef, turnUndoRef,
+    onSlideCountChangeRef, mountedRef, setContent, setTurnUndo, applyDirty, onNotice,
+  });
+
   // 工件装载（懒加载承诺兑现：DeckRichEditor 仅在进入富编辑时挂载，
   // 文档常规加载不拉 60KB+ 字节）。404 = 尚无工件 — 由服务端迁移（§3.2）
   // 为存量 deck 补建，客户端不本地合成 pptx 字节。
@@ -309,32 +318,8 @@ export function DeckRichEditor(input: {
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        // #review-2: 409 不再死锁 — 拉取服务端最新版本重建基线（用户手改优先
-        // 于 AI 并发写入），随后自动重试；绝不静默丢弃本地未保存编辑。
-        let rebased = false;
-        try {
-          const latest = await api.getDeckArtifact(docId);
-          lastVersionRef.current = latest.version;
-          rebased = true;
-          if (turnUndoRef.current && latest.version !== turnUndoRef.current.aiVersion) {
-            turnUndoRef.current = null;
-            setTurnUndo(false);
-          }
-        } catch { /* 版本拉取也失败 — 保持 dirty，提示重试 */ }
-        applyDirty(true);
-        onNotice?.(
-          rebased
-            ? t('writing.deckRichEditConflictRebased', '画布已在其他窗口/AI 更新 — 已基于最新版本继续保存你的编辑')
-            : t('writing.deckRichEditConflict', 'deck 工件已被其他窗口修改，请重试'),
-          6000,
-        );
-        if (rebased && !timerRef.current) {
-          timerRef.current = setTimeout(() => {
-            timerRef.current = null;
-            if (!dirtyRef.current || savingRef.current) return;
-            void saveRef.current();
-          }, 2500);
-        }
+        // #1142: 冲突不自动覆盖 — 拉服务端快照并交用户显式选择（见 useDeckConflict）。
+        void captureConflict();
       } else {
         onNotice?.(t('writing.deckRichEditSaveFail', 'deck 保存失败，请重试'), 6000);
       }
@@ -343,7 +328,7 @@ export function DeckRichEditor(input: {
       savingRef.current = false;
       setPhase('idle');
     }
-  }, [docId, onNotice, t, applyDirty]);
+  }, [docId, onNotice, t, applyDirty, captureConflict]);
   // save 的自引用（竞态补拍）走 latest-ref,避免 useCallback 环形依赖。
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -654,6 +639,12 @@ export function DeckRichEditor(input: {
           </div>
         </div>
       )}
+      <DeckConflictBanner
+        conflict={conflict}
+        onKeepMine={() => void keepMine()}
+        onLoadLatest={loadLatest}
+        onSnapshot={saveSnapshot}
+      />
       <div className="min-h-0 flex-1 bg-surface-elevated">
         {status === 'ready' && content && (
           <PowerPointViewer

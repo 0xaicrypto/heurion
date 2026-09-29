@@ -47,6 +47,21 @@ const filesPath = join(workerDataDir(), 'files.jsonl')
  *  log, so dropping superseded lines loses nothing. */
 const COMPACTION_EVERY = 200
 
+/**
+ * #1148: 终态作业 TTL — jobs.jsonl 只压缩不淘汰,长跑 worker/重启循环下
+ * 记录(含 result 里的 download_url 等)无限增长。默认 7 天;显式 0/负 → 关闭
+ * (保留全量,兼容排障场景)。
+ */
+const DEFAULT_JOB_TTL_DAYS = 7
+
+export function resolveJobTtlSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.WORKER_JOB_TTL_DAYS
+  if (raw === undefined || raw.trim() === '') return DEFAULT_JOB_TTL_DAYS * 86_400
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return n * 86_400
+}
+
 function ensureDir(): void {
   mkdirSync(workerDataDir(), { recursive: true })
 }
@@ -71,6 +86,33 @@ export class PersistentJobStore {
       if (!entry.fileId) continue
       this.files.set(entry.fileId, entry)
     }
+    // #1148: 启动即淘汰过期终态记录（含无主 files 索引条目）。
+    this.pruneExpired()
+  }
+
+  /**
+   * #1148: 淘汰 TTL 之外的终态作业（running/pending 永不淘汰 — 它们是
+   * 活跃/待恢复状态）及其 files 索引条目。返回淘汰数；有淘汰时重写两份
+   * jsonl（内存 map 即权威态）。
+   */
+  pruneExpired(nowSec: number = Date.now() / 1000, ttlSeconds: number = resolveJobTtlSeconds()): number {
+    if (ttlSeconds <= 0) return 0
+    const cutoff = nowSec - ttlSeconds
+    let removed = 0
+    for (const [id, job] of this.jobs) {
+      if (job.status === 'running' || job.status === 'pending') continue
+      if ((job.completed_at ?? job.created_at) >= cutoff) continue
+      this.jobs.delete(id)
+      removed++
+    }
+    if (removed === 0) return 0
+    ensureDir()
+    this.writeJobsFile()
+    // #1150-followup: 文件索引不随 job TTL 级联删除 — 产物文件保留 30 天
+    // (artifact cleanup 管),job 记录只活 7 天;此前级联把 files 条目一起删,
+    // 第 7~30 天的下载(fileId 查索引)全部 404。索引生命周期跟随产物清理
+    // (local-files.jsonl 由 cleanup 剪枝),与 job 记录解耦。
+    return removed
   }
 
   /** #656: startup recovery — jobs left `running` by a crashed process can
@@ -126,6 +168,10 @@ export class PersistentJobStore {
     this.jobWritesSinceCompact++
     if (this.jobWritesSinceCompact < COMPACTION_EVERY) return
     this.jobWritesSinceCompact = 0
+    this.writeJobsFile()
+  }
+
+  private writeJobsFile(): void {
     ensureDir()
     const lines = [...this.jobs.values()].map((j) => JSON.stringify(j)).join('\n')
     atomicWriteFileSync(jobsPath, lines ? lines + '\n' : '')
@@ -137,6 +183,10 @@ export class PersistentJobStore {
     this.fileWritesSinceCompact++
     if (this.fileWritesSinceCompact < COMPACTION_EVERY) return
     this.fileWritesSinceCompact = 0
+    this.writeFilesFile()
+  }
+
+  private writeFilesFile(): void {
     ensureDir()
     const lines = [...this.files.values()].map((e) => JSON.stringify(e)).join('\n')
     atomicWriteFileSync(filesPath, lines ? lines + '\n' : '')

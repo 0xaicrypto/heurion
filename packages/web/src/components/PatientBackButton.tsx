@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -7,13 +8,14 @@ import { useNavigate } from 'react-router-dom';
  * 没有返回路径；桌面端有侧边栏可回，移动端只能靠它。
  */
 export function PatientBackButton({ hash }: { hash?: string }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   return (
     <button
       onClick={() => navigate(`/app/patients/${hash ?? ''}`)}
       className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary lg:hidden"
-      aria-label="返回患者"
-      title="返回患者"
+      aria-label={t('patients.backToPatients', '返回患者')}
+      title={t('patients.backToPatients', '返回患者')}
     >
       <ArrowLeft size={16} />
     </button>

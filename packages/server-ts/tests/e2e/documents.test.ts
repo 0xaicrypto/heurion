@@ -659,3 +659,36 @@ describe('#1131 保存响应回显提交正文(token 不再重签)', () => {
     expect(body).toContain('?token=')
   })
 })
+
+/**
+ * #1134 — inject-results 响应正文重签:库内无 token(#1128),直接返回会让
+ * 注入审阅里图片/下载链接 401。响应每个下载 URL 必须带可验证 token。
+ */
+describe('#1134 inject-results 响应重签 token', () => {
+  test('响应正文含有效 ?token=(verifyChartToken 可验)', async () => {
+    const app = await getApp()
+    const create = await app.inject({
+      method: 'POST', url: '/api/v1/docs',
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { title: 'Inject Token' },
+    })
+    const docId = JSON.parse(create.payload).id
+    await app.inject({
+      method: 'PUT', url: `/api/v1/docs/${docId}`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { body: '原始 图：/api/v1/files/download/f_inj' },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/v1/docs/${docId}/inject-results`,
+      headers: { ...await authHeader(), 'content-type': 'application/json' },
+      payload: { label: '统计', result: '{"p":0.01}' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload).body as string
+    expect(body).toContain('## 统计')
+    const m = body.match(/\/api\/v1\/files\/download\/f_inj\?token=([^\s)"'\\]*)/)
+    expect(m, '注入响应 body 应带 ?token=').toBeTruthy()
+    const { verifyChartToken } = await import('../../src/common/chart-token.js')
+    expect(verifyChartToken('f_inj', m![1])).toBeTruthy()
+  })
+})

@@ -244,12 +244,14 @@ export const imagingAnalyzer: IngestionAnalyzer = {
     }
 
     // Merge DICOM metadata from extraction stage if present
-    if (job.extractedJson && typeof job.extractedJson === 'object' && job.extractedJson.dicom) {
-      dicomMeta = { ...(dicomMeta || {}), ...job.extractedJson.dicom }
+    // #1146: IngestionJob.extractedJson 收窄为 unknown — 本地显式收窄。
+    const extracted = job.extractedJson as { dicom?: Record<string, unknown>; modality?: string; region?: string } | undefined
+    if (extracted && typeof extracted === 'object' && extracted.dicom) {
+      dicomMeta = { ...(dicomMeta || {}), ...extracted.dicom }
     }
 
-    const modality = dicomMeta?.modality || job.extractedJson?.modality
-    const region = dicomMeta?.studyDescription || job.extractedJson?.region
+    const modality = dicomMeta?.modality || extracted?.modality
+    const region = dicomMeta?.studyDescription || extracted?.region
 
     let visionText = ''
     if (imageBase64) {

@@ -9,6 +9,8 @@ import { createDefaultEvolutionQueue, BullMqEvolutionQueue } from './modules/evo
 import { startEvolutionWorker } from './modules/evolution/evolution.worker.js'
 import { createGapResearchScheduler, type GapResearchScheduler } from './modules/knowledge/gap-research.service.js'
 import { createExperienceSynthesisScheduler } from './modules/skills/experience-synthesis.service.js'
+import { parseEnvInt } from './common/env-int.js'
+import { validateEnv } from './common/env-schema.js'
 import { makeLogger } from './common/logger.js'
 import { assertProductionSecrets } from './common/secrets.js'
 import { ensureArticleSummaryRenameMigration } from './common/kb-rename-migration.js'
@@ -16,6 +18,21 @@ import { ensureReferenceMigration } from './common/reference-migration.js'
 import { classifyGuidelineBySummaryTitle } from './modules/shared/summary-lookup.js'
 
 const log = makeLogger('db')
+
+// #1146: 启动期 env 集中校验 — 生产 errors fail-fast,非生产仅告警(不挡开发)。
+{
+  const { errors, warnings } = validateEnv()
+  for (const w of warnings) console.warn(`[env] ${w}`)
+  if (errors.length > 0) {
+    const isProd = process.env.APP_ENV === 'production' || process.env.ENVIRONMENT === 'production'
+    if (isProd) {
+      console.error('[env] invalid configuration (fail-fast in production):')
+      for (const e of errors) console.error(`  - ${e}`)
+      process.exit(1)
+    }
+    for (const e of errors) console.warn(`[env] ${e}`)
+  }
+}
 
 // #284/#569: users.display_name 有唯一约束,生产库曾存在重复名 → db push
 // 每次启动都报 UNIQUE constraint failed(即日志里的 "Error: SQLite database
@@ -122,6 +139,16 @@ async function main() {
   // 幂等回填（best-effort，不阻塞启动）。
   await ensureReferenceMigration({ classifyGuideline: classifyGuidelineBySummaryTitle })
 
+  // #1136: username 登录标识迁移 — 存量行 username 为空时回填 display_name
+  // (后者唯一约束保证不冲突);幂等,失败不阻塞启动(登录侧保留 displayName
+  // 兜底查找)。
+  try {
+    const backfilled = await prisma.$executeRawUnsafe('UPDATE users SET username = display_name WHERE username IS NULL')
+    if (backfilled > 0) log.info(`[DB] username backfill: ${backfilled} user(s)`)
+  } catch (err) {
+    log.warn('[DB] username backfill skipped (non-fatal):', (err as Error)?.message.slice(0, 120))
+  }
+
   // #842: CapturedSkill(confirmed)→ graph SkillNode v2 — 幂等,PII 命中行跳过。
   const { ensureSkillNodeMigration } = await import('./memory/skill-node-migration.js')
   await ensureSkillNodeMigration()
@@ -157,10 +184,11 @@ async function main() {
   let gapResearchScheduler: GapResearchScheduler | undefined
   const gapResearchEnabled = process.env.GAP_RESEARCH_ENABLED !== 'false'
   if (gapResearchEnabled) {
-    const intervalMs = parseInt(process.env.GAP_RESEARCH_INTERVAL_MS || '300000', 10)
+    // #1146: 非法值(如 '5m'→NaN)统一 warn+回退,不再 setInterval(NaN) 热循环。
+    const intervalMs = parseEnvInt('GAP_RESEARCH_INTERVAL_MS', 300_000)
     gapResearchScheduler = createGapResearchScheduler(intervalMs, {
-      maxPerRun: parseInt(process.env.GAP_RESEARCH_MAX_PER_RUN || '5', 10),
-      minAgeMs: parseInt(process.env.GAP_RESEARCH_MIN_AGE_MS || '60000', 10),
+      maxPerRun: parseEnvInt('GAP_RESEARCH_MAX_PER_RUN', 5),
+      minAgeMs: parseEnvInt('GAP_RESEARCH_MIN_AGE_MS', 60_000),
     })
     gapResearchScheduler.start()
     log.info(`[GAP-RESEARCH] Scheduler started (interval ${intervalMs}ms)`)
@@ -172,21 +200,22 @@ async function main() {
   let experienceScheduler: ReturnType<typeof createExperienceSynthesisScheduler> | undefined
   const experienceSynthesisEnabled = process.env.EXPERIENCE_SYNTHESIS_ENABLED === 'true'
   if (experienceSynthesisEnabled) {
-    const intervalMs = parseInt(process.env.EXPERIENCE_SYNTHESIS_INTERVAL_MS || (24 * 3600 * 1000).toString(), 10)
+    const intervalMs = parseEnvInt('EXPERIENCE_SYNTHESIS_INTERVAL_MS', 24 * 3600 * 1000)
     experienceScheduler = createExperienceSynthesisScheduler(intervalMs, {
-      minFacts: parseInt(process.env.EXPERIENCE_SYNTHESIS_MIN_FACTS || '3', 10),
-      maxCandidates: parseInt(process.env.EXPERIENCE_SYNTHESIS_MAX_CANDIDATES || '3', 10),
+      minFacts: parseEnvInt('EXPERIENCE_SYNTHESIS_MIN_FACTS', 3),
+      maxCandidates: parseEnvInt('EXPERIENCE_SYNTHESIS_MAX_CANDIDATES', 3),
     })
     experienceScheduler.start()
     log.info(`[EXPERIENCE-SYNTHESIS] Scheduler started (interval ${intervalMs}ms)`)
   }
 
   // #844: 周期轨迹归纳 — 写作流程聚类达标即产 skill 提案(经闸门待审)。
+  let inductionScheduler: { start(): void; stop(): void } | undefined
   const skillInductionEnabled = process.env.SKILL_INDUCE_ENABLED !== 'false'
   if (skillInductionEnabled) {
-    const intervalMs = parseInt(process.env.SKILL_INDUCE_INTERVAL_MS || (24 * 3600 * 1000).toString(), 10)
+    const intervalMs = parseEnvInt('SKILL_INDUCE_INTERVAL_MS', 24 * 3600 * 1000)
     const { createSkillInductionScheduler } = await import('./modules/skills/trajectory-induction.service.js')
-    const inductionScheduler = createSkillInductionScheduler(intervalMs)
+    inductionScheduler = createSkillInductionScheduler(intervalMs)
     inductionScheduler.start()
     log.info(`[SKILL-INDUCTION] Scheduler started (interval ${intervalMs}ms)`)
   }
@@ -197,6 +226,16 @@ async function main() {
     if (shuttingDown) return
     shuttingDown = true
     log.info(`[SHUTDOWN] Received ${signal}, closing worker/queue/server...`)
+
+    // #1146: 先停止接收新连接 — app.server.close() 不等在飞请求,旧实现
+    // 把 app.close() 放最后,整个排空窗口仍在接收新请求。收尾等待由
+    // drainActiveTurns + 末尾 app.close() 完成。
+    try {
+      app.server.close()
+      log.info('[SHUTDOWN] Server stopped accepting new connections')
+    } catch (err) {
+      log.error('[SHUTDOWN] server intake close error:', err)
+    }
 
     try {
       if (worker) {
@@ -219,6 +258,15 @@ async function main() {
       log.info('[SHUTDOWN] Experience synthesis scheduler stopped')
     } catch (err) {
       log.error('[SHUTDOWN] Experience synthesis scheduler stop error:', err)
+    }
+
+    // #1146: skill-induction 调度器此前未纳入 shutdown — 关闭后仍可能在
+    // 进程退出前触发一轮归纳。
+    try {
+      inductionScheduler?.stop()
+      log.info('[SHUTDOWN] Skill induction scheduler stopped')
+    } catch (err) {
+      log.error('[SHUTDOWN] Skill induction scheduler stop error:', err)
     }
 
     try {

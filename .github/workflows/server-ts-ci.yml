@@ -17,13 +17,15 @@ on:
       - 'packages/server-ts/**'
       - 'packages/embedding-server/**'
       - 'packages/worker/**'
+      - 'packages/contracts/**'
+      - 'packages/ssrf-guard/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'CONTRIBUTING.md'
       - '.github/ISSUE_TEMPLATE/**'
       - 'scripts/deploy*.sh'
       - 'docker-compose.yml'
-      - 'Dockerfile'
+      - 'packages/server-ts/Dockerfile'
       - '.env.production.example'
   push:
     branches: [main]
@@ -31,13 +33,15 @@ on:
       - 'packages/server-ts/**'
       - 'packages/embedding-server/**'
       - 'packages/worker/**'
+      - 'packages/contracts/**'
+      - 'packages/ssrf-guard/**'
       - '.github/workflows/server-ts-ci.yml'
       - '.github/workflows/deploy-server.yml'
       - 'CONTRIBUTING.md'
       - '.github/ISSUE_TEMPLATE/**'
       - 'scripts/deploy*.sh'
       - 'docker-compose.yml'
-      - 'Dockerfile'
+      - 'packages/server-ts/Dockerfile'
       - '.env.production.example'
   workflow_dispatch:
 
@@ -162,3 +166,37 @@ jobs:
           # #917: 清单单一事实源 = scripts/ci-regression-tests.txt（与
           # deploy-server.yml 共用，防双份清单再次分叉）。
           pnpm exec vitest run $(grep -v '^#' ../../scripts/ci-regression-tests.txt | grep -v '^$')
+
+  embedding-server:
+    name: Embedding server (typecheck + lint + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/embedding-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: packages/embedding-server/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      # #1150: 整包此前零校验 — batchSize=0 死循环这类问题直到运行时才暴露。
+      - name: Test
+        run: pnpm test

@@ -3,7 +3,7 @@ import JSZip from 'jszip'
 import http from 'node:http'
 import dns from 'node:dns'
 import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib'
-import { generatePptx, imageBudgetExceeded, MAX_EMBEDDED_IMAGE_BYTES } from '../src/handlers/pptx.js'
+import { generatePptx, imageBudgetExceeded, MAX_EMBEDDED_IMAGE_BYTES, MAX_IMAGE_RESOLVE_MS, resolveImageTimeBudget } from '../src/handlers/pptx.js'
 import {
   resolveImage,
   downloadRemoteImage,
@@ -703,5 +703,41 @@ describe('#1072-4 Content-Encoding：响应体解压后再做 magic bytes 判定
     const corrupt = gzipSync(PNG).subarray(0, 8) // 截断的 gzip 流
     fetchMock.mockResolvedValue(okResponse(corrupt, { 'content-encoding': 'gzip' }))
     await expect(downloadRemoteImage('https://cdn.example.com/broken.png')).rejects.toThrow(/解码失败/)
+  })
+})
+
+/**
+ * #1141 — pptx 图片解析时间预算:超预算不再解析,回退要点渲染(可见)。
+ */
+describe('#1141 pptx 图片解析时间预算', () => {
+  afterEach(() => {
+    delete process.env.PPTX_IMAGE_TIME_BUDGET_MS
+  })
+
+  test('resolveImageTimeBudget:默认 60s,0 合法(立即过期),非法值回退', () => {
+    expect(resolveImageTimeBudget()).toBe(MAX_IMAGE_RESOLVE_MS)
+    process.env.PPTX_IMAGE_TIME_BUDGET_MS = '0'
+    expect(resolveImageTimeBudget()).toBe(0)
+    process.env.PPTX_IMAGE_TIME_BUDGET_MS = '-1'
+    expect(resolveImageTimeBudget()).toBe(MAX_IMAGE_RESOLVE_MS)
+  })
+
+  test('预算为 0 → 图片不内嵌且不发起解析,日志留痕', async () => {
+    vi.stubEnv('PPTX_IMAGE_TIME_BUDGET_MS', '0')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await generatePptx({
+      schema_version: 1,
+      content_type: 'sidecar.generate_pptx',
+      data: {
+        schemaVersion: 1,
+        title: '时间预算',
+        slides: [{ title: '一', layout: 'bullets+image', content: [{ type: 'image', ref: 'x', data: PNG.toString('base64') }] }],
+      },
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('#1141'))
+    const zip = await JSZip.loadAsync((res as { buffer: Buffer }).buffer)
+    const media = Object.keys(zip.files).filter((n) => n.startsWith('ppt/media/') && !n.endsWith('/'))
+    expect(media.length).toBe(0)
+    vi.unstubAllEnvs()
   })
 })

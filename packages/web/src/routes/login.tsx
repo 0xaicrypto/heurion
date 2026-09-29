@@ -7,8 +7,7 @@ import { Alert, Button, Input } from '@/components/ui';
 import { ResendControl } from '@/components/ResendControl';
 
 export function LoginPage() {
-  const { t, i18n } = useTranslation();
-  const isZh = i18n.language.startsWith('zh');
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -294,7 +293,7 @@ export function LoginPage() {
 
         {isRegister && (
           <p className="text-center text-xs text-text-tertiary">
-            {isZh ? '首个注册账户将自动获得管理员权限。' : 'The first registered account gets administrator privileges.'}
+            {t('auth.firstAccountAdminHint', '首个注册账户将自动获得管理员权限。')}
           </p>
         )}
 

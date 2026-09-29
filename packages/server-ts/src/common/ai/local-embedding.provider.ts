@@ -1,5 +1,5 @@
-import type { AiProvider, AiProviderConfig, EmbedOptions } from './ai-provider.js'
-import { AiProviderError } from './ai-provider.js'
+import type { AiProvider, AiProviderConfig, EmbedOptions } from './ai-types.js'
+import { AiProviderError } from './ai-types.js'
 
 /**
  * Local embedding adapter.

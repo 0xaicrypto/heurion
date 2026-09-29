@@ -5,7 +5,7 @@
  * (audit). Stage 2 (Kitesurf browsing) lands later.
  */
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 import { downloadViaGuard } from '@heurion/ssrf-guard'
 
 const MAX_RESULTS = 10

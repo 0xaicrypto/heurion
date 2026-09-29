@@ -1,7 +1,7 @@
 import { BaseTool, ToolResult, abortedWriteResult } from './base-tool.js'
 import prisma from '../common/prisma.js'
 import { deckEditActionsSchema, type DeckEditAction } from '@heurion/contracts'
-import { parseDocSessionId } from './tool-registry.js'
+import { parseDocSessionId } from '../lib/doc-session.js'
 import { looksLikeHandwrittenReferences, HANDWRITTEN_REFERENCES_GUIDANCE } from './citation-guard.js'
 import {
   getDeckArtifact,

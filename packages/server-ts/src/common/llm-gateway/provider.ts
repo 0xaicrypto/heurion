@@ -2,6 +2,7 @@
  * #921 — llm-gateway 拆分:provider 注册/解析/模型预算。
  * 纯机械搬移自 src/common/llm-gateway.ts — 零行为变化。
  */
+import type { LlmProviderName } from './provider-names.js'
 import type { LlmChatOptions } from './types.js'
 
 /**
@@ -138,7 +139,7 @@ export interface LlmEndpoint {
 }
 
 /** #202: provider registry — runtime selection via DEFAULT_LLM_PROVIDER. */
-export const LLM_PROVIDERS: Record<string, LlmEndpoint> = {
+export const LLM_PROVIDERS: Record<LlmProviderName, LlmEndpoint> = {
   deepseek: { baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', modelEnv: 'DEEPSEEK_CHAT_MODEL', defaultModel: 'deepseek-chat' },
   // OpenCode Go gateway — deepseek-v4-flash / deepseek-v4-pro via the
   // OpenAI-compatible endpoint (key from opencode.ai/auth).
@@ -163,7 +164,7 @@ export function currentLlmProvider(): string {
 }
 
 export function resolveLlmEndpoint(): LlmEndpoint {
-  const entry = LLM_PROVIDERS[currentLlmProvider()]
+  const entry = LLM_PROVIDERS[currentLlmProvider() as LlmProviderName]
   if (!entry) {
     throw new Error(`Unknown DEFAULT_LLM_PROVIDER: ${currentLlmProvider()}`)
   }

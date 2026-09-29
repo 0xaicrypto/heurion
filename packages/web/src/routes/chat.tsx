@@ -230,7 +230,7 @@ export function ChatPage() {
       .then(setLlmStatus)
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) clearSession();
-        else setError(err instanceof ApiError ? err.messageText : t('common.loading'));
+        else setError(err instanceof ApiError ? err.messageText : t('chat.llmStatusLoadFail', 'AI 服务状态加载失败')); // #1147
       });
   }, [isAuthenticated, navigate, clearSession, t]);
 

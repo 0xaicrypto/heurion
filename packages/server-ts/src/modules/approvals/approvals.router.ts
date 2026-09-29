@@ -7,6 +7,7 @@ import {
   rejectApproval,
   listAuditLogs,
 } from './approval.service.js'
+import { ApprovalNotFoundError, ApprovalForbiddenError, ApprovalInputError } from './approval.errors.js'
 import prisma from '../../common/prisma.js'
 
 const rejectSchema = z.object({
@@ -79,8 +80,13 @@ export async function approvalsRouter(app: FastifyInstance) {
     try {
       const result = await confirmApproval(userId, id)
       return result
-    } catch (err: any) {
-      return reply.status(404).send({ error: err.message })
+    } catch (err) {
+      // #1146: 只有"确实不存在"才 404 — 其他异常向上抛给全局错误处理器
+      // （旧实现把 DB 故障也谎报为 not found）。
+      if (err instanceof ApprovalNotFoundError) return reply.status(404).send({ error: err.message })
+      if (err instanceof ApprovalForbiddenError) return reply.status(403).send({ error: err.message })
+      if (err instanceof ApprovalInputError) return reply.status(400).send({ error: err.message })
+      throw err
     }
   })
 
@@ -94,11 +100,15 @@ export async function approvalsRouter(app: FastifyInstance) {
     try {
       const result = await rejectApproval(userId, id, parsed.data.reason ?? null)
       return result
-    } catch (err: any) {
-      if (err.message === 'rejectedReason required') {
+    } catch (err) {
+      if (err instanceof Error && err.message === 'rejectedReason required') {
         return reply.status(400).send({ error: err.message })
       }
-      return reply.status(404).send({ error: err.message })
+      // #1146: 同 confirm — 非 not found 的异常不再伪装 404。
+      if (err instanceof ApprovalNotFoundError) return reply.status(404).send({ error: err.message })
+      if (err instanceof ApprovalForbiddenError) return reply.status(403).send({ error: err.message })
+      if (err instanceof ApprovalInputError) return reply.status(400).send({ error: err.message })
+      throw err
     }
   })
 

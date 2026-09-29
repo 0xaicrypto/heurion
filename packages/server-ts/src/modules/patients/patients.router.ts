@@ -1,8 +1,11 @@
 import { FastifyInstance } from 'fastify'
+import { unlink } from 'fs/promises'
+import path from 'path'
 import { authGuard } from '../../common/auth.guard.js'
 import { registerPatientSchema } from '../shared/chat.dto.js'
 import prisma from '../../common/prisma.js'
 import { findOwnedByHash } from '../../common/ownership.js'
+import { uploadsBaseDir } from '../../lib/upload-path.js'
 import crypto from 'crypto'
 import { quickScanDicom, renderDicomSlice, analyzeWithGeminiVision } from './dicom-scanner.js'
 import { recordScanFindingsAsFacts } from './patient-record.service.js'
@@ -91,20 +94,42 @@ export async function patientsRouter(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Patient not found' })
     }
 
-    // Remove related structured records first
-    await prisma.medicalRecord.deleteMany({ where: { patientHash: hash, userId } })
-    await prisma.researchAssessment.deleteMany({ where: { patientHash: hash } })
-    // #730: FileIndex 是真实表 — typed 访问。
-    await prisma.fileIndex.deleteMany({ where: { patientHash: hash, userId } })
+    // #1146: 物理文件（PHI）随索引删除一并清理 — 先取 id（磁盘路径 =
+    // uploadsBaseDir(userId)/<fileIndex.id>），提交后再 unlink。
+    const doomedFiles = await prisma.fileIndex.findMany({
+      where: { patientHash: hash, userId },
+      select: { id: true },
+    })
 
-    // Delete the patient row
-    await prisma.patientRecord.deleteMany({ where: { hash, userId } })
+    // #1146: 四条删除同一事务 — 旧实现串行 deleteMany，中途失败留下
+    // 半删状态（患者还在、影像/病历已丢）。
+    await prisma.$transaction([
+      prisma.medicalRecord.deleteMany({ where: { patientHash: hash, userId } }),
+      prisma.researchAssessment.deleteMany({ where: { patientHash: hash } }),
+      // #730: FileIndex 是真实表 — typed 访问。
+      prisma.fileIndex.deleteMany({ where: { patientHash: hash, userId } }),
+      prisma.patientRecord.deleteMany({ where: { hash, userId } }),
+    ])
+
+    // 提交后逐个 unlink — ENOENT 幂等跳过；其他失败仅日志（DB 已提交，
+    // 让请求失败会诱导重试，而重试只会 404）。
+    let filesDeleted = 0
+    for (const f of doomedFiles) {
+      try {
+        await unlink(path.join(uploadsBaseDir(userId), f.id))
+        filesDeleted++
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          log.warn(`[patients.delete] unlink failed for ${f.id}: ${(err as Error).message}`)
+        }
+      }
+    }
 
     // Cascade-delete memory facts tied to this patient so dependent summaries become stale/superseded
     const ctx = getUserContext(userId)
     const cascade = ctx.memory.deletePatientReferences(hash)
 
-    return { deleted: true, ...cascade }
+    return { deleted: true, files_deleted: filesDeleted, ...cascade }
   })
 
   // ── Studies ──

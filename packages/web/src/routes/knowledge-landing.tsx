@@ -5,64 +5,57 @@ import { Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
 
 export function KnowledgeLandingPage() {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language.startsWith('zh');
+  const { t } = useTranslation();
 
   const T = {
-    title: isZh ? '可进化的知识库' : 'Evolving knowledge base',
-    subtitle: isZh
-      ? 'Heurion 把聊天与文件中沉淀的事实变成可管理、可检索、可补全的知识。Summary 会记录来源 Fact 版本，Fact 变更自动传播，知识库会自己长大、也会自己纠正。'
-      : 'Heurion turns facts from chat and files into manageable, searchable, and completable knowledge. Summaries record source fact versions; fact changes propagate; the knowledge base grows and corrects itself.',
+    title: t('knowledgeLanding.title', '可进化的知识库'),
+    subtitle: t('knowledgeLanding.subtitle', 'Heurion 把聊天与文件中沉淀的事实变成可管理、可检索、可补全的知识。Summary 会记录来源 Fact 版本，Fact 变更自动传播，知识库会自己长大、也会自己纠正。'),
 
-    tabsTitle: isZh ? '五大标签，统一入口' : 'Five tabs, one entry point',
+    tabsTitle: t('knowledgeLanding.tabsTitle', '五大标签，统一入口'),
     tabs: [
       {
         icon: <BookOpen size={22} />,
         title: 'Summaries',
-        desc: isZh ? '由 Facts 自动合成的综述摘要；支持版本历史、失效(stale)标记、重新生成与影响范围。' : 'Synthesis summaries from facts; version history, stale badges, regenerate, and impact views.',
+        desc: t('knowledgeLanding.desc', '由 Facts 自动合成的综述摘要；支持版本历史、失效(stale)标记、重新生成与影响范围。'),
       },
       {
         icon: <Brain size={22} />,
         title: 'Facts',
-        desc: isZh ? '结构化记忆片段；编辑/删除会级联传播到依赖的 Summaries，支持版本历史与影响分析。' : 'Structured memory snippets; edits/deletes cascade to dependent summaries, with version history and impact analysis.',
+        desc: t('knowledgeLanding.desc2', '结构化记忆片段；编辑/删除会级联传播到依赖的 Summaries，支持版本历史与影响分析。'),
       },
       {
         icon: <Lightbulb size={22} />,
         title: 'Gaps',
-        desc: isZh ? '系统识别出的未解问题；可由 Fact 或 Summary 回答，也可忽略或批量关闭。' : 'Unanswered questions identified by the system; answer with a fact or summary, ignore, or close in bulk.',
+        desc: t('knowledgeLanding.desc3', '系统识别出的未解问题；可由 Fact 或 Summary 回答，也可忽略或批量关闭。'),
       },
       {
         icon: <Wrench size={22} />,
         title: 'Tools',
-        desc: isZh ? '已启用或待审核的插件与工具，支持开关与描述管理。' : 'Enabled or pending plugins and tools, with toggles and description management.',
+        desc: t('knowledgeLanding.desc4', '已启用或待审核的插件与工具，支持开关与描述管理。'),
       },
       {
         icon: <FileText size={22} />,
         title: 'Files',
-        desc: isZh ? '上传文件与报告助手生成结果，按租户隔离存储；删除文件会级联处理来源 Facts。' : 'Uploaded files and report-assistant outputs stored with tenant isolation; deleting a file cascades to its derived facts.',
+        desc: t('knowledgeLanding.desc5', '上传文件与报告助手生成结果，按租户隔离存储；删除文件会级联处理来源 Facts。'),
       },
     ],
 
-    featuresTitle: isZh ? '管理功能' : 'Management features',
+    featuresTitle: t('knowledgeLanding.featuresTitle', '管理功能'),
     features: [
-      { icon: <Search size={20} />, title: isZh ? '搜索过滤' : 'Search & filter', desc: isZh ? '每个标签页都有独立关键词过滤，快速定位内容。' : 'Each tab has independent keyword filtering to locate content quickly.' },
-      { icon: <RotateCcw size={20} />, title: isZh ? '版本历史与重新生成' : 'Version history & regenerate', desc: isZh ? '查看 Fact/Summary 的版本链；stale 摘要可一键重新生成。' : 'Browse version chains for facts and summaries; regenerate stale summaries in one click.' },
-      { icon: <Trash2 size={20} />, title: isZh ? '多选批量删除' : 'Bulk delete', desc: isZh ? '勾选多项后一键删除，减少重复操作。' : 'Select multiple items and delete them in one go.' },
-      { icon: <Edit3 size={20} />, title: isZh ? '内联编辑与影响分析' : 'Inline editing & impact', desc: isZh ? 'Facts 可直接编辑；保存前预览会影响哪些 Summaries。' : 'Edit facts inline; preview which summaries will be affected before saving.' },
+      { icon: <Search size={20} />, title: t('knowledgeLanding.title2', '搜索过滤'), desc: t('knowledgeLanding.desc6', '每个标签页都有独立关键词过滤，快速定位内容。') },
+      { icon: <RotateCcw size={20} />, title: t('knowledgeLanding.title3', '版本历史与重新生成'), desc: t('knowledgeLanding.desc7', '查看 Fact/Summary 的版本链；stale 摘要可一键重新生成。') },
+      { icon: <Trash2 size={20} />, title: t('knowledgeLanding.title4', '多选批量删除'), desc: t('knowledgeLanding.desc8', '勾选多项后一键删除，减少重复操作。') },
+      { icon: <Edit3 size={20} />, title: t('knowledgeLanding.title5', '内联编辑与影响分析'), desc: t('knowledgeLanding.desc9', 'Facts 可直接编辑；保存前预览会影响哪些 Summaries。') },
     ],
 
-    evolveTitle: isZh ? '从 Facts 到 Summaries 的异步进化' : 'Async evolution from Facts to Summaries',
-    evolveBody: isZh
-      ? 'Evolution Engine 在聊天路径之外运行：自动提取 Facts、去重链接、尝试回答 Gaps；当同一主题积累足够相关 Facts 时合成 Summary。Summary 记录来源 Fact 版本，Fact 变更会通过 Curation 自动标记依赖 Summary 为 stale。'
-      : 'The Evolution Engine runs outside the chat path: it auto-extracts facts, deduplicates and links them, tries to answer gaps, and synthesizes an summary when enough related facts accumulate. Summaries record source fact versions, and fact changes automatically mark dependent summaries stale via Curation.',
+    evolveTitle: t('knowledgeLanding.evolveTitle', '从 Facts 到 Summaries 的异步进化'),
+    evolveBody: t('knowledgeLanding.evolveBody', 'Evolution Engine 在聊天路径之外运行：自动提取 Facts、去重链接、尝试回答 Gaps；当同一主题积累足够相关 Facts 时合成 Summary。Summary 记录来源 Fact 版本，Fact 变更会通过 Curation 自动标记依赖 Summary 为 stale。'),
 
-    gapTitle: isZh ? 'Knowledge Gap：让未解问题显式化' : 'Knowledge Gap: make the unknown visible',
-    gapBody: isZh
-      ? '当用户提问却没有匹配的事实时，系统会创建一个 Gap。它不会沉默地胡说，而是把“我不知道”记录下来，等您后续回答、搜索或验证。'
-      : 'When a user asks something with no matching facts, the system creates a Gap. Instead of silently hallucinating, it records "I don\'t know" and waits for you to answer, search, or validate later.',
+    gapTitle: t('knowledgeLanding.gapTitle', 'Knowledge Gap：让未解问题显式化'),
+    gapBody: t('knowledgeLanding.gapBody', '当用户提问却没有匹配的事实时，系统会创建一个 Gap。它不会沉默地胡说，而是把“我不知道”记录下来，等您后续回答、搜索或验证。'),
 
-    ctaTitle: isZh ? '去知识库看看' : 'Browse the knowledge base',
-    ctaBody: isZh ? '登录后进入「记忆与知识」，查看您的 Summaries、Facts 与 Gaps。' : 'Log in and open Memory & Knowledge to see your Summaries, Facts, and Gaps.',
+    ctaTitle: t('knowledgeLanding.ctaTitle', '去知识库看看'),
+    ctaBody: t('knowledgeLanding.ctaBody', '登录后进入「记忆与知识」，查看您的 Summaries、Facts 与 Gaps。'),
   };
 
   return (
@@ -121,17 +114,17 @@ export function KnowledgeLandingPage() {
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent">1</div>
-                <span className="text-text-secondary">{isZh ? '聊天 → 自动提取 Facts' : 'Chat → auto-extract Facts'}</span>
+                <span className="text-text-secondary">{t('knowledgeLanding.item', '聊天 → 自动提取 Facts')}</span>
               </div>
               <div className="ml-4 h-6 w-0.5 bg-border" />
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent">2</div>
-                <span className="text-text-secondary">{isZh ? '≥3 条相关 Facts → 合成 Summary' : '≥3 related facts → synthesize Summary'}</span>
+                <span className="text-text-secondary">{t('knowledgeLanding.item2', '≥3 条相关 Facts → 合成 Summary')}</span>
               </div>
               <div className="ml-4 h-6 w-0.5 bg-border" />
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent">3</div>
-                <span className="text-text-secondary">{isZh ? 'Summary 被投影到后续对话' : 'Summary projected into later turns'}</span>
+                <span className="text-text-secondary">{t('knowledgeLanding.item3', 'Summary 被投影到后续对话')}</span>
               </div>
             </div>
           </Card>
@@ -145,12 +138,12 @@ export function KnowledgeLandingPage() {
               <div className="rounded-lg border border-border bg-background p-4">
                 <div className="flex items-center gap-2 text-text-tertiary">
                   <Lightbulb size={16} />
-                  <span className="text-xs">{isZh ? '未解问题示例' : 'Example gap'}</span>
+                  <span className="text-xs">{t('knowledgeLanding.item4', '未解问题示例')}</span>
                 </div>
-                <p className="mt-2 text-text-primary">{isZh ? '“EGFR ex20ins 的最佳一线治疗方案是什么？”' : '"What is the best first-line treatment for EGFR ex20ins?"'}</p>
+                <p className="mt-2 text-text-primary">{t('knowledgeLanding.item5', '“EGFR ex20ins 的最佳一线治疗方案是什么？”')}</p>
                 <div className="mt-3 flex gap-2">
-                  <span className="rounded-md bg-success/10 px-2 py-1 text-xs text-success">{isZh ? '回答' : 'Answer'}</span>
-                  <span className="rounded-md bg-surface px-2 py-1 text-xs text-text-secondary">{isZh ? '忽略' : 'Ignore'}</span>
+                  <span className="rounded-md bg-success/10 px-2 py-1 text-xs text-success">{t('knowledgeLanding.item6', '回答')}</span>
+                  <span className="rounded-md bg-surface px-2 py-1 text-xs text-text-secondary">{t('knowledgeLanding.item7', '忽略')}</span>
                 </div>
               </div>
             </Card>
@@ -171,7 +164,7 @@ export function KnowledgeLandingPage() {
           <p className="mx-auto mt-3 max-w-xl text-text-secondary">{T.ctaBody}</p>
           <div className="mt-6">
             <Link to="/app/memory?tab=knowledge" className="inline-flex items-center font-medium text-accent hover:underline">
-              {isZh ? '打开知识库' : 'Open knowledge base'}
+              {t('knowledgeLanding.item8', '打开知识库')}
               <ArrowRight size={16} className="ml-1" />
             </Link>
           </div>

@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router-dom';
 import { Button } from './ui';
@@ -26,6 +26,21 @@ class ErrorBoundaryInner extends Component<Props & { t: (k: string) => string },
 
   /** inline 重试：复位后子树重新挂载（错误期间子树已被卸载）。 */
   private retryInline = () => this.setState({ hasError: false });
+
+  /** #1147: 崩溃上报 — 此前只有降级 UI，生产环境无任何痕迹。
+   *  宿主可注入 `globalThis.__heurionErrorReporter`（监控 SDK / 埋点）；
+   *  未注入时至少 console.error 留痕。reporter 自身异常不得影响降级。 */
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    const reporter = (globalThis as {
+      __heurionErrorReporter?: (error: Error, info: ErrorInfo) => void;
+    }).__heurionErrorReporter;
+    if (reporter) {
+      try {
+        reporter(error, info);
+      } catch { /* reporter 异常不影响边界降级 */ }
+    }
+    console.error('[ErrorBoundary]', error, info.componentStack);
+  }
 
   render() {
     if (this.state.hasError) {

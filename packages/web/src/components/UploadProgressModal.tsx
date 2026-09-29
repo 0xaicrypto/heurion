@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { FileText, Loader2, X } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 
@@ -19,13 +20,14 @@ export interface UploadProgressState {
  * upload-abort),失败时 Modal 内联展示错误而非仅关掉顶部 Alert。
  */
 export function UploadProgressModal({ state, onCancel }: { state: UploadProgressState | null; onCancel?: () => void }) {
+  const { t } = useTranslation();
   if (!state) return null;
   const { fileName, percent, stage, error } = state;
   const importing = stage === 'importing' && !error;
   const pct = importing ? 100 : percent;
 
   return (
-    <Modal open backdropClassName="bg-black/50" aria-label="上传进度">
+    <Modal open backdropClassName="bg-black/50" aria-label={t('upload.progressAria', '上传进度')}>
       <div className="m-4 w-full max-w-sm rounded-xl border border-border bg-surface-elevated p-6 shadow-xl">
         <div className="mb-3 flex items-center gap-3">
           <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${error ? 'bg-error/10 text-error' : 'bg-accent/10 text-accent'}`}>
@@ -33,7 +35,7 @@ export function UploadProgressModal({ state, onCancel }: { state: UploadProgress
           </span>
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-text-primary">
-              {error ? '上传失败' : importing ? '正在导入原文…' : '正在上传…'}
+              {error ? t('upload.failed', '上传失败') : importing ? t('upload.importing', '正在导入原文…') : t('upload.uploading', '正在上传…')}
             </h3>
             <p className="truncate text-xs text-text-tertiary" title={fileName}>{fileName}</p>
           </div>
@@ -42,8 +44,8 @@ export function UploadProgressModal({ state, onCancel }: { state: UploadProgress
               onClick={onCancel}
               disabled={importing}
               className="rounded p-1 text-text-tertiary transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-40"
-              aria-label="取消上传"
-              title={importing ? '导入中不可取消' : '取消上传'}
+              aria-label={t('upload.cancelAria', '取消上传')}
+              title={importing ? t('upload.cancelDisabled', '导入中不可取消') : t('upload.cancel', '取消上传')}
             >
               <X size={16} />
             </button>
@@ -73,7 +75,7 @@ export function UploadProgressModal({ state, onCancel }: { state: UploadProgress
             {error ? (
               <span className="max-w-[260px] truncate text-error">{error}</span>
             ) : importing ? (
-              '正在提取文字、图片与公式…'
+              t('upload.extracting', '正在提取文字、图片与公式…')
             ) : `${pct}%`}
           </span>
         </div>

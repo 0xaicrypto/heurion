@@ -310,8 +310,6 @@ describe('#983 生成/注入走统一写回流程', () => {
     await screen.findByDisplayValue('A doc');
     const injected = 'A body\n\n## Overall survival\n\nHR 0.7 (95% CI 0.5-0.9)';
     apiMock.injectResults.mockResolvedValue({ ok: true });
-    // 注入后服务端正文(第二次 getDoc)
-    apiMock.getDoc
     // 注入路径的 getDoc(此次测试内第 2 次调用;加载期第 1 次走默认 mock)
     apiMock.getDoc
       .mockResolvedValueOnce({ ...DOC_A, body: injected, updated_at: '2026-01-05T00:00:00Z' });
@@ -601,5 +599,36 @@ describe('#1128 下载链接 token: base_sha 归一化', () => {
     expect(payload.body).toBe(rawBody);
     expect(payload.base_sha).toBe(await sha1Hex(normalizeFileDownloadTokens(rawBody)));
     expect(payload.base_sha).not.toBe(await sha1Hex(rawBody));
+  });
+});
+
+/**
+ * #1134 — 注入结果返回正文与本地仅 token 不同(token 轮换)时不弹审阅,
+ * 本地正文保持(旧 token 仍有效),避免每条下载链接被显示成改动。
+ */
+describe('#1134 注入结果 token-only 不弹审阅', () => {
+  test('响应正文与本地仅 token 不同 → 无审阅横幅、正文不变', async () => {
+    const bodyWithToken = 'A body\n\n图 /api/v1/files/download/f_1?token=old_sig';
+    apiMock.getDoc.mockResolvedValue({ ...DOC_A, body: bodyWithToken });
+    apiMock.injectResults.mockResolvedValue({
+      ok: true,
+      body: 'A body\n\n图 /api/v1/files/download/f_1?token=new_sig',
+      block_projection: undefined,
+      updated_at: '2026-01-06T00:00:00Z',
+    });
+
+    renderEditor(false);
+    await screen.findByDisplayValue('A doc');
+    fireEvent.click(moreMenu());
+    fireEvent.click(await screen.findByRole('button', { name: /注入结果|Inject Results/ }));
+    fireEvent.change(screen.getByPlaceholderText(/小节标题|Section label/), { target: { value: 'L' } });
+    fireEvent.change(screen.getByPlaceholderText(/统计输出|stat output/), { target: { value: 'R' } });
+    fireEvent.click(screen.getByRole('button', { name: /^注入$|^Inject$/ }));
+
+    await waitFor(() => expect(apiMock.injectResults).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    // 注入审阅入口 = results 提议卡 — 仅 token 轮换时不得出现
+    expect(screen.queryByText(/统计结果已就绪|Statistical results ready/)).toBeNull();
+    expect(editorText(document.body)).toContain('f_1?token=old_sig');
   });
 });

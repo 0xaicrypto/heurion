@@ -3,12 +3,38 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { randomUUID } from 'crypto'
+import { pathToFileURL } from 'url'
 import { promisify } from 'util'
 import { saveFile } from '../storage.js'
 // #790: payload 形状来自 contracts 单一来源（此前本文件手写 interface）。
 import { previewPayloadSchema, type PreviewPayload } from '@heurion/contracts'
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * #1140: 长任务进程组执行 — detached 起新进程组,超时 kill 整组。
+ * 旧实现 execFile 的 timeout 只向 wrapper(soffice)发信号,soffice.bin
+ * 子进程可能成孤儿继续占用/锁 profile。配对 promise 的 child.pid 做负号
+ * 组杀;race 保证 mock/真进程都能在超时点明确 reject。
+ */
+async function runDetached(bin: string, args: string[], timeoutMs: number): Promise<void> {
+  const p = execFileAsync(bin, args, { detached: true } as import('child_process').ExecFileOptions)
+  let timer: ReturnType<typeof setTimeout>
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const pid = (p as unknown as { child?: { pid?: number } }).child?.pid
+      if (pid) {
+        try { process.kill(-pid, 'SIGKILL') } catch { /* already gone */ }
+      }
+      reject(new Error(`${bin} timed out after ${timeoutMs}ms (process group killed)`))
+    }, timeoutMs)
+  })
+  try {
+    await Promise.race([p, timedOut])
+  } finally {
+    clearTimeout(timer!)
+  }
+}
 
 /**
  * #771 — preview_file: 渲染产物 / 上传 pptx → 翻页预览 PNG 列表。
@@ -72,15 +98,23 @@ export async function previewFile(payload: unknown) {
     const inputPath = path.join(dir, fileName)
     fs.writeFileSync(inputPath, binary)
 
-    await execFileAsync('soffice', [
+    // #1140: 每作业独立 LibreOffice profile — 并发预览共用用户 profile 时,
+    // 第二个 soffice 把请求交给第一个实例或卡在 profile 锁上(PREVIEW_FAILED/
+    // 120s 超时)。profile 目录随临时目录即用即删。
+    const profileDir = path.join(dir, 'profile')
+    fs.mkdirSync(profileDir, { recursive: true })
+    await runDetached('soffice', [
       '--headless', '--norestore', '--nolockcheck', '--convert-to', 'pdf',
+      `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
       '--outdir', dir, inputPath,
-    ], { timeout: SOFFICE_TIMEOUT_MS })
+    ], SOFFICE_TIMEOUT_MS)
     const pdfPath = inputPath.replace(/\.[^.]+$/, '.pdf')
     if (!fs.existsSync(pdfPath)) throw new Error('PREVIEW_FAILED: LibreOffice did not produce a PDF')
 
+    // #1140: pdftoppm 加像素上限(scale-to)——极端页面尺寸/恶意 PDF 不再
+    // 无限放大内存;96dpi A4 约 1.6K 宽,1600 覆盖常规页面且封顶。
     await execFileAsync('pdftoppm', [
-      '-png', '-r', '96', '-f', '1', '-l', String(maxPages),
+      '-png', '-r', '96', '-scale-to', '1600', '-f', '1', '-l', String(maxPages),
       pdfPath, path.join(dir, 'page'),
     ], { timeout: SOFFICE_TIMEOUT_MS })
 

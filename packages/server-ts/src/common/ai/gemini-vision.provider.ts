@@ -1,5 +1,5 @@
-import type { AiProvider, AiProviderConfig, VisionImageInput, VisionOptions, VisionResult } from './ai-provider.js'
-import { AiProviderError } from './ai-provider.js'
+import type { AiProvider, AiProviderConfig, VisionImageInput, VisionOptions, VisionResult } from './ai-types.js'
+import { AiProviderError } from './ai-types.js'
 
 export class GeminiVisionProvider implements Pick<AiProvider, 'vision'> {
   constructor(private config: AiProviderConfig = {}) {}

@@ -62,7 +62,7 @@ export function ChartLibrary({ onInsert }: { onInsert?: (markdown: string, title
     }
   };
 
-  const modeLabel = (m: LibraryEntry['mode']) => m === 'reactome' ? 'Reactome' : m === 'chart' ? 'Chart' : m === 'bioscene' ? 'BioScene' : m === 'figure' ? '学术图' : '—';
+  const modeLabel = (m: LibraryEntry['mode']) => m === 'reactome' ? 'Reactome' : m === 'chart' ? 'Chart' : m === 'bioscene' ? 'BioScene' : m === 'figure' ? t('chat.libraryModeFigure', '学术图') : '—';
 
   /** #822: 源码查看/重渲染 — fig_ 产物经 FigureRender 溯源。 */
   const toggleSource = async (e: LibraryEntry) => {
@@ -122,7 +122,7 @@ export function ChartLibrary({ onInsert }: { onInsert?: (markdown: string, title
                 {sourceView?.fileId === e.file_id && (
                   <div className="border-t border-border bg-surface px-3 py-2">
                     <p className="mb-1 text-[10px] text-text-tertiary">
-                      {sourceView.data.kind === 'mermaid' ? 'Mermaid 源码' : `LaTeX(${sourceView.data.options?.display ? 'display' : 'inline'})`}
+                      {sourceView.data.kind === 'mermaid' ? t('chat.mermaidSource', 'Mermaid 源码') : `LaTeX(${sourceView.data.options?.display ? 'display' : 'inline'})`}
                       {sourceView.data.rendered_ms != null && ` · ${sourceView.data.rendered_ms}ms`}
                     </p>
                     <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-background p-2 font-mono text-[11px] text-text-primary">{sourceView.data.source}</pre>

@@ -7,22 +7,46 @@ Wire contract (#689): AnalyzeRequest mirrors
 packages/contracts/src/stats.ts (statsRequestSchema) — keep both in sync.
 """
 import os
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field, StrictBool
 
 import stats_core
 
 app = FastAPI(title="Heurion Python Stats Worker")
 
+# #1149: 数组长度上限（与 contracts statsRequestSchema 的 .max 镜像）—
+# 无上限的巨型数组会打爆 scipy 内存。
+MAX_SERIES_LEN = 100_000
+MAX_TABLE_ROWS = 10_000
+MAX_TABLE_COLS = 1_000
+
+
+def _reject_coerced_number(v: Any) -> Any:
+    """#1149: 只收真正的 JSON number — pydantic 宽松模式此前接受 `"5"`/`true`
+    （str/bool→float 强转），zod 侧 z.number() 拒绝；两端行为必须一致。
+    bool 是 int 子类，必须显式拒绝。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise ValueError("must be a JSON number")
+    return v
+
+
+StrictNumber = Annotated[float, BeforeValidator(_reject_coerced_number)]
+Series = Annotated[List[StrictNumber], Field(max_length=MAX_SERIES_LEN)]
+Table = Annotated[
+    List[Annotated[List[StrictNumber], Field(max_length=MAX_TABLE_COLS)]],
+    Field(max_length=MAX_TABLE_ROWS),
+]
+
 
 class SurvivalRecord(BaseModel):
     """#严重-2: time/event are REQUIRED — zod already requires both. Optional
     fields silently coerced missing time to t=0 and missing event to censored,
-    corrupting the KM curve and log-rank p without any error."""
-    time: float
-    event: bool
+    corrupting the KM curve and log-rank p without any error.
+    #1149: event 严格 bool、time 严格数字（拒绝 "yes"/"1" 强转）。"""
+    time: StrictNumber
+    event: StrictBool
 
 
 class AnalyzeRequest(BaseModel):
@@ -31,14 +55,14 @@ class AnalyzeRequest(BaseModel):
     """
     # zod 侧 test 为 min(1) — pydantic 镜像同口径（裸 str 会接受空串，漂移）。
     test: str = Field(min_length=1)
-    group_a: Optional[List[float]] = None
-    group_b: Optional[List[float]] = None
-    table: Optional[List[List[float]]] = None
-    values: Optional[List[float]] = None
-    survival_a: Optional[List[SurvivalRecord]] = None
-    survival_b: Optional[List[SurvivalRecord]] = None
-    group: Optional[List[str]] = None
-    factor_a: Optional[List[str]] = None
+    group_a: Optional[Series] = None
+    group_b: Optional[Series] = None
+    table: Optional[Table] = None
+    values: Optional[Series] = None
+    survival_a: Optional[Annotated[List[SurvivalRecord], Field(max_length=MAX_SERIES_LEN)]] = None
+    survival_b: Optional[Annotated[List[SurvivalRecord], Field(max_length=MAX_SERIES_LEN)]] = None
+    group: Optional[Annotated[List[str], Field(max_length=MAX_SERIES_LEN)]] = None
+    factor_a: Optional[Annotated[List[str], Field(max_length=MAX_SERIES_LEN)]] = None
 
 
 def run_analysis(req: AnalyzeRequest) -> Dict[str, Any]:

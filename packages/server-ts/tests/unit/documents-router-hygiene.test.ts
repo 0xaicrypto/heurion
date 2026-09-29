@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import crypto from 'crypto'
+import { readFileSync } from 'node:fs'
 
 /**
  * #980 — documents.router 写回卫生批:
@@ -68,7 +69,7 @@ vi.mock('../../src/common/logger.js', () => ({
 }))
 vi.mock('../../src/common/chart-token.js', () => ({ refreshFileUrls: (s: string) => s }))
 vi.mock('../../src/common/doc-lint.js', () => ({ lintDocument: () => [] }))
-vi.mock('../../src/modules/chat/chat-sse.js', () => ({ createRawSseSender: () => ({ send: vi.fn(), end: vi.fn() }) }))
+vi.mock('../../src/modules/chat/chat-sse.js', () => ({ createRawSseSender: () => ({ send: vi.fn(), end: vi.fn(), signal: new AbortController().signal }) }))
 vi.mock('../../src/modules/figures/figure-markdown.js', () => ({
   scanFigures: () => ({ figures: [] }),
   resolveFiguresToImageLines: async () => [],
@@ -440,5 +441,15 @@ describe('#989 Phase 3 — phi-scan 按块定位(findings 携带所属节)', () 
     const findings = ((await scan({ params: { docId: DOC }, user: { userId: USER } }, makeReply())) as { findings: Array<{ section?: { id: string } }> }).findings
     expect(findings.length).toBeGreaterThan(0)
     expect(findings[0].section?.id).toMatch(/^s_[0-9a-f]{12}$/)
+  })
+})
+
+describe('#1146 polish SSE 不重复心跳/断开监听', () => {
+  test('复用 createRawSseSender 的 signal 与心跳(不再自建 setInterval ping/close 监听)', () => {
+    const src = readFileSync(new URL('../../src/modules/documents/documents.router.ts', import.meta.url), 'utf-8')
+    // 修复前:自建 15s 心跳 + reply.raw.on('close') → 每 15s 两次 ping
+    expect(src).not.toMatch(/setInterval\([\s\S]{0,160}?': ping/)
+    expect(src).not.toMatch(/reply\.raw\.on\('close'/)
+    expect(src).toContain('AbortSignal.any([sse.signal')
   })
 })

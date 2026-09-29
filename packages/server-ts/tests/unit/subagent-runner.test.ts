@@ -1,6 +1,9 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mockAiProvider } from '../helpers/ai-mock.js'
 import { runSubAgent } from '../../src/tools/subagent-runner.js'
+// #1146: runner 经 registry-port 晚绑定 — 测试需先加载 tool-registry 完成工厂注册。
+import '../../src/tools/tool-registry.js'
+
 
 vi.mock('../../src/common/llm.js', () => mockAiProvider())
 import { deepseekChat } from '../../src/common/llm.js'

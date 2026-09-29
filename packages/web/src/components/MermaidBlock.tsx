@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CodeBlock } from './MarkdownRenderer';
 
 /**
@@ -7,6 +8,7 @@ import { CodeBlock } from './MarkdownRenderer';
  * 与 worker 渲染壳同安全约束。渲染失败回退代码块展示。
  */
 export function MermaidBlock({ code }: { code: string }) {
+  const { t } = useTranslation();
   const [svg, setSvg] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const idRef = useRef(`mmd-${Math.random().toString(36).slice(2, 9)}`);
@@ -35,7 +37,7 @@ export function MermaidBlock({ code }: { code: string }) {
   if (!svg) {
     return (
       <div className="my-2 flex h-32 items-center justify-center rounded-lg border border-border bg-surface text-xs text-text-tertiary">
-        正在渲染 mermaid 图…
+        {t('markdown.mermaidRendering', '正在渲染 mermaid 图…')}
       </div>
     );
   }

@@ -25,17 +25,26 @@
  */
 import { z } from 'zod'
 
+// #1149: 数组长度上限与 python-stats-worker/main.py 镜像 — 无上限的巨型
+// 数组会打爆 scipy 内存；两端超限都必须在入口被拒。
+const MAX_SERIES_LEN = 100_000
+const MAX_TABLE_ROWS = 10_000
+const MAX_TABLE_COLS = 1_000
+
+const statsNumber = z.number()
+const statsSeries = z.array(statsNumber).max(MAX_SERIES_LEN)
+
 export const statsRequestSchema = z.object({
   test: z.string().min(1),
-  group_a: z.array(z.number()).optional(),
-  group_b: z.array(z.number()).optional(),
-  table: z.array(z.array(z.number())).optional(),
-  values: z.array(z.number()).optional(),
-  survival_a: z.array(z.object({ time: z.number(), event: z.boolean() })).optional(),
-  survival_b: z.array(z.object({ time: z.number(), event: z.boolean() })).optional(),
+  group_a: statsSeries.optional(),
+  group_b: statsSeries.optional(),
+  table: z.array(z.array(statsNumber).max(MAX_TABLE_COLS)).max(MAX_TABLE_ROWS).optional(),
+  values: statsSeries.optional(),
+  survival_a: z.array(z.object({ time: statsNumber, event: z.boolean() })).max(MAX_SERIES_LEN).optional(),
+  survival_b: z.array(z.object({ time: statsNumber, event: z.boolean() })).max(MAX_SERIES_LEN).optional(),
   // two-way-anova factors (stats_core.two_way_anova)
-  group: z.array(z.string()).optional(),
-  factor_a: z.array(z.string()).optional(),
+  group: z.array(z.string()).max(MAX_SERIES_LEN).optional(),
+  factor_a: z.array(z.string()).max(MAX_SERIES_LEN).optional(),
 })
 export type StatsRequest = z.infer<typeof statsRequestSchema>
 

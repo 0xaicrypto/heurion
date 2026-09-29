@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 
@@ -71,7 +71,12 @@ export function LogsSection() {
       .catch(() => setPlugins([]));
   }, []);
 
+  // #1147: 翻页/筛选的请求序号 — 慢的旧请求后到不得覆盖新页结果
+  // （此前快速翻页会闪回上一页数据）。
+  const loadSeq = useRef(0);
+
   const loadLogs = () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     api
@@ -82,11 +87,17 @@ export function LogsSection() {
         offset,
       })
       .then((res) => {
+        if (seq !== loadSeq.current) return;
         setLogs(res.logs);
         setTotal(res.total);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.messageText : 'Failed to load logs'))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (seq !== loadSeq.current) return;
+        setError(err instanceof ApiError ? err.messageText : 'Failed to load logs');
+      })
+      .finally(() => {
+        if (seq === loadSeq.current) setLoading(false);
+      });
   };
 
   useEffect(() => {

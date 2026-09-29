@@ -5,7 +5,7 @@
  * 的降级提示,agent 会转述并以文字描述代替)— 绝不静默失败。
  */
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'

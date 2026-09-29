@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-push hook — run typecheck + tests before pushing
-set -e
+set -euo pipefail
 
 echo "=== TypeScript Check ==="
 cd packages/server-ts

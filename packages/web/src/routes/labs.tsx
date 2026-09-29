@@ -274,7 +274,13 @@ export function LabsPage() {
       ) : (
         <div className="space-y-2">
           {files.map((f) => (
-            <div key={f.file_id} onClick={() => handleViewFile(f.file_id)} className="cursor-pointer">
+            // #1147: 可点击 div → button（键盘可操作 + 语义正确）。
+            <button
+              type="button"
+              key={f.file_id}
+              onClick={() => handleViewFile(f.file_id)}
+              className="w-full cursor-pointer rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <Card className="flex items-center gap-4 p-4 hover:bg-surface transition-colors">
               <FileText size={20} className="shrink-0 text-text-tertiary" />
               <div className="min-w-0 flex-1">
@@ -285,7 +291,7 @@ export function LabsPage() {
               </div>
               <Badge variant="default">{f.mime.split('/')[0]}</Badge>
             </Card>
-            </div>
+            </button>
           ))}
         </div>
       )}

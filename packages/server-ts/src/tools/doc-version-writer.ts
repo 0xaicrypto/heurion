@@ -270,16 +270,21 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
       await prisma.doc.updateMany({
         where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
         data: { blockProjection: projectionJson },
-      }).catch(() => undefined)
+      }).catch((err) => {
+        // #1146: 回填是存量修复的 best-effort,但失败不再完全静默。
+        log.warn('projection backfill skipped', { reason: (err as Error).message?.slice(0, 120) })
+      })
     }
     // title-only 变化（body/deck 未动）— 条件更新 title,不刷 updatedAt、
     // 不产生快照（原 PUT 语义:title-only 保存不触发版本与列表跳动）。
     if (titleChanged) {
+      // #1146: 不再 `.catch(() => undefined)` — DB 故障此前与 0 行同路径,
+      // 被谎报为"文档已被并发修改"。错误直接上抛(全局 500 + 日志)。
       const res = await prisma.doc.updateMany({
         where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
         data: { title: input.title },
-      }).catch(() => undefined)
-      if (!res || res.count === 0) {
+      })
+      if (res.count === 0) {
         return {
           body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
           conflict: true,
@@ -291,11 +296,12 @@ export async function writeDocVersion(input: DocVersionWrite): Promise<DocVersio
     // #review-1(收尾): 内容未变但指针需前移（同字节去重复用旧工件）—
     // 条件更新与上面的 title/投影回填同守卫强度；0 行 = 并发修改 → 冲突。
     if (input.deckArtifactId !== undefined && existing.deckArtifactId !== input.deckArtifactId) {
+      // #1146: 同上 — DB 故障不得伪装并发冲突。
       const res = await prisma.doc.updateMany({
         where: { id: input.docId, userId: input.userId, body: prevBody, deck: prevDeckRaw },
         data: { deckArtifactId: input.deckArtifactId },
-      }).catch(() => undefined)
-      if (!res || res.count === 0) {
+      })
+      if (res.count === 0) {
         return {
           body: '', deck: null, changed: false, bodyChanged: false, deckChanged: false,
           conflict: true,

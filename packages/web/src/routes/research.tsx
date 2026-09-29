@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Plus, FlaskConical } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Alert, Button, Input, Card, Badge, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 // #922: 三处重复的状态→Badge variant 映射收敛到 lib/status-variant。
 import { statusVariant } from '@/lib/status-variant';
-import { cn } from '@/lib/utils';
 
 interface Study {
   study_id: string;
@@ -20,7 +19,6 @@ interface Study {
 
 export function ResearchPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [studies, setStudies] = useState<Study[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -128,24 +126,31 @@ export function ResearchPage() {
               {studies.map((study) => (
                 <Card
                   key={study.study_id}
-                  className={cn('cursor-pointer p-4 transition-colors hover:border-accent/40')}
+                  className="p-4 transition-colors hover:border-accent/40"
                 >
-                  <div className="flex items-start justify-between" onClick={() => navigate(`/app/research/${study.study_id}`)}>
-                    <div className="min-w-0 flex-1 cursor-pointer" onClick={() => navigate(`/app/research/${study.study_id}`)}>
-                      <h3 className="truncate font-medium text-text-primary">{study.display_name}</h3>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-tertiary">
-                        <span className="font-mono">{study.study_id}</span>
-                        {study.short_code && <span>· {study.short_code}</span>}
-                        {study.study_type === 'basic' && (
-                          <span className="ml-1 rounded-full border border-accent/30 bg-accent/5 px-1.5 py-0.5 text-[10px] text-accent">基础研究</span>
-                        )}
+                  {/* #1147: 单一 Link（此前嵌套两个 onClick 都 navigate —
+                      点一次跳两次，返回需按两次；且不可键盘访问）。 */}
+                  <Link
+                    to={`/app/research/${study.study_id}`}
+                    className="block rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-medium text-text-primary">{study.display_name}</h3>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-tertiary">
+                          <span className="font-mono">{study.study_id}</span>
+                          {study.short_code && <span>· {study.short_code}</span>}
+                          {study.study_type === 'basic' && (
+                            <span className="ml-1 rounded-full border border-accent/30 bg-accent/5 px-1.5 py-0.5 text-[10px] text-accent">{t('research.studyTypeBasic', '基础研究')}</span>
+                          )}
+                        </div>
                       </div>
+                      <Badge variant={statusVariant(study.status)}>{study.status}</Badge>
                     </div>
-                    <Badge variant={statusVariant(study.status)}>{study.status}</Badge>
-                  </div>
-                  <p className="mt-2 text-xs text-text-tertiary">
-                    Created {new Date(study.created_at).toLocaleDateString()}
-                  </p>
+                    <p className="mt-2 text-xs text-text-tertiary">
+                      Created {new Date(study.created_at).toLocaleDateString()}
+                    </p>
+                  </Link>
                 </Card>
               ))}
             </div>

@@ -8,112 +8,28 @@
  */
 
 import { getLlmGateway, type LlmChatOptions } from '../llm-gateway.js'
+// #1146: 类型/错误类在叶子模块,这里 import 供实现使用并 re-export 保持旧路径。
+import {
+  AiProviderError,
+  type AiProvider,
+  type AiProviderConfig,
+  type ChatMessage,
+  type ChatOptions,
+  type ChatResult,
+  type EmbedOptions,
+  type TokenUsage,
+  type VisionImageInput,
+  type VisionOptions,
+  type VisionResult,
+} from './ai-types.js'
+export type {
+  AiProvider, AiProviderConfig, ChatMessage, ChatOptions, ChatResult, EmbedOptions,
+  TokenUsage, VisionImageInput, VisionOptions, VisionResult,
+} from './ai-types.js'
+export { AiProviderError } from './ai-types.js'
 import { GeminiVisionProvider } from './gemini-vision.provider.js'
 import { LocalEmbeddingProvider, ResilientEmbeddingProvider } from './local-embedding.provider.js'
 import { OpenAIEmbeddingProvider } from './openai-embedding.provider.js'
-
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
-
-export interface ChatOptions {
-  model?: string
-  maxTokens?: number
-  temperature?: number
-  telemetryContext?: {
-    userId: string
-    workspaceId: string
-    action: string
-  }
-  [key: string]: any
-}
-
-export interface TokenUsage {
-  promptTokens?: number
-  completionTokens?: number
-  totalTokens?: number
-}
-
-export interface ChatResult {
-  content: string
-  model?: string
-  usage?: TokenUsage
-}
-
-export interface EmbedOptions {
-  model?: string
-  dimensions?: number
-  normalize?: boolean
-  telemetryContext?: {
-    userId: string
-    workspaceId: string
-    action: string
-  }
-  [key: string]: any
-}
-
-export interface VisionImageInput {
-  base64: string
-  mimeType?: string
-}
-
-export interface VisionOptions {
-  model?: string
-  mimeType?: string
-  telemetryContext?: {
-    userId: string
-    workspaceId: string
-    action: string
-  }
-  [key: string]: any
-}
-
-export interface VisionResult {
-  content: string
-  model?: string
-}
-
-export interface AiProvider {
-  chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResult>
-  embed(texts: string[], options?: EmbedOptions): Promise<number[][]>
-  vision(images: VisionImageInput[], prompt: string, options?: VisionOptions): Promise<VisionResult>
-}
-
-export type AiProviderErrorCode =
-  | 'config_missing'
-  | 'api_error'
-  | 'not_implemented'
-  | 'timeout'
-  | 'invalid_response'
-
-export class AiProviderError extends Error {
-  constructor(
-    message: string,
-    public code: AiProviderErrorCode,
-    public statusCode?: number,
-    public cause?: Error,
-  ) {
-    super(message)
-    this.name = 'AiProviderError'
-  }
-}
-
-export interface AiProviderConfig {
-  /** #202: runtime LLM provider selection (DEFAULT_LLM_PROVIDER env). */
-  llmProvider?: string
-  deepseekApiKey?: string
-  deepseekChatModel?: string
-  geminiApiKey?: string
-  geminiVisionModel?: string
-  embeddingProvider?: 'local' | 'openai'
-  embeddingModel?: string
-  embeddingDevice?: 'cpu' | 'cuda' | 'mps'
-  embeddingFallbackProvider?: 'openai' | 'none'
-  localEmbeddingUrl?: string
-  openaiApiKey?: string
-  openaiEmbeddingModel?: string
-}
 
 export function loadAiConfigFromEnv(): AiProviderConfig {
   return {

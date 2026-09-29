@@ -9,8 +9,8 @@ import { safeParseDeckJson } from '../lib/asset-content.js'
 import { writeDocVersion } from './doc-version-writer.js'
 import { executeInsertPlot } from './insert-asset-plot.js'
 import { executeInsertExport } from './insert-asset-export.js'
-import type { ToolExecutionPlane } from './tool-registry.js'
-import { parseDocSessionId } from './tool-registry.js'
+import type { ToolExecutionPlane } from './tool-context.js'
+import { parseDocSessionId } from '../lib/doc-session.js'
 
 export { buildMarkdownTable, buildDocumentContent, buildPresentationContent, digestBody } from '../lib/asset-content.js'
 

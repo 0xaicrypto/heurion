@@ -633,7 +633,7 @@ export function PatientChatPage() {
       const result = await api.uploadFile(f, hash || undefined);
       setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       if (result.dedup) {
-        setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+        setKbDedupNotice(t('patients.kbDedupNotice', '📚 已在知识库,已加入上下文: {{name}}', { name: result.name }));
         setTimeout(() => setKbDedupNotice(null), 4000);
       }
     } catch (err) {
@@ -657,7 +657,7 @@ export function PatientChatPage() {
           const result = await api.uploadFile(file, hash || undefined);
           setAttachedFiles((prev) => [...prev, { name: result.name, fileId: result.file_id }]);
       if (result.dedup) {
-        setKbDedupNotice(`📚 已在知识库,已加入上下文: ${result.name}`);
+        setKbDedupNotice(t('patients.kbDedupNotice', '📚 已在知识库,已加入上下文: {{name}}', { name: result.name }));
         setTimeout(() => setKbDedupNotice(null), 4000);
       }
         } catch (err) {

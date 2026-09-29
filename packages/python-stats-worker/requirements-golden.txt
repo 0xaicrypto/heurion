@@ -1,0 +1,7 @@
+# #1150: golden 交叉校验的依赖此前裸装（无版本约束）— 上游小版本漂移会随
+# 机阻断部署（git diff --exit-code 对 golden 输出敏感）。与 worker 镜像同
+# 上界收敛（requirements.txt），CI Python 版本与 deploy-server.yml 对齐 3.12。
+scipy>=1.12,<2.0
+lifelines>=0.28,<0.30
+statsmodels>=0.14,<0.15
+numpy>=1.26,<3.0

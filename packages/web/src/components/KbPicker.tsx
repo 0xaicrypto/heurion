@@ -39,6 +39,12 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
   const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState<KbPickerItem[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // #1147: 请求序号 — 防抖搜索的过期响应不得覆盖新结果（慢请求后到）。
+  const searchSeq = useRef(0);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -56,14 +62,16 @@ export function KbPicker({ open, onClose, onConfirm, initialItems = [], max = 3 
   }, [open]);
 
   const handleSearch = async (q: string) => {
+    const seq = ++searchSeq.current;
     setSearching(true);
     try {
       const r = await api.getKnowledgePicker(q);
+      if (seq !== searchSeq.current) return; // #1147: 过期响应丢弃
       setResults(r.summaries || []);
     } catch {
-      setResults([]);
+      if (seq === searchSeq.current) setResults([]);
     } finally {
-      setSearching(false);
+      if (seq === searchSeq.current) setSearching(false);
     }
   };
 

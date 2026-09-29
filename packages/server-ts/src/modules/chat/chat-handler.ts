@@ -28,11 +28,11 @@ import { PrismaKnowledgeGapService } from '../knowledge/knowledge-gap.service.js
 import { PrismaTelemetryService } from '../knowledge/telemetry.service.js'
 import { formatCommandResult, resolveScene } from '../shared/chat-context.js'
 import { resolveTargetCandidates, pickTarget, isGenerateRequest, recordTurnIntent, type TurnAction, type TurnIntent, type TurnSource, type TurnTarget } from './turn-intent.js'
-import { parseDocSessionId } from '../../tools/tool-registry.js'
+import { parseDocSessionId } from '../../lib/doc-session.js'
 import { runConversationTurn, findPatient } from './conversation-turn.js'
 import { ensureSessionCompaction } from '../../memory/compaction/index.js'
 import { streamUnshownCompaction, loadCompactedUpto } from './history-budget.js'
-import type { TurnIO } from './tool-loop.js'
+import type { TurnIO } from './tool-presenters.js'
 
 /** 仅编辑语义判断（供决策表消歧——判定为编辑但存在多目标时需要澄清）。 */
 function turnAction2edit(detail: SidecarDecisionDetail | undefined, text: string): boolean {

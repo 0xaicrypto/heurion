@@ -171,31 +171,31 @@ function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: ()
 /* ══════════════ Tab 1: 选刊推荐(#848 三档梯度)══════════════ */
 
 const ARTICLE_TYPE_OPTIONS = [
-  { value: '', label: '自动/不限' },
-  { value: 'rct', label: 'RCT' },
-  { value: 'cohort', label: '队列研究' },
-  { value: 'real_world', label: '真实世界/回顾性' },
-  { value: 'case_report', label: '病例报告' },
-  { value: 'review', label: '综述' },
-  { value: 'meta', label: 'Meta 分析' },
+  { value: '', key: 'submission.typeAny', def: '自动/不限' },
+  { value: 'rct', key: 'submission.typeRct', def: 'RCT' },
+  { value: 'cohort', key: 'submission.typeCohort', def: '队列研究' },
+  { value: 'real_world', key: 'submission.typeRealWorld', def: '真实世界/回顾性' },
+  { value: 'case_report', key: 'submission.typeCaseReport', def: '病例报告' },
+  { value: 'review', key: 'submission.typeReview', def: '综述' },
+  { value: 'meta', key: 'submission.typeMeta', def: 'Meta 分析' },
 ];
 const PRIORITY_OPTIONS = [
-  { value: 'impact', label: '冲影响力' },
-  { value: 'speed', label: '求速度' },
-  { value: 'acceptance', label: '保接受' },
+  { value: 'impact', key: 'submission.priorityImpact', def: '冲影响力' },
+  { value: 'speed', key: 'submission.prioritySpeed', def: '求速度' },
+  { value: 'acceptance', key: 'submission.priorityAcceptance', def: '保接受' },
 ] as const;
-const TIER_META: Record<'reach' | 'match' | 'safety', { label: string; hint: string; accent: string }> = {
-  reach: { label: '冲刺', hint: '影响力高于当前匹配带,接受率低 — 值得一试', accent: 'border-l-rose-400' },
-  match: { label: '匹配', hint: 'Scope 与研究类型最贴合的现实档', accent: 'border-l-emerald-400' },
-  safety: { label: '保底', hint: '接受率/速度优先的稳妥选择', accent: 'border-l-sky-400' },
+const TIER_META: Record<'reach' | 'match' | 'safety', { labelKey: string; labelDef: string; hintKey: string; hintDef: string; accent: string }> = {
+  reach: { labelKey: 'submission.tierReach', labelDef: '冲刺', hintKey: 'submission.tierReachHint', hintDef: '影响力高于当前匹配带,接受率低 — 值得一试', accent: 'border-l-rose-400' },
+  match: { labelKey: 'submission.tierMatch', labelDef: '匹配', hintKey: 'submission.tierMatchHint', hintDef: 'Scope 与研究类型最贴合的现实档', accent: 'border-l-emerald-400' },
+  safety: { labelKey: 'submission.tierSafety', labelDef: '保底', hintKey: 'submission.tierSafetyHint', hintDef: '接受率/速度优先的稳妥选择', accent: 'border-l-sky-400' },
 };
-const DIM_LABELS: Record<string, string> = {
-  scope: 'Scope 匹配',
-  articleType: '研究类型适配',
-  impact: '影响力',
-  speed: '速度',
-  acceptance: '接受率',
-  cost: '费用',
+const DIM_LABELS: Record<string, { key: string; def: string }> = {
+  scope: { key: 'submission.dimScope', def: 'Scope 匹配' },
+  articleType: { key: 'submission.dimArticleType', def: '研究类型适配' },
+  impact: { key: 'submission.dimImpact', def: '影响力' },
+  speed: { key: 'submission.dimSpeed', def: '速度' },
+  acceptance: { key: 'submission.dimAcceptance', def: '接受率' },
+  cost: { key: 'submission.dimCost', def: '费用' },
 };
 
 function Monogram({ logo, large = false }: { logo: { monogram: string; color: string }; large?: boolean }) {
@@ -257,7 +257,7 @@ function JournalCard({ rec, picked, onPick }: { rec: TieredRecommendationDto; pi
             <ul className="mt-2 space-y-1 rounded-lg border border-border bg-surface-elevated p-2.5">
               {rec.breakdown.map((b) => (
                 <li key={b.dimension} className="flex items-start gap-2 text-xs">
-                  <span className="w-20 shrink-0 font-medium text-text-secondary">{DIM_LABELS[b.dimension] ?? b.dimension}</span>
+                  <span className="w-20 shrink-0 font-medium text-text-secondary">{DIM_LABELS[b.dimension] ? t(DIM_LABELS[b.dimension].key, DIM_LABELS[b.dimension].def) : b.dimension}</span>
                   <span className="w-8 shrink-0 tabular-nums text-text-tertiary">{b.score}</span>
                   <span className="text-text-secondary">{b.evidence}</span>
                 </li>
@@ -353,7 +353,7 @@ function JournalsTab({ title, abstract, language, onPick }: { title: string; abs
                   priority === p.value ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary',
                 )}
               >
-                {p.label}
+                {t(p.key, p.def)}
               </button>
             ))}
           </div>
@@ -369,7 +369,7 @@ function JournalsTab({ title, abstract, language, onPick }: { title: string; abs
           className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {ARTICLE_TYPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+            <option key={o.value} value={o.value}>{t(o.key, o.def)}</option>
           ))}
         </select>
         <div className="flex items-center gap-2">
@@ -421,8 +421,8 @@ function JournalsTab({ title, abstract, language, onPick }: { title: string; abs
           return (
             <section key={tier} className="space-y-2">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                {TIER_META[tier].label}
-                <span className="text-xs font-normal text-text-tertiary">{TIER_META[tier].hint}</span>
+                {t(TIER_META[tier].labelKey, TIER_META[tier].labelDef)}
+                <span className="text-xs font-normal text-text-tertiary">{t(TIER_META[tier].hintKey, TIER_META[tier].hintDef)}</span>
               </h3>
               {recs.map((rec) => (
                 <JournalCard key={rec.journal.id} rec={rec} picked={pickedId === rec.journal.id} onPick={pick} />
@@ -593,7 +593,7 @@ function TemplateTab({ title, abstract, authors, onSaved }: { title: string; abs
         template_id: template.id, title, abstract,
         authors: authors.split(',').map((a) => a.trim()).filter(Boolean),
       })).content;
-      const doc = await api.createDoc(`${title}（${template.journal_name} 模板）`);
+      const doc = await api.createDoc(t('submission.docTitleFromTemplate', '{{title}}（{{journal}} 模板）', { title, journal: template.journal_name }));
       await api.updateDoc(doc.id, { title: doc.title, body: prefilled });
       setAppliedTemplateId(template.id);
       setPaperLink({ title: title.trim(), abstract: abstract || '', docId: doc.id, updatedAt: Date.now() });

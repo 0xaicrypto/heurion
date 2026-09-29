@@ -10,7 +10,7 @@
 import { detectUnbackedEditClaim, countClaimedEditItems, detectTextOnlyPlan } from './edit-reconciliation.js'
 // #976: 任务清单状态（common 层）。
 import { loadActivePlan, planBacklog, renderPendingSteps } from '../../common/plan-store.js'
-import type { TurnIO } from './tool-loop.js'
+import type { TurnIO } from './tool-presenters.js'
 
 export interface EditClaimReconciliationInput {
   sessionId: string

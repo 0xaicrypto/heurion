@@ -8,7 +8,7 @@
  * fetch_article_summary 的 DOI 直解、#382 选刊元数据。
  */
 import { externalRequest, ExternalHttpError } from './external-fetch.js'
-import { formatAma, type CitationRecord } from './search-citation-tool.js'
+import { formatAma, type CitationRecord } from './citation-format.js'
 import { safeJsonParse } from '../common/llm-json.js'
 import { makeLogger } from '../common/logger.js'
 

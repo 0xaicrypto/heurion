@@ -10,7 +10,7 @@ import { validateRenderContent, SCHEMA_VERSION, slideLayoutSchema, deckThemeSche
 import prisma from '../common/prisma.js'
 import { uploadsBaseDir } from '../lib/upload-path.js'
 import type { ToolResult } from './base-tool.js'
-import type { ToolExecutionPlane } from './tool-registry.js'
+import type { ToolExecutionPlane } from './tool-context.js'
 import { ensureDraftBody } from './doc-import.js'
 import { buildDocumentContent, buildPresentationContent, digestBody } from '../lib/asset-content.js'
 import { embedContentImages, resolveLocalImageBlock } from './asset-embed.js'

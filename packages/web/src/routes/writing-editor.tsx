@@ -19,8 +19,6 @@ import { chatFailureText, useChatStore } from '@/stores/chat';
 import { Alert, Button, Skeleton } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
-// #837: AI 写回三路合并(旧后端无投影兜底路径仍用)。
-import { mergeThreeWay } from '@/lib/doc-merge';
 // #1021: 稳定 section id 的跳转定位（重名标题按出现序 + 回退提示）。
 import { resolveSectionJumpTarget } from '@/lib/section-jump';
 import { toSlides } from '@/lib/deck';
@@ -34,6 +32,8 @@ import { useDocReferences } from './writing-editor/references';
 import { useDocPersistence } from './writing-editor/persistence';
 // #837 拆分: 写回流水线（队列/合批/审阅落地）下沉 useDocWriteBack。
 import { useDocWriteBack } from './writing-editor/writeback';
+// #983/#1128/#1134: 结果注入写回编排下沉(P2 大文件棘轮)。
+import { useInjectResults } from './writing-editor/inject-results';
 // #1074-3: 评论-AI 状态机 / deck 冲突逻辑下沉 — 路由只留接线。
 import { useCommentsAi } from './writing-editor/comments-ai';
 // #1040 拆分: 评论状态机 + 锚点采纳态下沉 useDocComments。
@@ -556,62 +556,13 @@ export function WritingEditorPage() {
     }
   };
 
-  const handleInjectResults = async () => {
-    if (!docId || !injectLabel.trim() || !injectResult.trim()) return;
-    // #983: 审阅未决时注入会与 diffReview 驱动的编辑器内容互相踩踏 — 同
-    // handleInsertChart 守卫,明示先完成当前审阅。
-    if (diffReview !== null || pendingWriteBackRef.current !== null) {
-      showNotice(t('writing.reviewFirstForMethods', '请先完成当前 AI 修改的审阅，再生成内容'));
-      return;
-    }
-    setInjecting(true);
-    try {
-      const res = await api.injectResults(docId, injectLabel.trim(), injectResult.trim());
-      const subject = injectLabel.trim();
-      // #996/#997: 服务端返回写回后的新正文 + 同帧投影 — 注入结果直接路由进
-      // 统一提议卡(#998: results 表头),与 AI 写回同语义(先落库后审阅,
-      // 放弃 = 反向保存回滚);此前 {ok} 后自行 GET 全文三路合并/静默应用。
-      if (typeof res.body === 'string') {
-        serverBodyRef.current = res.body;
-        appliedDocBody.current = res.body;
-        if (res.body !== bodyRef.current) {
-          setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: res.body, source: 'results', subject });
-          setViewMode((m) => (m === 'deck' ? 'document' : m));
-          setChatSelection('');
-        }
-      } else {
-        // 旧后端兜底(响应无 body):沿用 getDoc + 三路合并路径。
-        const d = await api.getDoc(docId);
-        // #983: 服务端已在「服务端正文 + 注入块」上落库（writeDocVersion 单点）。
-        // 本地改用三路合并应用增量 — 此前「拉最新 body 整篇覆盖」会静默吞掉
-        // 本地未保存修改。base = 最后同步的服务端正文,ours = 本地(可能含
-        // 未保存编辑),theirs = 注入后的服务端正文。
-        const base = serverBodyRef.current ?? bodyRef.current;
-        const merged = mergeThreeWay(base, bodyRef.current, d.body);
-        if (merged === null) {
-          // 注入块与本地未保存修改在基线坐标上重叠 → 三路合并不安全:
-          // 进冲突确认审阅（接受 = 采用服务端版本,不再保存;取消 = 保留本地,
-          // 后续保存经 base_sha 失配 409 走冲突横幅），绝不静默覆盖任一侧。
-          conflictLoadRef.current = d;
-          setDiffReview({ key: `inject_${Date.now()}`, old: bodyRef.current, next: d.body, source: 'results', subject });
-          setViewMode((m) => (m === 'deck' ? 'document' : m));
-          showNotice(t('writing.injectConflictReview', '结果注入与本地未保存修改冲突 — 已进入审阅确认'), 6000);
-        } else {
-          // 服务端视角基线推进到注入后的正文 — 后续保存的 base_sha 指纹正确。
-          serverBodyRef.current = d.body;
-          if (merged !== bodyRef.current) setBody(merged);
-          setDoc((prev) => (prev ? { ...prev, body: merged, updated_at: d.updated_at } : prev));
-        }
-      }
-      setInjectOpen(false);
-      setInjectLabel('');
-      setInjectResult('');
-    } catch (err) {
-      setMethodsError(err instanceof ApiError ? err.messageText : String(err));
-    } finally {
-      setInjecting(false);
-    }
-  };
+  // #983/#1128/#1134: 注入写回编排下沉 useInjectResults(P2 大文件棘轮)。
+  const { handleInjectResults } = useInjectResults({
+    docId, injectLabel, injectResult, diffReview, pendingWriteBackRef,
+    bodyRef, serverBodyRef, appliedDocBodyRef: appliedDocBody, conflictLoadRef,
+    setInjecting, setInjectOpen, setInjectLabel, setInjectResult, setMethodsError,
+    setDiffReview, setViewMode, setChatSelection, setBody, setDoc, showNotice,
+  });
 
   // #382: drag the chat panel edge to resize (desktop); width persists.
   const handleChatResizeStart = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1056,7 +1007,7 @@ export function WritingEditorPage() {
           {/* #763: Selection Bubble 首次引导 — 一次性,dismiss 永久记住。 */}
           <div className="mx-auto mb-3 max-w-3xl">
             <SpotHint id="writing-selection-bubble" icon="✨">
-              试试:<b>选中任意一段文字</b>,会出现润色菜单;不选中则润色全文。
+              {t('writing.bubbleHintPre', '试试:')}<b>{t('writing.bubbleHintBold', '选中任意一段文字')}</b>{t('writing.bubbleHintPost', ',会出现润色菜单;不选中则润色全文。')}
             </SpotHint>
           </div>
           {error && (

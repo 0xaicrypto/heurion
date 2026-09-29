@@ -14,7 +14,7 @@
  * 工具调用不产生 doc_updated，因此不会假称「改了这节」。
  */
 import type { ChatStreamChunk } from '@heurion/contracts'
-import type { TurnIO } from './tool-loop.js'
+import type { TurnIO } from './tool-presenters.js'
 
 export interface TimelineToolEntry {
   tool: string

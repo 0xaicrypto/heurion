@@ -1,6 +1,6 @@
 import { resolveTierModel } from '../common/llm-gateway.js'
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 import { makeLogger } from '../common/logger.js'
 
 const log = makeLogger('background')

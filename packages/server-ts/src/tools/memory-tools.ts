@@ -1,5 +1,5 @@
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 
 export class SearchPastChatsTool extends BaseTool {
   constructor(private ctx: ToolContext) { super() }

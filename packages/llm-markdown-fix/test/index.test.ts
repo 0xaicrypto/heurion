@@ -77,3 +77,34 @@ describe('fixMarkdown 管线集成', () => {
     expect(out).toContain('| --- | --- |')
   })
 })
+
+/**
+ * #1149 — 表格规则三修:
+ *  - 无尾部管道的表头列数按单元格计(旧实现管道数-1 少算列);
+ *  - 代码围栏内不改表格;
+ *  - 分隔行对齐冒号保留。
+ */
+describe('#1149 表格规则正确性', () => {
+  test('无尾部管道表头 → 列数按单元格计（3 列不再截成 2 列）', () => {
+    const md = 'A | B | C\n|:--|--:|:-:|\n| 1 | 2 | 3 |'
+    const out = fixTableHeadersAndColumns(md)
+    expect(out).toContain('| A | B | C')
+    expect(out).toContain('| :--- | ---: | :---: |')
+  })
+
+  test('代码围栏内的表格样文本不被修改', () => {
+    const fenced = '```md\nA | B\n---|---\n| 1 | 2 |\n```'
+    expect(fixTableHeadersAndColumns(fenced)).toBe(fenced)
+    expect(fixNonStandardSeparator(fenced)).toBe(fenced)
+    expect(fixSingleLineTables(fenced)).toBe(fenced)
+    // 围栏外的同类脏表格仍照修
+    const outside = 'A | B\n---|---\n| 1 | 2 |'
+    expect(fixTableHeadersAndColumns(outside)).toContain('| --- | --- |')
+  })
+
+  test('非标准分隔行保留对齐冒号', () => {
+    const md = '| A | B |\n|:--|--:\n| 1 | 2 |'
+    const out = fixNonStandardSeparator(md)
+    expect(out).toContain('| :--- | ---: |')
+  })
+})

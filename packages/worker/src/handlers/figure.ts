@@ -49,32 +49,73 @@ function resolveAssetsDir(): string | null {
   return existsSync(path.join(dir, 'shell.html')) ? dir : null
 }
 
-// ── browser singleton(有界回收) ────────────────────────────────
+// ── browser singleton(有界回收 + 在途引用计数) ────────────────
 
 interface BrowserState {
   browser: Browser
   jobs: number
+  /** 在途渲染数 — 回收必须等归零(#1139: 旧实现第 50 个作业直接 close,
+   *  WORKER_MAX_CONCURRENT=4 下仍有用例在使用 → Target closed)。 */
+  inFlight: number
+  recyclePending: boolean
 }
 let browserState: BrowserState | null = null
 let browserLaunch: Promise<Browser> | null = null
 
-async function getBrowser(chromePath: string): Promise<Browser> {
-  if (browserState) {
-    browserState.jobs += 1
-    if (browserState.jobs >= BROWSER_RECYCLE_JOBS) {
-      const stale = browserState
+/** #1139: chromium 崩溃/被外部关闭 → 重置单例,下次 acquire 重新拉起
+ *  (旧实现要等回收阈值,期间所有渲染必败)。 */
+function attachDisconnectReset(browser: Browser): void {
+  browser.on('disconnected', () => {
+    if (browserState?.browser === browser) {
       browserState = null
       browserLaunch = null
-      // 回收是泄漏防护而非正确性路径 — 后台关闭,不阻塞当前渲染。
-      void Promise.resolve(stale.browser.close()).catch(() => {})
-    } else {
-      return browserState.browser
     }
+  })
+}
+
+/** 获取共享浏览器并登记在途引用(渲染结束必须 release)。 */
+export async function acquireFigureBrowser(chromePath: string): Promise<Browser> {
+  if (browserState) {
+    browserState.jobs += 1
+    browserState.inFlight += 1
+    if (browserState.jobs >= BROWSER_RECYCLE_JOBS) browserState.recyclePending = true
+    return browserState.browser
   }
   browserLaunch = browserLaunch || launchBrowser(chromePath)
-  const browser = await browserLaunch
-  browserState = { browser, jobs: 1 }
+  let browser: Browser
+  try {
+    browser = await browserLaunch
+  } catch (err) {
+    // #1139: 启动失败不得把 rejected Promise 永久缓存(旧实现此后每个
+    // 作业都直接 reject,一次冷启动超时废掉整个进程生命周期)。
+    browserLaunch = null
+    throw err
+  }
+  attachDisconnectReset(browser)
+  browserState = { browser, jobs: 1, inFlight: 1, recyclePending: false }
   return browser
+}
+
+/**
+ * 释放一次在途引用;回收标记且在途归零时才真正关闭。
+ * #1150-followup: 传入 acquire 时拿到的实例 — 旧作业的迟到释放(实例已被
+ * 回收/替换)不得扣新浏览器的计数,否则新实例会被提前关闭。可选参数保持
+ * 旧调用兼容(不传 = 释放当前实例)。
+ */
+export function releaseFigureBrowser(browser?: Browser): void {
+  if (!browserState) return
+  if (browser && browser !== browserState.browser) {
+    // 实例已轮换:这是旧作业的重复/迟到释放,忽略(回收时已确保 inFlight=0)。
+    return
+  }
+  if (browserState.inFlight <= 0) return // 重复释放不把计数扣穿
+  browserState.inFlight -= 1
+  if (browserState.recyclePending && browserState.inFlight === 0) {
+    const stale = browserState
+    browserState = null
+    browserLaunch = null
+    void Promise.resolve(stale.browser.close()).catch(() => {})
+  }
 }
 
 async function launchBrowser(chromePath: string): Promise<Browser> {
@@ -139,12 +180,15 @@ async function renderInPage(browser: Browser, assetsDir: string, input: FigurePa
     const ready = await page.evaluate(() => (window as unknown as FigureRenderWindow).__ready === true)
     if (!ready) throw new Error('FIGURE_FAILED: render shell did not initialize (bundles missing?)')
 
-    const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
-      Promise.race([
-        p,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('FIGURE_TIMEOUT: rendering exceeded 10s')), FIGURE_TIMEOUT_MS)),
-      ])
+    const withTimeout = <T,>(p: Promise<T>): Promise<T> => {
+      // #1139: 定时器必须在完成后清理 — 旧实现超时/成功后 timer 仍挂着,
+      // 长跑进程累积无谓定时器(且 keep-alive 挂住事件循环)。
+      let timer: ReturnType<typeof setTimeout>
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('FIGURE_TIMEOUT: rendering exceeded 10s')), FIGURE_TIMEOUT_MS)
+      })
+      return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+    }
 
     let svg: string
     if (input.kind === 'mermaid') {
@@ -189,24 +233,29 @@ export async function renderFigure(payload: unknown) {
   const chromePath = resolveChromePath()!
   const assetsDir = resolveAssetsDir()!
 
-  const browser = await getBrowser(chromePath)
-  const { svg, warnings } = await renderInPage(browser, assetsDir, input)
+  // #1139: acquire/release 引用计数 — 回收等待在途归零,不再关闭在用浏览器。
+  const browser = await acquireFigureBrowser(chromePath)
+  try {
+    const { svg, warnings } = await renderInPage(browser, assetsDir, input)
 
-  const size = extractSvgSize(svg)
-  const buffer = Buffer.from(svg, 'utf-8')
-  // 产物以 SVG 为准(设计决策 B)— 导出侧按需 sharp 光栅化;
-  // 扩展名如实,绝不做"SVG 字节按位图扩展名直嵌"。
-  const saved = await saveFile(buffer, 'figure.svg', 'image/svg+xml')
-  // 同时暴露 snake/camel 键 — job-runner 索引与控制面消费端按键取用。
-  return {
-    file_id: saved.fileId,
-    fileId: saved.fileId,
-    file_name: saved.fileName,
-    mime_type: saved.mimeType,
-    s3_key: saved.s3Key,
-    width: size.width,
-    height: size.height,
-    warnings: warnings.length > 0 ? warnings.slice(0, 10) : undefined,
+    const size = extractSvgSize(svg)
+    const buffer = Buffer.from(svg, 'utf-8')
+    // 产物以 SVG 为准(设计决策 B)— 导出侧按需 sharp 光栅化;
+    // 扩展名如实,绝不做"SVG 字节按位图扩展名直嵌"。
+    const saved = await saveFile(buffer, 'figure.svg', 'image/svg+xml')
+    // 同时暴露 snake/camel 键 — job-runner 索引与控制面消费端按键取用。
+    return {
+      file_id: saved.fileId,
+      fileId: saved.fileId,
+      file_name: saved.fileName,
+      mime_type: saved.mimeType,
+      s3_key: saved.s3Key,
+      width: size.width,
+      height: size.height,
+      warnings: warnings.length > 0 ? warnings.slice(0, 10) : undefined,
+    }
+  } finally {
+    releaseFigureBrowser(browser)
   }
 }
 

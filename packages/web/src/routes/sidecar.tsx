@@ -5,67 +5,60 @@ import { Card } from '@/components/ui';
 import { MarketingShell } from '@/components/marketing/MarketingShell';
 
 export function SidecarPage() {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language.startsWith('zh');
+  const { t } = useTranslation();
 
   const T = {
-    title: isZh ? '智能报告助手：从聊天到文档' : 'Smart Report Assistant: from chat to document',
-    subtitle: isZh
-      ? '一句话把临床讨论变成可交付的文档、表格或图表。报告助手在执行面独立渲染，不阻塞聊天流。'
-      : 'Turn a clinical discussion into a deliverable document, table, or chart with one sentence. The report assistant renders independently in the execution plane without blocking the chat stream.',
+    title: t('sidecar.title', '智能报告助手：从聊天到文档'),
+    subtitle: t('sidecar.subtitle', '一句话把临床讨论变成可交付的文档、表格或图表。报告助手在执行面独立渲染，不阻塞聊天流。'),
 
-    outputsTitle: isZh ? '支持生成的内容' : 'Supported outputs',
+    outputsTitle: t('sidecar.outputsTitle', '支持生成的内容'),
     outputs: [
       {
         icon: <FileText size={24} />,
         title: 'DOCX',
-        desc: isZh ? '病例总结、出院小结、研究方案、随访记录' : 'Case summaries, discharge summaries, protocols, follow-up notes',
+        desc: t('sidecar.desc', '病例总结、出院小结、研究方案、随访记录'),
       },
       {
         icon: <LayoutGrid size={24} />,
         title: 'PPTX',
-        desc: isZh ? '学术汇报幻灯片，自动分页与标题层级' : 'Academic presentation slides with auto-paging and heading hierarchy',
+        desc: t('sidecar.desc2', '学术汇报幻灯片，自动分页与标题层级'),
       },
       {
         icon: <Table size={24} />,
-        title: isZh ? '表格' : 'Table',
-        desc: isZh ? '基线特征表、Table 1、不良事件汇总' : 'Baseline characteristics, Table 1, adverse-event summaries',
+        title: t('sidecar.title2', '表格'),
+        desc: t('sidecar.desc3', '基线特征表、Table 1、不良事件汇总'),
       },
       {
         icon: <BarChart3 size={24} />,
-        title: isZh ? '图表' : 'Plot',
-        desc: isZh ? 'KM 生存曲线、柱状图、折线图、森林图' : 'KM survival curves, bar charts, line charts, forest plots',
+        title: t('sidecar.title3', '图表'),
+        desc: t('sidecar.desc4', 'KM 生存曲线、柱状图、折线图、森林图'),
       },
     ],
 
-    flowTitle: isZh ? '一句话生成，三步交付' : 'One sentence, three-step delivery',
+    flowTitle: t('sidecar.flowTitle', '一句话生成，三步交付'),
     flowSteps: [
       {
-        title: isZh ? '1. 意图识别' : '1. Intent recognition',
-        desc: isZh ? 'Query Router 识别“生成/创建/导出”等报告请求，避免普通聊天误触发。' : 'The Query Router detects report-generation requests like "generate / create / export" so normal chat is not mis-triggered.',
+        title: t('sidecar.title4', '1. 意图识别'),
+        desc: t('sidecar.desc5', 'Query Router 识别“生成/创建/导出”等报告请求，避免普通聊天误触发。'),
       },
       {
-        title: isZh ? '2. 执行面渲染' : '2. Execution-plane rendering',
-        desc: isZh ? '任务在隔离环境中异步完成文件生成与交付。' : 'Jobs complete file generation and delivery asynchronously in an isolated environment.',
+        title: t('sidecar.title5', '2. 执行面渲染'),
+        desc: t('sidecar.desc6', '任务在隔离环境中异步完成文件生成与交付。'),
       },
       {
-        title: isZh ? '3. 刷新不丢的下载' : '3. Refresh-safe download',
-        desc: isZh ? 'fileId 持久化到 EventLog，刷新页面后仍可通过 fileId 重新获取下载链接。' : 'The fileId is persisted to the EventLog, so the download link can be recovered after a page refresh.',
+        title: t('sidecar.title6', '3. 刷新不丢的下载'),
+        desc: t('sidecar.desc7', 'fileId 持久化到 EventLog，刷新页面后仍可通过 fileId 重新获取下载链接。'),
       },
     ],
 
-    capabilityTitle: isZh ? '能力检测，避免空转' : 'Capability detection prevents empty runs',
-    capabilityBody: isZh
-      ? '如果用户只是问“你可以创建 PPT 吗？”，报告助手不会真的生成空文件，而是返回可用格式与使用示例。'
-      : 'If a user merely asks "Can you create a PPT?", the report assistant returns available formats and examples instead of generating an empty file.',
+    capabilityTitle: t('sidecar.capabilityTitle', '能力检测，避免空转'),
+    capabilityBody: t('sidecar.capabilityBody', '如果用户只是问“你可以创建 PPT 吗？”，报告助手不会真的生成空文件，而是返回可用格式与使用示例。'),
 
-    kbTitle: isZh ? '一键加入知识库' : 'One-click knowledge ingestion',
-    kbBody: isZh
-      ? '生成文件时，报告助手同时输出 knowledgePayload。聊天界面的下载卡片提供“加入知识库”选项，把文档结构化为 Facts 或 Summaries。'
-      : 'When generating a file, the report assistant also emits a knowledgePayload. The chat download card offers an "Add to knowledge base" option to turn the document into Facts or Summaries.',
+    kbTitle: t('sidecar.kbTitle', '一键加入知识库'),
+    kbBody: t('sidecar.kbBody', '生成文件时，报告助手同时输出 knowledgePayload。聊天界面的下载卡片提供“加入知识库”选项，把文档结构化为 Facts 或 Summaries。'),
 
-    ctaTitle: isZh ? '在聊天里试试' : 'Try it in chat',
-    ctaBody: isZh ? '登录后打开 Chat，输入“生成一份 NSCLC 免疫治疗进展的 PPTX”。' : 'Log in, open Chat, and type "Generate a PPTX on NSCLC immunotherapy advances".',
+    ctaTitle: t('sidecar.ctaTitle', '在聊天里试试'),
+    ctaBody: t('sidecar.ctaBody', '登录后打开 Chat，输入“生成一份 NSCLC 免疫治疗进展的 PPTX”。'),
   };
 
   return (
@@ -121,9 +114,9 @@ export function SidecarPage() {
           <Card className="p-6">
             <div className="flex items-center gap-2 text-sm text-text-tertiary">
               <RefreshCw size={16} />
-              <span>{isZh ? '示例' : 'Example'}</span>
+              <span>{t('sidecar.item', '示例')}</span>
             </div>
-            <p className="mt-3 text-text-primary">{isZh ? '“生成一份 EGFR-TKI 耐药机制综述的 PPTX，包含研究进展和临床意义。”' : '"Generate a PPTX reviewing EGFR-TKI resistance mechanisms, including research progress and clinical implications."'}</p>
+            <p className="mt-3 text-text-primary">{t('sidecar.item2', '“生成一份 EGFR-TKI 耐药机制综述的 PPTX，包含研究进展和临床意义。”')}</p>
           </Card>
         </div>
       </section>
@@ -134,7 +127,7 @@ export function SidecarPage() {
             <Card className="p-6">
               <div className="flex items-center gap-2 text-accent">
                 <Database size={20} />
-                <span className="font-bold">{isZh ? 'knowledgePayload' : 'knowledgePayload'}</span>
+                <span className="font-bold">{t('sidecar.item3', 'knowledgePayload')}</span>
               </div>
               <p className="mt-3 text-sm text-text-secondary">{T.kbBody}</p>
             </Card>
@@ -155,7 +148,7 @@ export function SidecarPage() {
           <p className="mx-auto mt-3 max-w-xl text-text-secondary">{T.ctaBody}</p>
           <div className="mt-6">
             <Link to="/app/chat" className="inline-flex items-center font-medium text-accent hover:underline">
-              {isZh ? '打开聊天' : 'Open chat'}
+              {t('sidecar.item4', '打开聊天')}
               <ArrowRight size={16} className="ml-1" />
             </Link>
           </div>

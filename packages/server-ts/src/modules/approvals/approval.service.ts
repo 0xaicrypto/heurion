@@ -1,9 +1,9 @@
 import prisma from '../../common/prisma.js'
+import { ApprovalNotFoundError, ApprovalForbiddenError, ApprovalInputError } from './approval.errors.js'
 import type { DocumentNode } from '../../memory/memory.types.js'
 import { resolvePermission, type PermissionRule } from '../../common/permission.js'
 import { makeLogger } from '../../common/logger.js'
 import { safeJsonParse } from '../../common/llm-json.js'
-
 const log = makeLogger('knowledge')
 
 export type ApprovalTargetType = 'MedicalRecordEntry' | 'MemoryProposal' | 'Skill' | 'Persona' | 'Fact' | 'ResearchRule'
@@ -327,10 +327,10 @@ export async function confirmApproval(userId: string, id: string) {
     where: { id, status: 'pending', userId },
     data: { status: 'approved', actorId: userId, resolvedAt: now },
   })
-  if (claim.count === 0) throw new Error('Approval request not found')
+  if (claim.count === 0) throw new ApprovalNotFoundError('Approval request not found')
 
   const req = await prisma.approvalRequest.findUnique({ where: { id } })
-  if (!req) throw new Error('Approval request not found')
+  if (!req) throw new ApprovalNotFoundError('Approval request not found')
 
   try {
     await applyTargetUpdate(req.targetType, req.targetId, { status: 'confirmed' }, userId, now)
@@ -365,10 +365,10 @@ export async function rejectApproval(userId: string, id: string, reason: string 
     where: { id, status: 'pending', userId },
     data: { status: 'rejected', actorId: userId, reason: reason || null, resolvedAt: now },
   })
-  if (claim.count === 0) throw new Error('Approval request not found')
+  if (claim.count === 0) throw new ApprovalNotFoundError('Approval request not found')
 
   const req = await prisma.approvalRequest.findUnique({ where: { id } })
-  if (!req) throw new Error('Approval request not found')
+  if (!req) throw new ApprovalNotFoundError('Approval request not found')
 
   try {
     await applyTargetUpdate(req.targetType, req.targetId, { status: 'rejected', rejectedReason: reason || null }, userId, now)
@@ -479,7 +479,7 @@ async function applyTargetUpdate(
       data,
     })
     if (updated.count === 0) {
-      throw new Error('MedicalRecordEntry not found or not owned by the approving user')
+      throw new ApprovalNotFoundError('MedicalRecordEntry not found or not owned by the approving user')
     }
     return
   }
@@ -487,7 +487,7 @@ async function applyTargetUpdate(
     const row = await prisma.memoryProposal.findFirst({
       where: { id: targetId },
     })
-    if (!row) throw new Error('Memory proposal not found')
+    if (!row) throw new ApprovalNotFoundError('Memory proposal not found')
 
     // Rejection path: record the reason, do not touch the graph.
     if (updates.status === 'rejected') {
@@ -517,7 +517,7 @@ async function applyTargetUpdate(
         if (scope === 'institution') {
           const actor = await prisma.user.findUnique({ where: { id: actorId } })
           if (actor?.role !== 'admin') {
-            throw new Error('institution scope 提案需机构管理员确认 — 当前确认者无管理员权限')
+            throw new ApprovalForbiddenError('institution scope 提案需机构管理员确认 — 当前确认者无管理员权限')
           }
         }
       } catch (err) {
@@ -546,7 +546,7 @@ async function applyTargetUpdate(
     })
     return
   }
-  throw new Error(`Unsupported approval target type: ${targetType}`)
+  throw new ApprovalInputError(`Unsupported approval target type: ${targetType}`)
 }
 
 /**

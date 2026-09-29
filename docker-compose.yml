@@ -34,6 +34,8 @@ services:
     logging: *default-logging
     container_name: nexus-embedding-server
     restart: unless-stopped
+    # #1150: 内存上限 — 失控进程不再拖垮整机（dmesg OOM 全容器）。
+    mem_limit: 4g  # embedding-server
     env_file:
       - .env.production
     environment:
@@ -58,6 +60,8 @@ services:
     logging: *default-logging
     container_name: nexus-stats-worker
     restart: unless-stopped
+    # #1150: 内存上限 — 失控进程不再拖垮整机（dmesg OOM 全容器）。
+    mem_limit: 2g  # stats-worker
     env_file:
       - .env.production
     environment:
@@ -83,6 +87,8 @@ services:
     logging: *default-logging
     container_name: nexus-server
     restart: unless-stopped
+    # #1150: 内存上限 — 失控进程不再拖垮整机（dmesg OOM 全容器）。
+    mem_limit: 3g  # nexus-server
     env_file:
       - .env.production
     environment:
@@ -128,10 +134,13 @@ services:
     # No `ports:` here — Caddy is the only thing the host exposes.
 
   caddy:
-    image: caddy:2-alpine
+    # #1150: 固定次版本（2-alpine 随上游主版本内浮动，升级需显式改这里）。
+    image: caddy:2.8-alpine
     logging: *default-logging
     container_name: nexus-caddy
     restart: unless-stopped
+    # #1150: 内存上限 — 失控进程不再拖垮整机（dmesg OOM 全容器）。
+    mem_limit: 512m  # caddy
     ports:
       - "80:80"     # required for ACME http-01 challenge
       - "443:443"   # actual HTTPS

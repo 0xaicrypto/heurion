@@ -10,18 +10,30 @@
  */
 type Level = 'info' | 'warn' | 'error'
 
+import { getRequestScope, runWithRequestScope } from './request-context.js'
+
 export interface LogMeta {
   module: string
   requestId?: string
   [key: string]: unknown
 }
 
+/** #1146: 请求上下文 — app.ts onRequest 注入 request.id,应用日志即可与
+ *  fastify/pino 请求日志按 requestId 关联（此前 requestId 从未赋值）。
+ *  保留本函数形态供既有调用/测试使用。 */
+export function runWithRequestId<T>(requestId: string, fn: () => T): T {
+  return runWithRequestScope({ requestId, contextRefs: new Set() }, fn)
+}
+
 function emit(level: Level, msg: string, meta: LogMeta): void {
+  // #1146: meta 先展开,level/ts/msg/module 后写 — 调用方 meta 里的同名键
+  // （如 { level: 'error' }）此前会覆盖这些保留字段,日志等级被伪造。
   const line = JSON.stringify({
+    ...meta,
     level,
     ts: new Date().toISOString(),
     msg,
-    ...meta,
+    module: meta.module,
   })
   if (level === 'error') console.error(line)
   else if (level === 'warn') console.warn(line)
@@ -52,7 +64,9 @@ export function makeLogger(module: string) {
       }
       parts.push(stringifyArg(a))
     }
-    emit(level, parts.join(' '), { module, ...meta })
+    // #1146: 请求内日志自动携带 requestId（AsyncLocalStorage 注入）。
+    const requestId = getRequestScope()?.requestId
+    emit(level, parts.join(' '), { ...meta, module, ...(requestId ? { requestId } : {}) })
   }
   return {
     info: (...args: unknown[]) => dispatch('info', args),

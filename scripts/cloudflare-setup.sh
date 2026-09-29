@@ -3,7 +3,7 @@
 # Run once during initial deployment. Idempotent.
 # Requires GitHub Secrets: CF_API_TOKEN, CF_ZONE_ID, VPS_HOST
 
-set -e
+set -euo pipefail
 
 CF_TOKEN="${CF_API_TOKEN:?missing CF_API_TOKEN}"
 ZONE_ID="${CF_ZONE_ID:?missing CF_ZONE_ID}"

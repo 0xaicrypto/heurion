@@ -19,11 +19,3 @@ export function verifyToken(token: string): JwtPayload {
     algorithms: [config.jwtAlgorithm],
   }) as JwtPayload
 }
-
-export function decodeToken(token: string): JwtPayload | null {
-  try {
-    return jwt.decode(token) as JwtPayload
-  } catch {
-    return null
-  }
-}

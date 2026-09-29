@@ -1,5 +1,5 @@
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
 import { externalRequest } from './external-fetch.js'
 import { crossrefResolveDoi, looksLikeDoi, normalizeDoi } from './crossref.client.js'
 

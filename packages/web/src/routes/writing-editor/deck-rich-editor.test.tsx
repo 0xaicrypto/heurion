@@ -195,26 +195,103 @@ describe('#1101 DeckRichEditor 保存流', () => {
     expect(await screen.findByText('已同步')).toBeInTheDocument();
   });
 
-  test('#review-3 PUT 409 → 重建基线并自动重试（不再死锁，用户编辑不丢）', { timeout: 15_000 }, async () => {
+  test('#1142 PUT 409 → 冲突决策条出现，不自动重试覆盖，dirty 保持', { timeout: 15_000 }, async () => {
     await seedArtifact('v1');
-    putDeckArtifactMock
-      .mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'))
-      .mockResolvedValueOnce({ ok: true, artifact_id: 'art-2', version: 'v2', changed: true });
+    putDeckArtifactMock.mockRejectedValue(mkApiError(409, '{"error":{"code":"deck_conflict"}}'));
     const notice = vi.fn();
     render(<Harness docId="d1" onNotice={notice} />);
     await screen.findByTestId('pptx-viewer-simulate-edit');
 
     fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
-    await waitFor(
-      () => {
-        expect(notice).toHaveBeenCalledWith(expect.stringContaining('已基于最新版本继续保存'), 6000);
-      },
-      { timeout: 6000 },
-    );
-    // 自动重试落地 → dirty 清空，用户字节保留。
-    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(2), { timeout: 8000 });
-    expect(Array.from(putDeckArtifactMock.mock.calls[1][1] as Uint8Array)).toEqual([1, 2, 3, 4]);
-    await waitFor(() => expect(screen.getByText('已同步')).toBeInTheDocument(), { timeout: 8000 });
+    await waitFor(() => expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument(), { timeout: 6000 });
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining('已保留服务端新版本为快照'), 8000);
+    expect(screen.getByText('● 未保存')).toBeInTheDocument();
+    // 旧行为会 2.5s 后自动重试整包覆盖 — 修复后必须只有一次 PUT、不得再弹覆盖文案。
+    await new Promise((r) => setTimeout(r, 2800));
+    expect(putDeckArtifactMock).toHaveBeenCalledTimes(1);
+    expect(notice).not.toHaveBeenCalledWith(expect.stringContaining('已基于最新版本继续保存'), 6000);
+  });
+
+  test('#1142 保留我的 → 显式覆盖(以服务端新版本为锁) + 覆盖前自动另存服务端快照', { timeout: 15_000 }, async () => {
+    await seedArtifact('v1');
+    // 冲突捕获时服务端已被其他窗口前移到 v2。
+    getDeckArtifactMock.mockResolvedValue({
+      artifact_id: 'art-2', version: 'v2', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-02T00:00:00Z', download_url: '/api/v1/files/f2/download?token=t',
+    });
+    putDeckArtifactMock
+      .mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'))
+      .mockResolvedValueOnce({ ok: true, artifact_id: 'art-3', version: 'v3', changed: true });
+    vi.stubGlobal('URL', Object.assign(URL, {
+      createObjectURL: vi.fn(() => 'blob:mock'),
+      revokeObjectURL: vi.fn(),
+    }));
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument(), { timeout: 6000 });
+
+    fireEvent.click(screen.getByTestId('deck-conflict-keep-mine'));
+    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(2));
+    const [, coverBytes, coverBase] = putDeckArtifactMock.mock.calls[1];
+    expect(Array.from(coverBytes as Uint8Array)).toEqual([1, 2, 3, 4]);
+    expect(coverBase).toBe('v2');
+    // 覆盖前已自动另存服务端版本快照（文件名携带版本号）。
+    expect(clickSpy).toHaveBeenCalled();
+    const anchor = clickSpy.mock.instances[0] as unknown as HTMLAnchorElement;
+    expect(anchor.download).toBe('deck-conflict-v2.pptx');
+    await waitFor(() => expect(screen.queryByTestId('deck-conflict-banner')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('已同步')).toBeInTheDocument());
+    clickSpy.mockRestore();
+  });
+
+  test('#1142 载入最新 → 画布替换为服务端字节，冲突解除且不产生覆盖 PUT', { timeout: 15_000 }, async () => {
+    await seedArtifact('v1');
+    const serverBytes = new Uint8Array(321).fill(5);
+    getDeckArtifactMock.mockResolvedValue({
+      artifact_id: 'art-2', version: 'v2', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-02T00:00:00Z', download_url: '/api/v1/files/f2/download?token=t',
+    });
+    putDeckArtifactMock.mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'));
+    render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+    // 冲突捕获时的服务端字节（321）与本地编辑字节（4）长度不同 — 可断言画布替换。
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(serverBytes.buffer as ArrayBuffer, { status: 200 })));
+
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument(), { timeout: 6000 });
+    fireEvent.click(screen.getByTestId('deck-conflict-load-latest'));
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(serverBytes.length)));
+    expect(screen.queryByTestId('deck-conflict-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText('● 未保存')).not.toBeInTheDocument();
+    expect(putDeckArtifactMock).toHaveBeenCalledTimes(1); // 只有最初那次 409,无覆盖
+  });
+
+  test('#1142 另存快照 → 只下载服务端版本，冲突保持未决（PUT 不增加）', { timeout: 15_000 }, async () => {
+    await seedArtifact('v1');
+    getDeckArtifactMock.mockResolvedValue({
+      artifact_id: 'art-2', version: 'v2', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-02T00:00:00Z', download_url: '/api/v1/files/f2/download?token=t',
+    });
+    putDeckArtifactMock.mockRejectedValue(mkApiError(409, '{"error":{"code":"deck_conflict"}}'));
+    vi.stubGlobal('URL', Object.assign(URL, {
+      createObjectURL: vi.fn(() => 'blob:mock'),
+      revokeObjectURL: vi.fn(),
+    }));
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(<Harness docId="d1" />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument(), { timeout: 6000 });
+
+    fireEvent.click(screen.getByTestId('deck-conflict-snapshot'));
+    expect(clickSpy).toHaveBeenCalled();
+    const anchor = clickSpy.mock.instances[0] as unknown as HTMLAnchorElement;
+    expect(anchor.download).toBe('deck-conflict-v2.pptx');
+    expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument();
+    expect(putDeckArtifactMock).toHaveBeenCalledTimes(1);
+    clickSpy.mockRestore();
   });
 
   test('「保存并返回卡片流」→ 冲刷保存 → onClose', async () => {
@@ -542,25 +619,48 @@ describe('#1113/#1114 DeckRichEditor AI 写回', () => {
     expect(userBase).toBe('v2');
   });
 
-  test('#review-3 409 冲突：重建基线后自动重试，不再死锁、不丢用户编辑', { timeout: 15_000 }, async () => {
+  test('#1150-followup 保留我的二次 409 → 刷新冲突快照并提示（不再死循环失败）', { timeout: 15_000 }, async () => {
+    await seedArtifact('v1');
+    const meta = (version: string, file: string) => ({
+      artifact_id: `art-${version}`, version, mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      updated_at: '2026-01-02T00:00:00Z', download_url: `/api/v1/files/${file}/download?token=t`,
+    });
+    getDeckArtifactMock
+      .mockResolvedValueOnce(meta('v1', 'f1')) // 装载
+      .mockResolvedValueOnce(meta('v2', 'f2')) // 冲突捕获
+      .mockResolvedValueOnce(meta('v3', 'f3')); // 二次 409 后刷新
+    const v3Bytes = new Uint8Array(555).fill(3);
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes('/f3/') ? new Response(v3Bytes.buffer as ArrayBuffer, { status: 200 }) : new Response(new Uint8Array(4).fill(1).buffer as ArrayBuffer, { status: 200 })));
+    putDeckArtifactMock.mockRejectedValue(mkApiError(409, '{"error":{"code":"deck_conflict"}}'));
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:mock'), revokeObjectURL: vi.fn() }));
+    const notice = vi.fn();
+    render(<Harness docId="d1" onNotice={notice} />);
+    await screen.findByTestId('pptx-viewer-simulate-edit');
+    fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
+    await waitFor(() => expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument(), { timeout: 6000 });
+
+    fireEvent.click(screen.getByTestId('deck-conflict-keep-mine'));
+    await waitFor(() => expect(notice).toHaveBeenCalledWith(expect.stringContaining('服务端又有更新'), 6000), { timeout: 6000 });
+    expect(putDeckArtifactMock).toHaveBeenCalledTimes(2); // 首次 409 + 保留我的尝试
+    expect(getDeckArtifactMock).toHaveBeenCalledTimes(3);  // 装载 + 捕获 + 二次 409 刷新
+    // 冲突条保持未决,画布未被破坏;载入最新可拿到刷新后的 v3
+    expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('deck-conflict-load-latest'));
+    await waitFor(() => expect(screen.getByTestId('pptx-viewer-content-length')).toHaveTextContent(String(v3Bytes.length)), { timeout: 6000 });
+  });
+
+  test('#1142 409 冲突：不再自动重试整包覆盖（旧行为会静默丢弃 AI/他窗新版本）', { timeout: 15_000 }, async () => {
     await seedTwoVersions();
     render(<Harness docId="d1" />);
     await screen.findByTestId('pptx-viewer-simulate-edit');
 
-    // 第一次 PUT 409（其他窗口），rebase 时 GET 返回 v2；第二次 PUT 成功。
-    putDeckArtifactMock
-      .mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'))
-      .mockResolvedValueOnce({ ok: true, artifact_id: 'art-rebased', version: 'v-rebased', changed: true });
-
+    putDeckArtifactMock.mockRejectedValueOnce(mkApiError(409, '{"error":{"code":"deck_conflict"}}'));
     fireEvent.click(screen.getByTestId('pptx-viewer-simulate-edit'));
-    // 409 → rebase（getDeckArtifact 第二调）→ 2.5s 后重试 → 成功清 dirty。
-    await waitFor(() => expect(putDeckArtifactMock).toHaveBeenCalledTimes(2), { timeout: 9000 });
-    const [docArg1] = putDeckArtifactMock.mock.calls[0];
-    const [docArg2, , base2] = putDeckArtifactMock.mock.calls[1];
-    expect(docArg1).toBe('d1');
-    expect(base2).toBe('v2'); // 重试基于 rebase 后的服务端版本
-    expect(docArg2).toBe('d1');
-    await waitFor(() => expect(screen.getByText('已同步')).toBeInTheDocument(), { timeout: 9000 });
+    await waitFor(() => expect(screen.getByTestId('deck-conflict-banner')).toBeInTheDocument(), { timeout: 9000 });
+    // 等待超过旧自动重试窗口（2.5s）— PUT 必须仍只有一次。
+    await new Promise((r) => setTimeout(r, 2800));
+    expect(putDeckArtifactMock).toHaveBeenCalledTimes(1);
   });
 
   test('#review-4 AI 落地单飞：并发到达的新旧版本不交错，最终收敛到最新', { timeout: 15_000 }, async () => {

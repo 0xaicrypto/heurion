@@ -1,6 +1,6 @@
 import { BaseTool, ToolResult } from './base-tool.js'
-import type { ToolContext } from './tool-registry.js'
-import { parseDocSessionId } from './tool-registry.js'
+import type { ToolContext } from './tool-context.js'
+import { parseDocSessionId } from '../lib/doc-session.js'
 import { resetEutilsState, pubmedSearchRecords, type CitationRecord } from './search-citation-tool.js'
 import { crossrefSearchBibliographic } from './crossref.client.js'
 import { resolveOrCreateDocCitation } from '../lib/citation-store.js'

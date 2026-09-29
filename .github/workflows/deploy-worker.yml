@@ -193,7 +193,7 @@ jobs:
           if [ "$ok" != "1" ]; then
             ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new \
               "$WORKER_VPS_USER@$WORKER_VPS_HOST" \
-              "cd /opt/heurion-worker && docker compose --env-file .env.worker -f docker-compose.worker.yml logs --tail=50 heurion-worker || true"
+              "cd /opt/heurion-worker && WORKER_IMAGE_TAG=${{ steps.vars.outputs.sha }} docker compose --env-file .env.worker -f docker-compose.worker.yml logs --tail=50 heurion-worker || true"
             echo "❌ Worker health check failed. 手动回滚：WORKER_IMAGE_TAG=<上一个 sha> docker compose --env-file .env.worker -f docker-compose.worker.yml up -d"
             exit 1
           fi

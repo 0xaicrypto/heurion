@@ -1,6 +1,6 @@
 import { readZipEntries, ZipReadError } from './zip-reader.js'
 import { safeUploadPath } from './upload-path.js'
-import type { ExtractedPdfImage } from './document-extractor.js'
+import type { ExtractedPdfImage } from './extractor-types.js'
 
 /**
  * #777 — pptx 解析导入：pptx（zip + OOXML）→ slides 结构 + 内嵌图。

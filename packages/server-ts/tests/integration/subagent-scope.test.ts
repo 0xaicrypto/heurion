@@ -1,5 +1,8 @@
 import { describe, test, expect, afterEach, vi } from 'vitest'
 import { runSubAgent } from '../../src/tools/subagent-runner.js'
+// #1146: runner 经 registry-port 晚绑定 — 测试需先加载 tool-registry 完成工厂注册。
+import '../../src/tools/tool-registry.js'
+
 
 /** #510-followup — 深度分析子代理工具白名单按场景裁剪。 */
 vi.mock('../../src/common/llm.js', () => ({
