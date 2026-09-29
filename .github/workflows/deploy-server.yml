@@ -10,21 +10,9 @@ on:
       - '.github/**'
       # #1035: 测试代码不进入镜像，测试-only 改动不需要重建/部署生产。
       - 'packages/server-ts/tests/**'
-      # staging 专属基础设施（独立 compose/部署脚本）不参与生产镜像与部署 —
-      # 改这些文件不该重启生产容器。
-      - 'docker-compose.staging.yml'
-      - 'scripts/deploy-staging-compose.sh'
   workflow_dispatch:
-    inputs:
-      # #596: staging 默认跳过(资源占用大:embedding 模型 3.4GB + pm2),
-      # 仅在需要回归验证时手动触发。
-      run_staging:
-        description: 'Run staging deploy + regression'
-        type: boolean
-        default: false
 
-# Only one deploy+regression at a time: staging is a single shared VPS, and
-# concurrent deploys reset the DB while the other run is mid-regression.
+# Only one deploy at a time (shared VPS; concurrent deploys race the DB/compose state).
 concurrency:
   group: deploy-server
   cancel-in-progress: false
@@ -195,7 +183,8 @@ jobs:
         with: { python-version: '3.12' }
       - name: Python reference values
         run: |
-          pip install -q scipy lifelines statsmodels numpy
+          # #1150: 版本上界收敛（requirements-golden.txt）— 裸装漂移会随机阻断 golden 比对。
+          pip install -q -r packages/python-stats-worker/requirements-golden.txt
           cd packages/python-stats-worker
           python generate_golden.py > golden/stats_golden.json
           git diff --exit-code golden/stats_golden.json || { echo "golden drift — regenerate and commit"; exit 1; }
@@ -236,30 +225,6 @@ jobs:
             ${{ env.STATS_IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  staging:
-    name: Staging + Regression
-    # #596: 默认跳过 — 资源占用大,仅在 workflow_dispatch 手动开启时运行.
-    if: inputs.run_staging == true
-    needs: [typecheck, test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-      - name: Deploy staging + regression
-        env:
-          DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENCODE_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
-        run: |
-          scp -o StrictHostKeyChecking=no scripts/deploy-staging.sh scripts/regression-test.sh scripts/probe-staging.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/heurion/scripts/
-          # #553/#565: 部署或回归失败必须失败本 job。probe 仅诊断,用 rc 捕获,
-          # 不能让 `; bash probe ... || true` 吞掉前面的失败退出码。
-          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd ~/heurion && DEEPSEEK_KEY=$DEEPSEEK_KEY GEMINI_KEY=$GEMINI_KEY OPENCODE_KEY=$OPENCODE_KEY NCBI_API_KEY=$NCBI_API_KEY bash scripts/deploy-staging.sh && bash scripts/regression-test.sh http://localhost:8002; rc=\$?; bash scripts/probe-staging.sh || true; echo "--- cleaning up staging pm2 (#591) ---"; pm2 delete heurion-staging 2>/dev/null || true; pm2 delete heurion-embedding-staging 2>/dev/null || true; pm2 kill 2>/dev/null || true; truncate -s 0 ~/.pm2/logs/heurion-*.log 2>/dev/null || true; exit \$rc"
-
 
   provision-reactome-diagrams:
     name: Provision Reactome Diagrams

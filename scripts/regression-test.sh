@@ -3,11 +3,11 @@
 set -euo pipefail
 BASE="${1:-}"
 if [ -z "$BASE" ]; then
-  echo "Usage: $0 <base-url>  (e.g., http://localhost:8002 for staging)"
+  echo "Usage: $0 <base-url>  (e.g., http://localhost:8001 for a local instance)"
   exit 1
 fi
-if ! echo "$BASE" | grep -q "localhost\|127.0.0.1\|staging"; then
-  echo "ERROR: regression tests must target localhost or staging, not production"
+if ! echo "$BASE" | grep -q "localhost\|127.0.0.1"; then
+  echo "ERROR: regression tests must target a local instance, not production"
   exit 1
 fi
 USERNAME="HZ"
@@ -446,7 +446,7 @@ if [ -n "$TMP_PATIENT" ]; then
     -d "{\"facts\":[{\"category\":\"fact\",\"importance\":2,\"content\":\"TMP patient has test condition\",\"sourceType\":\"patient\",\"patientHash\":\"$TMP_PATIENT\"}]}" > /dev/null 2>&1
   check "16.21 Temp patient fact created" ok
   # 16.22 Cascade cleanup: unit test passes (tests/cascade.test.ts), but HTTP state sharing
-  # across staging requests has a timing issue. Skipped pending context hardening.
+  # across requests has a timing issue. Skipped pending context hardening.
 else
   check "16.21 Temp patient fact created" "no patient"
   check "16.22 Cascade cleanup on patient delete" "skipped"

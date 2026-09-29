@@ -105,7 +105,7 @@ curl -fsSL https://<your-hostname>/healthz
 
 ```
 /opt/heurion/                # checked-out repo
-├── Dockerfile
+├── packages/server-ts/Dockerfile
 ├── docker-compose.yml
 ├── Caddyfile
 ├── .env.production           # (you create this — never commit)

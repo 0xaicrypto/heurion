@@ -139,6 +139,14 @@ session only; never leaks across sessions before approval
 
 ## Quickstart
 
+一键本地单实例（构建 web + SQLite + API/前端同端口 8001）：
+
+```bash
+bash scripts/dev-local.sh        # → http://localhost:8001
+```
+
+或手动分终端启动：
+
 ```bash
 # Terminal 1 — backend
 cd packages/server-ts
@@ -160,7 +168,7 @@ Tests:
 ```bash
 cd packages/server-ts && pnpm vitest run   # full suite (AI mocked, hermetic) — 见 CI 统计，不在此写死规模
 cd packages/web && pnpm test               # unit suite
-bash scripts/regression-test.sh http://localhost:8002   # 96 checks, LLM-dependent ones retried
+bash scripts/regression-test.sh http://localhost:8001   # 96 checks, LLM-dependent ones retried
 ```
 
 ---
@@ -252,7 +260,7 @@ Design docs: [`docs/design/BRAIN2_MEMORY_LIFECYCLE.md`](docs/design/BRAIN2_MEMOR
 Every push to `main`:
 
 ```
-TypeCheck → Unit Tests → Build Web → Staging + Regression → Cloudflare SSL
+TypeCheck → Unit Tests → Build Web → Cloudflare SSL
 → Deploy Production (Docker Compose) → Purge Cloudflare cache
 ```
 

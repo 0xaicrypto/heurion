@@ -61,9 +61,8 @@ The CI pipeline (`deploy-server.yml`) runs:
 1. **typecheck** — `tsc --noEmit` on `packages/server-ts`
 2. **test** — `vitest run` (regression suite)
 3. **build-worker-image** — Build & push Execution Plane worker
-4. **staging** — Deploy to staging VPS + regression test suite
-5. **deploy** — Deploy to production VPS (blocked if staging fails)
-6. **deploy-execution-plane** — Deploy worker to sandbox VPS
+4. **deploy** — Deploy to production VPS
+5. **deploy-execution-plane** — Deploy worker to sandbox VPS
 
 All required checks must pass before merging.
 

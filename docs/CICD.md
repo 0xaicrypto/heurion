@@ -25,10 +25,6 @@ deploy at a time):
    (health-gated, non-idempotent-safe). `provision-reactome-diagrams` is
    intentionally NOT a dependency (external resource).
 
-`staging` runs only on manual `workflow_dispatch` (`run_staging: true`):
-deploys to `~/heurion` on port 8002 via `scripts/deploy-staging.sh`, runs
-`scripts/regression-test.sh http://localhost:8002`, then cleans up PM2.
-
 ## VPS layout
 
 ### Control Plane (`/opt/heurion`)
@@ -83,41 +79,6 @@ EMBEDDING_IMAGE=ghcr.io/0xaicrypto/nexus-embedding-server:sha-<short> \
 STATS_IMAGE=ghcr.io/0xaicrypto/nexus-stats-worker:sha-<short> \
   bash scripts/deploy-production-compose.sh
 ```
-
-### Staging deploy (manual, pm2 回归环境)
-
-```bash
-ssh <user>@<vps>
-cd ~/heurion
-DEEPSEEK_KEY=sk-... GEMINI_KEY=sk-... bash scripts/deploy-staging.sh
-bash scripts/regression-test.sh http://localhost:8002
-```
-
-### Staging（常驻手工测试环境，staging.heurion.org）
-
-与生产同 VPS 的**独立 compose 栈**（项目 `heurion-staging`：独立容器/卷/
-数据库/进程），加入生产网络后由共享 Caddy 的
-`staging.heurion.org` 站点反代；站点带 basic auth（用户名 `heurion`，
-密码在 GitHub Secret `STAGING_PASSWORD`）。生产零影响：Caddyfile 更新先
-validate 再 reload；staging 栈 `down -v` 即整体销毁。
-
-管理入口：`Deploy Staging` workflow（`workflow_dispatch`）：
-
-```bash
-gh workflow run deploy-staging.yml                      # 部署当前 main
-gh workflow run deploy-staging.yml --ref <feature-branch>   # 部署任意分支进行手工测试
-gh workflow run deploy-staging.yml -f reset_db=true     # 清库重来
-```
-
-- server 镜像与 web dist 都从选中的 revision 构建（`staging-<sha>` 标签）；
-  stats 默认复用 `latest`（可用 `deps_tag` 指定）。
-- **embedding 复用生产服务**（不另起容器）：主机仅 7.8G 内存，bge-m3 单实例
-  常驻 ~3G，两份会互相 OOM（2026-09-23 事故）；服务无状态，共享安全。
-- 也支持 `push: branches: [staging]` 的集成流（分支不存在则触发器静默）。
-- URL: `https://staging.heurion.org`（basic auth），清除测试数据端点
-  `clear-test-data` 在该 host 开放。
-- 文件落点：VPS `/opt/heurion-staging/`（compose/env/web-dist/脚本）；
-  Caddyfile 为 prod+staging 共享（`/opt/heurion/Caddyfile`）。
 
 ### Object Storage (DigitalOcean Spaces)
 
