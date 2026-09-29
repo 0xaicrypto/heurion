@@ -19,7 +19,8 @@ afterAll(() => {
 })
 
 describe.skipIf(!hasLocalSetup)('#819 real headless rendering', () => {
-  test('renders Chinese mermaid flowchart to SVG', async () => {
+  // CI 首渲染(字体回退 + mermaid bundle 解析)曾达 17s,偶发超 30s — 显式放宽。
+  test('renders Chinese mermaid flowchart to SVG', { timeout: 90_000 }, async () => {
     const result = await renderFigure({
       kind: 'mermaid',
       source: 'flowchart TD\n  A[患者入院] --> B{活检?}\n  B -->|阳性| C[确诊 NSCLC]\n  B -->|阴性| D[随访]',
@@ -31,7 +32,7 @@ describe.skipIf(!hasLocalSetup)('#819 real headless rendering', () => {
     expect(result.height).toBeGreaterThan(0)
   }, 30_000)
 
-  test('renders LaTeX formula (inline + display) to SVG', async () => {
+  test('renders LaTeX formula (inline + display) to SVG', { timeout: 90_000 }, async () => {
     const inline = await renderFigure({ kind: 'latex_math', source: 'e^{i\\pi} + 1 = 0' })
     expect(inline.file_id).toBeTruthy()
     const display = await renderFigure({ kind: 'latex_math', source: '\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}', display: true })
