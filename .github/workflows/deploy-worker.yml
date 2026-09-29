@@ -158,6 +158,16 @@ jobs:
             "$WORKER_VPS_USER@$WORKER_VPS_HOST" "chmod 600 /opt/heurion-worker/.env.worker"
           rm -f /tmp/heurion-worker.env
 
+      - name: Free disk before pull (stale images accumulate per-sha)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          ssh -i ~/.ssh/worker_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 \
+            "$WORKER_VPS_USER@$WORKER_VPS_HOST" \
+            "echo '=== disk before ===' && df -h / && \
+             (docker image prune -af >/dev/null 2>&1 || true) && \
+             (docker builder prune -af >/dev/null 2>&1 || true) && \
+             echo '=== disk after ===' && df -h /"
+
       - name: Pull new image (fail fast before touching the running container)
         if: steps.check.outputs.configured == 'true'
         run: |
