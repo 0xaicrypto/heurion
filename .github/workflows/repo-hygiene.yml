@@ -1,0 +1,32 @@
+# Repo hygiene（#1157 兜底）— 无 pnpm workspace/catalog 期间的共享依赖
+# 版本一致性门禁：任一共享依赖在包间声明不一致即失败。
+name: Repo Hygiene
+
+on:
+  pull_request:
+    paths:
+      - 'packages/*/package.json'
+      - 'scripts/check-shared-deps.mjs'
+      - '.github/workflows/repo-hygiene.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/*/package.json'
+      - 'scripts/check-shared-deps.mjs'
+      - '.github/workflows/repo-hygiene.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: repo-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared-deps:
+    name: Shared dependency versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/check-shared-deps.mjs

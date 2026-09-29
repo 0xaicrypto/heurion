@@ -11,16 +11,21 @@
   ],
   "scripts": {
     "build": "tsc",
-    "lint": "node -r ./scripts/eslint-ts-patch.cjs ./node_modules/eslint/bin/eslint.js src --ext .ts --report-unused-disable-directives --max-warnings 0"
+    "lint": "node -r ./scripts/eslint-ts-patch.cjs ./node_modules/eslint/bin/eslint.js src --report-unused-disable-directives --max-warnings 0",
+    "schema:generate": "node scripts/generate-json-schema.mjs",
+    "schema:check": "node scripts/generate-json-schema.mjs --check"
   },
   "dependencies": {
     "zod": "^3.22.0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@typescript-eslint/eslint-plugin": "^7.13.1",
-    "@typescript-eslint/parser": "^7.13.1",
-    "eslint": "^8.57.0",
-    "typescript-lint": "npm:typescript@5.9.3"
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "eslint": "^9.39.0",
+    "typescript-lint": "npm:typescript@5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "@eslint/js": "^9.39.0",
+    "zod-to-json-schema": "^3.24.1"
   }
 }

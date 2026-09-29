@@ -13,6 +13,7 @@
     "test:web": "cd packages/web && ./node_modules/.bin/vitest run",
     "test": "pnpm run test:server && pnpm run test:worker && pnpm run test:web",
     "check:i18n": "node scripts/check-i18n-keys.mjs --report",
-    "check:stats-schema": "bash scripts/check-stats-schema-alignment.sh"
+    "check:stats-schema": "bash scripts/check-stats-schema-alignment.sh",
+    "check:shared-deps": "node scripts/check-shared-deps.mjs"
   }
 }
