@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DocKind, Store } from '../db.ts'
-import { locateAnchor } from '../docs/comments.ts'
+import { auditCommentAnchors, locateAnchor } from '../docs/comments.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import { BusyError, type TurnService } from '../docs/turn.ts'
 import type { DocFiles } from '../docs/workspace.ts'
@@ -108,6 +108,10 @@ export function buildApi(deps: ApiDeps): Hono {
     if (!store.getDoc(docId)) return c.json({ error: 'not found' }, 404)
     const doc = store.getDoc(docId)!
     const projection = doc.head_seq > 0 ? store.getProjection(docId, doc.head_seq)?.projection : undefined
+    if (projection) {
+      // 读取时惰性重审计：drifted 标志与最新投影保持一致（幂等、开销可忽略）。
+      auditCommentAnchors(store, docId, doc.head_seq, projection)
+    }
     const comments = store.listComments(docId).map(c => ({
       ...c,
       ...(c.status === 'open' && projection ? locateAnchor(c.anchor, projection) : {}),

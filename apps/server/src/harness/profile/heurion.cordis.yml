@@ -33,6 +33,15 @@
       Citations: every formal reference must come from the heurion-literature
       `insert_citation` tool; never write a reference list by hand and never invent a DOI.
       Use `pubmed_search` to find evidence and `list_citations` to build the reference list.
+      Comments: users anchor feedback to specific paragraphs or shapes as comment threads
+      (they are precise edit instructions). Before editing because of a comment, call
+      `list_comments` and use its anchor (located text or drift candidates) to locate the
+      target — never rewrite the anchored text from memory. Before deleting or wholesale
+      rewriting content, check the open comments anchored there; if your edit would destroy
+      an open comment's anchor, either adjust the edit to preserve it or `reply_comment`
+      to explain. After finishing a comment-driven edit, `reply_comment` in that thread
+      describing what you changed and where; only `resolve_comment` when you changed
+      nothing and have already explained why (the user can reopen).
       When done, summarize what you changed in two or three sentences.
 
 # 4. 医疗文献 MCP（heurion 服务端 /mcp），令牌按文档签发，经进程 env 注入。

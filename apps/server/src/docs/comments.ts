@@ -31,22 +31,24 @@ function fullText(nodes: ProjectionNode[]): string {
 export function locateAnchor(anchor: CommentAnchor, projection: Projection): AnchorDiagnosis {
   const nodes = allNodes(projection)
   const snippet = norm(anchor.text_snippet)
-  if (!snippet) {
-    // 无片段冗余：只按 id 判存在性。
-    return { located: nodes.some(n => n.id === (anchor.para_id ?? anchor.shape_id)) }
-  }
-  const target = nodes.find(n => n.id === (anchor.para_id ?? anchor.shape_id))
-  if (target && norm(target.text).includes(snippet)) return { located: true }
-  if (fullText(nodes).includes(snippet)) {
-    // 片段还在文中：目标 id 仍在 → 跨节点片段，视为定位；目标没了 → 漂移 + 候选（待重定位）。
-    if (target) return { located: true }
+  const targetId = anchor.para_id ?? anchor.shape_id
+  const target = targetId ? nodes.find(n => n.id === targetId) : undefined
+
+  // 纯片段锚点（无固定目标 id）：片段在文中任何位置即视为定位。
+  if (!targetId) return { located: fullText(nodes).includes(snippet) }
+
+  if (!target) {
+    // 目标 id 消失：片段在别处 → 漂移 + 候选（待重定位）；片段也没了 → 漂移。
+    if (!snippet) return { located: false }
     const candidates = nodes
       .filter(n => norm(n.text).includes(snippet))
       .slice(0, 3)
       .map(n => ({ id: n.id, text: n.text.slice(0, 120) }))
     return { located: false, candidates: candidates.length > 0 ? candidates : undefined }
   }
-  // 片段对不上：目标还在也不算 located（内容已被改写）。
+
+  // 目标还在：片段命中（含跨节点选区）→ 定位；对不上 → 内容被改写，漂移 + 模糊候选。
+  if (norm(target.text).includes(snippet) || fullText(nodes).includes(snippet)) return { located: true }
   const candidates = nodes
     .filter(n => snippet.length >= 4 && norm(n.text).includes(snippet.slice(0, Math.max(4, Math.floor(snippet.length / 2)))))
     .slice(0, 3)
