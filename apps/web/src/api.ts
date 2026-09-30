@@ -13,6 +13,15 @@ export interface Message { id: number; role: 'user' | 'assistant'; text: string 
 export interface Citation { doi: string; formatted: string }
 export interface DocDetail extends Doc { busy: boolean; versions: Version[]; messages: Message[]; citations: Citation[] }
 
+export interface CommentAnchor { para_id?: string; shape_id?: string; slide_id?: string; text_snippet: string; section_index?: number }
+export interface CommentReply { id: string; role: 'user' | 'ai'; text: string; created_at: string }
+export interface Comment {
+  id: string; kind: DocKind; anchor: CommentAnchor
+  status: 'open' | 'resolved'; resolved_by: 'user' | 'ai' | null; drifted: boolean
+  created_at: string; replies: CommentReply[]
+  located?: boolean; candidates?: Array<{ id: string; text: string }>
+}
+
 export type UiEvent =
   | { type: 'status'; status: 'running' | 'idle' }
   | { type: 'reasoning'; text: string }
@@ -50,12 +59,22 @@ export const api = {
   cancel: (id: string) => fetch(`/api/docs/${id}/cancel`, { method: 'POST', headers: auth }),
   downloadUrl: (id: string, seq: number) => `/api/docs/${id}/versions/${seq}/file?token=${encodeURIComponent(TOKEN)}`,
 
+  listComments: (id: string) => fetch(`/api/docs/${id}/comments`, { headers: auth }).then(r => json<{ comments: Comment[] }>(r)),
+  createComment: (id: string, input: { text_snippet?: string; text?: string }) =>
+    fetch(`/api/docs/${id}/comments`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }).then(r => json<Comment>(r)),
+  replyComment: (id: string, cid: string, text: string) =>
+    fetch(`/api/docs/${id}/comments/${cid}/replies`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }).then(r => json<CommentReply>(r)),
+  resolveComment: (id: string, cid: string) =>
+    fetch(`/api/docs/${id}/comments/${cid}/resolve`, { method: 'POST', headers: auth }).then(r => json<{ ok: boolean }>(r)),
+  reopenComment: (id: string, cid: string) =>
+    fetch(`/api/docs/${id}/comments/${cid}/reopen`, { method: 'POST', headers: auth }).then(r => json<{ ok: boolean }>(r)),
+
   /** POST + 读 SSE 流（EventSource 不支持 POST）。 */
-  async chat(id: string, message: string, onEvent: (e: UiEvent) => void): Promise<void> {
-    const res = await fetch(`/api/docs/${id}/chat`, {
+  async postSse(path: string, body: Record<string, unknown>, onEvent: (e: UiEvent) => void): Promise<void> {
+    const res = await fetch(path, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(body),
     })
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
@@ -72,5 +91,14 @@ export const api = {
         if (data) onEvent(JSON.parse(data) as UiEvent)
       }
     }
+  },
+
+  chat(id: string, message: string, onEvent: (e: UiEvent) => void): Promise<void> {
+    return api.postSse(`/api/docs/${id}/chat`, { message }, onEvent)
+  },
+
+  /** 评论触发 AI 回合（S3）：prompt 由服务端组装。 */
+  processComment(id: string, cid: string, onEvent: (e: UiEvent) => void): Promise<void> {
+    return api.postSse(`/api/docs/${id}/comments/${cid}/process`, {}, onEvent)
   },
 }

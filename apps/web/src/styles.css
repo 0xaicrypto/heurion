@@ -48,6 +48,23 @@ a { color: var(--accent); }
 .versions li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .actions { display: flex; gap: 8px; }
 .citations { padding-left: 18px; font-size: 12px; }
+/* 评论面板（S2/S3） */
+.newcomment { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.newcomment input { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.comments, .replies { list-style: none; padding: 0; margin: 0; }
+.comment { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--surface); overflow: hidden; }
+.comment.resolved { opacity: .55; }
+.comment.drifted { border-color: var(--danger); }
+.comment-head { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: none; background: none; padding: 8px 10px; }
+.comment-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.comment-body blockquote { margin: 0; padding: 6px 8px; border-left: 3px solid var(--accent); background: var(--soft); font-size: 12px; border-radius: 4px; }
+.chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.chip.warn { border-color: var(--danger); color: var(--danger); }
+.replies { display: flex; flex-direction: column; gap: 4px; }
+.reply { font-size: 12px; padding: 6px 8px; border-radius: 6px; background: var(--soft); white-space: pre-wrap; }
+.reply.ai { border-left: 3px solid var(--accent); }
+.reply-input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.small { font-size: 11px; margin: 0; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--border); }

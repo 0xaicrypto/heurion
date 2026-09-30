@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import type { Projection } from './docs/office.ts'
 
@@ -56,6 +57,36 @@ export interface CitationRow {
   created_at: string
 }
 
+/** 评论锚点（DESIGN.md §4.4）：id 定位 + 文字片段冗余（跨编辑校验与漂移候选）。 */
+export interface CommentAnchor {
+  para_id?: string
+  shape_id?: string
+  slide_id?: string
+  text_snippet: string
+  section_index?: number
+}
+
+export interface CommentReplyRow {
+  id: string
+  comment_id: string
+  role: 'user' | 'ai'
+  text: string
+  created_at: string
+}
+
+export interface CommentRow {
+  id: string
+  doc_id: string
+  kind: DocKind
+  anchor: CommentAnchor
+  status: 'open' | 'resolved'
+  resolved_by: 'user' | 'ai' | null
+  /** 漂移：当前版本投影里锚不到（目标消失或片段对不上）。 */
+  drifted: boolean
+  created_at: string
+  replies: CommentReplyRow[]
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS docs (
   id TEXT PRIMARY KEY,
@@ -98,6 +129,23 @@ CREATE TABLE IF NOT EXISTS citations (
   formatted TEXT NOT NULL,
   created_at TEXT NOT NULL,
   UNIQUE (doc_id, doi)
+);
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('docx','pptx')),
+  anchor TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+  resolved_by TEXT CHECK (resolved_by IN ('user','ai')),
+  drifted INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS comment_replies (
+  id TEXT PRIMARY KEY,
+  comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user','ai')),
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 `
 
@@ -181,6 +229,67 @@ export class Store {
       { doc_id: string; seq: number; projection: string; created_at: string } | undefined
     if (!row) return undefined
     try { return { ...row, projection: JSON.parse(row.projection) as Projection } } catch { return undefined }
+  }
+
+  // —— 评论（S2） ——
+
+  addComment(docId: string, anchor: CommentAnchor): CommentRow {
+    const doc = this.getDoc(docId)
+    if (!doc) throw new Error(`doc ${docId} not found`)
+    const t = now()
+    const id = randomUUID()
+    this.db.prepare('INSERT INTO comments (id, doc_id, kind, anchor, status, drifted, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)')
+      .run(id, docId, doc.kind, JSON.stringify(anchor), 'open', t)
+    return this.getComment(docId, id)!
+  }
+
+  /** 双重过滤（id + docId）——防跨文档枚举。 */
+  getComment(docId: string, commentId: string): CommentRow | undefined {
+    const row = this.db.prepare('SELECT * FROM comments WHERE id = ? AND doc_id = ?').get(commentId, docId) as
+      { id: string; doc_id: string; kind: DocKind; anchor: string; status: 'open' | 'resolved'; resolved_by: 'user' | 'ai' | null; drifted: number; created_at: string } | undefined
+    if (!row) return undefined
+    const replies = (this.db.prepare('SELECT * FROM comment_replies WHERE comment_id = ? ORDER BY created_at, rowid').all(commentId) as unknown as CommentReplyRow[])
+    let anchor: CommentAnchor = { text_snippet: '' }
+    try { anchor = JSON.parse(row.anchor) as CommentAnchor } catch { /* 损坏锚点按空处理 */ }
+    return {
+      id: row.id, doc_id: row.doc_id, kind: row.kind, anchor, status: row.status,
+      resolved_by: row.resolved_by, drifted: row.drifted === 1, created_at: row.created_at, replies,
+    }
+  }
+
+  listComments(docId: string, status?: 'open' | 'resolved'): CommentRow[] {
+    const rows = status
+      ? this.db.prepare('SELECT id FROM comments WHERE doc_id = ? AND status = ? ORDER BY created_at, rowid').all(docId, status) as Array<{ id: string }>
+      : this.db.prepare('SELECT id FROM comments WHERE doc_id = ? ORDER BY created_at, rowid').all(docId) as Array<{ id: string }>
+    return rows.map(r => this.getComment(docId, r.id)!).filter(c => c !== undefined)
+  }
+
+  addReply(docId: string, commentId: string, role: 'user' | 'ai', text: string): CommentReplyRow {
+    const comment = this.getComment(docId, commentId)
+    if (!comment) throw new Error(`comment ${commentId} not found in doc ${docId}`)
+    const reply: CommentReplyRow = { id: randomUUID(), comment_id: commentId, role, text, created_at: now() }
+    this.db.prepare('INSERT INTO comment_replies (id, comment_id, role, text, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(reply.id, commentId, role, text, reply.created_at)
+    return reply
+  }
+
+  /** 关闭线程；by 记录发起方（用户手动 or AI resolve）。重复关闭幂等返回 false。 */
+  resolveComment(docId: string, commentId: string, by: 'user' | 'ai'): boolean {
+    const comment = this.getComment(docId, commentId)
+    if (!comment || comment.status === 'resolved') return false
+    this.db.prepare("UPDATE comments SET status = 'resolved', resolved_by = ?, drifted = 0 WHERE id = ?").run(by, commentId)
+    return true
+  }
+
+  reopenComment(docId: string, commentId: string): boolean {
+    const comment = this.getComment(docId, commentId)
+    if (!comment || comment.status === 'open') return false
+    this.db.prepare("UPDATE comments SET status = 'open', resolved_by = NULL WHERE id = ?").run(commentId)
+    return true
+  }
+
+  setCommentDrift(commentId: string, drifted: boolean): void {
+    this.db.prepare('UPDATE comments SET drifted = ? WHERE id = ?').run(drifted ? 1 : 0, commentId)
   }
 
   addMessage(docId: string, role: MessageRow['role'], text: string): void {

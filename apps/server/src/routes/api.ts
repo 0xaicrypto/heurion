@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DocKind, Store } from '../db.ts'
+import { locateAnchor } from '../docs/comments.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import { BusyError, type TurnService } from '../docs/turn.ts'
 import type { DocFiles } from '../docs/workspace.ts'
@@ -97,19 +98,77 @@ export function buildApi(deps: ApiDeps): Hono {
     if (pool.isBusy(docId)) return c.json({ error: 'AI 正在编辑这份文档' }, 409)
     const { message } = await c.req.json<{ message?: string }>()
     if (!message?.trim()) return c.json({ error: 'message required' }, 400)
-    return streamSSE(c, async stream => {
-      // 串行写入并在结束前等待全部写完：否则回调返回、流关闭时未写出的事件会丢失
-      let writes = Promise.resolve()
-      const emit = (e: unknown) => { writes = writes.then(() => stream.writeSSE({ data: JSON.stringify(e) })) }
-      try {
-        await turns.run(docId, message.trim(), emit)
-      } catch (err) {
-        console.error('[chat] turn failed', err)
-        emit({ type: 'error', message: err instanceof BusyError ? err.message : String((err as Error).message ?? err) })
-      }
-      emit({ type: 'done' })
-      await writes
+    return streamTurn(c, deps, docId, message.trim())
+  })
+
+  // —— 评论（S2/S3） ——
+
+  app.get('/api/docs/:id/comments', c => {
+    const docId = c.req.param('id')
+    if (!store.getDoc(docId)) return c.json({ error: 'not found' }, 404)
+    const doc = store.getDoc(docId)!
+    const projection = doc.head_seq > 0 ? store.getProjection(docId, doc.head_seq)?.projection : undefined
+    const comments = store.listComments(docId).map(c => ({
+      ...c,
+      ...(c.status === 'open' && projection ? locateAnchor(c.anchor, projection) : {}),
+    }))
+    return c.json({ comments })
+  })
+
+  app.post('/api/docs/:id/comments', async c => {
+    const docId = c.req.param('id')
+    if (!store.getDoc(docId)) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json<{ text_snippet?: string; para_id?: string; shape_id?: string; slide_id?: string; section_index?: number; text?: string }>()
+    const snippet = body.text_snippet?.trim()
+    const comment = body.text?.trim()
+    if (!snippet && !comment) return c.json({ error: 'text_snippet 或 text 至少填一项' }, 400)
+    const row = store.addComment(docId, {
+      para_id: body.para_id || undefined,
+      shape_id: body.shape_id || undefined,
+      slide_id: body.slide_id || undefined,
+      section_index: body.section_index,
+      // 无选区评论（纯指令）没有片段冗余，锚定退化为「整文档」级。
+      text_snippet: snippet ?? '',
     })
+    if (comment) store.addReply(docId, row.id, 'user', comment)
+    return c.json(row, 201)
+  })
+
+  app.post('/api/docs/:id/comments/:cid/replies', async c => {
+    const docId = c.req.param('id')
+    const { text } = await c.req.json<{ text?: string }>()
+    if (!text?.trim()) return c.json({ error: 'text required' }, 400)
+    if (!store.getComment(docId, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
+    return c.json(store.addReply(docId, c.req.param('cid'), 'user', text.trim()), 201)
+  })
+
+  app.post('/api/docs/:id/comments/:cid/resolve', c => {
+    const docId = c.req.param('id')
+    if (!store.getComment(docId, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
+    return c.json({ ok: store.resolveComment(docId, c.req.param('cid'), 'user') })
+  })
+
+  app.post('/api/docs/:id/comments/:cid/reopen', c => {
+    const docId = c.req.param('id')
+    if (!store.getComment(docId, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
+    return c.json({ ok: store.reopenComment(docId, c.req.param('cid')) })
+  })
+
+  // 评论触发 AI 回合（S3）：prompt 由服务端组装，前端不拼自然语言。
+  app.post('/api/docs/:id/comments/:cid/process', c => {
+    const docId = c.req.param('id')
+    const cid = c.req.param('cid')
+    if (!store.getDoc(docId)) return c.json({ error: 'not found' }, 404)
+    if (!store.getComment(docId, cid)) return c.json({ error: 'not found' }, 404)
+    if (pool.isBusy(docId)) return c.json({ error: 'AI 正在编辑这份文档' }, 409)
+    const prompt =
+      `请处理评论 ${cid}。步骤：\n` +
+      `1. 用 list_comments（comment_id="${cid}"）读取该线程的锚点与用户要求；\n` +
+      `2. 按锚点（漂移时用候选文本）在工作区文件里定位目标内容，完成用户要求的修改；\n` +
+      `3. 若修改涉及检索文献，按引用规范走 pubmed_search / insert_citation；\n` +
+      `4. 完成后用 reply_comment 在线程内说明改了什么、改在哪；确实无需改动才允许 resolve_comment。\n` +
+      `只处理这一条评论，不要动它以外的内容。`
+    return streamTurn(c, deps, docId, prompt)
   })
 
   app.post('/api/docs/:id/cancel', async c => {
@@ -118,4 +177,22 @@ export function buildApi(deps: ApiDeps): Hono {
   })
 
   return app
+}
+
+/** 聊天与评论触发共用的 SSE 回合管线。 */
+function streamTurn(c: Context, deps: ApiDeps, docId: string, message: string) {
+  const { turns } = deps
+  return streamSSE(c, async stream => {
+    // 串行写入并在结束前等待全部写完：否则回调返回、流关闭时未写出的事件会丢失
+    let writes = Promise.resolve()
+    const emit = (e: unknown) => { writes = writes.then(() => stream.writeSSE({ data: JSON.stringify(e) })) }
+    try {
+      await turns.run(docId, message, emit)
+    } catch (err) {
+      console.error('[chat] turn failed', err)
+      emit({ type: 'error', message: err instanceof BusyError ? err.message : String((err as Error).message ?? err) })
+    }
+    emit({ type: 'done' })
+    await writes
+  })
 }

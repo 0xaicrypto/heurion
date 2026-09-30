@@ -27,6 +27,7 @@ export class TurnService {
     // 防止模型重跑上一轮的辅助脚本把文件整篇重新生成（#1）。
     this.files.cleanWorkspaceScripts(docId)
     this.store.addMessage(docId, 'user', message)
+    const openBefore = new Set(this.store.listComments(docId, 'open').map(c => c.id))
     const baseSha = this.files.materializeHead(docId)
     const fileName = canonicalFileName(doc.kind)
     const prompt = baseSha === null
@@ -72,6 +73,11 @@ export class TurnService {
       const rate = version.meta?.id_survival
       if (typeof rate === 'number' && rate < ID_SURVIVAL_WARN) emit({ type: 'id_survival_warning', rate })
     }
+    // 评论状态变化（S2/S3）：漂移由落版审计写入；updated = 本回合被关闭的线程。
+    const openAfter = this.store.listComments(docId, 'open')
+    const updated = [...openBefore].filter(id => !openAfter.some(c => c.id === id))
+    const drifted = openAfter.filter(c => c.drifted).map(c => c.id)
+    if (updated.length > 0 || drifted.length > 0) emit({ type: 'comment_updates', updated, drifted })
   }
 
   /** 最近 6 条对话，作为新会话首轮的背景（不含本轮消息）。 */

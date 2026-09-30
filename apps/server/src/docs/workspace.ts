@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DocKind, Store, VersionRow, VersionSource } from '../db.ts'
+import { auditCommentAnchors } from './comments.ts'
 import { buildProjection, computeIdSurvival, ensureDocxParaIds } from './office.ts'
 
 /** 工作区里的权威文件名：模型只改这个文件，其余是脚本与临时产物。 */
@@ -58,6 +59,8 @@ export class DocFiles {
     mkdirSync(join(this.versionsDir, docId), { recursive: true })
     writeFileSync(path, bytes)
     this.store.setProjection(docId, version.seq, projection)
+    // 锚点漂移审计：每次落版后重跑（upload / AI / restore 同一入口，S2）。
+    auditCommentAnchors(this.store, docId, version.seq, projection)
     return version
   }
 

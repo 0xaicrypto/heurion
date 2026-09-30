@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Doc, type DocDetail, type DocKind, type UiEvent } from './api.ts'
+import { api, type Comment, type Doc, type DocDetail, type DocKind, type UiEvent } from './api.ts'
 
 interface LiveStep { kind: 'reasoning' | 'assistant' | 'tool' | 'notice' | 'error'; text: string }
 
@@ -53,11 +53,15 @@ function Sidebar({ docs, activeId, onSelect, onCreated }: {
 
 function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void }) {
   const [doc, setDoc] = useState<DocDetail | null>(null)
+  const [comments, setComments] = useState<Comment[]>([])
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
   const [live, setLive] = useState<LiveStep[]>([])
+  /** 评论触发的回合：线程 id → 处理中。 */
+  const [processing, setProcessing] = useState<Record<string, boolean>>({})
+  const reloadComments = useCallback(() => api.listComments(docId).then(r => setComments(r.comments)), [docId])
   const reload = useCallback(() => api.getDoc(docId).then(d => { setDoc(d); setRunning(d.busy) }), [docId])
-  useEffect(() => { void reload() }, [reload])
+  useEffect(() => { void reload(); void reloadComments() }, [reload, reloadComments])
 
   const onEvent = (e: UiEvent) => {
     const push = (s: LiveStep) => setLive(prev => [...prev, s])
@@ -65,11 +69,16 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
       case 'reasoning': return push({ kind: 'reasoning', text: e.text })
       case 'assistant': return push({ kind: 'assistant', text: e.text })
       case 'tool_call': return push({ kind: 'tool', text: e.name.replace(/^mcp__heurion-literature__/, '文献·') })
+      case 'tool_result': return push(e.isError && e.code ? { kind: 'error', text: `失败（${e.code}）` } : { kind: 'tool', text: '✓' })
       case 'citation_audit': return push(e.ok
         ? { kind: 'notice', text: '引用校验通过' }
         : { kind: 'error', text: `未登记的 DOI：${e.unregisteredDois.join(', ')}` })
       case 'version': return push({ kind: 'notice', text: `已保存为 v${e.seq}` })
-      case 'id_survival_warning': return push({ kind: 'error', text: `检测到疑似整文重写（id 存活率 ${(e.rate * 100).toFixed(0)}%），评论锚点可能已失效` })
+      case 'id_survival_warning': return push({ kind: 'error', text: `疑似整文重写（id 存活率 ${(e.rate * 100).toFixed(0)}%），评论锚点可能失效` })
+      case 'comment_updates':
+        void reloadComments()
+        if (e.drifted.length > 0) push({ kind: 'error', text: `${e.drifted.length} 条评论锚点漂移` })
+        return
       case 'error': return push({ kind: 'error', text: e.message })
       default: return
     }
@@ -90,6 +99,27 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
       // 过程步骤随回合结束收起，错误与保存结果保留到下一次发送
       setLive(prev => prev.filter(s => s.kind === 'error' || s.kind === 'notice'))
       await reload()
+      await reloadComments()
+      onChanged()
+    }
+  }
+
+  /** 评论触发 AI 回合（#3）：prompt 由服务端组装，前端只发信号。 */
+  const processComment = async (cid: string) => {
+    if (running || processing[cid]) return
+    setProcessing(prev => ({ ...prev, [cid]: true }))
+    setRunning(true)
+    setLive([])
+    try {
+      await api.processComment(docId, cid, onEvent)
+    } catch (err) {
+      onEvent({ type: 'error', message: (err as Error).message })
+    } finally {
+      setProcessing(prev => ({ ...prev, [cid]: false }))
+      setRunning(false)
+      setLive(prev => prev.filter(s => s.kind === 'error' || s.kind === 'notice'))
+      await reload()
+      await reloadComments()
       onChanged()
     }
   }
@@ -123,6 +153,8 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
         </form>
       </section>
       <aside className="panel">
+        <CommentsPanel docId={docId} comments={comments} running={running} processing={processing}
+          onProcess={cid => void processComment(cid)} onChanged={() => void reloadComments()} />
         <h2>版本</h2>
         <ul className="versions">
           {doc.versions.map(v => (
@@ -132,7 +164,7 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
               <span className="actions">
                 <a href={api.downloadUrl(doc.id, v.seq)}>下载</a>
                 {v.seq !== head?.seq && !running && (
-                  <button className="link" onClick={async () => { await api.restore(doc.id, v.seq); await reload(); onChanged() }}>回滚</button>
+                  <button className="link" onClick={async () => { await api.restore(doc.id, v.seq); await reload(); await reloadComments(); onChanged() }}>回滚</button>
                 )}
               </span>
             </li>
@@ -142,5 +174,95 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
         <ol className="citations">{doc.citations.map(c => <li key={c.doi}>{c.formatted}</li>)}</ol>
       </aside>
     </main>
+  )
+}
+
+/** 评论面板（S2/S3）：线程列表 + 新建 + 回复 + 关闭/重开 + 请 AI 处理。 */
+function CommentsPanel({ docId, comments, running, processing, onProcess, onChanged }: {
+  docId: string
+  comments: Comment[]
+  running: boolean
+  processing: Record<string, boolean>
+  onProcess: (cid: string) => void
+  onChanged: () => void
+}) {
+  const [snippet, setSnippet] = useState('')
+  const [text, setText] = useState('')
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const open = comments.filter(c => c.status === 'open')
+  const resolved = comments.filter(c => c.status === 'resolved')
+
+  const create = async () => {
+    const s = snippet.trim()
+    const t = text.trim()
+    if (!s && !t) return
+    await api.createComment(docId, { text_snippet: s || undefined, text: t || undefined })
+    setSnippet('')
+    setText('')
+    onChanged()
+  }
+
+  const thread = (c: Comment) => {
+    const isExpanded = expanded[c.id] ?? c.status === 'open'
+    const busy = processing[c.id]
+    return (
+      <li key={c.id} className={`comment ${c.status} ${c.drifted ? 'drifted' : ''}`}>
+        <button className="comment-head" onClick={() => setExpanded(p => ({ ...p, [c.id]: !isExpanded }))}>
+          <span className="chip">{c.status === 'open' ? '待处理' : '已关闭'}</span>
+          {c.drifted && <span className="chip warn">漂移</span>}
+          <span className="muted ellipsis">{c.anchor.text_snippet || '（无锚点片段）'}</span>
+        </button>
+        {isExpanded && (
+          <div className="comment-body">
+            {c.anchor.text_snippet && <blockquote>{c.anchor.text_snippet}</blockquote>}
+            {c.located === false && c.candidates && c.candidates.length > 0 && (
+              <p className="muted small">候选位置：{c.candidates.map(x => x.text).join(' / ')}</p>
+            )}
+            <ul className="replies">
+              {c.replies.map(r => <li key={r.id} className={`reply ${r.role}`}>{r.text}</li>)}
+            </ul>
+            {c.status === 'open' && (
+              <div className="row">
+                <input
+                  className="reply-input" placeholder="回复…" value={drafts[c.id] ?? ''}
+                  onChange={e => setDrafts(p => ({ ...p, [c.id]: e.target.value }))}
+                  onKeyDown={async e => {
+                    if (e.key === 'Enter' && (drafts[c.id] ?? '').trim()) {
+                      await api.replyComment(docId, c.id, (drafts[c.id] ?? '').trim())
+                      setDrafts(p => ({ ...p, [c.id]: '' }))
+                      onChanged()
+                    }
+                  }}
+                />
+                <button className="link" disabled={busy || running} onClick={() => onProcess(c.id)}>
+                  {busy ? 'AI 处理中…' : '请 AI 处理'}
+                </button>
+                <button className="link" onClick={async () => { await api.resolveComment(docId, c.id); onChanged() }}>关闭</button>
+              </div>
+            )}
+            {c.status === 'resolved' && (
+              <button className="link" onClick={async () => { await api.reopenComment(docId, c.id); onChanged() }}>重新打开</button>
+            )}
+          </div>
+        )}
+      </li>
+    )
+  }
+
+  return (
+    <>
+      <h2>评论（{open.length} 待处理）</h2>
+      <div className="newcomment">
+        <input placeholder="锚点片段（如：研究背景）" value={snippet} onChange={e => setSnippet(e.target.value)} />
+        <input placeholder="要求 AI 做什么（可留空只标记位置）" value={text} onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') void create() }} />
+        <button className="link" onClick={() => void create()}>+ 添加评论</button>
+      </div>
+      <ul className="comments">
+        {open.map(thread)}
+        {resolved.map(thread)}
+      </ul>
+    </>
   )
 }
