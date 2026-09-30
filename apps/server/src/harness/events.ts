@@ -6,10 +6,12 @@ export type UiEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; callId: string; name: string; arguments: string }
-  | { type: 'tool_result'; callId: string; isError: boolean }
+  | { type: 'tool_result'; callId: string; isError: boolean; code?: string }
   | { type: 'turn_end'; reason: string }
   | { type: 'version'; seq: number }
   | { type: 'citation_audit'; ok: boolean; unregisteredDois: string[] }
+  | { type: 'id_survival_warning'; rate: number }
+  | { type: 'comment_updates'; updated: string[]; drifted: string[] }
   | { type: 'error'; message: string }
 
 interface Block { type: string; text?: string; id?: string; name?: string; arguments?: string }
@@ -39,8 +41,15 @@ export function mapNotification(n: HarnessNotification, sessionId: string): UiEv
       return out
     }
     case 'tool/result': {
-      const message = data.message as { toolCallId?: string; isError?: boolean; source?: { toolCallId?: string } } | undefined
-      return [{ type: 'tool_result', callId: message?.toolCallId ?? message?.source?.toolCallId ?? '', isError: Boolean(message?.isError) }]
+      const message = data.message as { toolCallId?: string; isError?: boolean; code?: string; source?: { toolCallId?: string } } | undefined
+      const event: Extract<UiEvent, { type: 'tool_result' }> = {
+        type: 'tool_result',
+        callId: message?.toolCallId ?? message?.source?.toolCallId ?? '',
+        isError: Boolean(message?.isError),
+      }
+      // MCP 工具的显式失败码（validation_error / unit_not_found …）——前端据此展示具体原因。
+      if (typeof message?.code === 'string' && message.code) event.code = message.code
+      return [event]
     }
     case 'turn/end': {
       // reason 形如 { kind: 'completed' | 'error' | ..., error?: { message, code } }

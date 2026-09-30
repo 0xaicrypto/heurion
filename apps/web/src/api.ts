@@ -18,10 +18,12 @@ export type UiEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; callId: string; name: string; arguments: string }
-  | { type: 'tool_result'; callId: string; isError: boolean }
+  | { type: 'tool_result'; callId: string; isError: boolean; code?: string }
   | { type: 'turn_end'; reason: string }
   | { type: 'version'; seq: number }
   | { type: 'citation_audit'; ok: boolean; unregisteredDois: string[] }
+  | { type: 'id_survival_warning'; rate: number }
+  | { type: 'comment_updates'; updated: string[]; drifted: string[] }
   | { type: 'error'; message: string }
   | { type: 'done' }
 

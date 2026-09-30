@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { ID_SURVIVAL_WARN } from './office.ts'
 import type { Store } from '../db.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
 import type { HarnessPool } from '../harness/pool.ts'
@@ -8,7 +9,7 @@ import { canonicalFileName, type DocFiles } from './workspace.ts'
 export class BusyError extends Error {}
 
 /**
- * 一个 AI 回合：写入 head → dsh 执行 → 引用校验 → 落版本。
+ * 一个 AI 回合：清工作区脚本 → 写入 head → dsh 执行 → 引用/锚点审计 → 合并落版。
  * 引用校验不过时让模型自修一次；仍不过则丢弃本轮文件改动（工作区回到 head）。
  */
 export class TurnService {
@@ -23,6 +24,8 @@ export class TurnService {
     if (!doc) throw new Error(`doc ${docId} not found`)
     if (this.pool.isBusy(docId)) throw new BusyError('AI 正在编辑这份文档')
 
+    // 防止模型重跑上一轮的辅助脚本把文件整篇重新生成（#1）。
+    this.files.cleanWorkspaceScripts(docId)
     this.store.addMessage(docId, 'user', message)
     const baseSha = this.files.materializeHead(docId)
     const fileName = canonicalFileName(doc.kind)
@@ -63,7 +66,12 @@ export class TurnService {
       return
     }
     const version = this.files.snapshotAfterTurn(docId, baseSha, message.slice(0, 80))
-    if (version) emit({ type: 'version', seq: version.seq })
+    if (version) {
+      emit({ type: 'version', seq: version.seq })
+      // id 存活率告警（#1）：低于阈值 = 疑似整文重写，锚点大概率整体失效。
+      const rate = version.meta?.id_survival
+      if (typeof rate === 'number' && rate < ID_SURVIVAL_WARN) emit({ type: 'id_survival_warning', rate })
+    }
   }
 
   /** 最近 6 条对话，作为新会话首轮的背景（不含本轮消息）。 */

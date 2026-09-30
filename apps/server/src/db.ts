@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import type { Projection } from './docs/office.ts'
 
 export type DocKind = 'docx' | 'pptx'
 export type VersionSource = 'upload' | 'ai' | 'restore'
@@ -21,6 +22,20 @@ export interface VersionRow {
   sha256: string
   source: VersionSource
   note: string
+  created_at: string
+  /** 版本元数据（JSON）：如 id 存活率。 */
+  meta: VersionMeta | null
+}
+
+export interface VersionMeta {
+  /** 与上一版投影对比的 id 存活率；null = 首版（无对照）。 */
+  id_survival?: number | null
+}
+
+export interface ProjectionRow {
+  doc_id: string
+  seq: number
+  projection: Projection
   created_at: string
 }
 
@@ -57,6 +72,14 @@ CREATE TABLE IF NOT EXISTS versions (
   sha256 TEXT NOT NULL,
   source TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
+  meta TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (doc_id, seq)
+);
+CREATE TABLE IF NOT EXISTS projections (
+  doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  projection TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (doc_id, seq)
 );
@@ -78,7 +101,23 @@ CREATE TABLE IF NOT EXISTS citations (
 );
 `
 
+/** 旧库轻量迁移：缺列就补（SQLite 无 IF NOT EXISTS 的 ADD COLUMN）。 */
+function migrate(db: DatabaseSync): void {
+  const versionCols = (db.prepare('PRAGMA table_info(versions)').all() as Array<{ name: string }>).map(c => c.name)
+  if (!versionCols.includes('meta')) db.exec('ALTER TABLE versions ADD COLUMN meta TEXT')
+}
+
 const now = () => new Date().toISOString()
+
+interface VersionDbRow extends Omit<VersionRow, 'meta'> { meta: string | null }
+
+function parseVersion(row: VersionDbRow): VersionRow {
+  let meta: VersionMeta | null = null
+  if (row.meta) {
+    try { meta = JSON.parse(row.meta) as VersionMeta } catch { /* 损坏的 meta 按空处理 */ }
+  }
+  return { ...row, meta }
+}
 
 export class Store {
   readonly db: DatabaseSync
@@ -88,6 +127,7 @@ export class Store {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;')
     this.db.exec(SCHEMA)
+    migrate(this.db)
   }
 
   createDoc(id: string, title: string, kind: DocKind): DocRow {
@@ -109,23 +149,38 @@ export class Store {
     this.db.prepare('UPDATE docs SET session_id = ?, updated_at = ? WHERE id = ?').run(sessionId, now(), docId)
   }
 
-  addVersion(docId: string, sha256: string, source: VersionSource, note = ''): VersionRow {
+  addVersion(docId: string, sha256: string, source: VersionSource, note = '', meta?: VersionMeta): VersionRow {
     const doc = this.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
     const seq = doc.head_seq + 1
     const t = now()
-    this.db.prepare('INSERT INTO versions (doc_id, seq, sha256, source, note, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(docId, seq, sha256, source, note, t)
+    this.db.prepare('INSERT INTO versions (doc_id, seq, sha256, source, note, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(docId, seq, sha256, source, note, meta ? JSON.stringify(meta) : null, t)
     this.db.prepare('UPDATE docs SET head_seq = ?, updated_at = ? WHERE id = ?').run(seq, t, docId)
-    return { doc_id: docId, seq, sha256, source, note, created_at: t }
+    return this.getVersion(docId, seq)!
   }
 
   listVersions(docId: string): VersionRow[] {
-    return this.db.prepare('SELECT * FROM versions WHERE doc_id = ? ORDER BY seq DESC').all(docId) as unknown as VersionRow[]
+    return (this.db.prepare('SELECT * FROM versions WHERE doc_id = ? ORDER BY seq DESC').all(docId) as unknown as VersionDbRow[])
+      .map(parseVersion)
   }
 
   getVersion(docId: string, seq: number): VersionRow | undefined {
-    return this.db.prepare('SELECT * FROM versions WHERE doc_id = ? AND seq = ?').get(docId, seq) as VersionRow | undefined
+    const row = this.db.prepare('SELECT * FROM versions WHERE doc_id = ? AND seq = ?').get(docId, seq) as VersionDbRow | undefined
+    return row ? parseVersion(row) : undefined
+  }
+
+  /** 版本投影（S1：落版即导入）。 */
+  setProjection(docId: string, seq: number, projection: Projection): void {
+    this.db.prepare('INSERT OR REPLACE INTO projections (doc_id, seq, projection, created_at) VALUES (?, ?, ?, ?)')
+      .run(docId, seq, JSON.stringify(projection), now())
+  }
+
+  getProjection(docId: string, seq: number): ProjectionRow | undefined {
+    const row = this.db.prepare('SELECT * FROM projections WHERE doc_id = ? AND seq = ?').get(docId, seq) as
+      { doc_id: string; seq: number; projection: string; created_at: string } | undefined
+    if (!row) return undefined
+    try { return { ...row, projection: JSON.parse(row.projection) as Projection } } catch { return undefined }
   }
 
   addMessage(docId: string, role: MessageRow['role'], text: string): void {

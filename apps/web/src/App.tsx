@@ -69,6 +69,7 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
         ? { kind: 'notice', text: '引用校验通过' }
         : { kind: 'error', text: `未登记的 DOI：${e.unregisteredDois.join(', ')}` })
       case 'version': return push({ kind: 'notice', text: `已保存为 v${e.seq}` })
+      case 'id_survival_warning': return push({ kind: 'error', text: `检测到疑似整文重写（id 存活率 ${(e.rate * 100).toFixed(0)}%），评论锚点可能已失效` })
       case 'error': return push({ kind: 'error', text: e.message })
       default: return
     }

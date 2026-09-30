@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DocKind, Store, VersionRow, VersionSource } from '../db.ts'
+import { buildProjection, computeIdSurvival, ensureDocxParaIds } from './office.ts'
 
 /** 工作区里的权威文件名：模型只改这个文件，其余是脚本与临时产物。 */
 export function canonicalFileName(kind: DocKind): string {
@@ -13,6 +14,8 @@ export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).
 /**
  * 文档文件的版本库：heurion 保存的版本副本是权威副本，dsh 工作区只是执行现场。
  * 回合前把 head 版本写入工作区，回合后按哈希判断是否产生新版本。
+ * 每次落版同步导入投影（S1）：docx 先补 paraId（id 存进权威文件），再解析投影；
+ * 与上一版投影对比得 id 存活率，写进版本 meta。
  */
 export class DocFiles {
   constructor(
@@ -35,15 +38,31 @@ export class DocFiles {
     return join(this.versionsDir, docId, `${seq}.${kind}`)
   }
 
-  private saveVersion(docId: string, kind: DocKind, bytes: Uint8Array, source: VersionSource, note: string): VersionRow {
-    const version = this.store.addVersion(docId, sha256(bytes), source, note)
+  private saveVersion(docId: string, kind: DocKind, rawBytes: Uint8Array, source: VersionSource, note: string): VersionRow {
+    // docx：id 手术后再落版 —— 权威文件自带持久 id（DESIGN.md §4.1）。
+    const withIds = kind === 'docx' ? ensureDocxParaIds(rawBytes) : { bytes: rawBytes, stats: null }
+    if (withIds.stats && (withIds.stats.assigned > 0 || withIds.stats.reassigned > 0)) {
+      console.log(`[office] doc ${docId}: paraId assigned=${withIds.stats.assigned} reassigned=${withIds.stats.reassigned}`)
+    }
+    const bytes = withIds.bytes
+
+    // id 存活率：与落版前的 head 投影对比（对照 = 被覆盖掉的那一版）。
+    const prev = this.store.getDoc(docId)
+    const prevProjection = prev && prev.head_seq > 0 ? this.store.getProjection(docId, prev.head_seq)?.projection : undefined
+    const projection = buildProjection(kind, bytes)
+    const survival = computeIdSurvival(prevProjection, projection)
+
+    const version = this.store.addVersion(docId, sha256(bytes), source, note,
+      survival === null ? undefined : { id_survival: survival })
     const path = this.versionFile(docId, version.seq, kind)
     mkdirSync(join(this.versionsDir, docId), { recursive: true })
     writeFileSync(path, bytes)
+    this.store.setProjection(docId, version.seq, projection)
     return version
   }
 
   importUpload(docId: string, kind: DocKind, bytes: Uint8Array): VersionRow {
+    // 上传（含用 Word/PowerPoint 改完再传回）= 一次用户保存：落新版本 + 重新导入投影。
     return this.saveVersion(docId, kind, bytes, 'upload', '上传')
   }
 
@@ -81,5 +100,16 @@ export class DocFiles {
     const doc = this.store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
     return readFileSync(this.versionFile(docId, seq, doc.kind))
+  }
+
+  /**
+   * 回合前清理工作区辅助脚本：防止模型重跑上一轮留下的 build_*.py 把文件整篇重新生成。
+   * 只清根目录脚本与日志；保留 .venv（PIP_NO_INDEX 下装不回来）与权威文件。
+   */
+  cleanWorkspaceScripts(docId: string): void {
+    const dir = this.workspaceDir(docId)
+    for (const name of readdirSync(dir)) {
+      if (/\.(py|sh|log)$/i.test(name)) rmSync(join(dir, name), { force: true })
+    }
   }
 }

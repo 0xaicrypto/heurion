@@ -61,6 +61,17 @@ export function buildApi(deps: ApiDeps): Hono {
     })
   })
 
+  // 版本投影（S1）：前端预览/diff/锚点定位的统一数据源。
+  app.get('/api/docs/:id/projection', c => {
+    const doc = store.getDoc(c.req.param('id'))
+    if (!doc) return c.json({ error: 'not found' }, 404)
+    const seqParam = c.req.query('seq')
+    const seq = seqParam ? Number(seqParam) : doc.head_seq
+    const row = store.getProjection(doc.id, seq)
+    if (!row) return c.json({ error: 'no projection' }, 404)
+    return c.json({ doc_id: doc.id, seq, projection: row.projection })
+  })
+
   app.get('/api/docs/:id/versions/:seq/file', c => {
     const doc = store.getDoc(c.req.param('id'))
     const seq = Number(c.req.param('seq'))
