@@ -3,7 +3,6 @@ import { Transform } from 'prosemirror-transform'
 import type { CommentRow } from '../store/db.ts'
 import { indexById } from './ids.ts'
 import { plainText } from './markdown.ts'
-import { schema } from './schema.ts'
 
 /**
  * 评论锚点（PLATFORM.md §4.1）：有文字的锚点是 comment(thread) mark，挂在 Yjs 文本上，
@@ -21,14 +20,21 @@ export interface AnchorLocation {
 /** 文档中每条线程 mark 覆盖的块与文字。 */
 export function threadMarks(doc: PMNode): Map<string, { node_ids: string[]; text: string }> {
   const out = new Map<string, { node_ids: string[]; text: string }>()
-  doc.descendants(node => {
-    if (!node.isTextblock || !node.attrs.id) return true
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true
+    // 文本块自己没有 id（deck 形状里的段落）：归到最近的带 id 的祖先
+    let id = node.attrs.id as string | null | undefined
+    if (!id) {
+      const $pos = doc.resolve(pos)
+      for (let d = $pos.depth; d > 0 && !id; d--) id = $pos.node(d).attrs.id as string | null | undefined
+    }
+    if (!id) return false
     node.forEach(child => {
       for (const m of child.marks) {
         if (m.type.name !== 'comment') continue
         const thread = m.attrs.thread as string
         const entry = out.get(thread) ?? { node_ids: [], text: '' }
-        if (!entry.node_ids.includes(node.attrs.id as string)) entry.node_ids.push(node.attrs.id as string)
+        if (!entry.node_ids.includes(id!)) entry.node_ids.push(id!)
         entry.text += child.isText ? child.text : ''
         out.set(thread, entry)
       }
@@ -63,23 +69,30 @@ export function attachComment(doc: PMNode, nodeId: string, snippet: string, thre
   if (node.isTextblock) textblocks.push({ node, pos })
   else node.descendants((n, p) => { if (n.isTextblock) textblocks.push({ node: n, pos: pos + 1 + p }); return !n.isTextblock })
   if (textblocks.length === 0) return { doc, snippet: '' }
-  const mark = schema.marks.comment!.create({ thread })
+  // 用文档自己的 schema（doc / deck 各有一套）
+  const mark = doc.type.schema.marks.comment!.create({ thread })
   const tr = new Transform(doc)
-  if (!snippet) {
+  const whole = () => {
     for (const tb of textblocks) if (tb.node.content.size > 0) tr.addMark(tb.pos + 1, tb.pos + tb.node.nodeSize - 1, mark)
     return { doc: tr.doc, snippet: plainText(node).slice(0, 200) }
   }
+  if (!snippet.trim()) return whole()
+  // 在整个块（可能有多个段落、换行）的文字里找，忽略空白与换行：浏览器选区跨段落时带的是换行
+  let text = ''
+  const positions: number[] = []
   for (const tb of textblocks) {
-    let text = ''
-    const offsets: number[] = []
     tb.node.forEach((child, offset) => {
       if (!child.isText) return
-      for (let i = 0; i < child.text!.length; i++) { text += child.text![i]; offsets.push(tb.pos + 1 + offset + i) }
+      for (let i = 0; i < child.text!.length; i++) {
+        if (/\s/.test(child.text![i]!)) continue
+        text += child.text![i]
+        positions.push(tb.pos + 1 + offset + i)
+      }
     })
-    const at = text.indexOf(snippet)
-    if (at === -1) continue
-    tr.addMark(offsets[at]!, offsets[at + snippet.length - 1]! + 1, mark)
-    return { doc: tr.doc, snippet }
   }
-  throw new AnchorError(`块 ${nodeId} 中找不到选中的文字`)
+  const needle = snippet.replace(/\s+/g, '')
+  const at = text.indexOf(needle)
+  if (at === -1) throw new AnchorError(`块 ${nodeId} 中找不到选中的文字`)
+  tr.addMark(positions[at]!, positions[at + needle.length - 1]! + 1, mark)
+  return { doc: tr.doc, snippet: snippet.trim() }
 }

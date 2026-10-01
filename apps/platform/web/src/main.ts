@@ -406,8 +406,8 @@ function renderComments(): void {
       ${c.replies.map((r: any) => `<div class="reply ${r.role}"><b>${r.role === 'ai' ? 'Heurion' : '我'}</b>：${esc(r.text)}</div>`).join('')}
       <div class="row">
         ${c.status === 'open'
-          ? `<input type="text" placeholder="追问或补充（含 @heurion 自动处理）" data-reply><button data-act="reply">回复</button><button data-act="ask" class="ai">让 AI 处理</button><button data-act="resolve">关闭</button>`
-          : `<span class="muted">已关闭（${c.resolved_by === 'ai' ? 'AI' : '我'}）</span><button data-act="reopen">重新打开</button>`}
+          ? `<input type="text" placeholder="追问或补充（含 @heurion 自动处理）" data-reply><button data-act="reply">回复</button><button data-act="ask" class="ai">让 AI 处理</button><button data-act="resolve">关闭</button><button data-act="delete" title="删除评论">删除</button>`
+          : `<span class="muted">已关闭（${c.resolved_by === 'ai' ? 'AI' : '我'}）</span><button data-act="reopen">重新打开</button><button data-act="delete" title="删除评论">删除</button>`}
       </div>
     </div>`).join('')
 }
@@ -426,6 +426,9 @@ $('comments').onclick = async e => {
     } else if (btn.dataset.act === 'ask') {
       await api(`/api/docs/${session.docId}/comments/${cid}/ask?async=1`, { method: 'POST', body: JSON.stringify({ text, suggest: $<HTMLInputElement>('suggestMode').checked }) })
       switchTab('chatPane')
+    } else if (btn.dataset.act === 'delete') {
+      if (!confirm('删除这条评论？')) return
+      await api(`/api/docs/${session.docId}/comments/${cid}`, { method: 'DELETE' })
     } else {
       await api(`/api/docs/${session.docId}/comments/${cid}/${btn.dataset.act}`, { method: 'POST' })
     }

@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono'
+import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
@@ -337,9 +338,17 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const body = await c.req.json<{ node_id?: string; snippet?: string; text?: string }>()
     if (!body.node_id || !body.text?.trim()) return c.json({ error: 'node_id 与 text 必填' }, 400)
     const comment = store.addComment({ doc_id: row.id, node_id: body.node_id, snippet: body.snippet ?? '' })
+    let anchored: ReturnType<typeof attachComment>
     try {
-      const anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id)
+      try {
+        anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id)
+      } catch (err) {
+        // 选中的文字对不上（例如跨了不可编辑的内容）：退化为锚定整块，评论照常创建
+        if (!(err instanceof AnchorError) || !docs.get(row.id) || !body.snippet) throw err
+        anchored = attachComment(docs.get(row.id), body.node_id, '', comment.id)
+      }
       docs.commit(row.id, anchored.doc, { actor: 'user', turnId: null, ops: [{ op: 'comment', thread: comment.id }] })
+      store.db.prepare('UPDATE comments SET snippet = ? WHERE id = ?').run(anchored.snippet, comment.id)
     } catch (err) {
       store.db.prepare('DELETE FROM comments WHERE id = ?').run(comment.id)
       if (err instanceof AnchorError) return c.json({ error: err.message }, 400)
@@ -347,7 +356,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
     store.addReply(comment.id, 'user', body.text.trim())
     // @heurion：评论即指令，自动排队处理
-    if (wantsAi(body.text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, comment.id))
+    if (wantsAi(body.text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, comment.id, row.kind))
     return c.json({ ...store.getComment(row.id, comment.id), queued: wantsAi(body.text) }, 201)
   })
 
@@ -357,7 +366,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const { text } = await c.req.json<{ text?: string }>()
     if (!text?.trim()) return c.json({ error: 'text 必填' }, 400)
     const reply = store.addReply(c.req.param('cid'), 'user', text.trim())
-    if (wantsAi(text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, c.req.param('cid')))
+    if (wantsAi(text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, c.req.param('cid'), row.kind))
     return c.json({ ...reply, queued: wantsAi(text) }, 201)
   })
 
@@ -368,13 +377,26 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json({ ok: store.setCommentStatus(row.id, c.req.param('cid'), resolve ? 'resolved' : 'open', resolve ? 'user' : null) })
   })
 
+  /** 删除评论：去掉正文里的锚点标记与线程。 */
+  app.delete('/api/docs/:id/comments/:cid', c => {
+    const row = owned(c)
+    const cid = c.req.param('cid')
+    if (!row || !store.getComment(row.id, cid)) return c.json({ error: 'not found' }, 404)
+    const doc = docs.get(row.id)
+    const tr = new Transform(doc)
+    tr.removeMark(0, doc.content.size, doc.type.schema.marks.comment!.create({ thread: cid }))
+    docs.commit(row.id, tr.doc, { actor: 'user', turnId: null, ops: [{ op: 'delete_comment', thread: cid }] })
+    store.db.prepare('DELETE FROM comments WHERE doc_id = ? AND id = ?').run(row.id, cid)
+    return c.json({ ok: true })
+  })
+
   /** 让 AI 处理这条评论（可附追问）。 */
   app.post('/api/docs/:id/comments/:cid/ask', async c => {
     const row = owned(c)
     if (!row || !store.getComment(row.id, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json<{ text?: string; suggest?: boolean }>().catch(() => ({} as { text?: string; suggest?: boolean }))
     if (body.text?.trim()) store.addReply(c.req.param('cid'), 'user', body.text.trim())
-    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid')), { suggest: body.suggest })
+    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid'), row.kind), { suggest: body.suggest })
   })
 
   // —— 对话 ——

@@ -141,3 +141,22 @@ describe('deck：导出 XML 结构', () => {
     expect(errors).toEqual([])
   })
 })
+
+describe('deck：评论锚点', () => {
+  it('选区跨段落与换行（浏览器选区带换行）也能锚定，标记用 deck 自己的 schema', async () => {
+    const { attachComment, locate } = await import('../src/model/anchors.ts')
+    const { deckSchema } = await import('../src/model/deck-schema.ts')
+    const t = newDeck()
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, title: 'SELECT 试验', body: '- x' }] }, { actor: 'ai', turnId: null })
+    const title = shapesOf(t, 1).find(s => s.ph === 'title')!.id
+    // 标题形状里放两段，第二段带换行
+    t.ops.edit({ doc_id: t.docId, base_rev: 1, mode: 'apply', ops: [{ op: 'set_text', shape_id: title, markdown: 'SELECT 试验\n\n司美格鲁肽用于无糖尿病的<br>超重/肥胖心血管病患者' }] }, { actor: 'user', turnId: null })
+    const c = t.store.addComment({ doc_id: t.docId, node_id: title, snippet: '' })
+    const anchored = attachComment(t.docs.get(t.docId), title, 'SELECT 试验\n司美格鲁肽用于无糖尿病的\n超重/肥胖心血管病患者', c.id)
+    t.docs.commit(t.docId, anchored.doc, { actor: 'user', turnId: null, ops: [] })
+    let marked = ''
+    t.docs.get(t.docId).descendants(n => { if (n.isText && n.marks.some(m => m.type === deckSchema.marks.comment)) marked += n.text; return true })
+    expect(marked).toBe('SELECT 试验司美格鲁肽用于无糖尿病的超重/肥胖心血管病患者')
+    expect(locate(t.docs.get(t.docId), { ...c, snippet: 'x' }).located).toBe(true)
+  })
+})

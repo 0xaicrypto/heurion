@@ -4,12 +4,15 @@ import { mapNotification, type UiEvent } from '../harness/events.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import type { TurnRegistry } from '../mcp/turns.ts'
 
-/** 评论触发回合的提示（服务端组装，前端不拼自然语言）。 */
-export function commentPrompt(docId: string, commentId: string): string {
+/** 评论触发回合的提示（服务端组装，前端不拼自然语言）。幻灯片与文档用不同的读写工具。 */
+export function commentPrompt(docId: string, commentId: string, kind: 'doc' | 'deck' = 'doc'): string {
+  const edit = kind === 'deck'
+    ? `2. 锚点 node_ids 是形状 id：用 doc_outline 找到它所在的页，slide_read 读这一页，用 deck_edit（replace_text 或 set_text，沿用原格式）完成修改，改完用 layout_check 检查是否溢出；\n`
+    : `2. 按锚点所在块 id 用 doc_read 读取上下文，用 doc_edit 完成修改；\n`
   return (
     `请处理文档 ${docId} 中的评论 ${commentId}：\n` +
     `1. comments_list（doc_id="${docId}", comment_id="${commentId}"）读取锚点与要求；\n` +
-    `2. 按锚点所在块 id 用 doc_read 读取上下文，用 doc_edit 完成修改；\n` +
+    edit +
     `3. 用 comment_reply 说明改了什么、改在哪（线程留给用户确认后关闭）；确实无需改动时说明原因后 comment_resolve。\n` +
     `只处理这一条评论。`
   )
