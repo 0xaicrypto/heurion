@@ -20,6 +20,9 @@ export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).
  * 与上一版投影对比得 id 存活率，写进版本 meta。
  */
 export class DocFiles {
+  /** 编辑器文件内评论同步完成（user/upload 落版时）——@heurion 自动触发扫描挂这里。 */
+  onFileCommentsSynced: (docId: string, commentIds: string[]) => void = () => {}
+
   constructor(
     private readonly store: Store,
     private readonly workspacesDir: string,
@@ -71,8 +74,12 @@ export class DocFiles {
     this.store.setProjection(docId, version.seq, projection)
     // 锚点漂移审计：每次落版后重跑（upload / user / AI / restore 同一入口，S2）。
     auditCommentAnchors(this.store, docId, version.seq, projection)
-    // 编辑器文件内评论 → 评论表（"选中即评论"的同步路径，S4）。
-    if (kind === 'docx') syncFileComments(this.store, docId, bytes)
+    // 编辑器文件内评论 → 评论表（docx/pptx 通用）；
+    // user 主动落版后一律交给自动触发扫描（scan 自带水位去重；
+    // 去重保存也扫——覆盖「旧线程补 @heurion」的死角；AI 自身保存不触发，防自召唤循环）。
+    if (source === 'user' || source === 'upload') {
+      this.onFileCommentsSynced(docId, syncFileComments(this.store, docId, bytes).commentIds)
+    }
     return version
   }
 

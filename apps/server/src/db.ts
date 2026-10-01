@@ -87,6 +87,8 @@ export interface CommentRow {
   drifted: boolean
   created_at: string
   replies: CommentReplyRow[]
+  /** 最近一次 @heurion 自动触发时的最新用户回复 id（null = 从未触发）。 */
+  last_auto_reply_id: string | null
 }
 
 const SCHEMA = `
@@ -141,6 +143,8 @@ CREATE TABLE IF NOT EXISTS comments (
   resolved_by TEXT CHECK (resolved_by IN ('user','ai')),
   drifted INTEGER NOT NULL DEFAULT 0,
   file_comment_id TEXT,
+  /** 最近一次自动触发（@heurion）时的最新用户回复 id —— 防重复触发。 */
+  last_auto_reply_id TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS comment_replies (
@@ -159,6 +163,9 @@ function migrate(db: DatabaseSync): void {
   const commentCols = (db.prepare('PRAGMA table_info(comments)').all() as Array<{ name: string }>).map(c => c.name)
   if (commentCols.length > 0 && !commentCols.includes('file_comment_id')) {
     db.exec('ALTER TABLE comments ADD COLUMN file_comment_id TEXT')
+  }
+  if (commentCols.length > 0 && !commentCols.includes('last_auto_reply_id')) {
+    db.exec('ALTER TABLE comments ADD COLUMN last_auto_reply_id TEXT')
   }
 }
 
@@ -259,7 +266,7 @@ export class Store {
   /** 双重过滤（id + docId）——防跨文档枚举。 */
   getComment(docId: string, commentId: string): CommentRow | undefined {
     const row = this.db.prepare('SELECT * FROM comments WHERE id = ? AND doc_id = ?').get(commentId, docId) as
-      { id: string; doc_id: string; kind: DocKind; anchor: string; status: 'open' | 'resolved'; resolved_by: 'user' | 'ai' | null; drifted: number; created_at: string } | undefined
+      { id: string; doc_id: string; kind: DocKind; anchor: string; status: 'open' | 'resolved'; resolved_by: 'user' | 'ai' | null; drifted: number; file_comment_id: string | null; last_auto_reply_id: string | null; created_at: string } | undefined
     if (!row) return undefined
     const replies = (this.db.prepare('SELECT * FROM comment_replies WHERE comment_id = ? ORDER BY created_at, rowid').all(commentId) as unknown as CommentReplyRow[])
     let anchor: CommentAnchor = { text_snippet: '' }
@@ -267,6 +274,7 @@ export class Store {
     return {
       id: row.id, doc_id: row.doc_id, kind: row.kind, anchor, status: row.status,
       resolved_by: row.resolved_by, drifted: row.drifted === 1, created_at: row.created_at, replies,
+      last_auto_reply_id: row.last_auto_reply_id,
     }
   }
 
@@ -303,6 +311,19 @@ export class Store {
 
   setCommentDrift(commentId: string, drifted: boolean): void {
     this.db.prepare('UPDATE comments SET drifted = ? WHERE id = ?').run(drifted ? 1 : 0, commentId)
+  }
+
+  /** 记录 @heurion 自动触发水位（最新用户回复 id），防同一回复重复触发。 */
+  markAutoTriggered(commentId: string, replyId: string): void {
+    this.db.prepare('UPDATE comments SET last_auto_reply_id = ? WHERE id = ?').run(replyId, commentId)
+  }
+
+  /** 删除线程（回复随 FK 级联）。 */
+  deleteComment(docId: string, commentId: string): boolean {
+    const comment = this.getComment(docId, commentId)
+    if (!comment) return false
+    this.db.prepare('DELETE FROM comments WHERE id = ?').run(commentId)
+    return true
   }
 
   addMessage(docId: string, role: MessageRow['role'], text: string): void {

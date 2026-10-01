@@ -9,11 +9,26 @@ import { canonicalFileName, type DocFiles } from './workspace.ts'
 
 export class BusyError extends Error {}
 
+/** 评论触发回合的服务端 prompt（手动「请 AI 处理」与 @heurion 自动触发共用）。 */
+export function buildCommentPrompt(cid: string): string {
+  return (
+    `请处理评论 ${cid}。步骤：\n` +
+    `1. 用 list_comments（comment_id="${cid}"）读取该线程的锚点与用户要求；\n` +
+    `2. 按锚点（漂移时用候选文本）在工作区文件里定位目标内容，完成用户要求的修改；\n` +
+    `3. 若修改涉及检索文献，按引用规范走 pubmed_search / insert_citation；\n` +
+    `4. 完成后用 reply_comment 在线程内说明改了什么、改在哪；确实无需改动才允许 resolve_comment。\n` +
+    `只处理这一条评论，不要动它以外的内容。`
+  )
+}
+
 /**
  * 一个 AI 回合：清工作区脚本 → 写入 head → dsh 执行 → 引用/锚点审计 → 合并落版。
  * 引用校验不过时让模型自修一次；仍不过则丢弃本轮文件改动（工作区回到 head）。
  */
 export class TurnService {
+  /** 回合结束回调（@heurion 自动触发队列接力用）。 */
+  onTurnEnd: (docId: string) => void = () => {}
+
   constructor(
     private readonly store: Store,
     private readonly files: DocFiles,
@@ -21,6 +36,14 @@ export class TurnService {
   ) {}
 
   async run(docId: string, message: string, emit: (e: UiEvent) => void, opts: { commentId?: string } = {}): Promise<void> {
+    try {
+      await this._run(docId, message, emit, opts)
+    } finally {
+      this.onTurnEnd(docId)
+    }
+  }
+
+  private async _run(docId: string, message: string, emit: (e: UiEvent) => void, opts: { commentId?: string } = {}): Promise<void> {
     const commentId = opts.commentId
     const doc = this.store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)

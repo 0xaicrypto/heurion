@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { CommentAnchor } from '../src/db.ts'
 import type { Projection } from '../src/docs/office.ts'
 import { auditCommentAnchors, locateAnchor } from '../src/docs/comments.ts'
+import { CommentAutomation } from '../src/docs/comment-automation.ts'
+import { syncFileComments, wantsAi } from '../src/docs/office-comments.ts'
 import { commentToolHandlers } from '../src/literature/mcp.ts'
 import { Store } from '../src/db.ts'
+import { strFromU8, strToU8, zipSync } from 'fflate'
 
 const proj = (nodes: Array<{ id: string; text: string }>): Projection => ({
   nodes: nodes.map(n => ({ ...n, kind: 'paragraph' as const })),
@@ -122,5 +125,94 @@ describe('锚点定位与漂移审计', () => {
 
     // 再跑一遍幂等
     expect(auditCommentAnchors(store, 'd1', 2, p2)).toHaveLength(1)
+  })
+})
+
+describe('@heurion 自动触发', () => {
+  function fakeTurns() {
+    return { ran: [] as Array<string | undefined> }
+  }
+  const tick = () => new Promise(r => setTimeout(r, 10))
+
+  it('wantsAi：@heurion 大小写不敏感；普通评论不触发', () => {
+    expect(wantsAi('@heurion 请补充 RCT')).toBe(true)
+    expect(wantsAi('请 @Heurion 处理')).toBe(true)
+    expect(wantsAi('普通意见')).toBe(false)
+  })
+
+  it('含触发词的评论自动跑回合；同一回复不重复触发；新回复再次触发', async () => {
+    const store = new Store(':memory:')
+    store.createDoc('d', 'Paper', 'docx')
+    const turns = fakeTurns()
+    const auto = new CommentAutomation(store, { run: async (_d: string, _m: string, _e: never, o?: { commentId?: string }) => { turns.ran.push(o?.commentId) } } as never)
+
+    const c = store.addComment('d', { text_snippet: '研究背景' })
+    store.addReply('d', c.id, 'user', '@heurion 这段要补 RCT')
+    auto.scan('d', [c.id])
+    await tick()
+    expect(turns.ran).toEqual([c.id])
+
+    // 同一回复重复扫描 → 不再触发
+    auto.scan('d', [c.id])
+    await tick()
+    expect(turns.ran).toEqual([c.id])
+
+    // 用户追加了新的 @heurion 回复 → 再次触发
+    const r2 = store.addReply('d', c.id, 'user', '@heurion 还要补荟萃分析')
+    auto.scan('d', [c.id])
+    await tick()
+    expect(turns.ran).toEqual([c.id, c.id])
+    expect(store.getComment('d', c.id)!.last_auto_reply_id).toBe(r2.id)
+
+    // 不带触发词的回复 → 不触发
+    store.addReply('d', c.id, 'user', '好的，谢谢')
+    auto.scan('d', [c.id])
+    await tick()
+    expect(turns.ran).toHaveLength(2)
+  })
+
+  it('忙时排队，回合结束接力', async () => {
+    const store = new Store(':memory:')
+    store.createDoc('d', 'Paper', 'docx')
+    const order: string[] = []
+    const releases: Array<() => void> = []
+    const auto = new CommentAutomation(store, {
+      run: async (_d: string, _m: string, _e: never, o?: { commentId?: string }) => {
+        order.push(o?.commentId ?? '?')
+        await new Promise<void>(r => releases.push(r))
+      },
+    } as never)
+
+    const c1 = store.addComment('d', { text_snippet: '一' })
+    store.addReply('d', c1.id, 'user', '@heurion 改一')
+    const c2 = store.addComment('d', { text_snippet: '二' })
+    store.addReply('d', c2.id, 'user', '@heurion 改二')
+    auto.scan('d', [c1.id, c2.id])
+    await tick()
+    expect(order).toEqual([c1.id]) // 第一个在跑，第二个排队
+    expect(auto.pendingCount('d')).toBe(1)
+
+    releases.shift()!() // 第一回合结束 → drain 的 finally 自递归接力
+    await tick()
+    expect(order).toEqual([c1.id, c2.id])
+    releases.shift()!()
+    await tick()
+  })
+})
+
+describe('pptx 文件内评论同步', () => {
+  it('legacy p:cm（ppt/comments/commentN.xml）→ 按页号锚定 slide_id', () => {
+    const store = new Store(':memory:')
+    store.createDoc('d', 'Deck', 'pptx')
+    const cm = `<?xml version="1.0"?><p:cmLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cm id="1" authorIdx="0" dt="1"><a:t type="body">@heurion 这一页换个更直接的标题</a:t></p:cm><p:cm id="2" authorIdx="0" dt="2"><a:t type="body">普通批注</a:t></p:cm></p:cmLst>`
+    const bytes = zipSync({ 'ppt/comments/comment2.xml': strToU8(cm) })
+    const r = syncFileComments(store, 'd', bytes)
+    expect(r.imported).toBe(2)
+    const [c1, c2] = store.listComments('d')
+    expect(c1!.anchor.slide_id).toBe('ppt/slides/slide2.xml')
+    expect(c1!.anchor.text_snippet).toBe('@heurion 这一页换个更直接的标题')
+    expect(c2!.status).toBe('open')
+    // 重复同步去重
+    expect(syncFileComments(store, 'd', bytes).imported).toBe(0)
   })
 })

@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { relative } from 'node:path'
 import { getRequestListener } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { CommentAutomation } from './docs/comment-automation.ts'
 import { config } from './config.ts'
 import { Store } from './db.ts'
 import { TurnService } from './docs/turn.ts'
@@ -17,13 +18,16 @@ const store = new Store(config.dbPath)
 const files = new DocFiles(store, config.workspacesDir, config.versionsDir)
 const pool = new HarnessPool(config, id => files.workspaceDir(id))
 const turns = new TurnService(store, files, pool)
+const automation = new CommentAutomation(store, turns)
+turns.onTurnEnd = id => automation.handleTurnEnd(id)
+files.onFileCommentsSynced = (docId, ids) => { if (automation.scan(docId, ids) > 0) console.log(`[automation] doc ${docId}: @heurion queued`) }
 const literature = {
   store,
   pubmed: new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail),
   crossref: new CrossrefClient(fetch, config.contactEmail),
   secret: config.secret,
 }
-const app = buildApi({ store, files, pool, turns, devToken: config.devToken })
+const app = buildApi({ store, files, pool, turns, automation, devToken: config.devToken })
 app.route('/', buildWopi({ store, files, pool, config }))
 // 容器里由 server 直接托管前端构建产物（WEB_DIST）；本地开发走 vite dev server。
 if (process.env.WEB_DIST) app.use('*', serveStatic({ root: relative(process.cwd(), process.env.WEB_DIST) }))

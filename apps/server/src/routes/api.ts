@@ -3,6 +3,8 @@ import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DocKind, Store } from '../db.ts'
 import { auditCommentAnchors, locateAnchor } from '../docs/comments.ts'
+import type { CommentAutomation } from '../docs/comment-automation.ts'
+import { buildCommentPrompt } from '../docs/turn.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import { BusyError, type TurnService } from '../docs/turn.ts'
 import type { DocFiles } from '../docs/workspace.ts'
@@ -12,6 +14,7 @@ export interface ApiDeps {
   files: DocFiles
   pool: HarnessPool
   turns: TurnService
+  automation: CommentAutomation
   devToken: string
 }
 
@@ -135,6 +138,8 @@ export function buildApi(deps: ApiDeps): Hono {
       text_snippet: snippet ?? '',
     })
     if (comment) store.addReply(docId, row.id, 'user', comment)
+    // @heurion 自动触发（评论即指令）
+    deps.automation.scan(docId, [row.id])
     return c.json(row, 201)
   })
 
@@ -143,7 +148,9 @@ export function buildApi(deps: ApiDeps): Hono {
     const { text } = await c.req.json<{ text?: string }>()
     if (!text?.trim()) return c.json({ error: 'text required' }, 400)
     if (!store.getComment(docId, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
-    return c.json(store.addReply(docId, c.req.param('cid'), 'user', text.trim()), 201)
+    const reply = store.addReply(docId, c.req.param('cid'), 'user', text.trim())
+    deps.automation.scan(docId, [c.req.param('cid')])
+    return c.json(reply, 201)
   })
 
   app.post('/api/docs/:id/comments/:cid/resolve', c => {
@@ -158,6 +165,11 @@ export function buildApi(deps: ApiDeps): Hono {
     return c.json({ ok: store.reopenComment(docId, c.req.param('cid')) })
   })
 
+  app.delete('/api/docs/:id/comments/:cid', c => {
+    const docId = c.req.param('id')
+    return c.json({ ok: store.deleteComment(docId, c.req.param('cid')) })
+  })
+
   // 评论触发 AI 回合（S3）：prompt 由服务端组装，前端不拼自然语言。
   app.post('/api/docs/:id/comments/:cid/process', c => {
     const docId = c.req.param('id')
@@ -165,14 +177,7 @@ export function buildApi(deps: ApiDeps): Hono {
     if (!store.getDoc(docId)) return c.json({ error: 'not found' }, 404)
     if (!store.getComment(docId, cid)) return c.json({ error: 'not found' }, 404)
     if (pool.isBusy(docId)) return c.json({ error: 'AI 正在编辑这份文档' }, 409)
-    const prompt =
-      `请处理评论 ${cid}。步骤：\n` +
-      `1. 用 list_comments（comment_id="${cid}"）读取该线程的锚点与用户要求；\n` +
-      `2. 按锚点（漂移时用候选文本）在工作区文件里定位目标内容，完成用户要求的修改；\n` +
-      `3. 若修改涉及检索文献，按引用规范走 pubmed_search / insert_citation；\n` +
-      `4. 完成后用 reply_comment 在线程内说明改了什么、改在哪；确实无需改动才允许 resolve_comment。\n` +
-      `只处理这一条评论，不要动它以外的内容。`
-    return streamTurn(c, deps, docId, prompt, { commentId: cid })
+    return streamTurn(c, deps, docId, buildCommentPrompt(cid), { commentId: cid })
   })
 
   app.post('/api/docs/:id/cancel', async c => {

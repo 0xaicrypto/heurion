@@ -285,6 +285,7 @@ function CommentsPanel({ docId, kind, comments, running, processing, onProcess, 
         <button className="comment-head" onClick={() => setExpanded(p => ({ ...p, [c.id]: !isExpanded }))}>
           <span className={`chip ${c.status === 'open' ? 'chip-open' : 'chip-done'}`}>{c.status === 'open' ? '待处理' : '已关闭'}</span>
           {c.drifted && <span className="chip chip-warn">漂移</span>}
+          {c.last_auto_reply_id && <span className="chip chip-auto">@heurion</span>}
           <span className="ellipsis quote-preview">{c.anchor.text_snippet || '（整文档指令）'}</span>
         </button>
         {isExpanded && (
@@ -334,8 +335,8 @@ function CommentsPanel({ docId, kind, comments, running, processing, onProcess, 
     <div className="comments-pane">
       <p className="hint guide">
         {kind === 'docx'
-          ? '主入口：在右侧编辑器里选中文字 → 工具栏评论图标 → 写评论 → 保存（Ctrl+S），线程会出现在这里。'
-          : '主入口：在编辑器或下方画布评审里点选形状添加评论。'}
+          ? '主入口：在编辑器里选中文字 → Comment → 写「@heurion + 要求」→ Ctrl+S 保存，AI 自动处理（落版后编辑器自动刷新）。不带 @heurion 的评论用下面的按钮手动处理。'
+          : '主入口：在编辑器/下方画布里给形状加评论，评论里写「@heurion + 要求」→ 保存后 AI 自动处理。'}
       </p>
       {open.map(thread)}
       {resolved.map(thread)}

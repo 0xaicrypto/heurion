@@ -34,6 +34,12 @@ export function locateAnchor(anchor: CommentAnchor, projection: Projection): Anc
   const targetId = anchor.para_id ?? anchor.shape_id
   const target = targetId ? nodes.find(n => n.id === targetId) : undefined
 
+  // pptx 页级锚点（编辑器原生评论落在页上）：页在即定位。
+  if (!targetId && anchor.slide_id) {
+    const slide = (projection.slides ?? []).find(s => s.id === anchor.slide_id)
+    return slide ? { located: true } : { located: false }
+  }
+
   // 纯片段锚点（无固定目标 id）：片段在文中任何位置即视为定位。
   if (!targetId) return { located: fullText(nodes).includes(snippet) }
 

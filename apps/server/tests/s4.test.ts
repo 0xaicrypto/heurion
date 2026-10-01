@@ -35,7 +35,8 @@ describe('编辑器文件内评论同步', () => {
     expect(r1.imported).toBe(1)
     const row = store.listComments('d')[0]!
     expect(row.anchor.para_id).toBe('AAAA0001')
-    expect(row.anchor.text_snippet).toBe('这段需要补 RCT')
+    // 锚点 = 范围文字（文档里被评论的内容）；评论内容 = 指令，进回复
+    expect(row.anchor.text_snippet).toBe('与意义')
     expect(row.replies).toEqual([{ id: expect.any(String), comment_id: row.id, role: 'user', text: '这段需要补 RCT', created_at: expect.any(String) }])
 
     const r2 = syncFileComments(store, 'd', docx(body, commentsXml))

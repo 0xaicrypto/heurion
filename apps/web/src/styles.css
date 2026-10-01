@@ -101,6 +101,7 @@ a { color: var(--accent); }
 .quote-preview { flex: 1; min-width: 0; font-size: 12px; color: var(--text-secondary); }
 .chip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); flex-shrink: 0; }
 .chip-open { background: var(--soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.chip-auto { background: var(--author-ai-soft); color: var(--author-ai); border-color: transparent; }
 .chip-done { background: var(--soft); color: var(--muted); }
 .chip-warn { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
 .chip-ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }

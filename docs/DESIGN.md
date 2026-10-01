@@ -247,6 +247,8 @@ MCP 工具（docId 从文档令牌派生；评论按 id + docId 双重过滤，�
 
 流程：评论创建 → 触发回合 → 模型读锚点 → dsh 改文件 → `reply_comment` → 快照合并 → `comment_updates` 事件 → 前端刷新线程与高亮。
 
+**@heurion 自动触发（评论即指令，2026-10-01）**：评论文本（或线程最新 user 回复）里写 `@heurion` = 直接召唤 AI——用户在编辑器里评论 + 保存（PutFile）→ `office-comments.ts` 同步进评论表 → `CommentAutomation` 扫描并自动触发回合，**前端不再需要"请 AI 处理"按钮**（保留作手动兜底）。纪律：水位 `last_auto_reply_id` 防重复触发；仅 user/upload 落版后扫描（AI 自身保存不触发，防自召唤循环）；队列深度 ≤5、FIFO、回合结束接力。docx 锚点 = **评论范围文字**（commentRangeStart/End 之间），评论内容进回复；pptx 页级锚点（slide part）在 locateAnchor 直判页存在。已知局限：编辑器内对同一线程的追问会生成新的 w:comment → 新线程（OOXML 评论线程不回写 AI 回复，避免双源）。
+
 ### 5.5 锚点保护
 
 - **软门**：人设纪律，删除或整替内容前先 `list_comments` 核对该范围的 open 评论；会清空锚点时先 `reply_comment` 说明，或缩小改法保留锚点原文。
@@ -271,6 +273,7 @@ MCP 工具（docId 从文档令牌派生；评论按 id + docId 双重过滤，�
 - **评论主入口在编辑器里**：用户在 Collabora 选中内容插入原生评论（落 `word/comments.xml`），保存（PutFile）后由 `office-comments.ts` 同步进评论表（锚点 = 所在段落 paraId）；右栏评论面板承接「请 AI 处理 / 回复 / 关闭」。pptx 走评审画布点形状加评论（锚 shapeId）。
 - **看到 AI 正在编辑**：AI 回合落版后 head 的 `LastModifiedTime` 变化，CODE 的外部变更检测在用户无未保存修改时自动重载文档——无需前端干预。
 - 交互、状态、样式 token 以 [前端 Mock](mock/README.md) 为准；语义 token：author-ai 单强调色、diff 三态（added 绿 / removed 红 / modified accent）、锚点两态（accent / warning）、暗色跟随。
+- **编辑器内 UI 一致性（待做，#5 follow-up）**：CODE 支持 coolwsd 主题配置（logo/主色/帮助链接）与 Custom Button API（注入"@heurion 处理"自定义按钮）。POC 先用默认皮肤；S4 收尾时做：主题 token 对齐 + 编辑器内一键召唤按钮。
 
 | 区 | doc | deck |
 | --- | --- | --- |

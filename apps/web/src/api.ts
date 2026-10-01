@@ -20,6 +20,8 @@ export interface Comment {
   status: 'open' | 'resolved'; resolved_by: 'user' | 'ai' | null; drifted: boolean
   created_at: string; replies: CommentReply[]
   located?: boolean; candidates?: Array<{ id: string; text: string }>
+  /** 最近一次 @heurion 自动触发时的用户回复 id（非 null = 已配置自动处理）。 */
+  last_auto_reply_id?: string | null
 }
 
 export type UiEvent =
