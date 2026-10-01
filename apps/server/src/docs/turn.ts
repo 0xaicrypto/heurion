@@ -88,6 +88,7 @@ export class TurnService {
       let finalText = first.finalResponse
 
       let audit = this.audit(docId)
+      emit({ type: 'citation_audit', ...audit }) // 通过/不通过都推（前端展示"校验通过"）
       if (!audit.ok) {
         emit({ type: 'citation_audit', ...audit })
         const fix = await turn(

@@ -43,6 +43,14 @@ export function buildApi(deps: ApiDeps): Hono {
   app.get('/api/docs', c => c.json(store.listDocs()))
 
   app.post('/api/docs', async c => {
+    // JSON（程序/API 调用）与 multipart（上传）都收。
+    if (c.req.header('content-type')?.includes('application/json')) {
+      const body = await c.req.json<{ title?: string; kind?: string }>()
+      const kind: DocKind | null = body.kind === 'pptx' ? 'pptx' : body.kind === 'docx' ? 'docx' : null
+      if (!kind) return c.json({ error: 'kind 必须是 docx / pptx' }, 400)
+      const doc = store.createDoc(randomUUID(), body.title?.trim() || '未命名', kind)
+      return c.json(store.getDoc(doc.id), 201)
+    }
     const form = await c.req.parseBody()
     const file = form.file instanceof File ? form.file : null
     const kind = file ? kindFromName(file.name) : (form.kind === 'pptx' ? 'pptx' : form.kind === 'docx' ? 'docx' : null)
