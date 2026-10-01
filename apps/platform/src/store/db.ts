@@ -93,9 +93,21 @@ export interface TurnRow {
   user_id: string
   doc_id: string | null
   message: string
-  status: 'running' | 'done' | 'error' | 'cancelled'
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
   started_at: string
   ended_at: string | null
+  /** 未正常完成时的原因（报错文字 / 超时 / 取消说明）。 */
+  error: string | null
+}
+
+export interface QueuedJobRow {
+  id: string
+  user_id: string
+  doc_id: string
+  message: string
+  /** TurnOptions 的 JSON。 */
+  opts: string
+  enqueued_at: string
 }
 
 export interface MessageRow {
@@ -173,13 +185,20 @@ export class Store {
       );
       CREATE TABLE IF NOT EXISTS turns (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc_id TEXT, message TEXT NOT NULL, status TEXT NOT NULL,
-        started_at TEXT NOT NULL, ended_at TEXT
+        started_at TEXT NOT NULL, ended_at TEXT, error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS turn_queue (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+        message TEXT NOT NULL, opts TEXT NOT NULL, enqueued_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, role TEXT NOT NULL,
         text TEXT NOT NULL, turn_id TEXT, created_at TEXT NOT NULL
       );
     `)
+    // 旧库补列：回合失败 / 超时 / 取消的原因
+    const turnCols = (this.db.prepare('PRAGMA table_info(turns)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!turnCols.includes('error')) this.db.exec('ALTER TABLE turns ADD COLUMN error TEXT')
   }
 
   // —— 文档 ——
@@ -450,8 +469,34 @@ export class Store {
     return this.db.prepare('SELECT * FROM turns WHERE id = ?').get(id) as unknown as TurnRow
   }
 
-  endTurn(id: string, status: TurnRow['status']): void {
-    this.db.prepare('UPDATE turns SET status = ?, ended_at = ? WHERE id = ?').run(status, now(), id)
+  endTurn(id: string, status: TurnRow['status'], error: string | null = null): void {
+    this.db.prepare('UPDATE turns SET status = ?, ended_at = ?, error = ? WHERE id = ?').run(status, now(), error, id)
+  }
+
+  /** 文档里没有正常完成的回合（对话记录里标出失败原因）。 */
+  failedTurns(docId: string): Array<Pick<TurnRow, 'id' | 'status' | 'error' | 'ended_at'>> {
+    return this.db.prepare("SELECT id, status, error, ended_at FROM turns WHERE doc_id = ? AND status NOT IN ('done', 'running') ORDER BY started_at")
+      .all(docId) as unknown as Array<Pick<TurnRow, 'id' | 'status' | 'error' | 'ended_at'>>
+  }
+
+  // —— 回合队列（持久化：服务重启后排队中的任务继续执行） ——
+
+  enqueueJob(job: QueuedJobRow): void {
+    this.db.prepare('INSERT INTO turn_queue (id, user_id, doc_id, message, opts, enqueued_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(job.id, job.user_id, job.doc_id, job.message, job.opts, job.enqueued_at)
+  }
+
+  dequeueJob(id: string): void {
+    this.db.prepare('DELETE FROM turn_queue WHERE id = ?').run(id)
+  }
+
+  listQueuedJobs(): QueuedJobRow[] {
+    return this.db.prepare('SELECT * FROM turn_queue ORDER BY enqueued_at, rowid').all() as unknown as QueuedJobRow[]
+  }
+
+  /** 服务启动时：上次进程里没跑完的回合标为 interrupted。 */
+  interruptRunningTurns(): number {
+    return Number(this.db.prepare("UPDATE turns SET status = 'interrupted', ended_at = ?, error = '服务重启，回合被中断' WHERE status = 'running'").run(now()).changes)
   }
 
   addMessage(docId: string, role: 'user' | 'assistant', text: string, turnId: string | null): MessageRow {

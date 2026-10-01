@@ -3,6 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
+import { devUserFor } from './auth.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -24,7 +25,7 @@ const docs = new Documents(store)
 const ops = new OpService(docs)
 const registry = new TurnRegistry()
 const pool = new HarnessPool(config)
-const turns = new TurnService(docs, pool, registry)
+const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs })
 const postcheck = new PostCheck(docs)
 
 const pubmed = new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail)
@@ -65,8 +66,10 @@ const server = createServer((req, res) => {
   void api(req, res)
 })
 
-attachCollab(server, { docs, authenticate: token => token === config.devToken ? config.devUser : null })
+attachCollab(server, { docs, authenticate: token => devUserFor(token, config.devToken, config.devUser) })
 
+const restored = turns.restore()
+if (restored.interrupted || restored.requeued) console.log(`回合队列：${restored.interrupted} 个中断，${restored.requeued} 个继续排队`)
 server.listen(config.port, () => {
   console.log(`heurion platform on http://127.0.0.1:${config.port}`)
   if (!config.deepseekApiKey) console.warn('DEEPSEEK_API_KEY 未设置：AI 回合会失败')

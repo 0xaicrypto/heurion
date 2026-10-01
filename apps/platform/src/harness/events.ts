@@ -5,7 +5,7 @@ export type UiEvent =
   | { type: 'turn'; turn_id: string; message: string }
   /** 排队中（同一用户的上一回合还没结束）。 */
   | { type: 'queued'; position: number; message: string }
-  | { type: 'turn_done'; turn_id: string; status: 'done' | 'error' | 'cancelled'; docs: string[] }
+  | { type: 'turn_done'; turn_id: string; status: 'done' | 'error' | 'cancelled' | 'timeout'; docs: string[] }
   | { type: 'status'; status: 'running' | 'idle' }
   | { type: 'reasoning'; text: string }
   | { type: 'assistant'; text: string }

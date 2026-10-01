@@ -6,7 +6,8 @@
 import { strToU8, zipSync } from 'fflate'
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:8787'
-const TOKEN = process.env.HEURION_DEV_TOKEN || 'dev'
+// 独立的测试用户：e2e 的回合不进手工测试用户的队列
+const TOKEN = `${process.env.HEURION_DEV_TOKEN || 'dev'}:e2e`
 const H = { Authorization: `Bearer ${TOKEN}` }
 
 interface Turn { ms: number; events: Array<Record<string, any>>; calls: string[]; errors: string[] }
@@ -161,6 +162,16 @@ let deckId = ''
   const d10 = await api(`/api/docs/${deck.id}/deck`)
   const titles = (d10.doc.content as any[]).map(s => JSON.stringify(s))
   check('幻灯片：插入新页并修改已有页', titles.length === 4 && titles[2]!.includes('安全性') && titles[0]!.includes('SELECT 试验解读 · 2026'), summary(t10))
+
+  // 整形状评论：选中「研究设计」页的正文形状整体评论，AI 整体改写后锚点仍覆盖该形状
+  const design = (d10.doc.content as any[])[1]
+  const shapeText = (s: any): string => s.type === 'text' ? s.text : (s.content ?? []).map(shapeText).join('')
+  const bodyShape = (design.content as any[]).filter(s => s.type === 'shape' && s.attrs.kind === 'text').sort((a, b) => shapeText(b).length - shapeText(a).length)[0]
+  const wc = await api(`/api/docs/${deck.id}/comments`, { method: 'POST', body: JSON.stringify({ node_id: bodyShape.attrs.id, snippet: '', text: '这个形状里的内容全部改成英文' }) })
+  const t11 = await turn(`/api/docs/${deck.id}/comments/${wc.id}/ask`, {})
+  const c11 = (await api(`/api/docs/${deck.id}`)).comments.find((c: any) => c.id === wc.id)
+  const after = shapeText((((await api(`/api/docs/${deck.id}/deck`)).doc.content as any[])[1].content as any[]).find(s => s.attrs?.id === bodyShape.attrs.id) ?? {})
+  check('幻灯片：整形状评论改写后锚点仍在、内容已改成英文', c11.anchor.located && after.length > 0 && !/[\u4e00-\u9fff]/.test(after) && c11.replies.some((r: any) => r.role === 'ai'), `${summary(t11)} · ${after.slice(0, 80)}`)
 }
 
 // —— 10. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——

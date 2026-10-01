@@ -33,6 +33,8 @@ export const config = {
   /** dsh 进程回连平台 MCP 的地址。 */
   mcpUrl: env('HEURION_MCP_URL', `http://127.0.0.1:${port}/mcp`),
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),
+  /** 回合无响应超时：模型 / 工具连续这么久没有任何动静，自动停止该回合，放行队列。 */
+  turnIdleTimeoutMs: Number(env('TURN_IDLE_TIMEOUT_MS', String(5 * 60_000))),
 }
 
 export type Config = typeof config

@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
+import { devUserFor } from '../auth.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
@@ -46,12 +47,13 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const store = docs.store
   const app = new Hono<{ Variables: { user: string } }>()
 
-  // 开发期鉴权：单一令牌映射到单一用户（M2 换成账户体系）。EventSource / <img> 用 ?token=。
+  // 开发期鉴权（见 auth.ts）。EventSource / <img> 用 ?token=。
   app.use('/api/*', async (c, next) => {
     const header = c.req.header('authorization')
     const token = header?.startsWith('Bearer ') ? header.slice(7) : c.req.query('token')
-    if (token !== deps.devToken) return c.json({ error: 'unauthorized' }, 401)
-    c.set('user', deps.devUser)
+    const user = devUserFor(token, deps.devToken, deps.devUser)
+    if (!user) return c.json({ error: 'unauthorized' }, 401)
+    c.set('user', user)
     await next()
   })
 
@@ -119,6 +121,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       busy: turns.isBusy(c.get('user')),
       versions: store.listVersions(row.id),
       messages: store.listMessages(row.id),
+      failed_turns: store.failedTurns(row.id),
       suggestions: pendingGroups(doc),
       claim_checks: store.listClaimChecks(row.id),
       revertable: [...new Set(store.listMessages(row.id).map(m => m.turn_id).filter((t): t is string => !!t))].filter(t => docs.canRevertTurn(row.id, t)),
@@ -335,18 +338,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/comments', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const body = await c.req.json<{ node_id?: string; snippet?: string; text?: string }>()
+    const body = await c.req.json<{ node_id?: string; snippet?: string; paragraph?: number; text?: string }>()
     if (!body.node_id || !body.text?.trim()) return c.json({ error: 'node_id 与 text 必填' }, 400)
     const comment = store.addComment({ doc_id: row.id, node_id: body.node_id, snippet: body.snippet ?? '' })
-    let anchored: ReturnType<typeof attachComment>
     try {
-      try {
-        anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id)
-      } catch (err) {
-        // 选中的文字对不上（例如跨了不可编辑的内容）：退化为锚定整块，评论照常创建
-        if (!(err instanceof AnchorError) || !docs.get(row.id) || !body.snippet) throw err
-        anchored = attachComment(docs.get(row.id), body.node_id, '', comment.id)
-      }
+      const anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id, body.paragraph)
       docs.commit(row.id, anchored.doc, { actor: 'user', turnId: null, ops: [{ op: 'comment', thread: comment.id }] })
       store.db.prepare('UPDATE comments SET snippet = ? WHERE id = ?').run(anchored.snippet, comment.id)
     } catch (err) {
@@ -356,7 +352,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
     store.addReply(comment.id, 'user', body.text.trim())
     // @heurion：评论即指令，自动排队处理
-    if (wantsAi(body.text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, comment.id, row.kind))
+    if (wantsAi(body.text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, comment.id, row.kind), undefined, { commentId: comment.id })
     return c.json({ ...store.getComment(row.id, comment.id), queued: wantsAi(body.text) }, 201)
   })
 
@@ -366,7 +362,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const { text } = await c.req.json<{ text?: string }>()
     if (!text?.trim()) return c.json({ error: 'text 必填' }, 400)
     const reply = store.addReply(c.req.param('cid'), 'user', text.trim())
-    if (wantsAi(text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, c.req.param('cid'), row.kind))
+    if (wantsAi(text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, c.req.param('cid'), row.kind), undefined, { commentId: c.req.param('cid') })
     return c.json({ ...reply, queued: wantsAi(text) }, 201)
   })
 
@@ -396,7 +392,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!row || !store.getComment(row.id, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json<{ text?: string; suggest?: boolean }>().catch(() => ({} as { text?: string; suggest?: boolean }))
     if (body.text?.trim()) store.addReply(c.req.param('cid'), 'user', body.text.trim())
-    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid'), row.kind), { suggest: body.suggest })
+    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid'), row.kind), { suggest: body.suggest, commentId: c.req.param('cid') })
   })
 
   // —— 对话 ——
@@ -407,6 +403,13 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const { message, suggest } = await c.req.json<{ message?: string; suggest?: boolean }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
     return streamTurn(c, deps, row.id, message.trim(), { suggest })
+  })
+
+  // 任务队列：正在执行的一个 + 排队中的；可逐个取消
+  app.get('/api/queue', c => c.json(turns.view(c.get('user'))))
+  app.post('/api/queue/:jid/cancel', async c => {
+    const ok = await turns.cancelJob(c.get('user'), c.req.param('jid'))
+    return ok ? c.json({ ok: true }) : c.json({ error: '任务已结束或不存在' }, 404)
   })
 
   app.post('/api/cancel', async c => {
