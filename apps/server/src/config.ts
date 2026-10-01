@@ -24,7 +24,8 @@ export const config = {
   secret: env('HEURION_SECRET', 'dev-secret-not-for-production-use!'),
   devToken: env('HEURION_DEV_TOKEN', 'dev'),
   provider: env('DSH_PROVIDER', 'deepseek-official'),
-  model: env('DSH_MODEL', 'deepseek-v4-flash'),
+  /** V4.1-Flash（模型名 deepseek-flash）：原生多模态（旧名 v4-flash 不收图，2026-09 起均路由到此）。 */
+  model: env('DSH_MODEL', 'deepseek-flash'),
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
   primaryRuntime: process.env.DSH_PRIMARY_RUNTIME ?? '',
   ncbiApiKey: process.env.NCBI_API_KEY ?? '',

@@ -8,7 +8,7 @@ export interface Doc {
   updated_at: string
 }
 
-export interface Version { seq: number; source: 'upload' | 'ai' | 'restore'; note: string; created_at: string }
+export interface Version { seq: number; source: 'upload' | 'user' | 'ai' | 'restore'; note: string; created_at: string; meta?: { id_survival?: number | null } }
 export interface Message { id: number; role: 'user' | 'assistant'; text: string }
 export interface Citation { doi: string; formatted: string }
 export interface DocDetail extends Doc { busy: boolean; versions: Version[]; messages: Message[]; citations: Citation[] }
@@ -75,7 +75,7 @@ export const api = {
   getEditor: (id: string) => fetch(`/api/docs/${id}/editor`, { headers: auth }).then(r => json<{ urlsrc: string; access_token: string; wopisrc: string }>(r)),
   getProjection: (id: string, seq?: number) =>
     fetch(`/api/docs/${id}/projection${seq ? `?seq=${seq}` : ''}`, { headers: auth }).then(r => json<{ seq: number; projection: Projection }>(r)),
-  createComment: (id: string, input: { text_snippet?: string; text?: string }) =>
+  createComment: (id: string, input: { text_snippet?: string; text?: string; shape_id?: string; slide_id?: string }) =>
     fetch(`/api/docs/${id}/comments`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }).then(r => json<Comment>(r)),
   replyComment: (id: string, cid: string, text: string) =>
     fetch(`/api/docs/${id}/comments/${cid}/replies`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }).then(r => json<CommentReply>(r)),

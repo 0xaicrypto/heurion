@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Comment, type Doc, type DocDetail, type DocKind, type Projection, type ProjectionNode, type UiEvent } from './api.ts'
+import { api, type Comment, type Doc, type DocDetail, type DocKind, type Projection, type ProjectionNode, type UiEvent, type Version } from './api.ts'
 
 interface LiveStep { kind: 'reasoning' | 'assistant' | 'tool' | 'notice' | 'error'; text: string }
 
-const SOURCE_LABEL = { upload: '上传', ai: 'AI', restore: '回滚' } as const
+const SOURCE_META: Record<Version['source'], { label: string; cls: string }> = {
+  upload: { label: '上传', cls: 'src-upload' },
+  user: { label: '手动', cls: 'src-user' },
+  ai: { label: 'AI', cls: 'src-ai' },
+  restore: { label: '回滚', cls: 'src-restore' },
+}
 
 export function App() {
   const [docs, setDocs] = useState<Doc[]>([])
@@ -26,11 +31,11 @@ function Sidebar({ docs, activeId, onSelect, onCreated }: {
   const create = async (kind: DocKind) => onCreated(await api.createDoc({ title: kind === 'docx' ? '新文档' : '新幻灯片', kind }))
   return (
     <aside className="sidebar">
-      <h1>Heurion 2.0</h1>
+      <h1><span className="logo">H</span>Heurion 2.0</h1>
       <div className="row">
-        <button onClick={() => void create('docx')}>+ Word</button>
-        <button onClick={() => void create('pptx')}>+ PPT</button>
-        <button onClick={() => fileRef.current?.click()}>上传</button>
+        <button className="btn" onClick={() => void create('docx')}>+ Word</button>
+        <button className="btn" onClick={() => void create('pptx')}>+ PPT</button>
+        <button className="btn ghost" onClick={() => fileRef.current?.click()}>上传</button>
         <input ref={fileRef} type="file" accept=".docx,.pptx" hidden onChange={async e => {
           const file = e.target.files?.[0]
           if (file) onCreated(await api.createDoc({ file }))
@@ -41,12 +46,14 @@ function Sidebar({ docs, activeId, onSelect, onCreated }: {
         {docs.map(d => (
           <li key={d.id}>
             <button className={d.id === activeId ? 'active' : ''} onClick={() => onSelect(d.id)}>
-              <span className="badge">{d.kind === 'docx' ? 'W' : 'P'}</span>{d.title}
-              <span className="muted"> v{d.head_seq}</span>
+              <span className={`badge ${d.kind}`}>{d.kind === 'docx' ? 'W' : 'P'}</span>
+              <span className="doc-title">{d.title}</span>
+              <span className="muted">v{d.head_seq}</span>
             </button>
           </li>
         ))}
       </ul>
+      <footer className="muted small">评论驱动的并行协作编辑 · 执行层 dsh</footer>
     </aside>
   )
 }
@@ -57,11 +64,10 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
   const [live, setLive] = useState<LiveStep[]>([])
-  /** 评论触发的回合：线程 id → 处理中。 */
   const [processing, setProcessing] = useState<Record<string, boolean>>({})
-  const [inEditor, setInEditor] = useState(false)
-  /** 版本对比展开的 seq（null = 收起）。 */
+  const [tab, setTab] = useState<'comments' | 'versions' | 'citations'>('comments')
   const [diffSeq, setDiffSeq] = useState<number | null>(null)
+
   const reloadComments = useCallback(() => api.listComments(docId).then(r => setComments(r.comments)), [docId])
   const reload = useCallback(() => api.getDoc(docId).then(d => { setDoc(d); setRunning(d.busy) }), [docId])
   useEffect(() => { void reload(); void reloadComments() }, [reload, reloadComments])
@@ -76,7 +82,10 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
       case 'citation_audit': return push(e.ok
         ? { kind: 'notice', text: '引用校验通过' }
         : { kind: 'error', text: `未登记的 DOI：${e.unregisteredDois.join(', ')}` })
-      case 'version': return push({ kind: 'notice', text: `已保存为 v${e.seq}` })
+      case 'version':
+        push({ kind: 'notice', text: `已保存为 v${e.seq}（编辑器将自动刷新）` })
+        void reload()
+        return
       case 'id_survival_warning': return push({ kind: 'error', text: `疑似整文重写（id 存活率 ${(e.rate * 100).toFixed(0)}%），评论锚点可能失效` })
       case 'comment_updates':
         void reloadComments()
@@ -86,13 +95,21 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
         void reloadComments()
         const parts: string[] = []
         if (e.applied.length > 0) parts.push(`合并 ${e.applied.length} 处 AI 改动`)
-        if (e.overridden.length > 0) parts.push(`你手动更新的 ${e.overridden.length} 处保留了你的版本（AI 改动已丢弃）`)
+        if (e.overridden.length > 0) parts.push(`你手动更新的 ${e.overridden.length} 处保留了你的版本`)
         if (parts.length > 0) push({ kind: 'notice', text: `并行合并：${parts.join('；')}` })
         return
       }
       case 'error': return push({ kind: 'error', text: e.message })
       default: return
     }
+  }
+
+  const finishTurn = async () => {
+    setRunning(false)
+    setLive(prev => prev.filter(s => s.kind === 'error' || s.kind === 'notice'))
+    await reload()
+    await reloadComments()
+    onChanged()
   }
 
   const send = async () => {
@@ -106,12 +123,7 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
     } catch (err) {
       onEvent({ type: 'error', message: (err as Error).message })
     } finally {
-      setRunning(false)
-      // 过程步骤随回合结束收起，错误与保存结果保留到下一次发送
-      setLive(prev => prev.filter(s => s.kind === 'error' || s.kind === 'notice'))
-      await reload()
-      await reloadComments()
-      onChanged()
+      await finishTurn()
     }
   }
 
@@ -127,83 +139,267 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
       onEvent({ type: 'error', message: (err as Error).message })
     } finally {
       setProcessing(prev => ({ ...prev, [cid]: false }))
-      setRunning(false)
-      setLive(prev => prev.filter(s => s.kind === 'error' || s.kind === 'notice'))
-      await reload()
-      await reloadComments()
-      onChanged()
+      await finishTurn()
     }
   }
 
   if (!doc) return <div className="empty">加载中…</div>
   const head = doc.versions[0]
-  if (inEditor) {
-    return <EditorOverlay docId={docId} title={doc.title} onClose={() => { setInEditor(false); void reload(); void reloadComments(); onChanged() }} />
-  }
   return (
     <main className="workspace">
+      {/* 中栏：对话（AI 过程可视化） */}
       <section className="chat">
-        <header>
+        <header className="pane-head">
           <strong>{doc.title}</strong>
-          <span className="row">
-            {head && <button onClick={() => setInEditor(true)}>编辑器</button>}
-            {head
-              ? <a className="button" href={api.downloadUrl(doc.id, head.seq)}>下载 v{head.seq}</a>
-              : <span className="muted">还没有文件，让 AI 起草一份</span>}
-          </span>
+          <span className="muted small">{head ? `v${head.seq}` : '无版本'}</span>
         </header>
         <div className="messages">
           {doc.messages.map(m => <div key={m.id} className={`msg ${m.role}`}>{m.text}</div>)}
           {live.map((s, i) => <div key={`l${i}`} className={`step ${s.kind}`}>{s.text}</div>)}
-          {running && <div className="step notice">AI 正在编辑…</div>}
+          {running && <div className="step notice">AI 正在编辑…（改动落版后编辑器自动刷新）</div>}
         </div>
         <form className="composer" onSubmit={e => { e.preventDefault(); void send() }}>
           <textarea
             value={input}
-            placeholder={doc.kind === 'docx' ? '例如：把讨论部分改得更精炼，并补充两篇支持性文献' : '例如：新增一页总结主要终点结果'}
+            placeholder={doc.kind === 'docx' ? '对 AI 下整体指令，例如：把讨论部分改得更精炼' : '例如：新增一页总结主要终点结果'}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send() }}
           />
           {running
-            ? <button type="button" onClick={() => void api.cancel(docId)}>停止</button>
-            : <button type="submit" disabled={!input.trim()}>发送</button>}
+            ? <button type="button" className="btn danger" onClick={() => void api.cancel(docId)}>停止</button>
+            : <button type="submit" className="btn primary" disabled={!input.trim()}>发送</button>}
         </form>
       </section>
+
+      {/* 编辑器：常驻（Collabora iframe），AI 落版后由外部变更检测自动刷新 */}
+      <section className="editor">
+        {head
+          ? <EditorPane docId={docId} title={doc.title} headSeq={head.seq} />
+          : <div className="editor-empty">
+              <p>还没有文件。</p>
+              <p className="muted">在左侧对话里说一句需求，让 AI 起草全文（引用会自动走文献库）；<br />或点右上角「上传」导入现有 docx/pptx。</p>
+            </div>}
+      </section>
+
+      {/* 右栏：评论 / 版本 / 引用 */}
       <aside className="panel">
-        <CommentsPanel docId={docId} comments={comments} running={running} processing={processing}
-          onProcess={cid => void processComment(cid)} onChanged={() => void reloadComments()} />
-        <h2>版本</h2>
-        <ul className="versions">
-          {doc.versions.map(v => (
-            <li key={v.seq}>
-              <span>v{v.seq} · {SOURCE_LABEL[v.source]}</span>
-              <span className="muted ellipsis" title={v.note}>{v.note}</span>
-              <span className="actions">
-                <a href={api.downloadUrl(doc.id, v.seq)}>下载</a>
-                {v.seq > 1 && <button className="link" onClick={() => setDiffSeq(diffSeq === v.seq ? null : v.seq)}>{diffSeq === v.seq ? '收起' : '对比'}</button>}
-                {v.seq !== head?.seq && !running && (
-                  <button className="link" onClick={async () => { await api.restore(doc.id, v.seq); await reload(); await reloadComments(); onChanged() }}>回滚</button>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-        {diffSeq && <DiffView docId={docId} kind={doc.kind} seq={diffSeq} />}
-        {doc.kind === 'pptx' && head && (
-          <>
-            <h2>画布评审</h2>
-            <DeckCanvas docId={docId} headSeq={head.seq} comments={comments} />
-          </>
-        )}
-        <h2>引用（{doc.citations.length}）</h2>
-        <ol className="citations">{doc.citations.map(c => <li key={c.doi}>{c.formatted}</li>)}</ol>
+        <nav className="tabs">
+          <button className={tab === 'comments' ? 'on' : ''} onClick={() => setTab('comments')}>
+            评论{openCount(comments) > 0 && <span className="tab-badge">{openCount(comments)}</span>}
+          </button>
+          <button className={tab === 'versions' ? 'on' : ''} onClick={() => setTab('versions')}>版本</button>
+          <button className={tab === 'citations' ? 'on' : ''} onClick={() => setTab('citations')}>引用 {doc.citations.length}</button>
+        </nav>
+        <div className="pane-body">
+          {tab === 'comments' && (
+            <CommentsPanel docId={docId} kind={doc.kind} comments={comments} running={running} processing={processing}
+              onProcess={cid => void processComment(cid)} onChanged={() => void reloadComments()} />
+          )}
+          {tab === 'versions' && (
+            <VersionsPanel doc={doc} comments={comments} running={running} diffSeq={diffSeq} setDiffSeq={setDiffSeq}
+              onRestore={async seq => { await api.restore(doc.id, seq); await finishTurn() }}
+              onChanged={() => { void reloadComments(); void reload() }} />
+          )}
+          {tab === 'citations' && (
+            <ol className="citations">{doc.citations.map(c => <li key={c.doi}>{c.formatted}</li>)}</ol>
+          )}
+        </div>
       </aside>
     </main>
   )
 }
 
-/** 版本对比（S5 评审面）：与上一版投影按 id 三态 diff。 */
-function DiffView({ docId, kind, seq }: { docId: string; kind: DocKind; seq: number }) {
+const openCount = (cs: Comment[]) => cs.filter(c => c.status === 'open').length
+
+/** 编辑器面板：Collabora iframe 常驻；表单提交 access_token（WOPI 标准嵌入）。 */
+function EditorPane({ docId, title, headSeq }: { docId: string; title: string; headSeq: number }) {
+  const [info, setInfo] = useState<{ urlsrc: string; access_token: string; wopisrc: string } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    setInfo(null); setErr(null)
+    api.getEditor(docId).then(setInfo).catch(e => setErr((e as Error).message))
+  }, [docId])
+  useEffect(() => {
+    if (!info) return
+    const t = setTimeout(() => formRef.current?.submit(), 150)
+    return () => clearTimeout(t)
+  }, [info])
+  return (
+    <div className="editor-inner">
+      <div className="pane-head editor-bar">
+        <strong>{title}</strong>
+        <span className="muted small">在编辑器里选中内容添加评论，保存后自动进入评论队列</span>
+        <a className="btn ghost small" href={api.downloadUrl(docId, headSeq)}>下载</a>
+      </div>
+      {err
+        ? <div className="editor-empty">
+            <p>{err}</p>
+            <button className="btn" onClick={() => { void api.getEditor(docId).then(setInfo).catch(e => setErr((e as Error).message)) }}>重试</button>
+          </div>
+        : !info
+          ? <div className="editor-empty"><p>编辑器加载中…</p></div>
+          : <>
+            <form ref={formRef}
+              action={`${info.urlsrc}WOPISrc=${encodeURIComponent(info.wopisrc)}&title=${encodeURIComponent(title)}`}
+              method="post" target="coolframe" style={{ display: 'none' }}>
+              <input type="hidden" name="access_token" value={info.access_token} />
+              <input type="hidden" name="access_token_ttl" value="0" />
+            </form>
+            <iframe name="coolframe" title="Collabora" className="editor-frame" />
+          </>}
+    </div>
+  )
+}
+
+/** 评论面板：编辑器内评论是主入口；线程卡 + 请 AI 处理 + 回复/关闭。 */
+function CommentsPanel({ docId, kind, comments, running, processing, onProcess, onChanged }: {
+  docId: string
+  kind: DocKind
+  comments: Comment[]
+  running: boolean
+  processing: Record<string, boolean>
+  onProcess: (cid: string) => void
+  onChanged: () => void
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [fallback, setFallback] = useState({ snippet: '', text: '' })
+  const open = comments.filter(c => c.status === 'open')
+  const resolved = comments.filter(c => c.status === 'resolved')
+
+  const createFallback = async () => {
+    const s = fallback.snippet.trim()
+    const t = fallback.text.trim()
+    if (!s && !t) return
+    await api.createComment(docId, { text_snippet: s || undefined, text: t || undefined })
+    setFallback({ snippet: '', text: '' })
+    onChanged()
+  }
+
+  const thread = (c: Comment) => {
+    const isExpanded = expanded[c.id] ?? c.status === 'open'
+    const busy = processing[c.id]
+    return (
+      <li key={c.id} className={`card comment ${c.status} ${c.drifted ? 'drifted' : ''}`}>
+        <button className="comment-head" onClick={() => setExpanded(p => ({ ...p, [c.id]: !isExpanded }))}>
+          <span className={`chip ${c.status === 'open' ? 'chip-open' : 'chip-done'}`}>{c.status === 'open' ? '待处理' : '已关闭'}</span>
+          {c.drifted && <span className="chip chip-warn">漂移</span>}
+          <span className="ellipsis quote-preview">{c.anchor.text_snippet || '（整文档指令）'}</span>
+        </button>
+        {isExpanded && (
+          <div className="comment-body">
+            {c.anchor.text_snippet && <blockquote className="anchor-quote">{c.anchor.text_snippet}</blockquote>}
+            {c.located === false && c.candidates && c.candidates.length > 0 && (
+              <p className="hint">锚点漂移，候选位置：{c.candidates.map(x => x.text.slice(0, 30)).join(' / ')}</p>
+            )}
+            <ul className="replies">
+              {c.replies.map(r => (
+                <li key={r.id} className={`bubble ${r.role}`}>{r.text}</li>
+              ))}
+            </ul>
+            {c.status === 'open' && (
+              <div className="comment-actions">
+                <input
+                  className="reply-input" placeholder="回复这条评论…"
+                  value={drafts[c.id] ?? ''}
+                  onChange={e => setDrafts(p => ({ ...p, [c.id]: e.target.value }))}
+                  onKeyDown={async e => {
+                    if (e.key === 'Enter' && (drafts[c.id] ?? '').trim()) {
+                      await api.replyComment(docId, c.id, (drafts[c.id] ?? '').trim())
+                      setDrafts(p => ({ ...p, [c.id]: '' }))
+                      onChanged()
+                    }
+                  }}
+                />
+                <button className="btn primary small" disabled={busy || running} onClick={() => onProcess(c.id)}>
+                  {busy ? 'AI 处理中…' : '请 AI 处理'}
+                </button>
+                <button className="btn ghost small" onClick={async () => { await api.resolveComment(docId, c.id); onChanged() }}>关闭</button>
+              </div>
+            )}
+            {c.status === 'resolved' && (
+              <div className="comment-actions">
+                <span className="muted small">由 {c.resolved_by === 'ai' ? 'AI' : '你'} 关闭</span>
+                <button className="btn ghost small" onClick={async () => { await api.reopenComment(docId, c.id); onChanged() }}>重新打开</button>
+              </div>
+            )}
+          </div>
+        )}
+      </li>
+    )
+  }
+
+  return (
+    <div className="comments-pane">
+      <p className="hint guide">
+        {kind === 'docx'
+          ? '主入口：在右侧编辑器里选中文字 → 工具栏评论图标 → 写评论 → 保存（Ctrl+S），线程会出现在这里。'
+          : '主入口：在编辑器或下方画布评审里点选形状添加评论。'}
+      </p>
+      {open.map(thread)}
+      {resolved.map(thread)}
+      {comments.length === 0 && <p className="muted small center">还没有评论</p>}
+      <details className="fallback">
+        <summary className="muted small">没有编辑器也能加评论（输入锚点片段）</summary>
+        <div className="fallback-body">
+          <input placeholder="锚点片段（正文里已有的字串）" value={fallback.snippet} onChange={e => setFallback(f => ({ ...f, snippet: e.target.value }))} />
+          <input placeholder="要求 AI 做什么（可留空只标记位置）" value={fallback.text} onChange={e => setFallback(f => ({ ...f, text: e.target.value }))}
+            onKeyDown={e => { if (e.key === 'Enter') void createFallback() }} />
+          <button className="btn small" onClick={() => void createFallback()}>+ 添加评论</button>
+        </div>
+      </details>
+    </div>
+  )
+}
+
+/** 版本面板：来源徽标 + 锚点连续率 + 对比 diff + 回滚（+ deck 画布评审）。 */
+function VersionsPanel({ doc, comments, running, diffSeq, setDiffSeq, onRestore, onChanged }: {
+  doc: DocDetail
+  comments: Comment[]
+  running: boolean
+  diffSeq: number | null
+  setDiffSeq: (v: number | null) => void
+  onRestore: (seq: number) => Promise<void>
+  onChanged: () => void
+}) {
+  const head = doc.versions[0]
+  return (
+    <div>
+      <ul className="versions">
+        {doc.versions.map(v => {
+          const rate = v.meta?.id_survival
+          return (
+            <li key={v.seq} className="version-row">
+              <span className={`chip src ${SOURCE_META[v.source].cls}`}>{SOURCE_META[v.source].label}</span>
+              <span className="ver-seq">v{v.seq}</span>
+              <span className="ellipsis ver-note" title={v.note}>{v.note}</span>
+              <span className="actions">
+                {rate !== undefined && rate !== null && (
+                  <span className={`chip small-chip ${rate < 0.8 ? 'chip-warn' : 'chip-ok'}`}>锚点 {Math.round(rate * 100)}%</span>
+                )}
+                {v.seq > 1 && (
+                  <button className="btn ghost small" onClick={() => setDiffSeq(diffSeq === v.seq ? null : v.seq)}>
+                    {diffSeq === v.seq ? '收起' : '对比'}
+                  </button>
+                )}
+                <a className="btn ghost small" href={api.downloadUrl(doc.id, v.seq)}>下载</a>
+                {v.seq !== head?.seq && !running && (
+                  <button className="btn ghost small" onClick={() => void onRestore(v.seq)}>回滚</button>
+                )}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+      {diffSeq && <DiffView docId={doc.id} seq={diffSeq} />}
+      {doc.kind === 'pptx' && head && <DeckCanvas docId={doc.id} headSeq={head.seq} comments={comments} onChanged={onChanged} />}
+    </div>
+  )
+}
+
+/** 版本对比：与上一版投影按 id 三态 diff。 */
+function DiffView({ docId, seq }: { docId: string; seq: number }) {
   const [rows, setRows] = useState<Array<{ state: 'added' | 'removed' | 'modified'; text: string }> | null>(null)
   const [err, setErr] = useState<string | null>(null)
   useEffect(() => {
@@ -212,26 +408,26 @@ function DiffView({ docId, kind, seq }: { docId: string; kind: DocKind; seq: num
       try {
         const now = await api.getProjection(docId, seq)
         const prev = await api.getProjection(docId, seq - 1)
-        const a = (p: Projection) => [...(p.nodes ?? []), ...(p.slides ?? []).flatMap(s => s.shapes)]
-        const prevById = new Map(a(prev.projection).map(n => [n.id, n]))
+        const flat = (p: Projection) => [...(p.nodes ?? []), ...(p.slides ?? []).flatMap(s => s.shapes)]
+        const prevById = new Map(flat(prev.projection).map(n => [n.id, n]))
         const out: Array<{ state: 'added' | 'removed' | 'modified'; text: string }> = []
-        for (const n of a(now.projection)) {
+        for (const n of flat(now.projection)) {
           const p = prevById.get(n.id)
           if (!p) out.push({ state: 'added', text: n.text })
           else if (p.text !== n.text) out.push({ state: 'modified', text: `${p.text.slice(0, 40)} → ${n.text.slice(0, 40)}` })
         }
-        const nowIds = new Set(a(now.projection).map(n => n.id))
-        for (const n of a(prev.projection)) if (!nowIds.has(n.id)) out.push({ state: 'removed', text: n.text })
+        const nowIds = new Set(flat(now.projection).map(n => n.id))
+        for (const n of flat(prev.projection)) if (!nowIds.has(n.id)) out.push({ state: 'removed', text: n.text })
         if (ok) setRows(out)
       } catch (e) { if (ok) setErr((e as Error).message) }
     })()
     return () => { ok = false }
   }, [docId, seq])
-  if (err) return <p className="muted small">diff 不可用：{err}</p>
+  if (err) return <p className="hint">diff 不可用：{err}</p>
   if (!rows) return <p className="muted small">计算 diff…</p>
   if (rows.length === 0) return <p className="muted small">v{seq - 1} → v{seq} 无文本变化</p>
   return (
-    <ul className="diff">
+    <ul className="diff card">
       {rows.map((r, i) => (
         <li key={i} className={`diff-${r.state}`}>
           <span>{r.state === 'added' ? '+' : r.state === 'removed' ? '−' : '~'}</span>{r.text}
@@ -241,14 +437,18 @@ function DiffView({ docId, kind, seq }: { docId: string; kind: DocKind; seq: num
   )
 }
 
-/** deck 评审画布（S5）：投影几何画形状 + 评论锚点两态 overlay + 三态 diff。DOM 实现，不依赖画布库。 */
+/** deck 评审画布：投影几何 + 评论锚点两态 overlay + 三态 diff + 点形状加评论。 */
 const SLIDE_W = 12192000
 const SLIDE_H = 6858000
 
-function DeckCanvas({ docId, headSeq, comments }: { docId: string; headSeq: number; comments: Comment[] }) {
+function DeckCanvas({ docId, headSeq, comments, onChanged }: {
+  docId: string; headSeq: number; comments: Comment[]; onChanged: () => void
+}) {
   const [proj, setProj] = useState<Projection | null>(null)
   const [prev, setPrev] = useState<Projection | null>(null)
   const [diffOn, setDiffOn] = useState(true)
+  const [pending, setPending] = useState<ProjectionNode | null>(null)
+  const [pendingText, setPendingText] = useState('')
   useEffect(() => {
     void api.getProjection(docId).then(r => setProj(r.projection)).catch(() => setProj(null))
     if (headSeq > 1) void api.getProjection(docId, headSeq - 1).then(r => setPrev(r.projection)).catch(() => setPrev(null))
@@ -265,12 +465,26 @@ function DeckCanvas({ docId, headSeq, comments }: { docId: string; headSeq: numb
   const openComments = comments.filter(c => c.status === 'open' && c.anchor.shape_id)
   const commentByShape = new Map(openComments.map(c => [c.anchor.shape_id!, c]))
 
+  const submitShapeComment = async () => {
+    if (!pending || !pendingText.trim()) return
+    await api.createComment(docId, {
+      text: pendingText.trim(),
+      shape_id: pending.id,
+      slide_id: (proj?.slides ?? []).find(s => s.shapes.some(x => x.id === pending.id))?.id,
+      text_snippet: pending.text || undefined,
+    })
+    setPending(null)
+    setPendingText('')
+    onChanged()
+  }
+
   if (!proj) return <p className="muted small">暂无画布投影</p>
   return (
-    <div>
-      {prev && (
-        <label className="muted small"><input type="checkbox" checked={diffOn} onChange={e => setDiffOn(e.target.checked)} /> 形状级 diff（对照上一版）</label>
-      )}
+    <div className="deck-canvas">
+      <div className="deck-bar">
+        {prev && <label className="muted small"><input type="checkbox" checked={diffOn} onChange={e => setDiffOn(e.target.checked)} /> 形状级 diff（对照上一版）</label>}
+        <span className="muted small">点形状加评论</span>
+      </div>
       {(proj.slides ?? []).map(slide => (
         <div key={slide.id} className="slide">
           <div className="slide-label">第 {slide.index} 页</div>
@@ -286,8 +500,8 @@ function DeckCanvas({ docId, headSeq, comments }: { docId: string; headSeq: numb
                 transform: g.rot ? `rotate(${g.rot}deg)` : undefined,
               } : undefined
               return (
-                <div key={sh.id} className={cls} style={style} title={sh.id}>
-                  {sh.kind === 'opaque' && !sh.text ? <span className="muted small">[无预览对象]</span> : sh.text}
+                <div key={sh.id} className={cls} style={style} title={sh.id} onClick={() => g && setPending(sh)}>
+                  {sh.kind === 'opaque' && !sh.text ? <span className="muted">[无预览对象]</span> : sh.text}
                   {st && <span className="diff-tag">{st}</span>}
                   {c && <span className="diff-tag">{c.drifted ? '评论漂移' : '评论'}</span>}
                 </div>
@@ -296,133 +510,16 @@ function DeckCanvas({ docId, headSeq, comments }: { docId: string; headSeq: numb
           </div>
         </div>
       ))}
-    </div>
-  )
-}
-
-/** Collabora 编辑面（#4 spike → S4）：iframe + 表单提交 access_token（WOPI 标准嵌入）。 */
-function EditorOverlay({ docId, title, onClose }: { docId: string; title: string; onClose: () => void }) {
-  const [info, setInfo] = useState<{ urlsrc: string; access_token: string; wopisrc: string } | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const formRef = useRef<HTMLFormElement>(null)
-  useEffect(() => {
-    api.getEditor(docId).then(setInfo).catch(e => setErr((e as Error).message))
-  }, [docId])
-  useEffect(() => {
-    if (!info) return
-    // iframe 就绪后提交表单（WOPI 的 access_token 必须经 form POST 进入）
-    const t = setTimeout(() => formRef.current?.submit(), 200)
-    const onMessage = (e: MessageEvent) => {
-      if (e.data === 'close' || (e.data as { msgId?: string })?.msgId === 'close') onClose()
-    }
-    window.addEventListener('message', onMessage)
-    return () => { clearTimeout(t); window.removeEventListener('message', onMessage) }
-  }, [info, onClose])
-  return (
-    <div className="editor-overlay">
-      <header>
-        <strong>{title}</strong>
-        <button onClick={onClose}>返回列表</button>
-      </header>
-      {err ? <div className="empty">{err}</div>
-        : !info ? <div className="empty">加载编辑器…</div>
-        : <>
-          <form ref={formRef} action={`${info.urlsrc}WOPISrc=${encodeURIComponent(info.wopisrc)}&title=${encodeURIComponent(title)}&closebutton=1`} method="post" target="coolframe" style={{ display: 'none' }}>
-            <input type="hidden" name="access_token" value={info.access_token} />
-            <input type="hidden" name="access_token_ttl" value="0" />
-          </form>
-          <iframe name="coolframe" title="Collabora" className="editor-frame" />
-        </>}
-    </div>
-  )
-}
-
-/** 评论面板（S2/S3）：线程列表 + 新建 + 回复 + 关闭/重开 + 请 AI 处理。 */
-function CommentsPanel({ docId, comments, running, processing, onProcess, onChanged }: {
-  docId: string
-  comments: Comment[]
-  running: boolean
-  processing: Record<string, boolean>
-  onProcess: (cid: string) => void
-  onChanged: () => void
-}) {
-  const [snippet, setSnippet] = useState('')
-  const [text, setText] = useState('')
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const open = comments.filter(c => c.status === 'open')
-  const resolved = comments.filter(c => c.status === 'resolved')
-
-  const create = async () => {
-    const s = snippet.trim()
-    const t = text.trim()
-    if (!s && !t) return
-    await api.createComment(docId, { text_snippet: s || undefined, text: t || undefined })
-    setSnippet('')
-    setText('')
-    onChanged()
-  }
-
-  const thread = (c: Comment) => {
-    const isExpanded = expanded[c.id] ?? c.status === 'open'
-    const busy = processing[c.id]
-    return (
-      <li key={c.id} className={`comment ${c.status} ${c.drifted ? 'drifted' : ''}`}>
-        <button className="comment-head" onClick={() => setExpanded(p => ({ ...p, [c.id]: !isExpanded }))}>
-          <span className="chip">{c.status === 'open' ? '待处理' : '已关闭'}</span>
-          {c.drifted && <span className="chip warn">漂移</span>}
-          <span className="muted ellipsis">{c.anchor.text_snippet || '（无锚点片段）'}</span>
-        </button>
-        {isExpanded && (
-          <div className="comment-body">
-            {c.anchor.text_snippet && <blockquote>{c.anchor.text_snippet}</blockquote>}
-            {c.located === false && c.candidates && c.candidates.length > 0 && (
-              <p className="muted small">候选位置：{c.candidates.map(x => x.text).join(' / ')}</p>
-            )}
-            <ul className="replies">
-              {c.replies.map(r => <li key={r.id} className={`reply ${r.role}`}>{r.text}</li>)}
-            </ul>
-            {c.status === 'open' && (
-              <div className="row">
-                <input
-                  className="reply-input" placeholder="回复…" value={drafts[c.id] ?? ''}
-                  onChange={e => setDrafts(p => ({ ...p, [c.id]: e.target.value }))}
-                  onKeyDown={async e => {
-                    if (e.key === 'Enter' && (drafts[c.id] ?? '').trim()) {
-                      await api.replyComment(docId, c.id, (drafts[c.id] ?? '').trim())
-                      setDrafts(p => ({ ...p, [c.id]: '' }))
-                      onChanged()
-                    }
-                  }}
-                />
-                <button className="link" disabled={busy || running} onClick={() => onProcess(c.id)}>
-                  {busy ? 'AI 处理中…' : '请 AI 处理'}
-                </button>
-                <button className="link" onClick={async () => { await api.resolveComment(docId, c.id); onChanged() }}>关闭</button>
-              </div>
-            )}
-            {c.status === 'resolved' && (
-              <button className="link" onClick={async () => { await api.reopenComment(docId, c.id); onChanged() }}>重新打开</button>
-            )}
+      {pending && (
+        <div className="card pending-comment">
+          <p className="small"><strong>给选中形状加评论</strong><span className="muted"> · {pending.text.slice(0, 30) || pending.id}</span></p>
+          <textarea autoFocus value={pendingText} placeholder="要求 AI 对这个形状做什么…" onChange={e => setPendingText(e.target.value)} />
+          <div className="comment-actions">
+            <button className="btn ghost small" onClick={() => setPending(null)}>取消</button>
+            <button className="btn primary small" disabled={!pendingText.trim()} onClick={() => void submitShapeComment()}>添加</button>
           </div>
-        )}
-      </li>
-    )
-  }
-
-  return (
-    <>
-      <h2>评论（{open.length} 待处理）</h2>
-      <div className="newcomment">
-        <input placeholder="锚点片段（如：研究背景）" value={snippet} onChange={e => setSnippet(e.target.value)} />
-        <input placeholder="要求 AI 做什么（可留空只标记位置）" value={text} onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') void create() }} />
-        <button className="link" onClick={() => void create()}>+ 添加评论</button>
-      </div>
-      <ul className="comments">
-        {open.map(thread)}
-        {resolved.map(thread)}
-      </ul>
-    </>
+        </div>
+      )}
+    </div>
   )
 }

@@ -130,7 +130,7 @@ new DeepSeekHarness({
   profile: 'sdk',
   patches: [PROFILE_PATCH],     // heurion.cordis.yml
   cwd: workspaceDir(docId),     // 该文档的工作区（SDK 工作区是进程级的）
-  dshHome, provider, model,     // deepseek-official / deepseek-v4-flash
+  dshHome, provider, model,     // deepseek-official / deepseek-flash
   env: childEnv(docId),         // 显式白名单
 })
 await harness.run(prompt, { sessionId, onNotification })  // → { sessionId, finalResponse, events }
@@ -266,7 +266,11 @@ MCP 工具（docId 从文档令牌派生；评论按 id + docId 双重过滤，�
 
 ## 7. 前端
 
-三栏：文档列表 ｜ 编辑 / 评审面 ｜ 评论 + 聊天 + 版本 + 引用。交互、状态、样式 token 以 [前端 Mock](mock/README.md) 为准。
+四栏：文档列表 ｜ 对话 ｜ **编辑器（Collabora，常驻默认打开）** ｜ 评论 / 版本 / 引用（tab 切换）。
+
+- **评论主入口在编辑器里**：用户在 Collabora 选中内容插入原生评论（落 `word/comments.xml`），保存（PutFile）后由 `office-comments.ts` 同步进评论表（锚点 = 所在段落 paraId）；右栏评论面板承接「请 AI 处理 / 回复 / 关闭」。pptx 走评审画布点形状加评论（锚 shapeId）。
+- **看到 AI 正在编辑**：AI 回合落版后 head 的 `LastModifiedTime` 变化，CODE 的外部变更检测在用户无未保存修改时自动重载文档——无需前端干预。
+- 交互、状态、样式 token 以 [前端 Mock](mock/README.md) 为准；语义 token：author-ai 单强调色、diff 三态（added 绿 / removed 红 / modified accent）、锚点两态（accent / warning）、暗色跟随。
 
 | 区 | doc | deck |
 | --- | --- | --- |
@@ -298,7 +302,7 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `DEEPSEEK_API_KEY` | — | 必填，dsh `deepseek-official` 路由使用 |
-| `DSH_PROVIDER` / `DSH_MODEL` | `deepseek-official` / `deepseek-v4-flash` | 模型路由 |
+| `DSH_PROVIDER` / `DSH_MODEL` | `deepseek-official` / `deepseek-flash`（V4.1-Flash，原生多模态；旧名 v4-flash 不收图） | 模型路由 |
 | `HEURION_DATA_DIR` | `./data`（相对仓库根） | 数据目录 |
 | `PORT` | `8787` | server 端口 |
 | `HEURION_SECRET` | 开发默认值 | 文档 MCP 令牌的 HMAC 密钥，生产必填 |
