@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 用 podman（或 docker）构建并运行 Heurion 2.0 单机容器。
-#   scripts/container.sh build | up | down | logs | collabora
+# 用 podman（或 docker）构建并运行 Heurion 平台单机容器。
+#   scripts/container.sh build | up | down | logs | sh
 # 数据在命名卷 heurion2-data（macOS 上 bind mount 的属主映射会让非 root 用户无法写入）。
 #
 # ⚠️ 不要用 `lsof -ti :8787 | xargs kill` 之类按端口杀进程：podman 的网络进程
@@ -16,30 +16,14 @@ case "${1:-up}" in
   build) "$ENGINE" build -t "$IMAGE" . ;;
   up)
     [ -f .env ] || { echo "缺少 .env（cp .env.example .env 并填写 DEEPSEEK_API_KEY）"; exit 1; }
-    # 专用网络：容器名互为 DNS 别名（默认 podman 网络没有 DNS）。
-    "$ENGINE" network create heurion2-net 2>/dev/null || true
     "$ENGINE" rm -f "$NAME" >/dev/null 2>&1 || true
     "$ENGINE" run -d --name "$NAME" --env-file .env \
-      --network heurion2-net \
-      -e HEURION_DATA_DIR=/app/data -e DSH_PRIMARY_RUNTIME= \
-      -e HEURION_COLLABORA_URL=http://heurion2-collabora:9980 \
-      -e HEURION_PUBLIC_URL=http://heurion2:8787 \
+      -e HEURION_DATA_DIR=/app/data \
       -p 8787:8787 -v heurion2-data:/app/data \
       --memory 3g "$IMAGE"
     echo "http://localhost:8787" ;;
-  down) "$ENGINE" rm -f "$NAME" heurion2-collabora 2>/dev/null || true ;;
+  down) "$ENGINE" rm -f "$NAME" 2>/dev/null || true ;;
   logs) "$ENGINE" logs -f "$NAME" ;;
-  collabora)
-    # 编辑面（#4 spike → S4）：Collabora CODE 自建镜像（生产许可决策：MPLv2 源码自建路线的
-    # POC 第一步——官方镜像 + COPY 注入中文字体与 Windows 字体替换规则；无 shell，COPY 可用）。
-    # 字体来源：heurion2 容器 podman cp 而来，一次性放到 scripts/collabora-fonts/noto/。
-    "$ENGINE" network create heurion2-net 2>/dev/null || true
-    "$ENGINE" build -t heurion2-collabora:dev scripts/collabora-fonts/ 2>&1 | tail -1
-    "$ENGINE" rm -f heurion2-collabora >/dev/null 2>&1 || true
-    "$ENGINE" run -d --name heurion2-collabora --network heurion2-net \
-      -p 9980:9980 \
-      -e extra_params='--o:ssl.enable=false --o:net.protocol=ipv4' \
-      heurion2-collabora:dev
-    echo "http://localhost:9980" ;;
-  *) echo "usage: $0 build|up|down|logs|collabora"; exit 2 ;;
+  sh) "$ENGINE" exec -it "$NAME" bash ;;
+  *) echo "usage: $0 build|up|down|logs|sh"; exit 2 ;;
 esac

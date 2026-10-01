@@ -1,33 +1,27 @@
-# Heurion 2.0 本地/单机镜像：server + dsh 子进程 + office 依赖 + 前端静态资源
+# Heurion 平台单机镜像：平台 server（模型 + 操作层 + MCP + 页面）+ dsh 子进程
 FROM node:24-bookworm-slim
 
-# office 运行时：python-docx/pptx/openpyxl/pandas（预装，模型不需要也不应自行安装）
-# LibreOffice 无界面版用于渲染/转 PDF；Noto CJK 保证中文排版与渲染
+# dsh shell 的计算环境（统计、作图、读资料）。文档编辑只走 MCP，因此不装 python-docx/pptx。
+# LibreOffice 无界面版：导出文件的渲染校验与转 PDF；Noto CJK 保证中文渲染
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-venv git ca-certificates \
-      libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui \
+      libreoffice-writer-nogui \
       fonts-noto-cjk fonts-liberation2 \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m venv /opt/office \
-    && /opt/office/bin/pip install --no-cache-dir python-docx python-pptx openpyxl pandas
-ENV PATH=/opt/office/bin:$PATH
+RUN python3 -m venv /opt/compute \
+    && /opt/compute/bin/pip install --no-cache-dir pandas matplotlib scipy openpyxl
+ENV PATH=/opt/compute/bin:$PATH
 
 RUN npm install -g pnpm@12.5.1
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY apps/server/package.json apps/server/
-COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile
-
 COPY . .
-RUN pnpm --filter @heurion2/web build \
+RUN pnpm install --frozen-lockfile --filter @heurion2/platform... \
     && chmod -R a+rX /app \
     && mkdir -p /app/data && chown -R node:node /app/data
 
 USER node
 ENV HEURION_DATA_DIR=/app/data \
-    PORT=8787 \
-    WEB_DIST=/app/apps/web/dist
+    PORT=8787
 EXPOSE 8787
-CMD ["pnpm", "--filter", "@heurion2/server", "start"]
+CMD ["pnpm", "--filter", "@heurion2/platform", "start"]
