@@ -60,11 +60,7 @@ a { color: var(--accent); }
 .doc-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; font-weight: 700; font-size: 11px; color: var(--accent); background: var(--soft); }
 .badge.pptx { color: var(--author-ai); background: var(--author-ai-soft); }
-.doc-item { position: relative; display: flex; align-items: center; }
-.doc-item > button:first-child { flex: 1; min-width: 0; padding-right: 30px; }
-.doc-del { position: absolute; right: 4px; width: 22px; height: 22px; padding: 0; border: none; background: none; color: var(--muted); font-size: 15px; line-height: 1; border-radius: 6px; opacity: .3; flex-shrink: 0; }
-.doc-item:hover .doc-del { opacity: 1; }
-.doc-del:hover { color: var(--danger); background: var(--danger-soft); }
+.doc-delete { width: 100%; justify-content: center; margin-top: 12px; }
 .sidebar footer { padding: 10px 2px 0; border-top: 1px solid var(--border); }
 
 .workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr) 340px; min-width: 0; height: 100vh; }

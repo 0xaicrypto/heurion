@@ -57,16 +57,21 @@ function Sidebar({ docs, activeId, onSelect, onCreated, onChanged }: {
       </div>
       <ul className="doclist">
         {docs.map(d => (
-          <li key={d.id} className="doc-item">
+          <li key={d.id}>
             <button className={d.id === activeId ? 'active' : ''} onClick={() => onSelect(d.id)}>
               <span className={`badge ${d.kind}`}>{d.kind === 'docx' ? 'W' : 'P'}</span>
               <span className="doc-title">{d.title}</span>
               <span className="muted">v{d.head_seq}</span>
             </button>
-            <button className="doc-del" title="删除文档" onClick={e => { e.stopPropagation(); void remove(d.id, d.title) }}>×</button>
           </li>
         ))}
       </ul>
+      {activeId && docs.some(d => d.id === activeId) && (
+        <button className="btn danger doc-delete" onClick={() => {
+          const d = docs.find(x => x.id === activeId)!
+          void remove(d.id, d.title)
+        }}>删除当前文档</button>
+      )}
       <footer className="muted small">评论驱动的并行协作编辑 · 执行层 dsh</footer>
     </aside>
   )
