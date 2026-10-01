@@ -11,8 +11,11 @@
 ```sh
 cp .env.example .env        # 填 DEEPSEEK_API_KEY
 pnpm install
-pnpm --filter @heurion2/platform dev   # http://127.0.0.1:8787（页面 + REST + /mcp）
+pnpm --filter @heurion2/platform build   # 构建编辑器页面（dist-web/）
+pnpm --filter @heurion2/platform dev     # http://127.0.0.1:8787（页面 + REST + /collab + /mcp）
 ```
+
+改前端时用 `pnpm --filter @heurion2/platform dev:web`（http://127.0.0.1:5173，热更新，代理到 8787）。
 
 容器：`scripts/container.sh build && scripts/container.sh up`。
 
@@ -27,8 +30,9 @@ apps/platform/src
   convert/   docx 导入 / 修补式导出
   turns/     AI 回合
   harness/   dsh 进程池与 profile
+  collab/    协同网关（WebSocket + y-protocols）与人类编辑的事后检查
   http/      REST + SSE
-  web/       P0 单页
+apps/platform/web   编辑器页面（ProseMirror + y-prosemirror，schema 与服务端共用）
 docs/        架构与决策记录
 ```
 
@@ -38,4 +42,5 @@ docs/        架构与决策记录
 pnpm --filter @heurion2/platform typecheck
 pnpm --filter @heurion2/platform test
 pnpm --filter @heurion2/platform e2e   # 需要 server 在运行与 DEEPSEEK_API_KEY；真实 dsh 回合
+pnpm --filter @heurion2/platform ui    # 编辑器浏览器测试（首次：npx playwright install chromium）
 ```

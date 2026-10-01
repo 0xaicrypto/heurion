@@ -1,4 +1,4 @@
-# Heurion 平台单机镜像：平台 server（模型 + 操作层 + MCP + 页面）+ dsh 子进程
+# Heurion 平台单机镜像：平台 server（模型 + 操作层 + MCP + 协同网关 + 编辑器页面）+ dsh 子进程
 FROM node:24-bookworm-slim
 
 # dsh shell 的计算环境（统计、作图、读资料）。文档编辑只走 MCP，因此不装 python-docx/pptx。
@@ -17,6 +17,7 @@ RUN npm install -g pnpm@12.5.1
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile --filter @heurion2/platform... \
+    && pnpm --filter @heurion2/platform build \
     && chmod -R a+rX /app \
     && mkdir -p /app/data && chown -R node:node /app/data
 

@@ -1,6 +1,6 @@
 # Heurion 2.0 平台架构
 
-**Status:** v0.2（2026-10-01）· P0 已实现（`apps/platform`）· **跟踪:** epic [#16](https://github.com/0xaicrypto/heurion2/issues/16) · **决策人:** JZ
+**Status:** v0.3（2026-10-01）· P0、P1 已实现（`apps/platform`）· **跟踪:** epic [#16](https://github.com/0xaicrypto/heurion2/issues/16) · **决策人:** JZ
 **关系:** 本文是 v0.4 起的唯一架构。[DESIGN.md](DESIGN.md) 描述的 S 系列路线（dsh 用 python 改文件 + Collabora 编辑面）已于 2026-10-01 停用，保留为决策记录。
 
 ## 目录
@@ -32,10 +32,10 @@
 
 1. **平台持有真相与 id。** 结构化模型是唯一真相；docx/pptx 文件是导入 / 导出视图。id 由平台分配，写在模型节点上，不依赖文件内属性在编辑器间存活。
 2. **AI 对文档的一切写入走操作层。** dsh 经 MCP `doc_edit(ops)` → 写前守卫 → 原子应用。dsh 的 **shell 保留**，只用于计算类任务（统计、作图、数字数、读资料）；文档不在工作区里，也没有任何「用文件写回文档」的入口，所以模型在结构上绕不过操作层。shell 产出的图经 `asset_upload` 进入平台。
-3. **用户优先。** AI 的写入不能覆盖 `base_rev` 之后用户改过的块（`conflict_user_edited`）；用户的写入不受 AI 守卫阻挡。P0 的用户写入经 REST 进入同一操作层（actor=user）；P1 起改为编辑器直连协同层（CRDT 更新流）。
+3. **用户优先。** AI 的写入不能覆盖 `base_rev` 之后用户改过的块（`conflict_user_edited`）；用户的写入不受 AI 守卫阻挡。用户在编辑器里的编辑经协同层实时写入同一个 Y.Doc（CRDT 更新流），AI 写入前先把尚未落库的用户编辑落掉，冲突守卫因此看得到用户正在改的块。
 4. **dsh 仍是执行层。** 对话循环、工具执行、LLM 调用、子代理、上下文压缩不变；「office 文件读写」从 dsh 职责中移出（文档模型与守卫是平台核心，dsh 的 office 技能给不了结构化 id、写前守卫与原子 ops）。
 5. **产品规则保留：** 评论 = 带锚点的编辑指令、用户优先、引用规范（insert_citation 单通道）、可回滚。语义不变，实现位置迁移到操作层。
-6. **自研 = 组合成熟件，不从零造。** doc 内核 ProseMirror 模型 + Yjs（P1 编辑器 Tiptap）；deck 内核 Univer slides（Apache-2.0）+ fork Casual Slides 的 pptx 导入层。
+6. **自研 = 组合成熟件，不从零造。** doc 内核 ProseMirror + Yjs（编辑器直接用 ProseMirror，schema 前后端共用一份）；deck 内核 Univer slides（Apache-2.0）+ fork Casual Slides 的 pptx 导入层。
 
 ## 3. 总体架构
 
@@ -62,9 +62,9 @@ apps/platform（Node + Hono）
 | 寻址 | 文件内 id 载体（paraId / shape id） | 平台块 id（模型节点属性） | ⛳ 核心 |
 | AI 编辑 | dsh python 直接改文件 | MCP `doc_edit(ops)` + 写前守卫 | ⛳ 核心 |
 | 守卫 | 写后审计（漂移 / 存活率 / DOI） | 写前强制 | ⛳ 核心 |
-| 合并 | 三方合并（写后） | 节点级冲突守卫（P0）+ CRDT 合并（P1） | ⛳ 核心 |
+| 合并 | 三方合并（写后） | 节点级冲突守卫 + CRDT 合并 | ⛳ 核心 |
 | 评论 | 文件内 comments.xml 同步 | 平台评论（锚 = 文本上的 comment mark），导出时写入 comments.xml | 迁移 |
-| 编辑面 | Collabora iframe（WOPI） | P0 只读预览 + 选区评论；P1 Tiptap；P2 Univer | 迁移 |
+| 编辑面 | Collabora iframe（WOPI） | ProseMirror 编辑器（doc）；P2 Univer（deck） | 迁移 |
 | dsh 进程 | 每文档一个 | 每用户一个（一个会话可编辑多份文档） | 变化 |
 
 ## 4. 数据模型
@@ -86,7 +86,7 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 
 - **rev**：每次提交加一，模型读到的 rev 作为下一次写入的 `base_rev`。
 - **版本**：回合结束（本回合改过的每份文档各一版）/ 手动保存 / 导入 / 回滚时打快照；与上一版 rev 相同则不重复打。回滚 = 把旧快照作为一次用户提交写回并打新版本（历史只增）。
-- P1 起协同层的增量更新日志（ycommits）与 Y.UndoManager 用户级撤销随编辑器一起加入。
+- 浏览器编辑按 400ms 合批成一次用户提交（rev+1、op log、节点变更索引）；用户级撤销在浏览器（y-prosemirror 的 yUndoPlugin，只撤自己的编辑）；AI 回合的撤销见 §5.6。
 
 ## 5. 统一编辑框架
 
@@ -101,7 +101,7 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 | 路径 | 执行者 | 流程 |
 | --- | --- | --- |
 | ① 起草 / 修改 | dsh | `doc_outline` → `doc_read` → `doc_edit(ops)`（一批原子提交）→ 回合结束落版 |
-| ② 用户编辑 | 用户 | P0：REST `POST /api/docs/:id/edit`（同一操作层，actor=user，不受守卫阻挡）；P1：Tiptap → CRDT 更新流 |
+| ② 用户编辑 | 用户 | 编辑器 → 协同网关（WebSocket）→ 同一个 Y.Doc；合批落库为用户提交。REST `POST /api/docs/:id/edit` 保留给程序调用（同一操作层，actor=user） |
 | ③ 评论驱动 | dsh | 评论触发回合 → `comments_list`（锚点所在块与文字）→ `doc_edit` → `comment_reply`；改过内容的线程留给用户关闭 |
 
 ### 5.3 守卫（写前强制，只对 AI）
@@ -119,12 +119,14 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 
 - **为什么用 `base_rev` + 节点变更索引，而不是 `expectText`：** `expectText` 要求模型复述原文，「复述原文失配」正是 S 系列要消灭的失败来源；按 id + rev 判定冲突不依赖模型抄写，且冲突时直接返回当前内容，模型一次就能改对。
 - **锚点跟随替换**（`replace_text`）：替换文字里原样包含被锚定的文字 → 锚点精确落回；被锚定的文字整体被改写 → 锚点跟到新文字；部分重叠且被改写 → 范围外的剩余文字继续承担锚点。实测把「保留原文再补充」这类常见改法从需要 ack 变成无感。
-- **人类编辑不经硬守卫**：Yjs 更新在客户端已生效，服务端拒绝只能断开重连；P1 协同网关对人类编辑做事后检查（手写参考文献等），以提示呈现。
+- **人类编辑不经硬守卫**：Yjs 更新在客户端已生效，服务端拒绝只能断开重连。落库后做事后检查（`collab/postcheck.ts`，目前检查手写 DOI / PMID / 参考文献条目），以页面提示呈现，不拒绝写入。
+- **块 id 维护**：编辑器回车拆段、粘贴会复制或丢失块 id——浏览器插件当场补号，服务端落库前再修一次并广播（两端都修，以服务端为准）。
 
 ### 5.4 评论闭环
 
 - 评论数据在 SQLite，锚点在模型里（comment mark）；读取时实时定位（`located` / 锚定块 / 当前文字）。
-- 触发：前端「让 AI 处理」或「评论并让 AI 处理」→ 服务端组装提示 → 回合。@heurion 自动触发队列（水位去重、防自召唤）在 P1 随编辑器内评论一起接入。
+- 触发：前端「让 AI 处理」/「评论并让 AI 处理」，或评论 / 回复里写 `@heurion`（自动排队，只认用户写的内容，AI 的回复不会自我召唤）→ 服务端组装提示 → 回合。
+- 回合队列：每个用户一个 FIFO 队列（一个用户一个 dsh 进程），对话、评论处理、@heurion 都排进同一队列；回合事件同时推到文档的 SSE 流，页面上自动触发的回合同样可见。
 - AI 回复写入线程（role 固定为 ai）；**本回合改过文档时 `comment_resolve` 被拒绝**（`user_confirms_changes`），只有判断无需修改并说明后 AI 才能关闭线程。
 - 导出 docx 时 open 线程写为 `comments.xml`（Word 用户可见）。
 
@@ -134,6 +136,14 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 - 引用在模型里是行内原子节点 `citation(cite_id)`：编号按文中首次出现顺序计算，参考文献表由平台在预览 / 导出时生成；模型不能手写编号或参考文献表。
 - 守卫在写入前拦截正文里的 DOI / PMID / 手写参考文献；不再需要回合后审计与自修。
 
+### 5.6 撤销
+
+| 谁的修改 | 怎么撤 | 说明 |
+| --- | --- | --- |
+| 用户自己 | ⌘Z / ⌘⇧Z（浏览器 yUndoPlugin） | 只撤本人的编辑，不会撤掉 AI 或别人的改动 |
+| 某一轮 AI | 对话里「撤销本轮修改」（`POST /api/docs/:id/turns/:turnId/revert`） | 该回合专属的 Y.UndoManager 撤销它的全部提交；用户在此期间的编辑保留。服务重启后不可用 |
+| 任意时刻 | 版本回滚 | 回合结束、手动保存、导入、回滚时打的快照 |
+
 ## 6. doc 内核
 
 | 件 | 选型 | 说明 |
@@ -141,9 +151,9 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 | 模型 | ProseMirror schema（`model/schema.ts`）+ Yjs | 标题 / 段落（样式名、对齐）/ 有序与无序列表（可嵌套）/ 表格（colspan、rowspan、表头）/ 图（资产）/ 不可编辑块 / 引用原子节点；mark：粗、斜、下划线、上下标、代码、链接、评论 |
 | 写入 | prosemirror-transform 在内存应用 → `updateYFragment` 最小差异写入 Y.Doc | 未改动的节点在 Yjs 里保持原样（P1 编辑器同步的前提）；Node 中无 DOM 运行已验证 |
 | 内容格式 | markdown 方言（`model/markdown.ts`） | CommonMark + GFM 表格 + `[@c:id]` + `![说明](asset:<id> "图注")` + `<sup>/<sub>/<u>/<br>`；读视图带 `{#id}` 前缀，写入时忽略 |
-| 导入 | 自写 OOXML 解析（`convert/docx-import.ts`） | 标题（样式名 / outlineLvl / 中文「标题 N」）、列表（numbering.xml，相邻同类列表合并）、表格（gridSpan / vMerge）、格式、超链接、图片（入资产库）、修订（接受插入、丢弃删除）、内容控件、题注并回图；其余落为 opaque。每个顶层块保存**逐字节原文** |
-| 导出 | 修补式（`convert/docx-export.ts`） | 以原始文件包为底座（样式、编号、关系、媒体、页面设置）；导入后**未改动的块原样写回**，改过 / 新增的块按模型生成；新建文档用内置模板（宋体 / Times New Roman、标题样式）。引用为上标 [n] + 参考文献表；open 评论写入 comments.xml；图片嵌入 |
-| 撤销 | P0：版本回滚；P1：Y.UndoManager（按 origin 撤销整轮 AI 修改） | |
+| 导入 | 自写 OOXML 解析（`convert/docx-import.ts`） | 标题（样式名 / outlineLvl / 中文「标题 N」）、列表（numbering.xml，相邻同类列表合并）、表格（gridSpan / vMerge）、格式、超链接、图片（入资产库）、修订（接受插入、丢弃删除）、内容控件、题注并回图；含文本框 / 嵌入对象 / 脚注的段落整段落为 opaque（避免修改后重新生成丢内容）；含域代码（EndNote / Zotero 等）的段落仍可编辑，导入时提示修改后域变为文字；其余落为 opaque。每个顶层块保存**逐字节原文** |
+| 导出 | 修补式（`convert/docx-export.ts`） | 以原始文件包为底座（样式、编号、关系、媒体、页面设置）；导入后**未改动的块原样写回**（与图混排的段落：拆出的图也原样跟随时才整段写回，避免图重复），改过 / 新增的块按模型生成，新列表沿用原文件同类列表的编号定义与段落样式；新建文档用内置模板（宋体 / Times New Roman、标题样式）。引用为上标 [n] + 参考文献表；open 评论写入 comments.xml；图片嵌入 |
+| 撤销 | 用户：浏览器 yUndoPlugin；AI：每个回合一个服务端 Y.UndoManager（§5.6）；任何时候：版本回滚 | |
 
 保真口径：**未改动的块逐字节保真**（3 份真实文档「导入 → 不改 → 导出」正文与原文件逐字节一致）；改动 / 新增的块按平台样式生成，花式 Word 特性（SmartArt、域代码、文本框）导入为 opaque 或注记，原样写回、不可编辑。不使用 mammoth（转 HTML 丢失原始 XML，无法修补式导出）与 docx npm 包（整份重新生成）。
 
@@ -189,7 +199,7 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | `set_block_style` | `id, type?, level?, align?, style?` | 段落 ↔ 标题、级别、对齐、Word 样式名 |
 | `table_set_cells` / `table_insert_rows` / `table_delete_rows` | `id, …` | 单元格内容为行内 markdown |
 
-`mode: 'suggest'`（写成待采纳的修订）留到 P1 随编辑器实现，P0 返回 `unsupported_mode`。
+`mode: 'suggest'`：修改作为待采纳修订提交（块级：改动的块 = 原块待删除 + 新块待新增；新增块待新增；删除的块留在原位待删除；同一批共享修订组）。页面勾选「修订模式」时回合在服务端强制 suggest，不依赖模型传参。修订中的块不能再被 AI 修改（`pending_suggestion`）；读视图标出 `⟨待采纳·新增 / 删除⟩`；导出按「未采纳」处理。
 
 ### 8.3 安全边界
 
@@ -200,7 +210,7 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 ## 9. 前端
 
 - **P0**（`apps/platform/src/web/index.html`，无构建）：文档列表、新建 / 上传 docx；只读预览（文档变更 SSE 推送，AI 改动的块高亮闪烁）；选中文字 → 评论 / 评论并让 AI 处理；对话（工具步骤可见、可停止）；版本（保存、对比、回滚）；引用；导出 md / docx；读视图（看模型看到的内容）。
-- **P1**：Tiptap 编辑器 + y-prosemirror + 协同网关；AI 改动逐块实时流入，光标 / 选区标注 AI 色；Y.UndoManager；编辑器内评论与 @heurion 自动触发；`suggest` 模式。
+- **P1**（`apps/platform/web`，Vite 构建，server 托管 `dist-web/`）：ProseMirror 编辑器（schema 与服务端共用）+ y-prosemirror + 自制 provider（断线重连、重连后补齐双方缺失更新）；工具栏（段落 / 标题、粗斜下划线、上下标、列表、表格、撤销重做）与快捷键、Markdown 式输入规则、表格编辑（prosemirror-tables）；AI 改动的块高亮；选区评论与 @heurion；修订在正文里标红 / 绿并可就地采纳或拒绝，侧栏「修订」页逐组处理；对话里每轮可「撤销本轮修改」；事后检查提示。多人光标（awareness）留到 P3。
 - **P2**：deck 编辑面（Univer 画布 + 评论面板 / 形状锚点）。
 
 ## 10. 决策记录
@@ -215,7 +225,10 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | 引用 | `[@c:id]` 原子节点，编号与参考文献表由平台生成 | 编号永不错乱；手写引用在写前被拦截 |
 | doc 导入 / 导出 | 自写 OOXML 解析 + 修补式导出 | 未改动的块逐字节保真；mammoth / docx npm 包做不到 |
 | dsh 进程粒度 | 每用户一个 | 文档不在工作区里，一个会话可编辑多份文档 |
-| 协同（P1） | Yjs + y-prosemirror + 自制最小 ws 协议 | y-websocket 协议面大于需要 |
+| 编辑器 | 直接用 ProseMirror，不套 Tiptap | 前后端共用同一份 schema，Yjs 结构由一份定义保证一致；Tiptap 的默认节点名 / 属性与平台 schema 不同，硬对齐容易出现细微不一致而损坏协同数据。Tiptap 也是 ProseMirror 的封装，需要其 UI 扩展时可迁移 |
+| 协同 | Yjs + y-prosemirror + 自制最小 ws 协议（帧 = 类型 + y-protocols sync） | y-websocket 协议面大于需要 |
+| 修订粒度 | 块级 | 实现稳、和块 id / 冲突守卫同一粒度；字符级修订留到需要时再做 |
+| AI 回合撤销 | 每回合一个服务端 Y.UndoManager | CRDT 语义下只撤该回合的改动，用户期间的编辑保留；服务重启后不可用，退回版本回滚 |
 | deck 内核（P2） | Univer slides + fork Casual Slides 导入；导出修补式 | 开源 JS 里 pptx 往返保真最高；PptxGenJS 整份重建会丢形状 id |
 | 放弃 OnlyOffice（2026-10-01 JZ） | 自建内核 | 引擎在外 = 渲染 / 载体 / 许可三重不可控 |
 | Collabora | 2026-10-01 随 S 系列停用 | 平台模式下接入需「导出 → 编辑 → 整份导入」，不再值得维护 |
@@ -226,7 +239,8 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | --- | --- | --- |
 | 生成块的样式与原文档不完全一致 | 改过的段落在 Word 里观感略有差异 | 生成时沿用原文件的样式表与编号；评测纳入「导入 → 修改 → 导出」专项 |
 | 导入覆盖面（文本框、域代码、脚注、复杂编号） | 部分内容只读 | opaque 原样写回不丢；按评测样本逐项扩展 |
-| P1 协同层复杂度（Yjs 持久化、断线重连、服务端事后检查） | 数据安全 | 快照 + op log 双存；单进程持有每文档 Y.Doc |
+| 协同层（Yjs 持久化、断线重连） | 数据安全 | 每次提交写全量状态 + op log；关停前落库；单进程持有每文档 Y.Doc（多实例部署需要按文档路由） |
+| 编辑器拆段 / 粘贴产生重复 id | 寻址错乱 | 浏览器与服务端两端补号，服务端落库前强制唯一 |
 | Casual Slides 上游年轻 | deck 地基 | fork 进组织；导入层隔离清晰，可整体自维护 |
 | 模型对新工具面的适配 | 回合成功率 | e2e 任务集持续回归；错误码附 hint 与 current |
 | shell 仍可执行任意代码 | 安全 | M2 每用户容器 + 出口白名单 |
@@ -236,10 +250,12 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 
 | 期 | 内容 | 退出条件 | 状态 |
 | --- | --- | --- | --- |
-| **P0 doc 模型与操作层** | 模型 + Yjs 持久化；操作层与写前守卫；MCP 工具面；dsh 接入；评论锚点；版本；docx 导入 / 修补式导出；P0 单页 | e2e 任务集全绿；未改动块导出逐字节保真 | ✅ 2026-10-01：单测 25 项、e2e 13/13（`pnpm --filter @heurion2/platform e2e`）；3 份真实 docx 不改导出正文逐字节一致 |
-| **P1 doc 编辑面** | Tiptap + y-prosemirror + 自制 ws 协议；协同网关事后检查；Y.UndoManager；编辑器内评论与 @heurion 自动触发；`suggest` 模式 | 用户逐字编辑与 AI 修改并行无丢失；断线重连恢复 | 待开始 |
+| **P0 doc 模型与操作层** | 模型 + Yjs 持久化；操作层与写前守卫；MCP 工具面；dsh 接入；评论锚点与 @heurion；版本；docx 导入 / 修补式导出 | e2e 任务集全绿；未改动块导出逐字节保真；导出可被 LibreOffice 打开 | ✅ 2026-10-01 |
+| **P1 doc 编辑面** | ProseMirror 编辑器 + y-prosemirror + 自制 ws 协议；用户编辑合批落库与 id 修复；事后检查；用户撤销 + AI 回合撤销；修订（suggest）模式；回合队列 | 用户逐字编辑与 AI 修改并行无丢失；断线重连恢复 | ✅ 2026-10-01 |
 | **P2 deck 内核** | Casual 导入层移植；场景图模型；`deck_edit` / `slide_read` / `layout_check` / `slide_render`；修补式 pptx 导出；Univer 编辑面 | deck e2e 全绿；保真探针 ≥ 68/87 | 待开始 |
 | **P3 硬化** | deck 多人协同 / 离线恢复 / 权限细化 / 大文档性能 | M1 同口径评测达标 | — |
+
+**验证（2026-10-01）**：单测 41 项（模型 / 操作层 / 守卫 / MCP / docx 往返 / 协同网关 / 修订）；浏览器测试 11 项（`pnpm ui`，真实 Chromium：打字同步、拆段 id、工具栏、选区评论、修订就地采纳、撤销、断线重连）；e2e 19 项（`pnpm e2e`，真实 dsh + deepseek-flash，含 @heurion 自动触发、修订模式、撤销本轮、LibreOffice 打开导出文件）；3 份真实 docx「导入 → 不改 → 导出」正文逐字节一致。
 
 **P0 实测（deepseek-flash，2026-10-01）**
 
