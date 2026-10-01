@@ -34,6 +34,8 @@ export interface McpDeps {
   secret: string
   /** 用户工作区目录（asset_upload 只能读这里面的文件）。 */
   workspaceDir: (userId: string) => string
+  /** 令牌所属的 dsh 进程是否仍在用（被停止的进程不能再读写）。 */
+  isLiveSession: (userId: string, generation: string) => boolean
 }
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
@@ -476,6 +478,11 @@ export async function handleMcp(deps: McpDeps, req: IncomingMessage, res: Server
   const claims = auth.startsWith('Bearer ') ? verifyToken(deps.secret, auth.slice(7), 'mcp') : null
   if (!claims) {
     res.writeHead(401).end('unauthorized')
+    return
+  }
+  // 回合被停止 / 超时后，旧 dsh 进程可能还会活几秒：它的调用一律拒绝，免得写入记到下一个回合名下
+  if (claims.s && !deps.isLiveSession(claims.u, claims.s)) {
+    res.writeHead(401).end('session stopped')
     return
   }
   const server = buildMcpServer(deps, claims)

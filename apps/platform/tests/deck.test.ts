@@ -187,3 +187,15 @@ describe('deck：评论锚点', () => {
     expect(() => t.ops.edit({ doc_id: t.docId, base_rev: 3, mode: 'apply', ops: [{ op: 'delete_shape', shape_id: title }] }, { actor: 'ai', turnId: null })).toThrow(/open 评论/)
   })
 })
+
+describe('deck：评论按选区位置', () => {
+  it('形状段落里包含引用的选区：按位置锚定，引用文字不含 [n] 角标', async () => {
+    const { attachComment } = await import('../src/model/anchors.ts')
+    const t = newDeck()
+    const c = t.store.upsertCitation({ doc_id: t.docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, title: '结果', body: `- HR 0.80[@c:${c.id}]，显著` }] }, { actor: 'ai', turnId: null })
+    const body = shapesOf(t, 1).find(s => s.ph !== 'title')!.id
+    const r = attachComment(t.docs.get(t.docId), body, 'HR 0.80，显著', 'k1', 0, { from: 0, to: 'HR 0.80'.length + 1 + '，显著'.length })
+    expect(r.snippet).toBe('HR 0.80，显著')
+  })
+})

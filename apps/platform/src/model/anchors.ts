@@ -63,7 +63,9 @@ export class AnchorError extends Error {}
  * - 一整块：snippet 为空——doc 的块（列表项、表格、图……）或 deck 的整个形状。
  * 跨段落、跨块的选区不接受（与 Claude Docs 一致），调用方应在选区阶段就拦下。
  */
-export function attachComment(doc: PMNode, nodeId: string, snippet: string, thread: string, paragraph?: number): { doc: PMNode; snippet: string } {
+export function attachComment(
+  doc: PMNode, nodeId: string, snippet: string, thread: string, paragraph?: number, range?: { from: number; to: number },
+): { doc: PMNode; snippet: string } {
   const hit = indexById(doc).get(nodeId)
   if (!hit) throw new AnchorError(`找不到块 ${nodeId}`)
   const { node, pos } = hit
@@ -74,6 +76,24 @@ export function attachComment(doc: PMNode, nodeId: string, snippet: string, thre
   else node.descendants((n, p) => { if (n.isTextblock) textblocks.push({ node: n, pos: pos + 1 + p }); return !n.isTextblock })
 
   const wanted = snippet.replace(/\r\n?/g, '\n').trim()
+  if (range) {
+    // 选区位置（段落内偏移）：精确定位重复出现的文字；文字与位置对不上（期间文档变了）时退回按文字查找
+    const tb = node.isTextblock ? textblocks[0] : paragraph !== undefined ? textblocks[paragraph] : undefined
+    if (!tb) throw new AnchorError('选中的文字要落在一个段落内')
+    const { from, to } = range
+    const size = tb.node.content.size
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > size || from >= to) throw new AnchorError('选区位置无效，请重新选择')
+    const text = paragraphText(tb.node, from, to)
+    if (!text.trim()) throw new AnchorError('选中的内容里没有文字')
+    if (text.trim() === wanted || !wanted) {
+      tr.addMark(tb.pos + 1 + from, tb.pos + 1 + to, mark)
+      return { doc: tr.doc, snippet: text.trim() }
+    }
+    const r = findInParagraph(tb.node, tb.pos, wanted)
+    if (!r) throw new AnchorError('文档已变化，选中的文字对不上，请重新选择')
+    tr.addMark(r.from, r.to, mark)
+    return { doc: tr.doc, snippet: wanted }
+  }
   if (!wanted) {
     // 整块 / 整个形状
     for (const tb of textblocks) if (tb.node.content.size > 0) tr.addMark(tb.pos + 1, tb.pos + tb.node.nodeSize - 1, mark)
@@ -101,6 +121,14 @@ export function attachComment(doc: PMNode, nodeId: string, snippet: string, thre
   return { doc: tr.doc, snippet: wanted }
 }
 
+/**
+ * 段落内 [from, to) 的文字：硬换行记作换行，引用等行内原子不计文字。前端用同一规则从选区算出引用文字，
+ * 两边一致才按位置打锚点。
+ */
+export function paragraphText(block: PMNode, from: number, to: number): string {
+  return block.textBetween(from, to, '\n', leaf => (leaf.type.name === 'hard_break' ? '\n' : ''))
+}
+
 /** 在一个段落里找文字：硬换行记作换行；先精确，再不区分大小写。 */
 function findInParagraph(block: PMNode, pos: number, wanted: string): { from: number; to: number } | null {
   let text = ''
@@ -115,7 +143,8 @@ function findInParagraph(block: PMNode, pos: number, wanted: string): { from: nu
     }
   })
   let at = text.indexOf(wanted)
-  if (at === -1) {
+  if (at === -1 && text.toLowerCase().length === text.length && wanted.toLowerCase().length === wanted.length) {
+    // 转小写会改变长度的字符（如 İ）下位置对不上，这时不做大小写回退
     const lower = text.toLowerCase()
     at = lower.indexOf(wanted.toLowerCase())
     if (at !== -1 && lower.indexOf(wanted.toLowerCase(), at + 1) !== -1) at = -1

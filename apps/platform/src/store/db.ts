@@ -499,6 +499,11 @@ export class Store {
     return Number(this.db.prepare("UPDATE turns SET status = 'interrupted', ended_at = ?, error = '服务重启，回合被中断' WHERE status = 'running'").run(now()).changes)
   }
 
+  /** 评论锚点所在块与引用文字（打锚点 / 重新锚定后同步）。 */
+  setCommentAnchor(id: string, nodeId: string, snippet: string): void {
+    this.db.prepare('UPDATE comments SET node_id = ?, snippet = ? WHERE id = ?').run(nodeId, snippet, id)
+  }
+
   addMessage(docId: string, role: 'user' | 'assistant', text: string, turnId: string | null): MessageRow {
     const id = randomUUID()
     this.db.prepare('INSERT INTO messages (id, doc_id, role, text, turn_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')

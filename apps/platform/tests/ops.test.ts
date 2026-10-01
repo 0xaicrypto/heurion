@@ -337,3 +337,65 @@ describe('格式写入回归', () => {
     expect(docs.get(docId).eq(mk([cm]))).toBe(true)
   })
 })
+
+describe('代码审查回归（2026-10-01）', () => {
+  it('replace_text 含 emoji / 数学字母：按码元对齐，不丢字、不写入半个代理对', () => {
+    const cases: Array<[string, string, string, string]> = [
+      ['😀 good day', '😀 good', '😀 great', '😀 great day'],
+      ['hello world', 'world', 'wörld 😀!', 'hello wörld 😀!'],
+      ['a 𝛼 b', '𝛼 b', '𝛽 b', 'a 𝛽 b'],
+    ]
+    for (const [text, find, replace, want] of cases) {
+      const { docs, ops, docId } = setup(text)
+      const [p] = ids(docs, docId)
+      ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find, replace }] }, { actor: 'ai', turnId: null })
+      expect(docs.get(docId).child(0).textContent).toBe(want)
+    }
+  })
+
+  it('find 只有强调符号（「**」）：不会把空串当匹配词卡死，按原文找不到处理', () => {
+    const { docs, ops, docId } = setup('心衰是**常见**疾病。')
+    const [p] = ids(docs, docId)
+    expectOpError(() => ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: '**', replace: '' }] }, { actor: 'ai', turnId: null }), 'text_not_found')
+  })
+
+  it('评论按选区位置打锚点：重复出现的文字锚到选中的那一处', () => {
+    const { docs, docId } = setup('细胞因子作用于细胞，细胞随后增殖。')
+    const [p] = ids(docs, docId)
+    const text = docs.get(docId).child(0).textContent
+    const second = text.indexOf('细胞', text.indexOf('细胞') + 1)
+    const anchored = attachComment(docs.get(docId), p!, '细胞', 'c1', undefined, { from: second, to: second + 2 })
+    let at = -1
+    anchored.doc.child(0).forEach((n, offset) => { if (at < 0 && n.marks.some(m => m.attrs.thread === 'c1')) at = offset })
+    expect(at).toBe(second)
+  })
+
+  it('评论选区跨硬换行 / 包含引用：按位置锚定，引用文字与前端同一规则', async () => {
+    const { AnchorError, paragraphText } = await import('../src/model/anchors.ts')
+    const { store, docs, ops, docId } = setup('占位。')
+    const c = store.upsertCitation({ doc_id: docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    const [p] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p!, markdown: `第一行<br>第二行[@c:${c.id}]结束。` }] }, { actor: 'user', turnId: null })
+    const block = docs.get(docId).child(0)
+    const size = block.content.size
+    expect(paragraphText(block, 0, size)).toBe('第一行\n第二行结束。')
+    const r = attachComment(docs.get(docId), p!, '第一行\n第二行结束。', 'c2', undefined, { from: 0, to: size })
+    expect(r.snippet).toBe('第一行\n第二行结束。')
+    // 位置与文字对不上（期间文档变了）且文字也找不到：要求重选
+    expect(() => attachComment(docs.get(docId), p!, '已经不存在的字', 'c3', undefined, { from: 0, to: 3 })).toThrow(AnchorError)
+    // 越界位置
+    expect(() => attachComment(docs.get(docId), p!, 'x', 'c4', undefined, { from: 0, to: size + 5 })).toThrow(AnchorError)
+  })
+
+  it('正在回答的评论重新锚到整块后：记录改成整块评论，之后再整体改写不会被拦', () => {
+    const env = setup('心衰很常见。')
+    const [p1] = ids(env.docs, env.docId)
+    const cm = env.store.addComment({ doc_id: env.docId, node_id: p1!, snippet: '很常见' })
+    env.docs.commit(env.docId, attachComment(env.docs.get(env.docId), p1!, '很常见', cm.id).doc, { actor: 'user', turnId: null, ops: [] })
+    env.ops.edit({ doc_id: env.docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '很常见。', replace: '约影响 2% 的成人。' }] }, { actor: 'ai', turnId: null, answering: cm.id })
+    expect(env.store.getComment(env.docId, cm.id)!.snippet).toBe('')
+    // 下一轮（不再是回答这条评论）整段重写：整块评论跟着块走，不被锚点守卫拦下
+    env.ops.edit({ doc_id: env.docId, base_rev: 2, mode: 'apply', ops: [{ op: 'replace_block', id: p1!, markdown: '心力衰竭影响约 2% 的成年人。' }] }, { actor: 'ai', turnId: null })
+    expect(env.docs.get(env.docId).child(0).textContent).toBe('心力衰竭影响约 2% 的成年人。')
+  })
+})

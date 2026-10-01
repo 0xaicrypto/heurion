@@ -11,7 +11,7 @@ export interface DeckViewOptions {
   docId: string
   token: string
   /** 选中文字（限一个段落内）或单击形状（整个形状）；跨段落、跨形状给 blocked 提示。 */
-  onSelection: (anchor: { node_id: string; snippet: string; paragraph?: number; blocked?: string; rect: { top: number; left: number; width: number } } | null) => void
+  onSelection: (anchor: { node_id: string; snippet: string; paragraph?: number; range?: { from: number; to: number }; blocked?: string; rect: { top: number; left: number; width: number } } | null) => void
   onCommentClick: (thread: string) => void
 }
 
@@ -27,6 +27,8 @@ export class DeckView {
   private numbers = new Map<string, number>()
   /** 渲染中当前形状的段落计数（与服务端 attachComment 的段落序号一致：形状内文本块的文档顺序）。 */
   private pIndex = 0
+  /** 段落模型（形状 id#段落序号）：选区换算引用文字用。 */
+  private paras = new Map<string, PMJson>()
   private selected: string | null = null
 
   constructor(private readonly mount: HTMLElement, private readonly opts: DeckViewOptions) {
@@ -61,6 +63,7 @@ export class DeckView {
     const slides = this.data.doc.content ?? []
     // 引用编号：全文首次出现顺序
     this.numbers.clear()
+    this.paras.clear()
     const walk = (n: PMJson) => {
       if (n.type === 'citation' && !this.numbers.has(n.attrs!.cite_id)) this.numbers.set(n.attrs!.cite_id, this.numbers.size + 1)
       n.content?.forEach(walk)
@@ -110,9 +113,13 @@ export class DeckView {
     const lvl = p.attrs?.lvl ?? 0
     const ph = shape.attrs!.ph as string | null
     let size = 0
+    // 每个行内单位标上在段落里的偏移（data-o），选区据此换算回模型位置
+    let offset = 0
     const runs = (p.content ?? []).map(c => {
-      if (c.type === 'hard_break') return '<br>'
-      if (c.type === 'citation') return `<sup class="cite">[${this.numbers.get(c.attrs!.cite_id) ?? '?'}]</sup>`
+      const o = offset
+      offset += c.type === 'text' ? (c.text ?? '').length : 1
+      if (c.type === 'hard_break') return `<br data-o="${o}">`
+      if (c.type === 'citation') return `<sup class="cite" data-o="${o}" data-atom>[${this.numbers.get(c.attrs!.cite_id) ?? '?'}]</sup>`
       const rpr = c.marks?.find(m => m.type === 'rpr')?.attrs?.xml as string | undefined
       const sz = rpr ? /\ssz="(\d+)"/.exec(rpr)?.[1] : undefined
       const color = rpr ? /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(rpr)?.[1] : undefined
@@ -126,13 +133,14 @@ export class DeckView {
         if (m.type === 'sub') html = `<sub>${html}</sub>`
         if (m.type === 'comment') html = `<mark class="comment" data-thread="${esc(m.attrs?.thread)}">${html}</mark>`
       }
-      return color ? `<span style="color:#${color}">${html}</span>` : html
+      return `<span data-o="${o}"${color ? ` style="color:#${color}"` : ''}>${html}</span>`
     }).join('')
     if (!size) size = (ph && PH_SIZE[ph]) || (ph === 'body' || ph === 'obj' ? BODY_LEVELS[lvl] ?? 18 : 18)
     // 项目符号用 CSS 画，不进选区文字
     const bullet = (ph === 'body' || ph === 'obj') && runs ? ' class="bullet"' : ''
     const align = p.attrs?.align ? `text-align:${p.attrs.align};` : ''
-    return `<p data-p="${this.pIndex++}"${bullet} style="font-size:${size * k}px;margin-left:${lvl * 18 * k}px;${align}">${runs || '&nbsp;'}</p>`
+    this.paras.set(`${shape.attrs!.id}#${this.pIndex}`, p)
+    return `<p data-p="${this.pIndex++}" data-len="${offset}"${bullet} style="font-size:${size * k}px;margin-left:${lvl * 18 * k}px;${align}">${runs || '&nbsp;'}</p>`
   }
 
   private reportSelection(e?: MouseEvent): void {
@@ -163,9 +171,15 @@ export class DeckView {
       this.opts.onSelection({ node_id: '', snippet: '', blocked: a !== shapeOf(sel.focusNode) ? '评论只能选在一个形状内' : '评论只能选在一个段落内；要评论整个形状请单击它', rect: at })
       return
     }
-    const snippet = sel.toString()
+    const r = sel.getRangeAt(0)
+    const from = pmOffset(p, r.startContainer, r.startOffset)
+    const to = pmOffset(p, r.endContainer, r.endOffset)
+    const model = this.paras.get(`${a.dataset.id}#${p.dataset.p}`)
+    if (from === null || to === null || from >= to || !model) { this.opts.onSelection(null); return }
+    // 引用文字按模型算（与服务端同一规则），不含渲染出来的 [n] 角标
+    const snippet = paragraphSlice(model, from, to)
     if (!snippet.trim()) { this.opts.onSelection(null); return }
-    this.opts.onSelection({ node_id: a.dataset.id!, snippet, paragraph: Number(p.dataset.p), rect: at })
+    this.opts.onSelection({ node_id: a.dataset.id!, snippet, paragraph: Number(p.dataset.p), range: { from, to }, rect: at })
   }
 
   private select(id: string | null): void {
@@ -184,4 +198,34 @@ export class DeckView {
   destroy(): void {
     this.mount.innerHTML = ''
   }
+}
+
+/** 浏览器选区端点 → 段落内的模型偏移（按 data-o 标注换算；引用角标整体算一个单位）。 */
+function pmOffset(p: HTMLElement, node: Node, offset: number): number | null {
+  const el = node.nodeType === 3 ? node.parentElement : node as HTMLElement
+  if (!el || !p.contains(el)) return null
+  if (el === p) {
+    const kid = p.childNodes[offset] as HTMLElement | undefined
+    return kid?.dataset?.o !== undefined ? Number(kid.dataset.o) : Number(p.dataset.len ?? 0)
+  }
+  const run = el.closest('[data-o]') as HTMLElement | null
+  if (!run || !p.contains(run)) return null
+  const o = Number(run.dataset.o)
+  if (run.dataset.atom !== undefined || run.tagName === 'BR') return offset === 0 ? o : o + 1
+  if (node.nodeType === 3) return o + offset
+  return offset === 0 ? o : o + (run.textContent ?? '').length
+}
+
+/** 段落模型 [from, to) 的文字：硬换行记作换行，引用不计文字（同服务端 paragraphText）。 */
+function paragraphSlice(p: PMJson, from: number, to: number): string {
+  let out = ''
+  let pos = 0
+  for (const c of p.content ?? []) {
+    const len = c.type === 'text' ? (c.text ?? '').length : 1
+    const a = Math.max(from, pos)
+    const b = Math.min(to, pos + len)
+    if (a < b) out += c.type === 'text' ? c.text!.slice(a - pos, b - pos) : c.type === 'hard_break' ? '\n' : ''
+    pos += len
+  }
+  return out
 }

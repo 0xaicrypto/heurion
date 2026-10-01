@@ -18,6 +18,8 @@ export interface TokenClaims {
   aud: Audience
   /** 过期时间（unix 秒） */
   exp: number
+  /** dsh 进程代号：进程被停止后它的令牌立即失效（停止的回合不能再写入）。 */
+  s?: string
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')

@@ -64,15 +64,25 @@ function docToState(doc: PMNode): Uint8Array {
 }
 
 /**
- * 把模型写入 Y.Doc：updateYFragment 做最小差异，然后读回逐个顶层块核对。y-prosemirror 1.3.7 在
- * 行内原子节点（引用）之后的文字只改格式时不会更新格式属性（实测：粗体 → 评论标记无效），
- * 核对不一致的顶层块整块重写——内容一定对，代价只是该块在协同端的光标位置。
+ * 把模型写入 Y.Doc：updateYFragment 做最小差异，然后读回核对。y-prosemirror 1.3.7 在行内原子节点（引用）
+ * 之后的文字只改格式时不更新格式属性（实测：粗体 → 评论标记无效）。修补在原有 Yjs 元素上进行——
+ * 用临时 Y.Doc 生成目标内容的 Yjs 表示作参照，只补格式与元素属性，不删不换元素：协作者在同一段的并发输入、
+ * 回合撤销（UndoManager 追踪的元素）都不受影响。结构对不上时才退回整块重写（目前已知问题不会走到）。
  */
 export function writeFragment(ydoc: Y.Doc, next: PMNode): void {
   const fragment = ydoc.getXmlFragment(BODY)
   updateYFragment(ydoc, fragment, next, { mapping: new Map(), isOMark: new Map() } as never)
-  const got = yXmlFragmentToProseMirrorRootNode(fragment, next.type.schema)
+  let got = yXmlFragmentToProseMirrorRootNode(fragment, next.type.schema)
   if (got.eq(next)) return
+  if (got.childCount === next.childCount) {
+    const reference = referenceFragment(next)
+    for (let i = 0; i < next.childCount; i++) {
+      if (!got.child(i).eq(next.child(i))) syncAttributes(fragment.get(i), reference.get(i))
+    }
+    got = yXmlFragmentToProseMirrorRootNode(fragment, next.type.schema)
+    if (got.eq(next)) return
+  }
+  // 兜底：结构本身对不上，整块重写不一致的顶层块
   if (got.childCount !== next.childCount) {
     fragment.delete(0, fragment.length)
     fragment.insert(0, freshElements(next, 0, next.childCount))
@@ -85,14 +95,51 @@ export function writeFragment(ydoc: Y.Doc, next: PMNode): void {
   }
 }
 
+/** 目标内容在临时 Y.Doc 里的 Yjs 表示（y-prosemirror 自己的编码，作格式属性的参照）。 */
+function referenceFragment(doc: PMNode): Y.XmlFragment {
+  const tmp = new Y.Doc()
+  tmp.transact(() => updateYFragment(tmp, tmp.getXmlFragment(BODY), doc, { mapping: new Map(), isOMark: new Map() } as never))
+  return tmp.getXmlFragment(BODY)
+}
+
+type YNode = Y.XmlElement | Y.XmlText | Y.XmlHook
+
+/** 让 live 的格式与元素属性与 reference 一致（文字与结构相同才动）；结构不同返回 false。 */
+function syncAttributes(live: YNode | undefined, reference: YNode | undefined): boolean {
+  if (live instanceof Y.XmlText && reference instanceof Y.XmlText) {
+    const liveDelta = live.toDelta() as Array<{ insert: unknown; attributes?: Record<string, unknown> }>
+    const refDelta = reference.toDelta() as Array<{ insert: unknown; attributes?: Record<string, unknown> }>
+    // 比纯文字（XmlText.toString() 带格式标签，不能用）
+    const plain = (d: typeof liveDelta) => d.map(x => (typeof x.insert === 'string' ? x.insert : '\uFFFC')).join('')
+    if (plain(liveDelta) !== plain(refDelta)) return false
+    if (JSON.stringify(liveDelta) === JSON.stringify(refDelta)) return true
+    const keys = new Set(liveDelta.flatMap(d => Object.keys(d.attributes ?? {})))
+    let offset = 0
+    for (const d of refDelta) {
+      const length = typeof d.insert === 'string' ? d.insert.length : 1
+      const attrs: Record<string, unknown> = { ...(d.attributes ?? {}) }
+      for (const k of keys) if (!(k in attrs)) attrs[k] = null
+      live.format(offset, length, attrs)
+      offset += length
+    }
+    return true
+  }
+  if (live instanceof Y.XmlElement && reference instanceof Y.XmlElement && live.nodeName === reference.nodeName && live.length === reference.length) {
+    const la = live.getAttributes() as Record<string, unknown>
+    const ra = reference.getAttributes() as Record<string, unknown>
+    for (const [k, v] of Object.entries(ra)) if (JSON.stringify(la[k]) !== JSON.stringify(v)) live.setAttribute(k, v as never)
+    for (const k of Object.keys(la)) if (!(k in ra)) live.removeAttribute(k)
+    for (let j = 0; j < live.length; j++) if (!syncAttributes(live.get(j), reference.get(j))) return false
+    return true
+  }
+  return false
+}
+
 /** 顶层块 [from, to) 的全新 Yjs 元素（在临时 Y.Doc 里生成后克隆，可插入任何文档）。 */
 function freshElements(doc: PMNode, from: number, to: number): Y.XmlElement[] {
-  const tmp = new Y.Doc()
   const nodes: PMNode[] = []
   for (let i = from; i < to; i++) nodes.push(doc.child(i))
-  const part = doc.type.create(doc.attrs, nodes)
-  tmp.transact(() => updateYFragment(tmp, tmp.getXmlFragment(BODY), part, { mapping: new Map(), isOMark: new Map() } as never))
-  return tmp.getXmlFragment(BODY).toArray().map(el => (el as Y.XmlElement).clone())
+  return referenceFragment(doc.type.create(doc.attrs, nodes)).toArray().map(el => (el as Y.XmlElement).clone())
 }
 
 /** 服务端提交的 Yjs origin（区别于浏览器经协同网关送来的更新）。 */

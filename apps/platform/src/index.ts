@@ -3,7 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
-import { devUserFor } from './auth.ts'
+import { devUserFor } from './auth/dev.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -37,6 +37,7 @@ const mcpDeps = {
   pubmed,
   crossref,
   workspaceDir: (userId: string) => pool.workspaceDir(userId),
+  isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
 const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, devToken: config.devToken, devUser: config.devUser })

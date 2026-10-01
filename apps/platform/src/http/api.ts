@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
-import { devUserFor } from '../auth.ts'
+import { devUserFor } from '../auth/dev.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
@@ -338,13 +338,13 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/comments', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const body = await c.req.json<{ node_id?: string; snippet?: string; paragraph?: number; text?: string }>()
+    const body = await c.req.json<{ node_id?: string; snippet?: string; paragraph?: number; range?: { from: number; to: number }; text?: string }>()
     if (!body.node_id || !body.text?.trim()) return c.json({ error: 'node_id 与 text 必填' }, 400)
     const comment = store.addComment({ doc_id: row.id, node_id: body.node_id, snippet: body.snippet ?? '' })
     try {
-      const anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id, body.paragraph)
+      const anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id, body.paragraph, body.range)
       docs.commit(row.id, anchored.doc, { actor: 'user', turnId: null, ops: [{ op: 'comment', thread: comment.id }] })
-      store.db.prepare('UPDATE comments SET snippet = ? WHERE id = ?').run(anchored.snippet, comment.id)
+      store.setCommentAnchor(comment.id, body.node_id, anchored.snippet)
     } catch (err) {
       store.db.prepare('DELETE FROM comments WHERE id = ?').run(comment.id)
       if (err instanceof AnchorError) return c.json({ error: err.message }, 400)

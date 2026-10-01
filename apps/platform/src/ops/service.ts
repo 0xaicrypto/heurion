@@ -76,11 +76,14 @@ export class OpService {
       ? toSuggestion(before, applied.doc, `g${randomBytes(4).toString('hex')}`)
       : applied.doc
 
-    if (meta.answering) after = this.keepAnswering(batch.doc_id, meta.answering, before, after)
+    let reanchored: string | null = null
+    if (meta.answering) ({ doc: after, nodeId: reanchored } = this.keepAnswering(batch.doc_id, meta.answering, before, after))
     after = this.keepWholeNode(batch.doc_id, after)
     if (ai) this.guardAnchors(batch, before, after)
 
     const event = this.docs.commit(batch.doc_id, after, { actor: meta.actor, turnId: meta.turnId, ops: batch.ops })
+    // 重新锚到整块的线程：记录随之改成整块评论（引用文字清空，之后按整块维护）
+    if (reanchored && meta.answering) this.docs.store.setCommentAnchor(meta.answering, reanchored, '')
     return { doc_id: batch.doc_id, rev: event?.rev ?? rev, results, changes: event?.changes ?? [] }
   }
 
@@ -146,17 +149,19 @@ export class OpService {
   }
 
   /** 锚点守卫：本批操作会让 open 评论失去锚点，且未在 ack_comments 中确认 → 拒绝。 */
-  private keepAnswering(docId: string, thread: string, before: PMNode, after: PMNode): PMNode {
+  /** 返回重新锚定到的块 id（没有重新锚定为 null），edit 提交成功后写回评论记录。 */
+  private keepAnswering(docId: string, thread: string, before: PMNode, after: PMNode): { doc: PMNode; nodeId: string | null } {
+    const unchanged = { doc: after, nodeId: null }
     const comment = this.docs.store.getComment(docId, thread)
-    if (!comment || comment.status !== 'open') return after
+    if (!comment || comment.status !== 'open') return unchanged
     const was = locate(before, comment)
-    if (!was.located || locate(after, comment).located) return after
+    if (!was.located || locate(after, comment).located) return unchanged
     for (const id of was.node_ids) {
       try {
-        return attachComment(after, id, '', thread).doc
+        return { doc: attachComment(after, id, '', thread).doc, nodeId: id }
       } catch { /* 块也被删了：交给锚点守卫 */ }
     }
-    return after
+    return unchanged
   }
 
   /** 整块 / 整个形状的评论锚的是块本身：块还在而文字被整体改写时，把标记补回整块。 */

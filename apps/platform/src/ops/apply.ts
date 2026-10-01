@@ -225,6 +225,7 @@ function appendAcrossCitation(tr: Transform, map: ReturnType<typeof textMap>, op
 
 function allIndexes(hay: string, needle: string): number[] {
   const out: number[] = []
+  if (!needle) return out // 空串会在末尾原地打转
   for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) out.push(i)
   return out
 }
@@ -233,7 +234,8 @@ function allIndexes(hay: string, needle: string): number[] {
 function findVariants(find: string): string[] {
   const unescaped = find.replace(/<br\s*\/?>/gi, '\n').replace(/\\([\\*_`[\]<>])/g, '$1').replace(/&lt;/g, '<')
   const plain = unescaped.replace(/\*\*|__|(?<![\w*])\*(?!\s)|(?<!\s)\*(?![\w*])/g, '')
-  return [...new Set([find, unescaped, plain])]
+  // 「**」这类只有强调符号的 find 去掉符号后是空串：不能当作匹配词
+  return [...new Set([find, unescaped, plain])].filter(v => v.length > 0)
 }
 
 export type InlineParser = (markdown: string) => PMNode[]
@@ -286,11 +288,14 @@ function oldUnits(tr: Transform, map: ReturnType<typeof textMap>, start: number,
   return out
 }
 
-/** 新内容：解析出的行内节点逐单位展开（文字逐字符、原子一个），位置即 Fragment 内偏移。 */
+/**
+ * 新内容：解析出的行内节点逐单位展开（文字逐 UTF-16 码元、原子一个），位置即 Fragment 内偏移。
+ * 必须按码元而不是按字符（for…of 会把 emoji 等代理对当一个）：旧内容与 ProseMirror 位置都按码元计。
+ */
 function newUnits(nodes: readonly PMNode[]): string[] {
   const out: string[] = []
   for (const n of nodes) {
-    if (n.isText) for (const ch of n.text!) out.push(`t:${ch}|${marksKey(n.marks)}`)
+    if (n.isText) for (let i = 0; i < n.text!.length; i++) out.push(`t:${n.text![i]}|${marksKey(n.marks)}`)
     else out.push(`atom:${n.type.name}${JSON.stringify(n.attrs)}`)
   }
   return out
@@ -314,8 +319,9 @@ export function replaceInTextblock(tr: Transform, node: PMNode, pos: number, op:
   }
   if (hits.length === 0) {
     // 大小写不同：唯一匹配时接受（Claude Docs 默认不区分大小写）
+    // 转小写会改变长度的字符（如 İ）下位置对不上，这时不做大小写回退
     const lower = map.text.toLowerCase()
-    for (const v of findVariants(op.find)) {
+    for (const v of lower.length === map.text.length ? findVariants(op.find) : []) {
       const ci = allIndexes(lower, v.toLowerCase())
       if (ci.length === 1 || (ci.length > 1 && op.occurrence !== undefined)) { hits = ci; needle = v; break }
     }
@@ -384,7 +390,8 @@ function nearCandidates(map: ReturnType<typeof textMap>, find: string): MatchCan
     let flat = ''
     for (let i = 0; i < map.text.length; i++) {
       if (/\s/.test(map.text[i]!)) continue
-      flat += map.text[i]!.toLowerCase()
+      const ch = map.text[i]!.toLowerCase()
+      flat += ch.length === 1 ? ch : map.text[i]!
       idx.push(i)
     }
     for (let at = flat.indexOf(target); at !== -1 && out.length < 3; at = flat.indexOf(target, at + 1)) {

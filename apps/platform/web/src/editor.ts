@@ -32,6 +32,8 @@ export interface SelectionAnchor {
   snippet: string
   /** deck：选区所在段落在形状里的序号。 */
   paragraph?: number
+  /** 选区在段落内的偏移（ProseMirror 位置，相对段落内容起点）。 */
+  range?: { from: number; to: number }
   /** 选区不能评论时的提示（跨段落、跨形状…）；有值时只提示不评论。 */
   blocked?: string
   /** 选区在视口中的位置（浮动按钮用）。 */
@@ -314,11 +316,15 @@ export class Editor {
     }
     let nodeId: string | null = null
     for (let d = $from.depth; d > 0 && !nodeId; d--) nodeId = ($from.node(d).attrs.id as string | null) ?? null
-    const snippet = this.view.state.doc.textBetween(from, to, '\n', '')
+    // 与服务端 paragraphText 同一规则：硬换行记作换行，引用不计文字
+    const snippet = this.view.state.doc.textBetween(from, to, '\n', leaf => (leaf.type.name === 'hard_break' ? '\n' : ''))
     if (!nodeId || !snippet.trim()) { this.opts.onSelection(null); return }
+    // 段落内偏移：服务端按位置打锚点（重复出现的文字也能锚准）
+    const base = $from.start()
+    const range = $from.parent.attrs.id === nodeId ? { from: from - base, to: to - base } : undefined
     const start = this.view.coordsAtPos(from)
     const end = this.view.coordsAtPos(to)
-    this.opts.onSelection({ node_id: nodeId, snippet, rect: { top: start.top, left: start.left, width: Math.max(0, end.right - start.left) } })
+    this.opts.onSelection({ node_id: nodeId, snippet, range, rect: { top: start.top, left: start.left, width: Math.max(0, end.right - start.left) } })
   }
 
   /** AI 改动的块短暂高亮（Yjs 更新可能晚于提交事件到达，稍等再标）。 */

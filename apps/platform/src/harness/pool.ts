@@ -13,6 +13,8 @@ interface Entry {
   sessionId: string | null
   lastUsed: number
   busy: boolean
+  /** 进程代号，写进它的 MCP 令牌；进程被停止（entry 删除）后旧令牌立即失效。 */
+  generation: string
 }
 
 /**
@@ -34,7 +36,7 @@ export class HarnessPool {
     return dir
   }
 
-  private childEnv(userId: string): NodeJS.ProcessEnv {
+  private childEnv(userId: string, generation: string): NodeJS.ProcessEnv {
     return {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: process.env.HOME ?? this.config.dshHome,
@@ -42,7 +44,7 @@ export class HarnessPool {
       DEEPSEEK_API_KEY: this.config.deepseekApiKey,
       HEURION_MCP_URL: this.config.mcpUrl,
       // MCP 令牌比进程的最长空闲时间长；进程回收后重新签发
-      HEURION_MCP_TOKEN: issueToken(this.config.secret, { u: userId, d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 24 * 3600 }),
+      HEURION_MCP_TOKEN: issueToken(this.config.secret, { u: userId, d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 24 * 3600, s: generation }),
       // 不加载 dsh office 技能：文档编辑只走 MCP
       DSH_PRIMARY_RUNTIME: '',
       PIP_NO_INDEX: '1',
@@ -53,6 +55,7 @@ export class HarnessPool {
     let e = this.entries.get(userId)
     if (!e) {
       const cwd = this.workspaceDir(userId)
+      const generation = randomUUID()
       e = {
         harness: new DeepSeekHarness({
           profile: 'sdk',
@@ -60,7 +63,7 @@ export class HarnessPool {
           dshHome: this.config.dshHome,
           cwd,
           processCwd: cwd,
-          env: this.childEnv(userId),
+          env: this.childEnv(userId, generation),
           provider: this.config.provider,
           model: this.config.model,
           initializeTimeoutMs: 60_000,
@@ -68,10 +71,16 @@ export class HarnessPool {
         sessionId: null,
         lastUsed: Date.now(),
         busy: false,
+        generation,
       }
       this.entries.set(userId, e)
     }
     return e
+  }
+
+  /** 令牌里的进程代号是否仍是该用户当前的 dsh 进程。 */
+  isLive(userId: string, generation: string): boolean {
+    return this.entries.get(userId)?.generation === generation
   }
 
   isBusy(userId: string): boolean {

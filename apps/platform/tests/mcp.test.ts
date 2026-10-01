@@ -32,6 +32,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     docs: env.docs, ops: env.ops, turns: registry, secret: SECRET, claims: new ClaimService(env.docs, pubmed), renderer: new SlideRenderer(workspace),
     pubmed, crossref,
     workspaceDir: () => workspace,
+    isLiveSession: () => true,
   }, claims)
   const [a, b] = InMemoryTransport.createLinkedPair()
   await server.connect(a)
@@ -174,5 +175,22 @@ describe('论断核对', () => {
     t.ops.edit({ doc_id: t.docId, base_rev: t.docs.rev(t.docId), mode: 'apply', ack_comments: comments.map(c => c.id), ops: [{ op: 'replace_text', id, find: '因安全性问题提前终止', replace: '按计划完成' }] }, { actor: 'user', turnId: null })
     const stale = await t.call('claim_report', { doc_id: t.docId, results: [{ claim_id: ev.claims[0].claim_id, verdict: 'supported', reason: 'x' }] })
     expect(stale.body.results[0].status).toBe('stale')
+  })
+})
+
+describe('MCP 会话失效', () => {
+  it('被停止的 dsh 进程的令牌立即失效；当前进程的令牌照常', async () => {
+    const { handleMcp } = await import('../src/mcp/server.ts')
+    const live = new Set(['g-now'])
+    const deps = { secret: SECRET, isLiveSession: (_u: string, g: string) => live.has(g) } as unknown as Parameters<typeof handleMcp>[0]
+    const call = async (s: string) => {
+      const token = issueToken(SECRET, { u: 'u1', d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 60, s })
+      const res = { code: 0, body: '', writeHead(code: number) { this.code = code; return this }, end(b: string) { this.body = b }, on() {} }
+      await handleMcp(deps, { headers: { authorization: `Bearer ${token}` } } as never, res as never).catch(() => {})
+      return res
+    }
+    const stale = await call('g-old')
+    expect([stale.code, stale.body]).toEqual([401, 'session stopped'])
+    expect((await call('g-now')).code).not.toBe(401)
   })
 })

@@ -188,7 +188,7 @@ describe('失败原因', () => {
 
 describe('开发令牌', () => {
   it('「令牌:名字」映射到独立开发用户；非法名字与错误令牌拒绝', async () => {
-    const { devUserFor } = await import('../src/auth.ts')
+    const { devUserFor } = await import('../src/auth/dev.ts')
     expect(devUserFor('dev', 'dev', 'dev')).toBe('dev')
     expect(devUserFor('dev:e2e', 'dev', 'dev')).toBe('dev:e2e')
     expect(devUserFor('dev:BAD USER', 'dev', 'dev')).toBeNull()
