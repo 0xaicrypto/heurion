@@ -66,6 +66,11 @@ export function buildWopi(deps: WopiDeps): Hono {
   const { store, files, pool, config } = deps
   const app = new Hono()
   let discoveryCache: { at: number; xml: string } | null = null
+  // WOPI 请求日志：评论触发链路依赖 PutFile，必须看得见每一次保存。
+  app.use('/wopi/*', async (c, next) => {
+    await next()
+    console.log(`[wopi] ${c.req.method} ${c.req.path.split('?')[0]} -> ${c.res.status}`)
+  })
 
   const auth = (docId: string, token: string | undefined): boolean => {
     const from = verifyDocToken(config.secret, token ?? '')
