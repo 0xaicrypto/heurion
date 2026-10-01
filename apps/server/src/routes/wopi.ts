@@ -122,8 +122,9 @@ export function buildWopi(deps: WopiDeps): Hono {
 
     const bytes = new Uint8Array(await c.req.arrayBuffer())
     if (bytes.length === 0) return c.json({ error: 'empty body' }, 400)
-    const version = files.saveUserSave(docId, bytes, '编辑保存')
-    return c.body(null, 200, { 'X-COOL-WOPI-Timestamp': version.created_at, 'X-HEURION-VERSION': String(version.seq) })
+    const { version } = files.saveUserSave(docId, bytes, '编辑保存')
+    const created = version ? version.created_at : lastModified(docId)!
+    return c.body(null, 200, { 'X-COOL-WOPI-Timestamp': created, 'X-HEURION-VERSION': String(store.getDoc(docId)!.head_seq) })
   })
 
   // 编辑面 URL 组装（前端 iframe 用）：发现文档 + WOPISrc + 按文档令牌。

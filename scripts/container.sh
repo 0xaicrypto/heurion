@@ -32,10 +32,16 @@ case "${1:-up}" in
   collabora)
     # 编辑面（#4 spike → S4）：Collabora CODE，明文 HTTP 仅限本地。
     # 浏览器从宿主机访问 9980；它回连 WOPI host 走容器网络别名。
+    # CODE 镜像极简无 shell，中文字体用挂载注入（/tmp/h2-fonts/noto 由
+    #   podman cp heurion2:/usr/share/fonts/opentype/noto /private/tmp/h2-fonts/noto
+    # 生成；缺失时跳过挂载，退化为豆腐块）。
     "$ENGINE" network create heurion2-net 2>/dev/null || true
     "$ENGINE" rm -f heurion2-collabora >/dev/null 2>&1 || true
+    FONT_ARGS=''
+    [ -d /private/tmp/h2-fonts/noto ] && FONT_ARGS="-v /private/tmp/h2-fonts/noto:/usr/share/fonts/opentype/noto-cjk:ro,Z"
+    # shellcheck disable=SC2086
     "$ENGINE" run -d --name heurion2-collabora --network heurion2-net \
-      -p 9980:9980 \
+      -p 9980:9980 $FONT_ARGS \
       -e extra_params='--o:ssl.enable=false --o:net.protocol=ipv4' \
       docker.io/collabora/code:latest
     echo "http://localhost:9980" ;;

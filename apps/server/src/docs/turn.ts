@@ -114,12 +114,9 @@ export class TurnService {
       const version = this.files.landMerged(docId, merged.bytes, message.slice(0, 80))
       emit({ type: 'merge_result', applied: merged.applied.map(a => `${a.kind}:${a.id}`), overridden: merged.overridden })
       emit({ type: 'version', seq: version.seq })
-      // 同节点冲突在线程里说明（评论驱动的回合）
-      if (merged.overridden.length > 0 && commentId) {
-        const list = merged.overridden.map(o => o.text.slice(0, 40)).join('；')
-        this.store.addReply(docId, commentId, 'ai',
-          `并行合并：你手动更新的 ${merged.overridden.length} 处内容保留了你的版本，AI 对同一处的修改已丢弃（${list}）。其余改动已合并为 v${version.seq}。`)
-      }
+      this.ensureThreadReply(docId, commentId, openBefore, version.seq, merged.overridden.length > 0
+        ? `并行合并：你手动更新的 ${merged.overridden.length} 处内容保留了你的版本，AI 对同一处的修改已丢弃；其余改动已合并为 v${version.seq}。`
+        : `AI 已把修改合并进你手动保存的版本（v${version.seq}）：异处的改动双方都保留。`)
       this.emitCommentEvents(docId, openBefore, emit)
       return
     }
@@ -129,8 +126,29 @@ export class TurnService {
       // id 存活率告警（#1）：低于阈值 = 疑似整文重写，锚点大概率整体失效。
       const rate = version.meta?.id_survival
       if (typeof rate === 'number' && rate < ID_SURVIVAL_WARN) emit({ type: 'id_survival_warning', rate })
+      this.ensureThreadReply(docId, commentId, openBefore, version.seq,
+        `AI 已按评论完成修改（v${version.seq}）。编辑器会自动刷新到新版本。`)
     }
     this.emitCommentEvents(docId, openBefore, emit)
+  }
+
+  /**
+   * 自动回复保障（#2）：评论驱动的回合结束时，线程里必须留下 AI 说明——
+   * 模型没调 reply_comment 时由服务端代发（role='ai'，可追溯），用户读线程永远有交代。
+   */
+  private ensureThreadReply(
+    docId: string,
+    commentId: string | undefined,
+    openBefore: Set<string>,
+    seq: number,
+    fallbackText: string,
+  ): void {
+    if (!commentId || !openBefore.has(commentId)) return
+    const c = this.store.getComment(docId, commentId)
+    if (!c) return
+    const last = c.replies[c.replies.length - 1]
+    const hasNewAiReply = last?.role === 'ai' && !openBefore.has(last.id) // 本回合内新增的 AI 回复
+    if (!hasNewAiReply) this.store.addReply(docId, commentId, 'ai', fallbackText)
   }
 
   /** 回合结束时评论状态事件（S2/S3）。 */

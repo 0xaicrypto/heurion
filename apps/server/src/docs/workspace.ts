@@ -88,11 +88,19 @@ export class DocFiles {
     return this.saveVersion(docId, kind, bytes, 'upload', '上传')
   }
 
-  /** 编辑面（WOPI PutFile）保存：用户手动编辑落一个 user 版本。 */
-  saveUserSave(docId: string, bytes: Uint8Array, note: string): VersionRow {
+  /**
+   * 编辑面（WOPI PutFile）保存。幂等：内容与 head 相同时不落空版本，
+   * 但**评论同步与 @heurion 扫描照跑**（评论添加本身不改变正文，用户可能
+   * 只加评论就 Ctrl+S —— 触发链路不能依赖「内容变了」）。
+   */
+  saveUserSave(docId: string, bytes: Uint8Array, note: string): { version: VersionRow | null; synced: boolean } {
     const doc = this.store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
-    return this.saveVersion(docId, doc.kind, bytes, 'user', note)
+    const changed = sha256(bytes) !== (doc.head_seq > 0 ? this.store.getVersion(docId, doc.head_seq)!.sha256 : '')
+    const version = changed ? this.saveVersion(docId, doc.kind, bytes, 'user', note) : null
+    const ids = syncFileComments(this.store, docId, bytes).commentIds
+    this.onFileCommentsSynced(docId, ids)
+    return { version, synced: true }
   }
 
   /** 回合开始：把 head 版本覆盖写入工作区，返回基准哈希（无版本时为 null）。 */

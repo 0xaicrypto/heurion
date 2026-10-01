@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type Comment, type Doc, type DocDetail, type DocKind, type Projection, type ProjectionNode, type UiEvent, type Version } from './api.ts'
 
+const fmtTime = (iso: string): string => {
+  const d = new Date(iso)
+  const today = new Date()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return d.toDateString() === today.toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
 interface LiveStep { kind: 'reasoning' | 'assistant' | 'tool' | 'notice' | 'error'; text: string }
 
 const SOURCE_META: Record<Version['source'], { label: string; cls: string }> = {
@@ -174,7 +181,7 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
       {/* 编辑器：常驻（Collabora iframe），AI 落版后由外部变更检测自动刷新 */}
       <section className="editor">
         {head
-          ? <EditorPane docId={docId} title={doc.title} headSeq={head.seq} />
+          ? <EditorPane docId={docId} title={doc.title} headSeq={head.seq} busy={running} openAutoComments={openCount(comments)} />
           : <div className="editor-empty">
               <p>还没有文件。</p>
               <p className="muted">在左侧对话里说一句需求，让 AI 起草全文（引用会自动走文献库）；<br />或点右上角「上传」导入现有 docx/pptx。</p>
@@ -212,7 +219,9 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
 const openCount = (cs: Comment[]) => cs.filter(c => c.status === 'open').length
 
 /** 编辑器面板：Collabora iframe 常驻；表单提交 access_token（WOPI 标准嵌入）。 */
-function EditorPane({ docId, title, headSeq }: { docId: string; title: string; headSeq: number }) {
+function EditorPane({ docId, title, headSeq, busy, openAutoComments }: {
+  docId: string; title: string; headSeq: number; busy: boolean; openAutoComments: number
+}) {
   const [info, setInfo] = useState<{ urlsrc: string; access_token: string; wopisrc: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
@@ -229,9 +238,14 @@ function EditorPane({ docId, title, headSeq }: { docId: string; title: string; h
     <div className="editor-inner">
       <div className="pane-head editor-bar">
         <strong>{title}</strong>
-        <span className="muted small">在编辑器里选中内容添加评论，保存后自动进入评论队列</span>
+        <span className="muted small">在编辑器里选中内容添加评论，写 @heurion 保存后自动处理</span>
         <a className="btn ghost small" href={api.downloadUrl(docId, headSeq)}>下载</a>
       </div>
+      {busy && (
+        <div className="ai-banner">
+          <span className="pulse" /> AI 正在修改文档{openAutoComments > 0 ? `（评论队列 ${openAutoComments} 条待处理）` : ''} — 完成落版后编辑器会自动刷新，此刻保存会被暂时拒绝
+        </div>
+      )}
       {err
         ? <div className="editor-empty">
             <p>{err}</p>
@@ -264,24 +278,16 @@ function CommentsPanel({ docId, kind, comments, running, processing, onProcess, 
 }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [fallback, setFallback] = useState({ snippet: '', text: '' })
   const open = comments.filter(c => c.status === 'open')
   const resolved = comments.filter(c => c.status === 'resolved')
 
-  const createFallback = async () => {
-    const s = fallback.snippet.trim()
-    const t = fallback.text.trim()
-    if (!s && !t) return
-    await api.createComment(docId, { text_snippet: s || undefined, text: t || undefined })
-    setFallback({ snippet: '', text: '' })
-    onChanged()
-  }
-
   const thread = (c: Comment) => {
     const isExpanded = expanded[c.id] ?? c.status === 'open'
-    const busy = processing[c.id]
+    const busy = processing[c.id] || (running && c.status === 'open' && c.last_auto_reply_id != null)
+    const lastReply = c.replies[c.replies.length - 1]
+    const autoPending = busy && c.last_auto_reply_id != null && lastReply?.role === 'user'
     return (
-      <li key={c.id} className={`card comment ${c.status} ${c.drifted ? 'drifted' : ''}`}>
+      <li key={c.id} className={`card comment ${c.status} ${c.drifted ? 'drifted' : ''} ${autoPending ? 'working' : ''}`}>
         <button className="comment-head" onClick={() => setExpanded(p => ({ ...p, [c.id]: !isExpanded }))}>
           <span className={`chip ${c.status === 'open' ? 'chip-open' : 'chip-done'}`}>{c.status === 'open' ? '待处理' : '已关闭'}</span>
           {c.drifted && <span className="chip chip-warn">漂移</span>}
@@ -295,28 +301,36 @@ function CommentsPanel({ docId, kind, comments, running, processing, onProcess, 
               <p className="hint">锚点漂移，候选位置：{c.candidates.map(x => x.text.slice(0, 30)).join(' / ')}</p>
             )}
             <ul className="replies">
-              {c.replies.map(r => (
-                <li key={r.id} className={`bubble ${r.role}`}>{r.text}</li>
+              {c.replies.map((r, i) => (
+                <li key={r.id} className={`bubble ${r.role}`}>
+                  <div className="bubble-meta">
+                    {r.role === 'ai'
+                      ? <><span className="avatar">H</span><strong>Heurion</strong></>
+                      : <><span className="avatar user-avatar">你</span><strong>你</strong></>}
+                    <span className="muted">{fmtTime(r.created_at)}</span>
+                  </div>
+                  <div className="bubble-text">{r.text}</div>
+                </li>
               ))}
             </ul>
+            {autoPending && <div className="bubble working-hint"><span className="pulse" /> AI 正在根据这条评论修改文档…（完成后这里会出现说明，编辑器自动刷新）</div>}
             {c.status === 'open' && (
               <div className="comment-actions">
                 <input
-                  className="reply-input" placeholder="回复这条评论…"
+                  className="reply-input" placeholder="让 Heurion 修改…"
                   value={drafts[c.id] ?? ''}
+                  disabled={busy || running}
                   onChange={e => setDrafts(p => ({ ...p, [c.id]: e.target.value }))}
                   onKeyDown={async e => {
-                    if (e.key === 'Enter' && (drafts[c.id] ?? '').trim()) {
-                      await api.replyComment(docId, c.id, (drafts[c.id] ?? '').trim())
+                    const v = (drafts[c.id] ?? '').trim()
+                    if (e.key === 'Enter' && v) {
                       setDrafts(p => ({ ...p, [c.id]: '' }))
+                      await api.askHeurion(docId, c.id, v)
                       onChanged()
                     }
                   }}
                 />
-                <button className="btn primary small" disabled={busy || running} onClick={() => onProcess(c.id)}>
-                  {busy ? 'AI 处理中…' : '请 AI 处理'}
-                </button>
-                <button className="btn ghost small" onClick={async () => { await api.resolveComment(docId, c.id); onChanged() }}>关闭</button>
+                <button className="btn ghost small" disabled={busy || running} onClick={async () => { await api.resolveComment(docId, c.id); onChanged() }}>完成</button>
               </div>
             )}
             {c.status === 'resolved' && (
@@ -335,21 +349,12 @@ function CommentsPanel({ docId, kind, comments, running, processing, onProcess, 
     <div className="comments-pane">
       <p className="hint guide">
         {kind === 'docx'
-          ? '主入口：在编辑器里选中文字 → Comment → 写「@heurion + 要求」→ Ctrl+S 保存，AI 自动处理（落版后编辑器自动刷新）。不带 @heurion 的评论用下面的按钮手动处理。'
-          : '主入口：在编辑器/下方画布里给形状加评论，评论里写「@heurion + 要求」→ 保存后 AI 自动处理。'}
+          ? '在编辑器里选中文字 → Comment → 写「@heurion + 要求」→ Ctrl+S 保存，AI 自动处理；不带 @heurion 的评论用线程里的「请 AI 处理」手动触发。'
+          : '在编辑器/画布里给形状加评论，评论里写「@heurion + 要求」→ 保存后 AI 自动处理。'}
       </p>
       {open.map(thread)}
       {resolved.map(thread)}
       {comments.length === 0 && <p className="muted small center">还没有评论</p>}
-      <details className="fallback">
-        <summary className="muted small">没有编辑器也能加评论（输入锚点片段）</summary>
-        <div className="fallback-body">
-          <input placeholder="锚点片段（正文里已有的字串）" value={fallback.snippet} onChange={e => setFallback(f => ({ ...f, snippet: e.target.value }))} />
-          <input placeholder="要求 AI 做什么（可留空只标记位置）" value={fallback.text} onChange={e => setFallback(f => ({ ...f, text: e.target.value }))}
-            onKeyDown={e => { if (e.key === 'Enter') void createFallback() }} />
-          <button className="btn small" onClick={() => void createFallback()}>+ 添加评论</button>
-        </div>
-      </details>
     </div>
   )
 }

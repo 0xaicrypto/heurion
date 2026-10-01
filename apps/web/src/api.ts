@@ -83,6 +83,9 @@ export const api = {
     fetch(`/api/docs/${id}/comments/${cid}/replies`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }).then(r => json<CommentReply>(r)),
   resolveComment: (id: string, cid: string) =>
     fetch(`/api/docs/${id}/comments/${cid}/resolve`, { method: 'POST', headers: auth }).then(r => json<{ ok: boolean }>(r)),
+  /** 线程内召唤 Heurion 修改（多轮追问）：输入即触发，无需 @heurion。 */
+  askHeurion: (id: string, cid: string, text: string) =>
+    fetch(`/api/docs/${id}/comments/${cid}/ask`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }).then(r => json<{ ok: boolean; queued: boolean }>(r)),
   reopenComment: (id: string, cid: string) =>
     fetch(`/api/docs/${id}/comments/${cid}/reopen`, { method: 'POST', headers: auth }).then(r => json<{ ok: boolean }>(r)),
 

@@ -62,6 +62,18 @@ export class CommentAutomation {
     return this.queue.get(docId)?.length ?? 0
   }
 
+  /** 手动/追问强制触发（线程内「让 Heurion 修改」）：不要求 @heurion，直接入队执行。 */
+  force(docId: string, commentId: string): void {
+    const c = this.store.getComment(docId, commentId)
+    if (!c) return
+    const last = c.replies[c.replies.length - 1]
+    if (last?.role === 'user') this.store.markAutoTriggered(commentId, last.id)
+    const q = this.queue.get(docId) ?? []
+    if (!q.includes(commentId)) q.push(commentId)
+    this.queue.set(docId, q)
+    void this.drain(docId)
+  }
+
   private async drain(docId: string): Promise<void> {
     if (this.running.has(docId)) return
     const q = this.queue.get(docId)
@@ -72,10 +84,11 @@ export class CommentAutomation {
       await this.turns.run(docId, buildCommentPrompt(cid), () => {}, { commentId: cid })
     } catch (err) {
       if (!(err instanceof BusyError)) console.error('[automation] auto turn failed', err)
-      // 忙/失败 → 放回队首，等回合结束接力
+      // 忙/失败 → 放回队首。回合结束信号可能丢失（如进程被杀），5s 延迟自愈重试兜底。
       const cur = this.queue.get(docId) ?? []
       cur.unshift(cid)
       this.queue.set(docId, cur)
+      setTimeout(() => this.handleTurnEnd(docId), 5000)
     } finally {
       this.running.delete(docId)
       this.handleTurnEnd(docId)

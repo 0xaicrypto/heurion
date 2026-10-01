@@ -165,6 +165,19 @@ export function buildApi(deps: ApiDeps): Hono {
     return c.json({ ok: store.reopenComment(docId, c.req.param('cid')) })
   })
 
+  // 线程内召唤（Claude 式「Ask Claude to edit」）：输入即触发，无需 @heurion。
+  app.post('/api/docs/:id/comments/:cid/ask', async c => {
+    const docId = c.req.param('id')
+    const cid = c.req.param('cid')
+    const { text } = await c.req.json<{ text?: string }>()
+    if (!text?.trim()) return c.json({ error: 'text required' }, 400)
+    if (!store.getComment(docId, cid)) return c.json({ error: 'not found' }, 404)
+    if (pool.isBusy(docId)) return c.json({ error: 'AI 正在编辑这份文档，稍候' }, 409)
+    store.addReply(docId, cid, 'user', text.trim())
+    deps.automation.force(docId, cid)
+    return c.json({ ok: true, queued: true })
+  })
+
   app.delete('/api/docs/:id/comments/:cid', c => {
     const docId = c.req.param('id')
     return c.json({ ok: store.deleteComment(docId, c.req.param('cid')) })

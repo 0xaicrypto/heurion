@@ -78,12 +78,12 @@ describe('用户保存提取 user_ops（S5 合并输入）', () => {
     const loXml = strFromU8(unzipSync(files.readVersion('d', 1))['word/document.xml']!)
       .replaceAll(/ w14:paraId="[0-9A-F]{8}"/g, '')
       .replace('<w:t>二</w:t>', '<w:t>二改</w:t>')
-    const v2 = files.saveUserSave('d', docx(loXml), '编辑保存')
-    expect(v2.source).toBe('user')
-    expect(v2.meta?.user_ops).toBeDefined()
-    expect(v2.meta!.user_ops!.added).toHaveLength(1)   // 段二：Collabora 换新 id + 改文字 → add
-    expect(v2.meta!.user_ops!.removed).toHaveLength(1) // 旧 id 消失
-    expect(v2.meta!.user_ops!.modified).toHaveLength(0)
+    const v2 = files.saveUserSave('d', docx(loXml), '编辑保存').version
+    expect(v2?.source).toBe('user')
+    expect(v2?.meta?.user_ops).toBeDefined()
+    expect(v2!.meta!.user_ops!.added).toHaveLength(1)   // 段二：Collabora 换新 id + 改文字 → add
+    expect(v2!.meta!.user_ops!.removed).toHaveLength(1) // 旧 id 消失
+    expect(v2!.meta!.user_ops!.modified).toHaveLength(0)
     // 未触碰段落（一）id 被对齐重建保留
     const v2ids = [...strFromU8(unzipSync(files.readVersion('d', 2))['word/document.xml']!).matchAll(/w14:paraId="([0-9A-F]{8})"/g)].map(m => m[1]!)
     expect(v2ids).toContain(v1ids[0])
@@ -143,8 +143,9 @@ describe('AI 回合期间用户推进（S5：docx 三方合并 / deck 丢弃）'
       isBusy: () => false,
       liveSession: () => 's',
       run: async () => {
+        // 模拟 dsh 改工作区 + 用户抢先把第二页写进 head（字节不同 → head 推进）
         writeFileSync(files.workspaceFile('d', 'pptx'), zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>') }))
-        files.saveUserSave('d', zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>') }), '用户保存')
+        files.saveUserSave('d', zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>'), 'ppt/slides/slide2.xml': strToU8('<p:sld/>') }), '用户保存')
         return { sessionId: 's', finalResponse: '完成', events: [] }
       },
       close: async () => {},
