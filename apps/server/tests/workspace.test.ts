@@ -1,10 +1,18 @@
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../src/db.ts'
 import { DocFiles } from '../src/docs/workspace.ts'
 import { mapNotification } from '../src/harness/events.ts'
+
+const docxOf = (text: string) =>
+  zipSync({
+    'word/document.xml': strToU8(
+      `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`,
+    ),
+  })
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'h2-'))
@@ -17,17 +25,16 @@ describe('DocFiles', () => {
   it('versions only when the workspace file changes, and restore appends', () => {
     const { store, files } = setup()
     store.createDoc('d', 'Paper', 'docx')
-    files.importUpload('d', 'docx', new Uint8Array([1]))
+    files.importUpload('d', 'docx', docxOf('第一版'))
 
     const base = files.materializeHead('d')
     expect(files.snapshotAfterTurn('d', base, 'noop')).toBeNull()
 
-    writeFileSync(files.workspaceFile('d', 'docx'), new Uint8Array([2]))
+    writeFileSync(files.workspaceFile('d', 'docx'), docxOf('第二版'))
     expect(files.snapshotAfterTurn('d', base, 'edit')?.seq).toBe(2)
 
     const restored = files.restore('d', 1)
     expect(restored).toMatchObject({ seq: 3, source: 'restore' })
-    expect([...files.readVersion('d', 3)]).toEqual([1])
     expect(store.getDoc('d')?.head_seq).toBe(3)
   })
 
@@ -36,8 +43,17 @@ describe('DocFiles', () => {
     store.createDoc('d', 'Deck', 'pptx')
     const base = files.materializeHead('d')
     expect(base).toBeNull()
-    writeFileSync(files.workspaceFile('d', 'pptx'), new Uint8Array([9]))
+    writeFileSync(files.workspaceFile('d', 'pptx'), zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>') }))
     expect(files.snapshotAfterTurn('d', base, 'create')).toMatchObject({ seq: 1, source: 'ai' })
+  })
+
+  it('损坏/半成品字节不落版本（结构检查交给 dsh office 技能）', () => {
+    const { store, files } = setup()
+    store.createDoc('d', 'Paper', 'docx')
+    files.importUpload('d', 'docx', docxOf('第一版'))
+    writeFileSync(files.workspaceFile('d', 'docx'), new Uint8Array([2, 3, 4]))
+    expect(files.snapshotAfterTurn('d', files.materializeHead('d'), '坏字节')).toBeNull()
+    expect(store.getDoc('d')?.head_seq).toBe(1)
   })
 })
 

@@ -33,6 +33,8 @@ export interface VersionMeta {
   id_survival?: number | null
   /** 用户保存（编辑面）提取的节点变更（S5 合并输入）。 */
   user_ops?: { added: string[]; removed: string[]; modified: string[] }
+  /** 回合进行中的进度快照（边改边看）；最终版不带此标记。 */
+  intermediate?: boolean
 }
 
 export interface ProjectionRow {
@@ -230,6 +232,12 @@ export class Store {
   getVersion(docId: string, seq: number): VersionRow | undefined {
     const row = this.db.prepare('SELECT * FROM versions WHERE doc_id = ? AND seq = ?').get(docId, seq) as VersionDbRow | undefined
     return row ? parseVersion(row) : undefined
+  }
+
+  /** 更新版本的 note 与 meta（中间快照转正用；历史其余字段不动）。 */
+  updateVersion(docId: string, seq: number, note: string, meta: VersionMeta): void {
+    this.db.prepare('UPDATE versions SET note = ?, meta = ? WHERE doc_id = ? AND seq = ?')
+      .run(note, JSON.stringify(meta), docId, seq)
   }
 
   /** 版本投影（S1：落版即导入）。 */

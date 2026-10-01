@@ -160,3 +160,31 @@ describe('AI 回合期间用户推进（S5：docx 三方合并 / deck 丢弃）'
     expect(store.listVersions('d')).toHaveLength(2)
   })
 })
+
+describe('进度快照（LO 回写后边改边看）', () => {
+  it('工作区新状态 → snapshotIntermediate 落中间版；finalizeIntermediate 转正', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'h2-prog-'))
+    const store = new Store(':memory:')
+    const files = new DocFiles(store, join(dir, 'ws'), join(dir, 'versions'))
+    store.createDoc('d', 'Doc', 'docx')
+    files.importUpload('d', 'docx', docx('<w:p><w:r><w:t>第一版</w:t></w:r></w:p>'))
+
+    // 模拟 dsh 改到一半：工作区出现新状态（head 未动）
+    writeFileSync(files.workspaceFile('d', 'docx'), docx('<w:p><w:r><w:t>第二版进行中</w:t></w:r></w:p>'))
+    const mid = files.snapshotIntermediate('d')
+    expect(mid?.meta?.intermediate).toBe(true)
+    expect(store.getDoc('d')?.head_seq).toBe(2)
+    expect(mid?.note).toContain('进行中')
+
+    // 非 head 的中间版不在场时 finalize 安全返回 null
+    expect(files.finalizeIntermediate('d2', 'x')).toBeNull()
+
+    // dsh 收尾：工作区 == head（最后中间版）→ snapshotAfterTurn null → 转正
+    const again = files.snapshotAfterTurn('d', null, '完成修改')
+    expect(again).toBeNull()
+    const final = files.finalizeIntermediate('d', '完成修改')
+    expect(final?.seq).toBe(2)
+    expect(final?.meta?.intermediate).toBeUndefined()
+    expect(final?.note).toBe('完成修改')
+  })
+})

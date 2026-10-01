@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DocKind, Store, VersionRow, VersionSource } from '../db.ts'
+
+import type { DocKind, Store, VersionMeta, VersionRow, VersionSource } from '../db.ts'
 import { auditCommentAnchors } from './comments.ts'
 import { syncFileComments } from './office-comments.ts'
 import { buildProjection, computeIdSurvival, diffProjectionOps, ensureDocxParaIds, reconcileDocxIds, reconcilePptxIds } from './office.ts'
@@ -12,6 +13,27 @@ export function canonicalFileName(kind: DocKind): string {
 }
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+/**
+ * 内容指纹：投影的**无 id 规范形**（kind+text 序列）哈希。
+ * 幂等判断用它而不是文件字节/文档 XML——同一份内容会以不同字节形态出现
+ * （编辑保存的 paraId 规范化、模型重存、zip 压缩差异）；kind/text 不随
+ * ensure/reconcile 手术变化，编辑才变化。
+ */
+function contentFingerprint(kind: DocKind, bytes: Uint8Array): string | null {
+  try {
+    const p = buildProjection(kind, bytes)
+    const canon: unknown[] = (p.nodes ?? []).map(n => [n.kind, n.text])
+    for (const s of p.slides ?? []) {
+      canon.push(['slide', s.id])
+      for (const n of s.shapes) canon.push([n.kind, n.text, n.id])
+    }
+    if ((p.nodes ?? []).length === 0 && (p.slides ?? []).length === 0) return null
+    return sha256(Buffer.from(JSON.stringify(canon)))
+  } catch {
+    return null // 非法 zip：指纹不可得（调用方按"未变/坏字节"处理）
+  }
+}
 
 /**
  * 文档文件的版本库：heurion 保存的版本副本是权威副本，dsh 工作区只是执行现场。
@@ -43,7 +65,7 @@ export class DocFiles {
     return join(this.versionsDir, docId, `${seq}.${kind}`)
   }
 
-  private saveVersion(docId: string, kind: DocKind, rawBytes: Uint8Array, source: VersionSource, note: string): VersionRow {
+  private saveVersion(docId: string, kind: DocKind, rawBytes: Uint8Array, source: VersionSource, note: string, extraMeta?: VersionMeta): VersionRow {
     // docx：id 手术后再落版 —— 权威文件自带持久 id（DESIGN.md §4.1）。
     const ensured = kind === 'docx' ? ensureDocxParaIds(rawBytes) : { bytes: rawBytes, stats: null }
     if (ensured.stats && (ensured.stats.assigned > 0 || ensured.stats.reassigned > 0)) {
@@ -65,9 +87,10 @@ export class DocFiles {
 
     // 用户保存提取节点变更摘要（S5 合并输入）；AI/回滚不产 user_ops。
     const userOps = source === 'user' ? diffProjectionOps(prevProjection, projection) : null
-    const meta = { ...(survival === null ? {} : { id_survival: survival }), ...(userOps ? { user_ops: userOps } : {}) }
+    const meta = { ...(survival === null ? {} : { id_survival: survival }), ...(userOps ? { user_ops: userOps } : {}), ...(extraMeta ?? {}) }
 
-    const version = this.store.addVersion(docId, sha256(bytes), source, note, Object.keys(meta).length ? meta : undefined)
+    const version = this.store.addVersion(docId, sha256(bytes), source, note,
+      Object.keys(meta).length ? meta : undefined)
     const path = this.versionFile(docId, version.seq, kind)
     mkdirSync(join(this.versionsDir, docId), { recursive: true })
     writeFileSync(path, bytes)
@@ -96,11 +119,23 @@ export class DocFiles {
   saveUserSave(docId: string, bytes: Uint8Array, note: string): { version: VersionRow | null; synced: boolean } {
     const doc = this.store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
-    const changed = sha256(bytes) !== (doc.head_seq > 0 ? this.store.getVersion(docId, doc.head_seq)!.sha256 : '')
+    const changed = contentFingerprint(doc.kind, bytes) !== (doc.head_seq > 0 ? contentFingerprint(doc.kind, this.readVersion(docId, doc.head_seq)) : null)
     const version = changed ? this.saveVersion(docId, doc.kind, bytes, 'user', note) : null
     const ids = syncFileComments(this.store, docId, bytes).commentIds
     this.onFileCommentsSynced(docId, ids)
     return { version, synced: true }
+  }
+
+  /** 回合结束发现 head 是中间快照且字节一致 → 转正：去 intermediate 标记、换真实 note。 */
+  finalizeIntermediate(docId: string, note: string): VersionRow | null {
+    const doc = this.store.getDoc(docId)
+    if (!doc || doc.head_seq === 0) return null
+    const head = this.store.getVersion(docId, doc.head_seq)!
+    if (!head.meta?.intermediate) return null
+    const meta = { ...head.meta }
+    delete meta.intermediate
+    this.store.updateVersion(docId, doc.head_seq, note, meta)
+    return this.store.getVersion(docId, doc.head_seq)!
   }
 
   /** 回合开始：把 head 版本覆盖写入工作区，返回基准哈希（无版本时为 null）。 */
@@ -120,8 +155,29 @@ export class DocFiles {
     const path = this.workspaceFile(docId, doc.kind)
     if (!existsSync(path)) return null
     const bytes = readFileSync(path)
-    if (sha256(bytes) === baseSha) return null
+    const fp = contentFingerprint(doc.kind, bytes)
+    if (fp === null) return null // 损坏/半成品字节：不落（结构检查由 dsh office 技能负责）
+    // 幂等：与当前 head 相同（中间快照已把它落过）→ 不重复落版。
+    if (doc.head_seq > 0 && fp === contentFingerprint(doc.kind, this.readVersion(docId, doc.head_seq))) return null
+    if (baseSha !== null && sha256(bytes) === baseSha) return null
     return this.saveVersion(docId, doc.kind, bytes, 'ai', note)
+  }
+
+  /**
+   * 回合进行中的进度快照（边改边看）：工作区出现「zip 有效 + 与 head 不同」的
+   * 中间状态就落一个中间版本 → LastModifiedTime 变化 → 编辑器自动刷新。
+   * 由 TurnService 节流调用；中间版 meta.intermediate=true，UI 折叠显示。
+   */
+  snapshotIntermediate(docId: string): VersionRow | null {
+    const doc = this.store.getDoc(docId)
+    if (!doc) throw new Error(`doc ${docId} not found`)
+    const path = this.workspaceFile(docId, doc.kind)
+    if (!existsSync(path)) return null
+    const bytes = readFileSync(path)
+    const fp = contentFingerprint(doc.kind, bytes)
+    if (fp === null) return null // 半成品/损坏 zip：不落，等下个周期
+    if (doc.head_seq > 0 && fp === contentFingerprint(doc.kind, this.readVersion(docId, doc.head_seq))) return null
+    return this.saveVersion(docId, doc.kind, bytes, 'ai', 'AI 编辑中…（进行中快照）', { intermediate: true })
   }
 
   /** S5：三方合并后的 AI 版本直接落库（字节已合并好，不依赖工作区）。 */
