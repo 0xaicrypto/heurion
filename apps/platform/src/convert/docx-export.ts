@@ -138,13 +138,65 @@ export function exportDocx(input: ExportInput): ExportResult {
     return before !== undefined && before.eq(n) ? input.src(id!) : null
   }
 
-  // 编号：生成的列表用平台自己的 abstractNum（ids 9000+，不与原文件冲突）
+  // 块在父节点中的位置（判断从段落里拆出的图是否原样跟随）
+  const positions = (doc: PMNode | null) => {
+    const m = new Map<string, { parent: PMNode; index: number }>()
+    doc?.descendants((n, _pos, parent, index) => { if (n.attrs.id && parent) m.set(n.attrs.id as string, { parent, index }) })
+    return m
+  }
+  const basePos = positions(input.baseline)
+  const curPos = positions(input.doc)
+  /** 原样写回时已经包含在段落原文里的图（不再单独生成）。 */
+  const skip = new Set<string>()
+  /**
+   * 段落能否原样写回：未改动；若原文里嵌着图（导入时拆成了后续的图块），这些图块也必须
+   * 原样、按原顺序紧跟在后面——否则重新生成段落（不含图），图按模型单独生成。
+   */
+  const verbatim = (n: PMNode): string | null => {
+    const src = unchanged(n)
+    if (!src || !/<w:(drawing|pict)\b/.test(src)) return src
+    const id = n.attrs.id as string
+    const b = basePos.get(id)
+    const c = curPos.get(id)
+    if (!b || !c) return null
+    const figures: PMNode[] = []
+    for (let i = b.index + 1; i < b.parent.childCount; i++) {
+      const sib = b.parent.child(i)
+      if (sib.type.name !== 'figure' || input.src(sib.attrs.id as string)) break
+      figures.push(sib)
+    }
+    for (let k = 0; k < figures.length; k++) {
+      const cur = c.parent.maybeChild(c.index + 1 + k)
+      if (!cur || !cur.eq(figures[k]!)) return null
+    }
+    for (const f of figures) skip.add(f.attrs.id as string)
+    return src
+  }
+
+  // 编号：新列表优先沿用原文件里同类列表的 abstractNum 与段落样式；没有时用平台自己的（ids 9000+）
   let numberingXml = pkg.text('word/numbering.xml')
+  const abstractOf = new Map([...(numberingXml ?? '').matchAll(/<w:num\b[^>]*w:numId="(\d+)"[^>]*>[\s\S]*?<w:abstractNumId w:val="(\d+)"/g)].map(m => [m[1]!, m[2]!]))
+  const listTemplate = new Map<string, { abstractId: string; pStyle: string | null }>()
+  input.baseline?.descendants(n => {
+    if (!/_list$/.test(n.type.name) || listTemplate.has(n.type.name)) return true
+    const first = n.firstChild?.firstChild
+    const src = first?.attrs.id ? input.src(first.attrs.id as string) : null
+    const numId = src ? /<w:numId w:val="(\d+)"/.exec(src)?.[1] : undefined
+    const abstractId = numId ? abstractOf.get(numId) : undefined
+    if (abstractId) listTemplate.set(n.type.name, { abstractId, pStyle: /<w:pStyle w:val="([^"]+)"/.exec(src!)?.[1] ?? null })
+    return true
+  })
   const newNums: string[] = []
+  const numStyle = new Map<string, string | null>()
   let nextNum = 9001
+  let usesPlatformNumbering = false
   const numFor = (ordered: boolean): string => {
     const id = String(nextNum++)
-    newNums.push(`<w:num w:numId="${id}"><w:abstractNumId w:val="${ordered ? 9002 : 9001}"/>${ordered ? '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>' : ''}</w:num>`)
+    const tpl = listTemplate.get(ordered ? 'ordered_list' : 'bullet_list')
+    if (!tpl) usesPlatformNumbering = true
+    const abstractId = tpl?.abstractId ?? (ordered ? '9002' : '9001')
+    newNums.push(`<w:num w:numId="${id}"><w:abstractNumId w:val="${abstractId}"/>${ordered ? '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>' : ''}</w:num>`)
+    numStyle.set(id, tpl?.pStyle ?? null)
     return id
   }
 
@@ -219,9 +271,12 @@ export function exportDocx(input: ExportInput): ExportResult {
     return out
   }
 
-  const pPr = (node: PMNode, extra = ''): string => {
+  /** styleId：没有自带样式时使用的段落样式 id（列表沿用原文件列表的样式）。 */
+  const pPr = (node: PMNode, extra = '', styleId?: string): string => {
     let p = ''
-    if (node.type.name === 'heading') {
+    if (!node.attrs.style && styleId && node.type.name === 'paragraph') {
+      p += `<w:pStyle w:val="${esc(styleId)}"/>`
+    } else if (node.type.name === 'heading') {
       const level = Math.min(6, Math.max(1, node.attrs.level as number))
       const id = headingStyle(level)
       if (!styles.has(id.toLowerCase())) missingHeading.add(level)
@@ -236,7 +291,7 @@ export function exportDocx(input: ExportInput): ExportResult {
     return p ? `<w:pPr>${p}</w:pPr>` : ''
   }
 
-  const paragraph = (node: PMNode, extraPPr = ''): string => unchanged(node) ?? `<w:p>${pPr(node, extraPPr)}${inline(node)}</w:p>`
+  const paragraph = (node: PMNode, extraPPr = ''): string => verbatim(node) ?? `<w:p>${pPr(node, extraPPr)}${inline(node)}</w:p>`
 
   const figure = (node: PMNode): string => {
     const asset = input.asset(String(node.attrs.asset_id))
@@ -308,7 +363,7 @@ export function exportDocx(input: ExportInput): ExportResult {
     let id = numId
     if (!id) {
       node.forEach(item => {
-        const src = item.firstChild ? unchanged(item.firstChild) : null
+        const src = item.firstChild ? input.src(item.firstChild.attrs.id as string) : null
         const m = src ? /<w:numId w:val="(\d+)"/.exec(src) : null
         if (!id && m) id = m[1]!
       })
@@ -318,9 +373,9 @@ export function exportDocx(input: ExportInput): ExportResult {
     node.forEach(item => {
       item.forEach((child, _o, idx) => {
         if (idx === 0 && child.type.name === 'paragraph') {
-          // 没有自带样式的列表段落用 List Paragraph（包里有该样式时）
-          const styled = child.attrs.style ? child : child.type.create({ ...child.attrs, style: 'List Paragraph' }, child.content, child.marks)
-          out += unchanged(child) ?? `<w:p>${pPr(styled, `<w:numPr><w:ilvl w:val="${ilvl}"/><w:numId w:val="${id}"/></w:numPr>`)}${inline(child)}</w:p>`
+          // 没有自带样式的列表段落：沿用原文件列表的段落样式，否则 List Paragraph（包里有该样式时）
+          const styleId = numStyle.get(id!) ?? styles.get('list paragraph')
+          out += verbatim(child) ?? `<w:p>${pPr(child, `<w:numPr><w:ilvl w:val="${ilvl}"/><w:numId w:val="${id}"/></w:numPr>`, styleId)}${inline(child)}</w:p>`
         } else if (/_list$/.test(child.type.name)) {
           out += list(child, Math.min(8, ilvl + 1), child.type === node.type ? id : null)
         } else out += block(child)
@@ -340,7 +395,8 @@ export function exportDocx(input: ExportInput): ExportResult {
       case 'table':
         return table(node)
       case 'figure':
-        return figure(node)
+        if (skip.has(node.attrs.id as string)) return ''
+        return unchanged(node) ?? figure(node)
       case 'opaque': {
         const src = input.src(node.attrs.id as string)
         if (src) return src
@@ -396,7 +452,7 @@ export function exportDocx(input: ExportInput): ExportResult {
     const lvls = (ordered: boolean) => Array.from({ length: 9 }, (_, i) => ordered
       ? `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="${['decimal', 'lowerLetter', 'lowerRoman'][i % 3]}"/><w:lvlText w:val="%${i + 1}."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${420 * (i + 1)}" w:hanging="420"/></w:pPr></w:lvl>`
       : `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="${['•', '◦', '▪'][i % 3]}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${420 * (i + 1)}" w:hanging="420"/></w:pPr></w:lvl>`).join('')
-    const abstracts = `<w:abstractNum w:abstractNumId="9001"><w:multiLevelType w:val="hybridMultilevel"/>${lvls(false)}</w:abstractNum><w:abstractNum w:abstractNumId="9002"><w:multiLevelType w:val="hybridMultilevel"/>${lvls(true)}</w:abstractNum>`
+    const abstracts = !usesPlatformNumbering ? '' : `<w:abstractNum w:abstractNumId="9001"><w:multiLevelType w:val="hybridMultilevel"/>${lvls(false)}</w:abstractNum><w:abstractNum w:abstractNumId="9002"><w:multiLevelType w:val="hybridMultilevel"/>${lvls(true)}</w:abstractNum>`
     if (!numberingXml) {
       numberingXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}></w:numbering>`
       pkg.rel('numbering', 'numbering.xml')

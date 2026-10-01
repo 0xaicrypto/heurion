@@ -1,4 +1,4 @@
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { exportDocx } from '../src/convert/docx-export.ts'
 import { bindAssets, importDocx } from '../src/convert/docx-import.ts'
@@ -8,7 +8,7 @@ import { Documents } from '../src/model/runtime.ts'
 import { schema } from '../src/model/schema.ts'
 import { OpService } from '../src/ops/service.ts'
 import { Store } from '../src/store/db.ts'
-import { docx, li, p } from './fixtures.ts'
+import { docx, drawing, IMAGE_REL, li, p, PNG } from './fixtures.ts'
 
 /** 模拟 API 的导入流程，返回平台里的文档。 */
 function importInto(bytes: Uint8Array) {
@@ -104,5 +104,59 @@ describe('docx 导出（修补式）', () => {
     back.doc.forEach(n => kinds.push(n.type.name))
     expect(kinds.slice(0, 5)).toEqual(['heading', 'paragraph', 'figure', 'ordered_list', 'table'])
     expect(back.doc.child(3).childCount).toBe(2)
+  })
+})
+
+describe('docx 导出：图、不可编辑段落、列表样式', () => {
+  const withImage = (body: string) => docx(body, { rels: IMAGE_REL, files: { 'word/media/image1.png': PNG } })
+  const drawings = (bytes: Uint8Array) => (bodyOf(bytes).match(/<w:drawing>/g) ?? []).length
+
+  it('文字与图混排的段落：原样写回时图不重复；改了文字后图仍只出现一次', () => {
+    const original = withImage(`${p('前文')}<w:p><w:r><w:t>见下图</w:t></w:r>${drawing()}</w:p>${p('后文')}`)
+    const t = importInto(original)
+    expect(bodyOf(t.exportNow().bytes)).toBe(bodyOf(original))
+    const para = t.docs.get(t.docId).child(1).attrs.id as string
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: para, find: '见下图', replace: '见图 1' }] }, { actor: 'user', turnId: null })
+    const out = t.exportNow().bytes
+    expect(drawings(out)).toBe(1)
+    expect(bodyOf(out)).toContain('见图 1')
+  })
+
+  it('只有一张图的段落：未改动时逐字节写回', () => {
+    const original = withImage(`${p('前文')}<w:p>${drawing()}</w:p>`)
+    const t = importInto(original)
+    expect(t.docs.get(t.docId).child(1).type.name).toBe('figure')
+    expect(bodyOf(t.exportNow().bytes)).toBe(bodyOf(original))
+  })
+
+  it('含文本框 / 脚注的段落导入为不可编辑块，导出原样保留', () => {
+    const textbox = `<w:p><w:r><w:t>正文</w:t></w:r><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps"><w:t>框内文字</w:t></mc:Choice></mc:AlternateContent></w:r></w:p>`
+    const footnote = `<w:p><w:r><w:t>有脚注</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>`
+    const r = importDocx(docx(textbox + footnote))
+    expect(r.doc.child(0).type.name).toBe('opaque')
+    expect(r.doc.child(1).attrs.kind).toBe('脚注')
+    expect(r.warnings.join()).toContain('不可编辑块')
+    const t = importInto(docx(textbox + footnote + p('可编辑')))
+    const last = t.docs.get(t.docId).child(2).attrs.id as string
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: last, find: '可编辑', replace: '已编辑' }] }, { actor: 'user', turnId: null })
+    const body = bodyOf(t.exportNow().bytes)
+    expect(body).toContain('框内文字')
+    expect(body).toContain('<w:footnoteReference w:id="1"/>')
+  })
+
+  it('新建的无序列表沿用原文件无序列表的编号定义与段落样式', () => {
+    const bullet = (t: string) => p(t, '<w:pStyle w:val="ListBullet"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/></w:numPr>')
+    const original = docx(`${bullet('原有项')}${p('正文')}`)
+    // numId 7 → abstractNum 3（bullet）
+    const files = unzipSync(original)
+    files['word/numbering.xml'] = strToU8(`<?xml version="1.0"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="3"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="7"><w:abstractNumId w:val="3"/></w:num></w:numbering>`)
+    const t = importInto(zipSync(files))
+    const para = t.docs.get(t.docId).child(1).attrs.id as string
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'insert_after', anchor_id: para, markdown: '- 新项' }] }, { actor: 'user', turnId: null })
+    const out = unzipSync(t.exportNow().bytes)
+    const numbering = strFromU8(out['word/numbering.xml']!)
+    expect(numbering).toMatch(/<w:num w:numId="9001"><w:abstractNumId w:val="3"\/>/)
+    expect(numbering).not.toContain('w:abstractNumId="9001"')
+    expect(bodyOf(t.exportNow().bytes)).toMatch(/<w:pStyle w:val="ListBullet"\/><w:numPr><w:ilvl w:val="0"\/><w:numId w:val="9001"\/>/)
   })
 })

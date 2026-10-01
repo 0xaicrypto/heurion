@@ -131,28 +131,32 @@ export function importDocx(bytes: Uint8Array): DocxImport {
     return schema.node('figure', { asset_id: key, alt: docPr?.getAttribute('descr') || docPr?.getAttribute('name') || '' })
   }
 
+  /**
+   * 段落里模型表达不了的内容：flags.unmodelled（文本框、嵌入对象、脚注 / 尾注引用）→ 整段落为
+   * 不可编辑块原样写回，避免修改后重新生成时丢失；flags.fields（域代码）→ 仍可编辑，修改后域变为文字。
+   */
+  interface InlineFlags { unmodelled: string | null; fields: boolean }
+
   /** 段落里的行内内容；图片单独收集为块。 */
-  const inlineOf = (p: XElement, figures: PMNode[]): PMNode[] => {
+  const inlineOf = (p: XElement, figures: PMNode[], flags: InlineFlags = { unmodelled: null, fields: false }): PMNode[] => {
     const out: PMNode[] = []
     const walk = (el: XElement, marks: readonly Mark[]) => {
       for (const c of children(el)) {
         const name = local(c)
         if (c.namespaceURI !== W) {
-          if (name === 'AlternateContent') {
-            const text = c.textContent?.trim()
-            if (text) warnings.push(`文本框内容未导入正文：「${text.slice(0, 30)}」`)
-          }
+          if (name === 'AlternateContent') flags.unmodelled ??= '文本框'
           continue
         }
         switch (name) {
-          case 'r': runOf(c, marks, out, figures); break
+          case 'r': runOf(c, marks, out, figures, flags); break
           case 'hyperlink': {
             const id = c.getAttributeNS(R, 'id') ?? c.getAttribute('r:id')
             const href = id ? rels.get(id) : c.getAttribute('w:anchor') ? `#${c.getAttribute('w:anchor')}` : undefined
             walk(c, href ? schema.marks.link!.create({ href }).addToSet(marks) : marks)
             break
           }
-          case 'ins': case 'smartTag': case 'customXml': case 'fldSimple': walk(c, marks); break
+          case 'fldSimple': flags.fields = true; walk(c, marks); break
+          case 'ins': case 'smartTag': case 'customXml': walk(c, marks); break
           case 'sdt': { const content = child(c, 'sdtContent'); if (content) walk(content, marks); break }
           case 'del': case 'pPr': case 'bookmarkStart': case 'bookmarkEnd': case 'proofErr': break
           default: break
@@ -163,7 +167,7 @@ export function importDocx(bytes: Uint8Array): DocxImport {
     return out
   }
 
-  const runOf = (r: XElement, outer: readonly Mark[], out: PMNode[], figures: PMNode[]) => {
+  const runOf = (r: XElement, outer: readonly Mark[], out: PMNode[], figures: PMNode[], flags: InlineFlags) => {
     const rPr = child(r, 'rPr')
     let marks = outer
     const on = (name: string) => {
@@ -178,18 +182,28 @@ export function importDocx(bytes: Uint8Array): DocxImport {
     if (va === 'subscript') marks = schema.marks.sub!.create().addToSet(marks)
     for (const c of children(r)) {
       const name = local(c)
+      if (c.namespaceURI !== W) {
+        if (name === 'AlternateContent') flags.unmodelled ??= '文本框'
+        continue
+      }
       if (name === 't' && c.textContent) out.push(schema.text(c.textContent, marks))
       else if (name === 'tab') out.push(schema.text('\t', marks))
       else if (name === 'br' || name === 'cr') out.push(schema.node('hard_break'))
       else if (name === 'drawing' || name === 'pict') {
         const fig = figureFor(c)
         if (fig) figures.push(fig)
-        else warnings.push('有图片未能导入（找不到图片数据）')
+        else flags.unmodelled ??= name === 'pict' ? '文本框或图形' : '图形'
       }
+      else if (name === 'object') flags.unmodelled ??= '嵌入对象'
+      else if (name === 'footnoteReference') flags.unmodelled ??= '脚注'
+      else if (name === 'endnoteReference') flags.unmodelled ??= '尾注'
+      else if (name === 'fldChar') flags.fields = true
     }
   }
 
   const blocks: PMNode[] = []
+  let unmodelledCount = 0
+  let fieldParagraphs = 0
   // 列表栈：按 numId 连续分组，ilvl 决定嵌套
   let listStack: Array<{ info: ListInfo; items: PMNode[][] }> = []
 
@@ -212,7 +226,8 @@ export function importDocx(bytes: Uint8Array): DocxImport {
     const styleId = wAttr(pPr && child(pPr, 'pStyle'), 'val')
     const align = wAttr(pPr && child(pPr, 'jc'), 'val')
     const figures: PMNode[] = []
-    const inline = inlineOf(p, figures)
+    const flags: InlineFlags = { unmodelled: null, fields: false }
+    const inline = inlineOf(p, figures, flags)
     const level = headingLevel(styleId, pPr)
     const numPr = pPr && child(pPr, 'numPr')
     const numId = wAttr(numPr && child(numPr, 'numId'), 'val')
@@ -220,6 +235,18 @@ export function importDocx(bytes: Uint8Array): DocxImport {
     const styleName = styleId ? styles.get(styleId)?.name ?? styleId : null
     const alignAttr = align === 'center' ? 'center' : align === 'right' || align === 'end' ? 'right' : align === 'both' ? 'justify' : null
     const xmlText = xmlOf(p)
+
+    if (flags.unmodelled) {
+      // 整段原样保留（含编号属性），不进列表分组
+      flushLists()
+      const text = inline.map(n => n.textContent).join('').trim()
+      const node = schema.node('opaque', { kind: flags.unmodelled, description: text.slice(0, 200) || `含${flags.unmodelled}的段落` })
+      blocks.push(node)
+      pendingSrc.push({ node, xml: xmlText })
+      unmodelledCount++
+      return
+    }
+    if (flags.fields) fieldParagraphs++
 
     if (numId && numId !== '0' && level === null) {
       // 换了一个列表 → 收起；更浅的层级 → 收起更深的层
@@ -240,6 +267,12 @@ export function importDocx(bytes: Uint8Array): DocxImport {
     const prev = blocks[blocks.length - 1]
     if (figures.length === 0 && prev?.type.name === 'figure' && !prev.attrs.caption && styleName && /^(caption|题注)$/i.test(styleName)) {
       blocks[blocks.length - 1] = prev.type.create({ ...prev.attrs, caption: inline.map(n => n.textContent).join('') })
+      return
+    }
+    // 只有一张图的段落：图本身承接段落原文（未改动时原样写回）
+    if (inline.length === 0 && figures.length === 1) {
+      blocks.push(figures[0]!)
+      pendingSrc.push({ node: figures[0]!, xml: xmlText })
       return
     }
     if (inline.length > 0 || figures.length === 0) {
@@ -318,6 +351,8 @@ export function importDocx(bytes: Uint8Array): DocxImport {
 
   for (const el of children(body)) blockLevel(el)
   flushLists()
+  if (unmodelledCount > 0) warnings.push(`${unmodelledCount} 个段落含文本框、嵌入对象或脚注，已作为不可编辑块原样保留`)
+  if (fieldParagraphs > 0) warnings.push(`${fieldParagraphs} 个段落含域代码（如 EndNote / Zotero 引用、交叉引用），这些段落被修改后域会变为普通文字`)
   if (blocks.length === 0) blocks.push(schema.node('paragraph'))
 
   // Word 常给相邻的列表项分配不同 numId：相邻的同类列表合并成一个
