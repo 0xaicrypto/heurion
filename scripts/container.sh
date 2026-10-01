@@ -11,21 +11,26 @@ case "${1:-up}" in
   build) "$ENGINE" build -t "$IMAGE" . ;;
   up)
     [ -f .env ] || { echo "缺少 .env（cp .env.example .env 并填写 DEEPSEEK_API_KEY）"; exit 1; }
+    # 专用网络：容器名互为 DNS 别名（默认 podman 网络没有 DNS）。
+    "$ENGINE" network create heurion2-net 2>/dev/null || true
     "$ENGINE" rm -f "$NAME" >/dev/null 2>&1 || true
     "$ENGINE" run -d --name "$NAME" --env-file .env \
+      --network heurion2-net \
       -e HEURION_DATA_DIR=/app/data -e DSH_PRIMARY_RUNTIME= \
       -e HEURION_COLLABORA_URL=http://heurion2-collabora:9980 \
       -e HEURION_PUBLIC_URL=http://heurion2:8787 \
       -p 8787:8787 -v heurion2-data:/app/data \
-      --memory 3g --network podman "$IMAGE"
+      --memory 3g "$IMAGE"
     echo "http://localhost:8787" ;;
   down) "$ENGINE" rm -f "$NAME" heurion2-collabora 2>/dev/null || true ;;
   logs) "$ENGINE" logs -f "$NAME" ;;
   collabora)
     # 编辑面（#4 spike → S4）：Collabora CODE，明文 HTTP 仅限本地。
     # 浏览器从宿主机访问 9980；它回连 WOPI host 走容器网络别名。
+    "$ENGINE" network create heurion2-net 2>/dev/null || true
     "$ENGINE" rm -f heurion2-collabora >/dev/null 2>&1 || true
-    "$ENGINE" run -d --name heurion2-collabora -p 9980:9980 \
+    "$ENGINE" run -d --name heurion2-collabora --network heurion2-net \
+      -p 9980:9980 \
       -e extra_params='--o:ssl.enable=false --o:net.protocol=ipv4' \
       docker.io/collabora/code:latest
     echo "http://localhost:9980" ;;

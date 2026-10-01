@@ -141,8 +141,11 @@ export function buildWopi(deps: WopiDeps): Hono {
     }
     const urlsrc = pickUrlSrc(discoveryCache.xml, doc.kind)
     if (!urlsrc) return c.json({ error: 'discovery 中没有该类型的 urlsrc' }, 502)
+    // CODE 广播的是它在网络里的自身地址（如 heurion2-collabora:9980）——
+    // iframe 是浏览器加载的，重写成浏览器可达的地址。
+    const browserUrlsrc = urlsrc.replace(/^https?:\/\/[^/]+/, config.collaboraBrowserUrl)
     return c.json({
-      urlsrc,
+      urlsrc: browserUrlsrc,
       access_token: signDocToken(config.secret, docId),
       wopisrc: `${config.publicUrl}/wopi/files/${docId}`,
     })
