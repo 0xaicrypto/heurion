@@ -95,6 +95,10 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 - 可寻址节点（标题 / 段落 / 列表 / 列表项 / 表格 / 图 / 不可编辑块）的 `id` 是模型节点属性：4 位起的 base36 短 id，文档内唯一，导入或插入时由平台分配，之后不变。表格单元格按 (row, col) 寻址。
 - 模型看到 / 使用的都是块 id（读视图里的 `{#id}` 前缀），不复述原文定位。
 - **评论锚点** = 文本上的 `comment(thread)` mark（Yjs 里是文本格式属性，随编辑移动）；无文字的块（图、不可编辑块）锚在块 id 上。锚点只在被锚定的文字真的消失时丢失，而这正是锚点守卫拦截的情形。
+- **锚点颗粒度**（2026-10-01 定，doc 与 Claude Docs 实测一致，deck 取最小颗粒度）：
+  - doc：一个段落 / 标题**内**的连续文字（`\n` 对应硬换行；精确匹配，失配时唯一的不区分大小写匹配）；或整块（不带文字，用于列表、表格、图等非文本块）。**跨块选区不接受**——编辑器选区阶段只给提示「评论只能选在一个段落内」，接口返回 400。
+  - deck：形状里**某一段**内的文字（带段落序号 `paragraph`）；或**整个形状**（单击形状，不带文字）。跨段落、跨形状的选区只给提示。
+  - 整块 / 整形状的评论锚的是块本身：块里文字被整体改写后，标记自动补回整块，不算丢锚；块被删除才算。
 
 ### 5.2 写路径
 
@@ -110,23 +114,32 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 
 | 守卫 | 规则 | 失败码 |
 | --- | --- | --- |
-| 冲突（用户优先） | 目标块在 `base_rev` 之后被用户改过 | `conflict_user_edited`（附当前内容与新 rev） |
+| 冲突（用户优先） | 目标块在 `base_rev` 之后被用户改过（`replace_text` 除外：原文即守卫） | `conflict_user_edited`（附当前内容与新 rev） |
 | 引用 | 写入内容出现 DOI、PMID 或手写参考文献条目 | `citation_not_registered` |
 | 引用 | `[@c:id]` 未在本文档登记 | `citation_unknown` |
 | 锚点 | 本批操作会让 open 评论失去锚点，且线程未列入 `ack_comments` | `anchor_has_open_comments`（附线程与用户要求） |
-| 结构 | 找不到块 / 原文 / 单元格，非法嵌套，编辑不可编辑块 | `node_not_found` / `text_not_found` / `ambiguous_match` / `cell_not_found` / `invalid_structure` / `node_not_editable` |
+| 结构 | 找不到块 / 原文 / 单元格，非法嵌套，编辑不可编辑块 | `node_not_found` / `text_not_found`（附 `near` 近似候选）/ `ambiguous_match`（附每处 `matches` 上下文）/ `occurrence_out_of_range` / `cell_not_found` / `invalid_structure` / `node_not_editable` |
 | 参数 | op 形状、markdown、`base_rev` | `invalid_markdown` / `invalid_base_rev` / zod 校验错误 |
 
 - **为什么用 `base_rev` + 节点变更索引，而不是 `expectText`：** `expectText` 要求模型复述原文，「复述原文失配」正是 S 系列要消灭的失败来源；按 id + rev 判定冲突不依赖模型抄写，且冲突时直接返回当前内容，模型一次就能改对。
-- **锚点跟随替换**（`replace_text`）：替换文字里原样包含被锚定的文字 → 锚点精确落回；被锚定的文字整体被改写 → 锚点跟到新文字；部分重叠且被改写 → 范围外的剩余文字继续承担锚点。实测把「保留原文再补充」这类常见改法从需要 ack 变成无感。
+- **`replace_text` 以原文为守卫**（对齐 Claude Docs 的 find 编辑）：`find` 必须在块内原样出现，用户改掉了这几个字就自然匹配不上（`text_not_found`，附当前内容），所以不再按 `base_rev` 判冲突——用户改了同一段的别处不影响 AI 的小改。整块替换（`replace_block` 等）仍按 `base_rev`。
+- **匹配规则**：块内字面匹配，不跨块；引用标记、硬换行算一个单位，`find` 不能跳过它们（「只在引用后追加」的情形例外，见代码）；空白不做容错。失配时不猜，返回 `near`（空白 / 大小写不同、中间隔着引用的写法，带可直接重试的原文）；多处匹配返回每处上下文，带 `occurrence` 重试。大小写不同且唯一时直接按不区分大小写匹配。
+- **Yjs 写入核对**：`updateYFragment` 后读回逐个顶层块核对，不一致的块整块重写。y-prosemirror 1.3.7 在引用等行内原子节点之后的文字只改格式时不更新格式属性（实测），核对保证模型与 Yjs 一致。
+- **最小差异写入**：替换只改真正变化的字（去掉相同的开头与结尾），引用、格式、评论锚点落在保留下来的字上不动。纯文字替换按文字比较，保留的字保持原格式；新插入的字沿用被替换的第一个字的格式，纯插入取左右邻字共有的格式。
+- **锚点跟随**：锚点随最小差异自然收缩到保留下来的字（与 Claude Docs 一致）；被锚定的字全部消失 → 锚点守卫拦截。**例外：正在回答的评论**——评论触发的回合（「让 AI 处理」/ `@heurion`）里，用户要改的往往正是被评论的文字，这条线程的锚点被改没时自动重新锚到原块 / 形状上，线程保持 open 等用户确认；其他线程照常拦截。
 - **人类编辑不经硬守卫**：Yjs 更新在客户端已生效，服务端拒绝只能断开重连。落库后做事后检查（`collab/postcheck.ts`，目前检查手写 DOI / PMID / 参考文献条目），以页面提示呈现，不拒绝写入。
 - **块 id 维护**：编辑器回车拆段、粘贴会复制或丢失块 id——浏览器插件当场补号，服务端落库前再修一次并广播（两端都修，以服务端为准）。
 
 ### 5.4 评论闭环
 
-- 评论数据在 SQLite，锚点在模型里（comment mark）；读取时实时定位（`located` / 锚定块 / 当前文字）。
+- 评论数据在 SQLite，锚点在模型里（comment mark）；读取时实时定位（`located` / 锚定块 / 当前文字）。创建时按 §5.1 的颗粒度打锚点，打不上返回 400（不再退化为整块锚点）。
 - 触发：前端「让 AI 处理」/「评论并让 AI 处理」，或评论 / 回复里写 `@heurion`（自动排队，只认用户写的内容，AI 的回复不会自我召唤）→ 服务端组装提示 → 回合。
 - 回合队列：每个用户一个 FIFO 队列（一个用户一个 dsh 进程），对话、评论处理、@heurion 都排进同一队列；回合事件同时推到文档的 SSE 流，页面上自动触发的回合同样可见。
+  - **持久化**：排队中的任务存在 SQLite `turn_queue`，服务重启后继续执行；重启时没跑完的回合标为 `interrupted`（已提交的修改保留，可撤销）。
+  - **任务队列面板**（对话页签顶部，跨文档）：执行中的任务（文档、要求、已运行时长）+ 排队中的任务（位次、已等待时长）；评论任务显示用户写的要求。可逐个**取消**排队任务、只**停止**当前任务（后面的照常执行）、或**全部停止**。`GET /api/queue`、`POST /api/queue/:id/cancel`。
+  - **停止卡住的任务**：先让等待中的 dsh 调用立即失败、放行队列，再结束 dsh 进程（下一个任务重新拉起）；模型调用卡住、进程关不掉时队列也不会被堵死。
+  - **无响应超时**：回合连续 5 分钟没有任何动静（dsh 的模型输出、工具调用 / 结果，或本回合的提交）→ 按「停止」同样的方式自动停止，回合记为 `timeout`，页面提示「模型服务 5 分钟无响应，已自动停止」，队列继续。`TURN_IDLE_TIMEOUT_MS` 可调。起因：DeepSeek 接口曾出现请求发出后十余分钟不返回（实测直连 `chat/completions` 同样挂起）。
+  - 开发令牌 `<token>:<名字>` 映射到独立的开发用户；e2e 用 `dev:e2e`，不占手工测试用户的队列。
 - AI 回复写入线程（role 固定为 ai）；**本回合改过文档时 `comment_resolve` 被拒绝**（`user_confirms_changes`），只有判断无需修改并说明后 AI 才能关闭线程。
 - 导出 docx 时 open 线程写为 `comments.xml`（Word 用户可见）。
 
@@ -168,7 +181,8 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 - **渲染**（`render/slides.ts`）：LibreOffice 转 PDF → pdftoppm 转 PNG，按（文档, rev）缓存；容器内直接运行，本地开发自动改用 heurion2:dev 镜像。
 - **版面检查**（`views/layout.ts`）：按字号近似估算文字溢出、形状重叠、超出页面、字号过小。
 - **MCP 面**：`doc_outline`（各页 id / 版式 / 标题 + 可用版式）/ `slide_read`（形状 id、种类、占位符、几何 pt、文字）/ `deck_edit(ops)`（add_slide 按版式填占位符 / delete_slide / move_slide / set_text / replace_text / add_shape / set_xfrm / delete_shape / set_notes / table_set_cells）/ `layout_check` / `slide_render`（PNG 交给多模态模型自查）；守卫同 §5.3，按形状判定。
-- **页面**：deck 查看器按模型近似渲染（位置、文字、填充、图片），每页可切换 LibreOffice 精确预览；AI 改动高亮、修订标红 / 绿、形状内选中文字可评论。编辑走对话。
+- **页面**：deck 查看器按模型近似渲染（位置、文字、填充、图片），每页可切换 LibreOffice 精确预览；AI 改动高亮、修订标红 / 绿。评论按最小颗粒度：形状里一个段落内选中文字，或单击形状评论整个形状（§5.1）。编辑走对话。
+- **形状内 `replace_text`**：逐段匹配（同 doc 的规则，不跨段落），改文字时沿用原文字段的 `a:rPr`。
 - **下一步（P2 画布）**：Univer slides 编辑面（Apache-2.0）+ Casual Slides 导入层作为渲染数据来源；拖拽 / 缩放形状、直接改字经同一操作层落库。图表数据编辑（`set_chart_data`）、插图（`set_image`）随画布一起做。
 - **过渡**：Collabora / WOPI 已于 2026-10-01 随 S 系列停用。
 
@@ -198,7 +212,7 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | --- | --- | --- |
 | `insert_after` / `insert_before` | `anchor_id, markdown` | 插入一个或多个块；锚点是列表项时插入列表项 |
 | `replace_block` | `id, markdown` | 整块替换，第一个块沿用原 id 与段落样式 |
-| `replace_text` | `id, find, replace, occurrence?` | 块内替换，**小改动首选**：继承原格式、锚点跟随；find 容忍 markdown 转义与强调符号 |
+| `replace_text` | `id, find, replace, occurrence?` | 块内替换，**小改动首选**：原文即守卫（不看 `base_rev`）、最小差异写入、保留格式 / 引用 / 锚点；find 容忍 markdown 转义与强调符号；失配返回近似候选 |
 | `delete` | `ids` | 删除最后一个块时留空段落 |
 | `move` | `ids, after`（null = 文档开头） | |
 | `set_block_style` | `id, type?, level?, align?, style?` | 段落 ↔ 标题、级别、对齐、Word 样式名 |
@@ -215,7 +229,7 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 ## 9. 前端
 
 - **P0**（`apps/platform/src/web/index.html`，无构建）：文档列表、新建 / 上传 docx；只读预览（文档变更 SSE 推送，AI 改动的块高亮闪烁）；选中文字 → 评论 / 评论并让 AI 处理；对话（工具步骤可见、可停止）；版本（保存、对比、回滚）；引用；导出 md / docx；读视图（看模型看到的内容）。
-- **P1**（`apps/platform/web`，Vite 构建，server 托管 `dist-web/`）：ProseMirror 编辑器（schema 与服务端共用）+ y-prosemirror + 自制 provider（断线重连、重连后补齐双方缺失更新）；工具栏（段落 / 标题、粗斜下划线、上下标、列表、表格、撤销重做）与快捷键、Markdown 式输入规则、表格编辑（prosemirror-tables）；AI 改动的块高亮；选区评论与 @heurion；修订在正文里标红 / 绿并可就地采纳或拒绝，侧栏「修订」页逐组处理；对话里每轮可「撤销本轮修改」；事后检查提示。多人光标（awareness）留到 P3。
+- **P1**（`apps/platform/web`，Vite 构建，server 托管 `dist-web/`）：ProseMirror 编辑器（schema 与服务端共用）+ y-prosemirror + 自制 provider（断线重连、重连后补齐双方缺失更新）；工具栏（段落 / 标题、粗斜下划线、上下标、列表、表格、撤销重做）与快捷键、Markdown 式输入规则、表格编辑（prosemirror-tables）；AI 改动的块高亮；选区评论与 @heurion；修订在正文里标红 / 绿并可就地采纳或拒绝；有待采纳修订时正文上方出现修订提示条（处数、上一处 / 下一处、全部采纳 / 拒绝），不单设页签；对话里每轮可「撤销本轮修改」；事后检查提示。视觉语言取自 Heurion logo：墨蓝石板主色 + 天蓝 AI / 强调色、圆角胶囊，左栏墨色底带品牌标识，支持深色模式。多人光标（awareness）留到 P3。
 - **P2**：deck 编辑面（Univer 画布 + 评论面板 / 形状锚点）。
 
 ## 10. 决策记录
@@ -225,7 +239,9 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | 真相源 | 结构化模型（Yjs）持有真相；文件 = 导入 / 导出视图 | 编辑器不再能摧毁寻址体系（实测：LO 丢 paraId、重编号 shape id） |
 | 代码位置 | 新建 `apps/platform`，S 系列 `apps/server` / `apps/web` 停用 | 新架构与旧的文件真相模型不兼容，不在旧代码上改 |
 | AI 编辑方式 | MCP `doc_edit(ops)` + 写前守卫；shell 保留给计算 | 守卫成为硬闸；「复述原文失配」「整文件重生成」被结构消灭；实测模型只在数字数时用 shell |
-| 用户优先 | `base_rev` + 节点变更索引 | 不依赖模型复述原文；冲突时返回当前内容 |
+| 用户优先 | `base_rev` + 节点变更索引；`replace_text` 以原文为守卫 | 整块改写不依赖模型复述原文；小改动的原文本来就要写出，用它判定比整块 rev 更细，用户改同段别处不误伤 |
+| 回合队列 | 进程内 FIFO + SQLite 持久化，不引入消息队列 | 单实例、每用户一个 dsh 进程，SQLite 已满足持久、可取消、可查看；Redis / BullMQ 在多实例或独立 worker（M2 多账户横向扩展）时再换，队列逻辑集中在 `TurnService`，替换面小 |
+| 评论锚点颗粒度（2026-10-01 JZ） | doc 同 Claude Docs：段落内或整块；deck 最小颗粒度：段落内或整个形状 | 跨段落锚点让「改什么」含糊，AI 修改也随之跨段；选区阶段拦下比事后猜测可靠 |
 | 内容格式 | markdown 方言 + 块 id 前缀 | 对 LLM 友好、token 少；实测 deepseek-flash 一次写对 |
 | 引用 | `[@c:id]` 原子节点，编号与参考文献表由平台生成 | 编号永不错乱；手写引用在写前被拦截 |
 | doc 导入 / 导出 | 自写 OOXML 解析 + 修补式导出 | 未改动的块逐字节保真；mammoth / docx npm 包做不到 |
