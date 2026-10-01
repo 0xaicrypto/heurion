@@ -228,22 +228,23 @@ export function reconcilePptxIds(prev: Projection | undefined, bytes: Uint8Array
   let all: Record<string, Uint8Array>
   try { all = unzipSync(bytes) } catch { return { bytes, remapped: 0 } }
   if (!prev?.slides?.length) return { bytes, remapped: 0 }
-  const prevByPart = new Map(prev.slides.map(s => [s.id, s.shapes.filter(n => n.id.includes('#') && n.text)]))
+  // 上一版形状（file-backed 复合 id）全量保留——文本匹配用带文本的，几何匹配用带几何的。
+  const prevByPart = new Map(prev.slides.map(s => [s.id, s.shapes.filter(n => n.id.includes('#'))]))
   let total = 0
   const out: Record<string, Uint8Array> = { ...all }
   for (const [name, entry] of Object.entries(all)) {
-    const slide = /^ppt\/slides\/slide\d+\.xml$/.exec(name)
-    if (!slide) continue
+    const slideMatch = /^ppt\/slides\/slide\d+\.xml$/.exec(name)
+    if (!slideMatch) continue
     const prevShapes = prevByPart.get(name)
     if (!prevShapes?.length) continue
     const xml = strFromU8(entry!)
 
-    // 扫描 cNvPr（形状 id 载体）+ 所属形状文本：cNv 挂在形状帧上（cNvPr 自闭合，不单独成帧）。
-    interface Tag { start: number; end: number; id: string; text: string }
+    // 扫描形状帧：cNv（id 载体）+ 元素类型 + 几何（a:off/a:ext）+ 文本。
+    interface Tag { start: number; end: number; id: string; el: string; text: string; geometry?: { w: number; h: number; x: number; y: number } }
     const tags: Tag[] = []
     {
       let aDepth = 0
-      const stack: Array<{ el: string; cNv?: { start: number; end: number; id: string }; buf: string[] }> = []
+      const stack: Array<{ el: string; cNv?: { start: number; end: number; id: string }; buf: string[]; geometry?: Tag['geometry'] }> = []
       for (const tok of tokenize(xml)) {
         if (tok.t === 'text') {
           if (aDepth > 0) {
@@ -254,27 +255,39 @@ export function reconcilePptxIds(prev: Projection | undefined, bytes: Uint8Array
         }
         if (tok.t === 'open') {
           if (tok.name === 'a:t') { aDepth++; continue }
+          const top = stack[stack.length - 1]
           if (tok.name === 'p:sp' || tok.name === 'p:pic' || tok.name === 'p:graphicFrame') {
             stack.push({ el: tok.name, buf: [] })
           } else if (tok.name === 'p:cNvPr' && tok.attrs.id) {
-            const top = stack[stack.length - 1]
             if (top && !top.cNv) top.cNv = { start: tok.at, end: tok.end, id: tok.attrs.id }
+          } else if (tok.name === 'a:off' && top) {
+            top.geometry ??= { w: 0, h: 0, x: 0, y: 0 }
+            top.geometry.x = Number(tok.attrs.x)
+            top.geometry.y = Number(tok.attrs.y)
+          } else if (tok.name === 'a:ext' && top) {
+            top.geometry ??= { w: 0, h: 0, x: 0, y: 0 }
+            top.geometry.w = Number(tok.attrs.cx)
+            top.geometry.h = Number(tok.attrs.cy)
           }
           continue
         }
         if (tok.name === 'a:t') { aDepth = Math.max(0, aDepth - 1); continue }
         if (tok.name === 'p:sp' || tok.name === 'p:pic' || tok.name === 'p:graphicFrame') {
           const frame = stack.pop()
-          if (frame?.cNv) tags.push({ ...frame.cNv, text: normText(frame.buf.join('')) })
+          if (frame?.cNv) {
+            tags.push({ ...frame.cNv, el: frame.el, text: normText(frame.buf.join('')), ...(frame.geometry ? { geometry: frame.geometry } : {}) })
+          }
         }
       }
     }
     if (tags.length === 0) continue
 
-    // 同页内按文本对齐（窗口容忍）。
-    let pi = 0
     const currentTaken = new Set(tags.map(t => t.id))
     const remaps = new Map<number, string>()
+    const usedPrev = new Set<string>()
+
+    // 第一遍：文本对齐（窗口容忍）。
+    let pi = 0
     tags.forEach((t, k) => {
       if (!t.text) return
       const hit = (pi < prevShapes.length && normText(prevShapes[pi]!.text) === t.text)
@@ -282,13 +295,35 @@ export function reconcilePptxIds(prev: Projection | undefined, bytes: Uint8Array
         : prevShapes.findIndex((n, j) => j > pi && j <= pi + 3 && normText(n.text) === t.text)
       if (hit < 0) return
       pi = hit + 1
-      const prevId = prevShapes[hit]!.id.split('#')[1]!
+      const prevNode = prevShapes[hit]!
+      usedPrev.add(prevNode.id)
+      const prevId = prevNode.id.split('#')[1]!
       if (prevId === t.id) return
       if (currentTaken.has(prevId)) return
       remaps.set(k, prevId)
       currentTaken.delete(t.id)
       currentTaken.add(prevId)
     })
+
+    // 第二遍（几何匹配增强）：无文本形状（图片/图表/空占位）在 LO 回写后无从文本对齐，
+    // 按「同元素类型 + 同宽高」在页内顺序对回上一版 id。文本被改写的形状不参与本遍
+    // （用户重写了评论锚定的内容 → 应该漂移）。误匹配情形：删一图又加一张同尺寸图
+    // ——POC 可接受，漂移审计兜底。
+    tags.forEach((t, k) => {
+      if (remaps.has(k) || t.text || !t.geometry || t.geometry.w === 0) return
+      const hit = prevShapes.findIndex(n => !usedPrev.has(n.id) && !n.text
+        && n.geometry && n.geometry.w === t.geometry!.w && n.geometry.h === t.geometry!.h)
+      if (hit < 0) return
+      const prevNode = prevShapes[hit]!
+      usedPrev.add(prevNode.id)
+      const prevId = prevNode.id.split('#')[1]!
+      if (prevId === t.id) return
+      if (currentTaken.has(prevId)) return
+      remaps.set(k, prevId)
+      currentTaken.delete(t.id)
+      currentTaken.add(prevId)
+    })
+
     if (remaps.size === 0) continue
 
     let out2 = xml

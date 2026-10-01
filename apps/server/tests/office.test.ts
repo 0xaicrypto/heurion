@@ -179,6 +179,27 @@ describe('id 对齐重建（Collabora/LibreOffice 回写场景）', () => {
     const after = buildProjection('pptx', r.bytes)
     expect(after.slides![0]!.shapes[0]!.id).toBe('ppt/slides/slide1.xml#2')
   })
+
+  it('pptx：无文本形状（图片）靠几何匹配恢复 id——LO 回写后图片评论不再误报漂移', () => {
+    const pic = (id: string, x: number, w: number) =>
+      `<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ` +
+      `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>` +
+      `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="图"/></p:nvPicPr>` +
+      `<p:spPr><a:xfrm><a:off x="${x}" y="0"/><a:ext cx="${w}" cy="1000"/></a:xfrm></p:spPr></p:pic>` +
+      `</p:spTree></p:cSld></p:sld>`
+    const proj1 = buildProjection('pptx', zipSync({ 'ppt/slides/slide1.xml': strToU8(pic('5', 100, 3000)) }))
+    // LO 式：id 5 → 82
+    const lo = zipSync({ 'ppt/slides/slide1.xml': strToU8(pic('82', 100, 3000)) })
+    const r = reconcilePptxIds(proj1, lo)
+    expect(r.remapped).toBe(1)
+    const after = buildProjection('pptx', r.bytes)
+    expect(after.slides![0]!.shapes[0]!.id).toBe('ppt/slides/slide1.xml#5')
+    // 图片被移动（位置变了、尺寸同）→ 同一对象，id 照样恢复（评论跟对象走）
+    const moved = zipSync({ 'ppt/slides/slide1.xml': strToU8(pic('83', 900, 3000)) })
+    const r2 = reconcilePptxIds(proj1, moved)
+    expect(r2.remapped).toBe(1)
+    expect(buildProjection('pptx', r2.bytes).slides![0]!.shapes[0]!.id).toBe('ppt/slides/slide1.xml#5')
+  })
 })
 
 describe('computeIdSurvival', () => {  it('未变节点 id 全保留 → 1；全部换新 → 0；无上一版 → null', () => {

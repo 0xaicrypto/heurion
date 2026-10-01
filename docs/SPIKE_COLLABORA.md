@@ -15,7 +15,7 @@
 | CODE 定位 | 官方明确「仅测试/家用/小团队，**不建议生产**」——本意是逼企业用户订阅或自建 |
 | 生产路径 | ① 买 Collabora Online（COOL）订阅；② 从 MPLv2 源码自建、去 Collabora 商标、自行维护 |
 | 本项目 POC | ✅ 本地开发/评测用 CODE 二进制完全合规（这正是它的定位） |
-| 上线闸（M2 前） | 需拍板：自建构建（工程 + 长期维护）vs 订阅（成本）——不阻塞 S4/S5 |
+| 本项目生产 | ✅ **已定（2026-10-01）：从 MPLv2 源码自建**——去 Collabora 商标/CSS 主题、自行构建与维护，不买 COOL 订阅。代价：安全补丁需自己跟踪 backport（参考 Nextcloud 社区的同类实践）；收益：无按人订阅成本、不受 CODE 的非生产条款约束。列入 M2 上线前工作 |
 
 ## 2. 集成面：最小 WOPI host（已实现并验证）
 
@@ -65,7 +65,7 @@ CODE 原生**外部变更检测**与 §4.3 写后合并语义严丝合缝：
 ## 5. 开放项（S4/S5 范围）
 
 1. **评论同步**：用户在 Collabora 里写的是文件内评论（docx `word/comments.xml`）。**docx 侧已落地**（`docs/office-comments.ts`：按所在段落的 paraId 锚定、file_comment_id 去重）。pptx 侧 Impress 评论同步待做（deck 编辑刚接通，跟随 S4 收尾）。
-2. **无文本形状的锚点**：图片等无文本形状在 LO 回写后 id 无法按文本恢复（会漂移）；后续可用几何匹配增强。
+2. ~~无文本形状的锚点~~ **已落地（几何匹配）**：reconcile 第二遍按「同元素类型 + 同宽高」把无文本形状（图片/图表）对回上一版 id——图片被移动但未删除时评论跟随对象；误匹配（删一图加一张同尺寸图）风险 POC 可接受，漂移审计兜底。
 3. **frame_ancestors**：CODE 默认放行 `localhost:*`；生产（M2）需把集成域写进 coolwsd 配置。
 4. **视觉验收**：iframe 内实际编辑/保存需浏览器手工确认（本 spike 以协议层验证为准）——浏览器打开 `http://localhost:8787` → 选中已有文档 → 「编辑器」按钮即可。
 5. **容器同网部署**：`scripts/container.sh up` 已把两个容器放进同一网络（别名互连）；本地开发拓扑（宿主 server + 容器 CODE）用 `HEURION_PUBLIC_URL=http://host.containers.internal:8787`。

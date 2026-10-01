@@ -366,7 +366,7 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 | 论断正确性未校验 | 引用真实但论断可能错 | M1 #8 `verify_claims` |
 | 锚点保护是软门 | AI 可能清空锚点后才被发现 | 漂移审计 + 整轮回滚；按触规率决定是否升级硬闸 |
 | AI 回合窗口内暂停用户保存（S4） | 伪并行 | S5 三方合并后解除 |
-| Collabora CODE 生产许可 | CODE 二进制附专有条件、不建议生产 | POC/本地合规；M2 前拍板：MPLv2 自建去标 vs COOL 订阅（[SPIKE_COLLABORA.md](SPIKE_COLLABORA.md)） |
+| Collabora CODE 生产许可 | CODE 二进制附专有条件、不建议生产 | **已定（2026-10-01）：从 MPLv2 源码自建**，去 Collabora 商标后构建镜像、自行跟踪补丁；POC/本地期间直接用 CODE 二进制（合规）。列入 M2（#13 同批） |
 | Collabora 文件内评论与评论表双源 | 用户在编辑器里写的评论需同步 | S4：解析 `word/comments.xml` 按 paraId 同步进评论表；AI 只写线程不回写 OOXML 评论 |
 | frame_ancestors 限制 | 生产域名无法嵌入 iframe | M2：把集成域写进 coolwsd 配置 |
 | SDK 没有权限回调 | 无法逐次审批工具调用 | 容器隔离兜底；确需逐次审批就改用 ACP |
