@@ -33,13 +33,21 @@ iframe 嵌入：`GET /api/docs/:id/editor` 返回 `{urlsrc, access_token, wopisr
 
 ## 3. 版本守卫映射（本轮最有价值的发现）
 
-CODE 原生的**外部变更检测**与我们 §4.3 的写后合并语义严丝合缝：
+**LibreOffice / Collabora 回写会重新生成全部内嵌 id**（实测容器 LO 7.4 与 LO 源码双证：docx 的 `w14:paraId` 与 pptx 的 `cNvPr@id` 都在导出时重新生成，不回写导入值——`docxattributeoutput.cxx` 里 paraId 走 `m_nNextParaId++`）。这意味着**用户在 Collabora 里保存一次，所有评论锚点即报废**——spike 若只做协议层验证会漏掉这个坑。
+
+对策已落地（S4 关键路径）：每次落版跑 **id 对齐重建（reconcile）**——把「文本未变」的段落/形状恢复成上一版 id（文本对齐 + 插入窗口容忍）；被改写的段落保留新 id（正是漂移语义）。效果：
+
+- python-docx（AI 回合）天然保留 id，reconcile 为 no-op；
+- Collabora 保存后，未触碰内容的 id 100% 恢复（单测覆盖）；
+- 版本 meta 同时记录 `id_survival`（对齐后的锚点连续率，告警阈值 0.8）与用户保存的 `user_ops`（S5 三方合并的输入）。
+
+CODE 原生**外部变更检测**与 §4.3 写后合并语义严丝合缝：
 
 - CheckFileInfo 返回 `LastModifiedTime`（= head 版本时间）；
-- PutFile 带 `X-COOL-WOPI-Timestamp`，与 head 不一致（编辑期间 AI 落了新版本/回滚）→ 返回 **409 `{COOLStatusCode: 1010}`**，CODE 会主动弹「覆盖我的版本 / 重新加载」询问 —— **用户优先**的冲突 UX 由编辑器原生承担；
-- AI 回合进行中（busy）PutFile → 同样 409，回合窗口内天然互斥。
+- PutFile 带 `X-COOL-WOPI-Timestamp`，与 head 不一致（编辑期间 AI 落了新版本/回滚）→ 返回 **409 `{COOLStatusCode: 1010}`**，CODE 主动弹「覆盖 / 重新加载」询问 —— 用户优先的冲突 UX 由编辑器原生承担；
+- AI 回合进行中（busy）PutFile → 409；反向守护同样落地：回合快照时发现 head 被用户推进 → 拒落版并提示重试。
 
-实测：旧时间戳 PutFile → 409 ✓；当前时间戳 → 200 ✓。
+实测：旧时间戳 PutFile → 409 ✓；当前时间戳 → 200 ✓；回合期间用户推进 → AI 改动丢弃 ✓（单测）。
 
 ## 4. 为什么选 Collabora 而不是 TipTap + XML 补丁器
 
@@ -56,10 +64,11 @@ CODE 原生的**外部变更检测**与我们 §4.3 的写后合并语义严丝�
 
 ## 5. 开放项（S4/S5 范围）
 
-1. **评论同步**：用户在 Collabora 里写的是文件内评论（docx `word/comments.xml`）。S4 需把文件内评论同步进评论表（锚点 = 所在段落的 `w14:paraId`），AI 回复写回线程即可（不回写 OOXML 评论，避免双源）。pptx 侧同理（Impress 评论）。
-2. **frame_ancestors**：CODE 默认放行 `localhost:*`；生产（M2）需把集成域写进 coolwsd 配置。
-3. **视觉验收**：iframe 内实际编辑/保存需浏览器手工确认（本 spike 以协议层验证为准）——浏览器打开 `http://localhost:8787` → 选中已有文档 → 「编辑器」按钮即可。
-4. **容器同网部署**：`scripts/container.sh up` 已把两个容器放进同一网络（别名互连）；本地开发拓扑（宿主 server + 容器 CODE）用 `HEURION_PUBLIC_URL=http://host.containers.internal:8787`。
+1. **评论同步**：用户在 Collabora 里写的是文件内评论（docx `word/comments.xml`）。**docx 侧已落地**（`docs/office-comments.ts`：按所在段落的 paraId 锚定、file_comment_id 去重）。pptx 侧 Impress 评论同步待做（deck 编辑刚接通，跟随 S4 收尾）。
+2. **无文本形状的锚点**：图片等无文本形状在 LO 回写后 id 无法按文本恢复（会漂移）；后续可用几何匹配增强。
+3. **frame_ancestors**：CODE 默认放行 `localhost:*`；生产（M2）需把集成域写进 coolwsd 配置。
+4. **视觉验收**：iframe 内实际编辑/保存需浏览器手工确认（本 spike 以协议层验证为准）——浏览器打开 `http://localhost:8787` → 选中已有文档 → 「编辑器」按钮即可。
+5. **容器同网部署**：`scripts/container.sh up` 已把两个容器放进同一网络（别名互连）；本地开发拓扑（宿主 server + 容器 CODE）用 `HEURION_PUBLIC_URL=http://host.containers.internal:8787`。
 
 ## 6. 复现步骤
 

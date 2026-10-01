@@ -31,6 +31,8 @@ export interface VersionRow {
 export interface VersionMeta {
   /** 与上一版投影对比的 id 存活率；null = 首版（无对照）。 */
   id_survival?: number | null
+  /** 用户保存（编辑面）提取的节点变更（S5 合并输入）。 */
+  user_ops?: { added: string[]; removed: string[]; modified: string[] }
 }
 
 export interface ProjectionRow {
@@ -138,6 +140,7 @@ CREATE TABLE IF NOT EXISTS comments (
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
   resolved_by TEXT CHECK (resolved_by IN ('user','ai')),
   drifted INTEGER NOT NULL DEFAULT 0,
+  file_comment_id TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS comment_replies (
@@ -153,6 +156,10 @@ CREATE TABLE IF NOT EXISTS comment_replies (
 function migrate(db: DatabaseSync): void {
   const versionCols = (db.prepare('PRAGMA table_info(versions)').all() as Array<{ name: string }>).map(c => c.name)
   if (!versionCols.includes('meta')) db.exec('ALTER TABLE versions ADD COLUMN meta TEXT')
+  const commentCols = (db.prepare('PRAGMA table_info(comments)').all() as Array<{ name: string }>).map(c => c.name)
+  if (commentCols.length > 0 && !commentCols.includes('file_comment_id')) {
+    db.exec('ALTER TABLE comments ADD COLUMN file_comment_id TEXT')
+  }
 }
 
 const now = () => new Date().toISOString()
@@ -233,14 +240,20 @@ export class Store {
 
   // —— 评论（S2） ——
 
-  addComment(docId: string, anchor: CommentAnchor): CommentRow {
+  addComment(docId: string, anchor: CommentAnchor, fileCommentId?: string): CommentRow {
     const doc = this.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
     const t = now()
     const id = randomUUID()
-    this.db.prepare('INSERT INTO comments (id, doc_id, kind, anchor, status, drifted, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)')
-      .run(id, docId, doc.kind, JSON.stringify(anchor), 'open', t)
+    this.db.prepare('INSERT INTO comments (id, doc_id, kind, anchor, status, drifted, file_comment_id, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
+      .run(id, docId, doc.kind, JSON.stringify(anchor), 'open', fileCommentId ?? null, t)
     return this.getComment(docId, id)!
+  }
+
+  /** 编辑器（Collabora）文件内评论的去重查找。 */
+  getCommentByFileId(docId: string, fileCommentId: string): CommentRow | undefined {
+    const row = this.db.prepare('SELECT id FROM comments WHERE doc_id = ? AND file_comment_id = ?').get(docId, fileCommentId) as { id: string } | undefined
+    return row ? this.getComment(docId, row.id) : undefined
   }
 
   /** 双重过滤（id + docId）——防跨文档枚举。 */

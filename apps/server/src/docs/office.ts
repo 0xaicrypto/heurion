@@ -145,39 +145,200 @@ export function ensureDocxParaIds(bytes: Uint8Array): { bytes: Uint8Array; stats
   return { bytes: zipSync({ ...all, [DOC_XML]: strToU8(out) }), stats }
 }
 
-// —— 极简 XML 事件流：只为读投影，不序列化 ——
+/** file-backed id 判定：w14:paraId 格式（8 位 hex）。 */
+export const isFileBackedId = (id: string): boolean => /^[0-9A-Fa-f]{8}$/.test(id)
+
+const normText = (s: string): string => s.replace(/\s+/g, '').toLowerCase()
+
+/**
+ * docx 段落 id 对齐重建（S4 关键路径）：LibreOffice / Collabora 回写 docx 时会**重新生成**
+ * 全部 paraId（不回写导入值），用户保存一次所有评论锚点即报废。本函数把「文本未变」的
+ * 段落恢复成上一版的 paraId（按文本对齐；被改写的段落保留新 id —— 正是漂移语义）。
+ * 前置：bytes 已过 ensureDocxParaIds（每个 <w:p> 都有 id）。
+ */
+export function reconcileDocxIds(prev: Projection | undefined, bytes: Uint8Array): { bytes: Uint8Array; remapped: number } {
+  let all: Record<string, Uint8Array>
+  try { all = unzipSync(bytes) } catch { return { bytes, remapped: 0 } }
+  const entry = all[DOC_XML]
+  if (!entry || !prev?.nodes?.length) return { bytes, remapped: 0 }
+  const xml = strFromU8(entry)
+
+  // 扫描 w:p 段落（含表格内段落——它们的 id 同样会被 LO 重新生成）：(标签位置, id, 段内 w:t 文本)
+  interface PTag { start: number; end: number; id: string; text: string }
+  const tags: PTag[] = []
+  {
+    let tDepth = 0
+    let buf: string[] = []
+    let cur: { start: number; end: number; id: string } | null = null
+    for (const tok of tokenize(xml)) {
+      if (tok.t === 'text') { if (tDepth > 0) buf.push(decodeXml(tok.raw)); continue }
+      if (tok.t === 'open') {
+        if (tok.name === 'w:t') tDepth++
+        else if (tok.name === 'w:p' && !cur) {
+          const id = tok.attrs['w14:paraId']
+          if (id) cur = { start: tok.at, end: tok.end, id }
+        }
+        continue
+      }
+      if (tok.name === 'w:t') { tDepth = Math.max(0, tDepth - 1); continue }
+      if (tok.name === 'w:p' && cur) {
+        tags.push({ ...cur, text: normText(buf.join('')) })
+        cur = null
+        buf = []
+        tDepth = 0
+      }
+    }
+  }
+  if (tags.length === 0) return { bytes, remapped: 0 }
+
+  // 与上一版 file-backed 段落做对齐匹配（窗口容忍插入）。
+  const prevNodes = prev.nodes.filter(n => isFileBackedId(n.id) && normText(n.text))
+  let pi = 0
+  const currentTaken = new Set(tags.map(t => t.id.toLowerCase()))
+  const remaps = new Map<number, string>() // tag index → prevId
+  tags.forEach((t, k) => {
+    const hit = (pi < prevNodes.length && prevNodes[pi]!.text === t.text)
+      ? pi
+      : prevNodes.findIndex((n, j) => j > pi && j <= pi + 3 && n.text === t.text)
+    if (hit < 0) return
+    pi = hit + 1
+    const prevId = prevNodes[hit]!.id
+    if (prevId.toLowerCase() === t.id) return
+    if (currentTaken.has(prevId.toLowerCase())) return // 目标 id 已被占用 → 不动，避免制造重复
+    remaps.set(k, prevId)
+    currentTaken.delete(t.id.toLowerCase())
+    currentTaken.add(prevId.toLowerCase())
+  })
+  if (remaps.size === 0) return { bytes, remapped: 0 }
+
+  // 从后往前替换标签上的 id。
+  let out = xml
+  for (let k = tags.length - 1; k >= 0; k--) {
+    const newId = remaps.get(k)
+    if (!newId) continue
+    const t = tags[k]!
+    const tag = out.slice(t.start, t.end)
+    out = out.slice(0, t.start) + tag.replace(/w14:paraId="([0-9A-Fa-f]+)"/, `w14:paraId="${newId}"`) + out.slice(t.end)
+  }
+  return { bytes: zipSync({ ...all, [DOC_XML]: strToU8(out) }), remapped: remaps.size }
+}
+
+/** pptx 形状 id 对齐重建：LibreOffice/Collabora 回写 pptx 时 cNvPr@id 同样全部重新生成。 */
+export function reconcilePptxIds(prev: Projection | undefined, bytes: Uint8Array): { bytes: Uint8Array; remapped: number } {
+  let all: Record<string, Uint8Array>
+  try { all = unzipSync(bytes) } catch { return { bytes, remapped: 0 } }
+  if (!prev?.slides?.length) return { bytes, remapped: 0 }
+  const prevByPart = new Map(prev.slides.map(s => [s.id, s.shapes.filter(n => n.id.includes('#') && n.text)]))
+  let total = 0
+  const out: Record<string, Uint8Array> = { ...all }
+  for (const [name, entry] of Object.entries(all)) {
+    const slide = /^ppt\/slides\/slide\d+\.xml$/.exec(name)
+    if (!slide) continue
+    const prevShapes = prevByPart.get(name)
+    if (!prevShapes?.length) continue
+    const xml = strFromU8(entry!)
+
+    // 扫描 cNvPr（形状 id 载体）+ 所属形状文本：cNv 挂在形状帧上（cNvPr 自闭合，不单独成帧）。
+    interface Tag { start: number; end: number; id: string; text: string }
+    const tags: Tag[] = []
+    {
+      let aDepth = 0
+      const stack: Array<{ el: string; cNv?: { start: number; end: number; id: string }; buf: string[] }> = []
+      for (const tok of tokenize(xml)) {
+        if (tok.t === 'text') {
+          if (aDepth > 0) {
+            const top = stack[stack.length - 1]
+            if (top?.cNv) top.buf.push(decodeXml(tok.raw))
+          }
+          continue
+        }
+        if (tok.t === 'open') {
+          if (tok.name === 'a:t') { aDepth++; continue }
+          if (tok.name === 'p:sp' || tok.name === 'p:pic' || tok.name === 'p:graphicFrame') {
+            stack.push({ el: tok.name, buf: [] })
+          } else if (tok.name === 'p:cNvPr' && tok.attrs.id) {
+            const top = stack[stack.length - 1]
+            if (top && !top.cNv) top.cNv = { start: tok.at, end: tok.end, id: tok.attrs.id }
+          }
+          continue
+        }
+        if (tok.name === 'a:t') { aDepth = Math.max(0, aDepth - 1); continue }
+        if (tok.name === 'p:sp' || tok.name === 'p:pic' || tok.name === 'p:graphicFrame') {
+          const frame = stack.pop()
+          if (frame?.cNv) tags.push({ ...frame.cNv, text: normText(frame.buf.join('')) })
+        }
+      }
+    }
+    if (tags.length === 0) continue
+
+    // 同页内按文本对齐（窗口容忍）。
+    let pi = 0
+    const currentTaken = new Set(tags.map(t => t.id))
+    const remaps = new Map<number, string>()
+    tags.forEach((t, k) => {
+      if (!t.text) return
+      const hit = (pi < prevShapes.length && normText(prevShapes[pi]!.text) === t.text)
+        ? pi
+        : prevShapes.findIndex((n, j) => j > pi && j <= pi + 3 && normText(n.text) === t.text)
+      if (hit < 0) return
+      pi = hit + 1
+      const prevId = prevShapes[hit]!.id.split('#')[1]!
+      if (prevId === t.id) return
+      if (currentTaken.has(prevId)) return
+      remaps.set(k, prevId)
+      currentTaken.delete(t.id)
+      currentTaken.add(prevId)
+    })
+    if (remaps.size === 0) continue
+
+    let out2 = xml
+    for (let k = tags.length - 1; k >= 0; k--) {
+      const newId = remaps.get(k)
+      if (!newId) continue
+      const t = tags[k]!
+      const tag = out2.slice(t.start, t.end)
+      out2 = out2.slice(0, t.start) + tag.replace(/id="\d+"/, `id="${newId}"`) + out2.slice(t.end)
+    }
+    out[name] = strToU8(out2)
+    total += remaps.size
+  }
+  return { bytes: total > 0 ? zipSync(out) : bytes, remapped: total }
+}
+
+// —— 极简 XML 事件流：只为读投影/扫描，不序列化 ——
 
 type XmlToken =
-  | { t: 'open'; name: string; attrs: Record<string, string>; self: boolean }
-  | { t: 'close'; name: string }
-  | { t: 'text'; raw: string }
+  | { t: 'open'; name: string; attrs: Record<string, string>; self: boolean; at: number; end: number }
+  | { t: 'close'; name: string; at: number; end: number }
+  | { t: 'text'; raw: string; at: number }
 
 function* tokenize(xml: string): Generator<XmlToken> {
   let i = 0
   while (i < xml.length) {
     const lt = xml.indexOf('<', i)
     if (lt < 0) return
-    if (lt > i) yield { t: 'text', raw: xml.slice(i, lt) }
+    if (lt > i) yield { t: 'text', raw: xml.slice(i, lt), at: i }
     if (xml.startsWith('<!--', lt)) { const e = xml.indexOf('-->', lt); i = e < 0 ? xml.length : e + 3; continue }
     if (xml.startsWith('<![CDATA[', lt)) {
       const end = xml.indexOf(']]>', lt)
-      yield { t: 'text', raw: xml.slice(lt + 9, end < 0 ? xml.length : end) }
+      yield { t: 'text', raw: xml.slice(lt + 9, end < 0 ? xml.length : end), at: lt + 9 }
       i = end < 0 ? xml.length : end + 3
       continue
     }
     const gt = xml.indexOf('>', lt)
     if (gt < 0) return
     const tag = xml.slice(lt + 1, gt)
-    if (tag.startsWith('/')) { yield { t: 'close', name: tag.slice(1).trim() }; i = gt + 1; continue }
+    if (tag.startsWith('/')) { yield { t: 'close', name: tag.slice(1).trim(), at: lt, end: gt + 1 }; i = gt + 1; continue }
     const m = /^([^\s/>]+)((?:\s+[\w:.-]+="[^"]*")*)\s*(\/?)$/.exec(tag)
     const attrs: Record<string, string> = {}
     if (m?.[2]) for (const a of m[2].matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[a[1]!] = decodeXml(a[2]!)
-    yield { t: 'open', name: m?.[1] ?? '', attrs, self: m?.[3] === '/' }
+    yield { t: 'open', name: m?.[1] ?? '', attrs, self: m?.[3] === '/', at: lt, end: gt + 1 }
     i = gt + 1
   }
 }
 
-/** docx 投影：正文标题/段落/列表/表格。表格 node 的 id 是合成的（tbl-N）——表格锚点一律落在其内部段落的 paraId 上。 */
+/** docx 投影：正文标题/段落/列表/表格。表格落两个产物：合成 id 的表格 node（合并文本，供展示/diff）
+ *  + 其内部段落逐个成 node（file-backed paraId，可被评论锚定）。 */
 export function docxProjection(documentXml: string): ProjectionNode[] {
   const nodes: ProjectionNode[] = []
   let tbl = 0
@@ -209,7 +370,7 @@ export function docxProjection(documentXml: string): ProjectionNode[] {
         if (para) para.buf.push('\t')
         else tblBuf += '\t'
       } else if (tok.name === 'w:tbl') { tbl++; tblBuf = '' } else if (tok.name === 'w:sdt' && tbl === 0) sdt++
-      else if (tok.name === 'w:p' && tbl === 0 && !para) para = { id: tok.attrs['w14:paraId'], numPr: false, buf: [] }
+      else if (tok.name === 'w:p' && !para) para = { id: tok.attrs['w14:paraId'], numPr: false, buf: [] }
       else if (tok.name === 'w:pStyle' && para) para.style = tok.attrs['w:val']
       else if (tok.name === 'w:numPr' && para) para.numPr = true
       continue
@@ -218,6 +379,12 @@ export function docxProjection(documentXml: string): ProjectionNode[] {
     if (tok.name === 'w:t') { tDepth = Math.max(0, tDepth - 1); continue }
     if (tok.name === 'w:p') {
       if (tbl === 0 && para) { nodes.push(paraKind(para)); para = null }
+      else if (tbl > 0 && para) { // 表格内段落也逐个成 node（可锚定）
+        const cellPara = paraKind(para)
+        nodes.push(cellPara)
+        tblBuf += cellPara.text
+        para = null
+      }
     } else if (tok.name === 'w:tc') {
       if (tbl > 0) tblBuf += ' | '
     } else if (tok.name === 'w:tr') {
@@ -225,7 +392,7 @@ export function docxProjection(documentXml: string): ProjectionNode[] {
     } else if (tok.name === 'w:tbl') {
       tbl--
       if (tbl === 0) {
-        const text = tblBuf.trim().replace(/\s*\|\s*(\n|$)/g, '$1')
+        const text = tblBuf.trim().replace(/\s*\|\s*(\n|$)/g, '$1').replace(/\n/g, ' / ')
         nodes.push({ id: `tbl-${++synthetic}`, kind: 'table', text })
         tblBuf = ''
       }
@@ -332,4 +499,25 @@ export function computeIdSurvival(prev: Projection | undefined, next: Projection
     if (pid === n.id) kept++
   }
   return total === 0 ? 0 : kept / total
+}
+
+/** 用户保存的节点变更摘要（S5 三方合并的输入）：按 id 对比前后投影。 */
+export function diffProjectionOps(
+  prev: Projection | undefined,
+  next: Projection,
+): { added: string[]; removed: string[]; modified: string[] } | null {
+  if (!prev) return null
+  const flat = (p: Projection): ProjectionNode[] => [...(p.nodes ?? []), ...(p.slides ?? []).flatMap(s => s.shapes)]
+  const prevById = new Map(flat(prev).map(n => [n.id, n]))
+  const added: string[] = []
+  const modified: string[] = []
+  for (const n of flat(next)) {
+    const p = prevById.get(n.id)
+    if (!p) added.push(n.id)
+    else if (p.text !== n.text) modified.push(n.id)
+  }
+  const nextIds = new Set(flat(next).map(n => n.id))
+  const removed = flat(prev).filter(n => !nextIds.has(n.id)).map(n => n.id)
+  if (added.length === 0 && removed.length === 0 && modified.length === 0) return null
+  return { added, removed, modified }
 }

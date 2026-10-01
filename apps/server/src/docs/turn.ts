@@ -28,6 +28,7 @@ export class TurnService {
     this.files.cleanWorkspaceScripts(docId)
     this.store.addMessage(docId, 'user', message)
     const openBefore = new Set(this.store.listComments(docId, 'open').map(c => c.id))
+    const baseSeq = doc.head_seq
     const baseSha = this.files.materializeHead(docId)
     const fileName = canonicalFileName(doc.kind)
     const prompt = baseSha === null
@@ -64,6 +65,14 @@ export class TurnService {
     if (!audit.ok) {
       this.files.materializeHead(docId)
       emit({ type: 'error', message: '引用校验仍未通过，本轮文件改动已丢弃。' })
+      return
+    }
+    // 用户优先（DESIGN.md §4.3 的另一半）：回合开始后用户手动保存推进了 head
+    // → AI 是基于旧基线改的，直接落版会覆盖用户改动 → 拒绝落版、提示重试。
+    const headNow = this.store.getDoc(docId)!.head_seq
+    if (headNow !== baseSeq) {
+      this.files.materializeHead(docId)
+      emit({ type: 'error', message: `回合期间文档被手动更新（当前 v${headNow}），本轮 AI 改动已丢弃，请基于新版本重试。` })
       return
     }
     const version = this.files.snapshotAfterTurn(docId, baseSha, message.slice(0, 80))

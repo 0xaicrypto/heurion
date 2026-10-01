@@ -3,7 +3,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { join } from 'node:path'
 import type { DocKind, Store, VersionRow, VersionSource } from '../db.ts'
 import { auditCommentAnchors } from './comments.ts'
-import { buildProjection, computeIdSurvival, ensureDocxParaIds } from './office.ts'
+import { syncFileComments } from './office-comments.ts'
+import { buildProjection, computeIdSurvival, diffProjectionOps, ensureDocxParaIds, reconcileDocxIds, reconcilePptxIds } from './office.ts'
 
 /** 工作区里的权威文件名：模型只改这个文件，其余是脚本与临时产物。 */
 export function canonicalFileName(kind: DocKind): string {
@@ -41,26 +42,37 @@ export class DocFiles {
 
   private saveVersion(docId: string, kind: DocKind, rawBytes: Uint8Array, source: VersionSource, note: string): VersionRow {
     // docx：id 手术后再落版 —— 权威文件自带持久 id（DESIGN.md §4.1）。
-    const withIds = kind === 'docx' ? ensureDocxParaIds(rawBytes) : { bytes: rawBytes, stats: null }
-    if (withIds.stats && (withIds.stats.assigned > 0 || withIds.stats.reassigned > 0)) {
-      console.log(`[office] doc ${docId}: paraId assigned=${withIds.stats.assigned} reassigned=${withIds.stats.reassigned}`)
+    const ensured = kind === 'docx' ? ensureDocxParaIds(rawBytes) : { bytes: rawBytes, stats: null }
+    if (ensured.stats && (ensured.stats.assigned > 0 || ensured.stats.reassigned > 0)) {
+      console.log(`[office] doc ${docId}: paraId assigned=${ensured.stats.assigned} reassigned=${ensured.stats.reassigned}`)
     }
-    const bytes = withIds.bytes
 
-    // id 存活率：与落版前的 head 投影对比（对照 = 被覆盖掉的那一版）。
-    const prev = this.store.getDoc(docId)
-    const prevProjection = prev && prev.head_seq > 0 ? this.store.getProjection(docId, prev.head_seq)?.projection : undefined
+    // id 对齐重建（S4）：Collabora / LibreOffice 回写会把全部 id 重新生成 ——
+    // 用文本对齐把「文本未变」的段落/形状恢复成上一版 id，评论锚点才跨编辑器存活。
+    const doc = this.store.getDoc(docId)
+    const prevProjection = doc && doc.head_seq > 0 ? this.store.getProjection(docId, doc.head_seq)?.projection : undefined
+    const reconciled = kind === 'docx'
+      ? reconcileDocxIds(prevProjection, ensured.bytes)
+      : reconcilePptxIds(prevProjection, ensured.bytes)
+    if (reconciled.remapped > 0) console.log(`[office] doc ${docId}: id remapped=${reconciled.remapped}`)
+    const bytes = reconciled.bytes
+
     const projection = buildProjection(kind, bytes)
     const survival = computeIdSurvival(prevProjection, projection)
 
-    const version = this.store.addVersion(docId, sha256(bytes), source, note,
-      survival === null ? undefined : { id_survival: survival })
+    // 用户保存提取节点变更摘要（S5 合并输入）；AI/回滚不产 user_ops。
+    const userOps = source === 'user' ? diffProjectionOps(prevProjection, projection) : null
+    const meta = { ...(survival === null ? {} : { id_survival: survival }), ...(userOps ? { user_ops: userOps } : {}) }
+
+    const version = this.store.addVersion(docId, sha256(bytes), source, note, Object.keys(meta).length ? meta : undefined)
     const path = this.versionFile(docId, version.seq, kind)
     mkdirSync(join(this.versionsDir, docId), { recursive: true })
     writeFileSync(path, bytes)
     this.store.setProjection(docId, version.seq, projection)
-    // 锚点漂移审计：每次落版后重跑（upload / AI / restore 同一入口，S2）。
+    // 锚点漂移审计：每次落版后重跑（upload / user / AI / restore 同一入口，S2）。
     auditCommentAnchors(this.store, docId, version.seq, projection)
+    // 编辑器文件内评论 → 评论表（"选中即评论"的同步路径，S4）。
+    if (kind === 'docx') syncFileComments(this.store, docId, bytes)
     return version
   }
 

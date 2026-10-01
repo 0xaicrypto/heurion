@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../src/db.ts'
-import { computeIdSurvival, docxProjection, ensureDocxParaIds, pptxProjection } from '../src/docs/office.ts'
+import { buildProjection, computeIdSurvival, docxProjection, ensureDocxParaIds, pptxProjection, reconcileDocxIds, reconcilePptxIds } from '../src/docs/office.ts'
 import { DocFiles } from '../src/docs/workspace.ts'
 
 const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -87,7 +87,11 @@ describe('docxProjection', () => {
       { id: expect.any(String), kind: 'heading', level: 2, text: '方法如下' },
       { id: expect.any(String), kind: 'list', text: '纳入标准一' },
       { id: expect.any(String), kind: 'paragraph', text: '普通段落。' },
-      { id: expect.stringMatching(/^tbl-\d+$/), kind: 'table', text: 'A1 | B1\nA2 | B2' },
+      { id: expect.any(String), kind: 'paragraph', text: 'A1' },
+      { id: expect.any(String), kind: 'paragraph', text: 'B1' },
+      { id: expect.any(String), kind: 'paragraph', text: 'A2' },
+      { id: expect.any(String), kind: 'paragraph', text: 'B2' },
+      { id: expect.stringMatching(/^tbl-\d+$/), kind: 'table', text: 'A1 | B1 / A2 | B2' },
     ])
   })
 
@@ -119,8 +123,65 @@ describe('pptxProjection', () => {
   })
 })
 
-describe('computeIdSurvival', () => {
-  it('未变节点 id 全保留 → 1；全部换新 → 0；无上一版 → null', () => {
+describe('id 对齐重建（Collabora/LibreOffice 回写场景）', () => {
+  /** 模拟 LO 回写：剥掉全部 paraId，再由 ensure 分配全新随机 id。 */
+  const stripIds = (bytes: Uint8Array) => {
+    const all = unzipSync(bytes)
+    const xml = strFromU8(all['word/document.xml']!).replaceAll(/ w14:paraId="[0-9A-Fa-f]+"/g, '')
+    return zipSync({ ...all, 'word/document.xml': strToU8(xml) })
+  }
+  const idsOf = (bytes: Uint8Array) =>
+    [...strFromU8(unzipSync(bytes)['word/document.xml']!).matchAll(/w14:paraId="([0-9A-Fa-f]{8})"/g)].map(m => m[1]!.toUpperCase())
+
+  it('docx：LO 式全量重新生成 id → 文本未变段落恢复上一版 id；被改写的段落保留新 id', () => {
+    const ensured = ensureDocxParaIds(asDocx(docxXml(p('一') + p('二') + p('三'))))
+    const proj1 = buildProjection('docx', ensured.bytes)
+
+    const loBytes = ensureDocxParaIds(stripIds(ensured.bytes)).bytes // 全新 id
+    expect(idsOf(loBytes).filter(id => idsOf(ensured.bytes).includes(id))).toHaveLength(0) // 确认全换了
+
+    const r = reconcileDocxIds(proj1, loBytes)
+    expect(r.remapped).toBe(3)
+    expect(idsOf(r.bytes)).toEqual(idsOf(ensured.bytes)) // 幂等恢复
+    expect(computeIdSurvival(proj1, buildProjection('docx', r.bytes))).toBe(1)
+  })
+
+  it('docx：改写了文本的段落不恢复（保留新 id = 漂移语义）', () => {
+    const ensured = ensureDocxParaIds(asDocx(docxXml(p('一') + p('二') + p('三'))))
+    const proj1 = buildProjection('docx', ensured.bytes)
+
+    // 真实 LO 路径：回写剥 id → 全新 id → 用户在其中改了段二的文字
+    const loXml = strFromU8(unzipSync(stripIds(ensured.bytes))['word/document.xml']!).replace('<w:t>二</w:t>', '<w:t>二改</w:t>')
+    const loBytes = ensureDocxParaIds(asDocx(loXml)).bytes
+
+    const r = reconcileDocxIds(proj1, loBytes)
+    expect(r.remapped).toBe(2) // 一/三恢复；二改保留新 id
+    const ids = idsOf(r.bytes)
+    const orig = idsOf(ensured.bytes)
+    expect(ids[0]).toBe(orig[0]) // 一 恢复
+    expect(ids[2]).toBe(orig[2]) // 三 恢复
+    expect(ids[1]).not.toBe(orig[1]) // 二改 = 漂移语义
+    expect(computeIdSurvival(proj1, buildProjection('docx', r.bytes))).toBe(1) // 存活率只数未变内容
+  })
+
+  it('pptx：cNvPr id 全量重生成 → 文本未变形状恢复上一版 id', () => {
+    const slide = (title: string, id: string) =>
+      `<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ` +
+      `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>` +
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="T"/><p:cNvSpPr/></p:nvSpPr>` +
+      `<p:txBody><a:p><a:r><a:t>${title}</a:t></a:r></a:p></p:txBody></p:sp>` +
+      `</p:spTree></p:cSld></p:sld>`
+    const proj1 = buildProjection('pptx', zipSync({ 'ppt/slides/slide1.xml': strToU8(slide('终点', '2')) }))
+    // LO 式：id 换成 82
+    const lo = zipSync({ 'ppt/slides/slide1.xml': strToU8(slide('终点', '82')) })
+    const r = reconcilePptxIds(proj1, lo)
+    expect(r.remapped).toBe(1)
+    const after = buildProjection('pptx', r.bytes)
+    expect(after.slides![0]!.shapes[0]!.id).toBe('ppt/slides/slide1.xml#2')
+  })
+})
+
+describe('computeIdSurvival', () => {  it('未变节点 id 全保留 → 1；全部换新 → 0；无上一版 → null', () => {
     const prev = { nodes: [{ id: 'A1', kind: 'paragraph' as const, text: '甲' }, { id: 'A2', kind: 'paragraph' as const, text: '乙' }] }
     const same = { nodes: [{ id: 'A1', kind: 'paragraph' as const, text: '甲' }, { id: 'A2', kind: 'paragraph' as const, text: '乙' }] }
     const changedOne = { nodes: [{ id: 'A1', kind: 'paragraph' as const, text: '甲' }, { id: 'B2', kind: 'paragraph' as const, text: '乙' }] }
