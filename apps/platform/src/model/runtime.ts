@@ -5,6 +5,7 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from 'y-prosemirro
 import type { Actor, DocKind, DocRow, Store, VersionRow, VersionSource } from '../store/db.ts'
 import { assignIds, collectIds } from './ids.ts'
 import { schema } from './schema.ts'
+import { deckSchema } from './deck-schema.ts'
 import { revertByNodes } from '../ops/revert.ts'
 
 /** Yjs 里存放正文的 fragment 名。 */
@@ -21,7 +22,7 @@ export interface CommitEvent {
 }
 
 /** 变更 diff 时计入「修改」的节点：叶子级块（容器类只记增删）。 */
-const LEAF_BLOCKS = new Set(['paragraph', 'heading', 'figure', 'opaque', 'table'])
+const LEAF_BLOCKS = new Set(['paragraph', 'heading', 'figure', 'opaque', 'table', 'shape'])
 
 function addressableMap(doc: PMNode): Map<string, PMNode> {
   const map = new Map<string, PMNode>()
@@ -47,10 +48,13 @@ export function diffNodes(before: PMNode, after: PMNode): NodeChange[] {
   return out
 }
 
-export function stateToDoc(state: Uint8Array): PMNode {
+/** 文档类型对应的 schema。 */
+export const schemaFor = (kind: DocKind) => kind === 'deck' ? deckSchema : schema
+
+export function stateToDoc(state: Uint8Array, kind: DocKind = 'doc'): PMNode {
   const ydoc = new Y.Doc()
   Y.applyUpdate(ydoc, state)
-  return yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schema)
+  return yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schemaFor(kind))
 }
 
 function docToState(doc: PMNode): Uint8Array {
@@ -71,6 +75,7 @@ const USER_FLUSH_MS = 400
 const TURN_UNDO_KEEP = 20
 
 interface Loaded {
+  kind: DocKind
   ydoc: Y.Doc
   rev: number
   cache: PMNode | null
@@ -97,8 +102,12 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
 
   /** 新建文档：content 缺省为一个空段落；同时落 v1。 */
   create(input: { owner: string; title: string; kind?: DocKind; content?: PMNode; source?: VersionSource; id?: string }): DocRow {
-    const content = assignIds(input.content ?? schema.node('doc', null, [schema.node('paragraph')]), new Set())
-    const row = this.store.createDoc({ id: input.id, owner: input.owner, title: input.title, kind: input.kind ?? 'doc', state: docToState(content) })
+    const kind = input.kind ?? 'doc'
+    const empty = kind === 'deck'
+      ? deckSchema.node('doc', null, [deckSchema.node('slide')])
+      : schema.node('doc', null, [schema.node('paragraph')])
+    const content = assignIds(input.content ?? empty, new Set())
+    const row = this.store.createDoc({ id: input.id, owner: input.owner, title: input.title, kind, state: docToState(content) })
     this.store.addVersion({ docId: row.id, rev: 0, source: input.source ?? 'create', note: input.source === 'import' ? '导入' : '新建', state: this.store.getState(row.id)! })
     return row
   }
@@ -111,8 +120,8 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
       if (!row || !state) throw new Error(`doc ${docId} not found`)
       const ydoc = new Y.Doc()
       Y.applyUpdate(ydoc, state)
-      const committed = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schema)
-      const loaded: Loaded = { ydoc, rev: row.rev, cache: committed, committed, timer: null, turnUndo: new Map() }
+      const committed = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schemaFor(row.kind))
+      const loaded: Loaded = { kind: row.kind, ydoc, rev: row.rev, cache: committed, committed, timer: null, turnUndo: new Map() }
       ydoc.on('update', (_update: Uint8Array, origin: unknown) => {
         loaded.cache = null
         if (isServerOrigin(origin)) return
@@ -130,7 +139,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
   /** 当前文档（PM 节点，只读）。 */
   get(docId: string): PMNode {
     const l = this.load(docId)
-    l.cache ??= yXmlFragmentToProseMirrorRootNode(l.ydoc.getXmlFragment(BODY), schema)
+    l.cache ??= yXmlFragmentToProseMirrorRootNode(l.ydoc.getXmlFragment(BODY), schemaFor(l.kind))
     return l.cache
   }
 
@@ -240,7 +249,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
     if (!base || base.reverted) return null
     this.flush(docId)
     const turn = this.store.turnChanges(turnId, docId)
-    const { doc, skipped } = revertByNodes(this.get(docId), stateToDoc(base.state), turn.changes, this.store.userTouchedSince(docId, turn.minRev))
+    const { doc, skipped } = revertByNodes(this.get(docId), stateToDoc(base.state, l.kind), turn.changes, this.store.userTouchedSince(docId, turn.minRev))
     const event = this.commit(docId, doc, { actor: 'user', turnId: null, ops: [{ op: 'revert_turn', turn_id: turnId, by: 'nodes' }] })
     this.store.markTurnReverted(turnId, docId)
     return { event, skipped }
@@ -257,7 +266,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
 
   versionDoc(docId: string, seq: number): PMNode | null {
     const state = this.store.getVersionState(docId, seq)
-    return state ? stateToDoc(state) : null
+    return state ? stateToDoc(state, this.load(docId).kind) : null
   }
 
   /** 回滚：把旧版本内容作为一次用户提交写回（历史只增），并打版本。 */

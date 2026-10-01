@@ -8,12 +8,14 @@ import { randomBytes } from 'node:crypto'
 import { applyOps, type OpResult } from './apply.ts'
 import { toSuggestion } from './suggest.ts'
 import { DOI, manualCitation } from './citation-check.ts'
-import { OpError, opTexts, targetIds, type EditBatch } from './types.ts'
+import { OpError, opTexts, targetIds, type DocOp, type EditBatch } from './types.ts'
+import { applyDeckOps, deckOpTexts, deckTargetIds, type DeckEditBatch, type DeckOp } from './deck.ts'
+import { readLayouts } from '../convert/pptx-layouts.ts'
 
 export interface EditResult {
   doc_id: string
   rev: number
-  results: OpResult[]
+  results: Array<Omit<OpResult, 'op'> & { op: string }>
   changes: NodeChange[]
 }
 
@@ -26,11 +28,26 @@ export interface EditResult {
 export class OpService {
   constructor(private readonly docs: Documents) {}
 
-  edit(batch: EditBatch, meta: { actor: Actor; turnId: string | null }): EditResult {
+  /** deck 的版式与页面尺寸（来自原始文件包；按文档缓存）。 */
+  private readonly deckInfo = new Map<string, ReturnType<typeof readLayouts>>()
+
+  deckContextInfo(docId: string): ReturnType<typeof readLayouts> {
+    let info = this.deckInfo.get(docId)
+    if (!info) {
+      const pkg = this.docs.store.getPackage(docId)
+      info = pkg ? readLayouts(pkg) : { layouts: [], size: { cx: 12192000, cy: 6858000 } }
+      this.deckInfo.set(docId, info)
+    }
+    return info
+  }
+
+  edit(batch: EditBatch | DeckEditBatch, meta: { actor: Actor; turnId: string | null }): EditResult {
     const store = this.docs.store
     const row = store.getDoc(batch.doc_id)
     if (!row) throw new OpError('doc_not_found', `文档 ${batch.doc_id} 不存在`)
-    if (row.kind !== 'doc') throw new OpError('unsupported_kind', 'doc_edit 只能编辑 doc 类型文档')
+    const deck = row.kind === 'deck'
+    const targetsOf = (op: unknown) => deck ? deckTargetIds(op as DeckOp) : targetIds(op as DocOp)
+    const textsOf = (op: unknown) => deck ? deckOpTexts(op as DeckOp) : opTexts(op as DocOp)
     // 先落掉尚未落库的浏览器编辑：冲突守卫要看到用户最新的改动
     this.docs.flush(batch.doc_id)
     const rev = this.docs.rev(batch.doc_id)
@@ -40,13 +57,16 @@ export class OpService {
     const before = this.docs.get(batch.doc_id)
     const ai = meta.actor === 'ai'
 
-    this.guardPending(batch, before)
+    this.guardPending(batch, before, targetsOf)
     if (ai) {
-      this.guardConflicts(batch, before)
-      this.guardCitations(batch)
+      this.guardConflicts(batch, before, targetsOf)
+      this.guardCitations(batch, textsOf)
     }
 
-    const applied = applyOps(before, batch.ops, { taken: this.docs.takenIds(batch.doc_id) })
+    const taken = this.docs.takenIds(batch.doc_id)
+    const applied = deck
+      ? applyDeckOps(before, batch.ops as DeckOp[], { taken, ...this.deckContextInfo(batch.doc_id) })
+      : applyOps(before, batch.ops as DocOp[], { taken })
     const results = applied.results
     const after = batch.mode === 'suggest'
       ? toSuggestion(before, applied.doc, `g${randomBytes(4).toString('hex')}`)
@@ -59,10 +79,10 @@ export class OpService {
   }
 
   /** 待采纳修订中的块不能再改（先由用户采纳或拒绝）。 */
-  private guardPending(batch: EditBatch, before: PMNode): void {
+  private guardPending(batch: EditBatch | DeckEditBatch, before: PMNode, targetsOf: (op: unknown) => string[]): void {
     const index = indexById(before)
     batch.ops.forEach((op, i) => {
-      for (const id of [...targetIds(op), ...('anchor_id' in op ? [op.anchor_id] : [])]) {
+      for (const id of [...targetsOf(op), ...('anchor_id' in op ? [op.anchor_id] : [])]) {
         const node = index.get(id)?.node
         if (node?.attrs.suggest) {
           throw new OpError('pending_suggestion', `块 ${id} 在待采纳的修订里`, {
@@ -74,17 +94,17 @@ export class OpService {
   }
 
   /** 冲突守卫：目标块在 base_rev 之后被用户改过 → 拒绝，附当前内容。 */
-  private guardConflicts(batch: EditBatch, before: PMNode): void {
+  private guardConflicts(batch: EditBatch | DeckEditBatch, before: PMNode, targetsOf: (op: unknown) => string[]): void {
     const index = indexById(before)
     batch.ops.forEach((op, i) => {
-      for (const id of targetIds(op)) {
+      for (const id of targetsOf(op)) {
         const userRev = this.docs.store.lastChangeBy(batch.doc_id, id, 'user')
         if (userRev > batch.base_rev) {
           const node = index.get(id)?.node
           throw new OpError('conflict_user_edited', `块 ${id} 在 rev ${userRev} 被用户修改过（你的 base_rev 是 ${batch.base_rev}）`, {
             op_index: i,
             hint: '以 current 为准重新决定改法，并用新的 rev 作为 base_rev 再提交；用户的修改优先。',
-            current: { rev: this.docs.rev(batch.doc_id), markdown: node ? serializeBlock(node, { ids: true }, '') : null },
+            current: { rev: this.docs.rev(batch.doc_id), markdown: node ? (node.type.name === 'shape' || node.type.name === 'slide' ? node.textContent : serializeBlock(node, { ids: true }, '')) : null },
           })
         }
       }
@@ -92,10 +112,10 @@ export class OpService {
   }
 
   /** 引用守卫：写入内容不得出现 DOI / PMID / 手写参考文献；[@c:id] 必须已登记。 */
-  private guardCitations(batch: EditBatch): void {
+  private guardCitations(batch: EditBatch | DeckEditBatch, textsOf: (op: unknown) => string[]): void {
     const registered = new Set(this.docs.store.listCitations(batch.doc_id).map(c => c.id))
     batch.ops.forEach((op, i) => {
-      for (const text of opTexts(op)) {
+      for (const text of textsOf(op)) {
         const withoutCites = text.replace(/\[@c:[a-z0-9]+\]/g, '')
         const doi = DOI.exec(withoutCites)?.[0]
         if (manualCitation(withoutCites)) {
@@ -118,7 +138,7 @@ export class OpService {
   }
 
   /** 锚点守卫：本批操作会让 open 评论失去锚点，且未在 ack_comments 中确认 → 拒绝。 */
-  private guardAnchors(batch: EditBatch, before: PMNode, after: PMNode): void {
+  private guardAnchors(batch: EditBatch | DeckEditBatch, before: PMNode, after: PMNode): void {
     const open = this.docs.store.listComments(batch.doc_id, 'open')
     if (open.length === 0) return
     const ack = new Set(batch.ack_comments ?? [])

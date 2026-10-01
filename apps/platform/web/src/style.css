@@ -112,3 +112,27 @@ textarea, input[type=text] { font: inherit; width: 100%; border: 1px solid var(-
 .verdict.unsupported { color: var(--danger); background: var(--danger-soft); }
 .verdict.unclear, .verdict.missing_citation { color: var(--warn); background: var(--warn-soft); }
 .claim { font-size: 13px; margin-top: 8px; }
+
+/* deck 查看器 */
+.page.deck { max-width: none; width: fit-content; padding: 24px; background: transparent; border: 0; }
+.slide-wrap { margin-bottom: 28px; }
+.slide-wrap[data-suggest="delete"] .slide { outline: 3px solid var(--danger); opacity: .6; }
+.slide-wrap[data-suggest="insert"] .slide { outline: 3px solid var(--ok); }
+.slide-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.slide-head button { font-size: 12px; padding: 0 8px; }
+.slide { position: relative; background: #fff; color: #1f2328; border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; }
+.slide-png { display: block; width: 100%; height: 100%; object-fit: contain; }
+.shape { position: absolute; overflow: hidden; line-height: 1.2; transition: background .8s; }
+.shape p { margin: 0 0 .2em; white-space: pre-wrap; word-break: break-word; }
+.shape-shape { border: 1px dashed rgba(0,0,0,.08); }
+.shape-image img { width: 100%; height: 100%; object-fit: contain; }
+.shape-chart, .shape-group, .shape-opaque { border: 1px dashed #c0c4cc; display: flex; align-items: center; justify-content: center; }
+.shape-label { font-size: 11px; color: #888; padding: 4px; text-align: center; }
+.shape table { border-collapse: collapse; width: 100%; height: 100%; }
+.shape td { border: 1px solid #ccc; padding: 2px 4px; vertical-align: top; }
+.shape.ai-flash { background: var(--ai-soft); }
+.shape[data-suggest="delete"] { background: var(--danger-soft); text-decoration: line-through; opacity: .7; }
+.shape[data-suggest="insert"] { background: var(--ok-soft); outline: 2px solid var(--ok); }
+.shape mark.comment { background: var(--warn-soft); border-bottom: 2px solid var(--warn); }
+.slide-notes { font-size: 12px; color: var(--muted); margin-top: 6px; white-space: pre-wrap; max-width: 760px; }
+.doclist .kind { font-size: 10px; background: var(--ai-soft); color: var(--ai); border-radius: 4px; padding: 0 4px; margin-right: 6px; }

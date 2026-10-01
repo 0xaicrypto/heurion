@@ -20,6 +20,7 @@ export const config = {
   dbPath: resolve(dataDir, 'platform', 'platform.db'),
   workspacesDir: resolve(dataDir, 'platform', 'workspaces'),
   dshHome: resolve(dataDir, 'platform', 'dsh-home'),
+  renderDir: resolve(dataDir, 'platform', 'render'),
   secret: env('HEURION_SECRET', 'dev-secret-not-for-production-use!'),
   /** 开发期：单一 API 令牌 + 单一用户（多用户鉴权在 M2）。 */
   devToken: env('HEURION_DEV_TOKEN', 'dev'),

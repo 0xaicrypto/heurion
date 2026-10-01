@@ -39,7 +39,7 @@ function check(name: string, ok: boolean, detail = '') {
   console.log(`${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
 const summary = (t: Turn) => `${(t.ms / 1000).toFixed(1)}s · 工具 ${t.calls.length}（${[...new Set(t.calls)].join(', ')}）· 工具报错 ${t.errors.length}${t.errors.length ? `：${t.errors.join(', ')}` : ''}`
-const shell = (t: Turn) => t.calls.some(c => !['doc_outline', 'doc_read', 'doc_search', 'doc_edit', 'doc_history', 'doc_diff', 'doc_list', 'doc_create', 'comments_list', 'comment_reply', 'comment_resolve', 'pubmed_search', 'doi_lookup', 'insert_citation', 'list_citations', 'asset_upload', 'verify_claims', 'claim_report'].includes(c))
+const shell = (t: Turn) => t.calls.some(c => !['doc_outline', 'doc_read', 'doc_search', 'doc_edit', 'doc_history', 'doc_diff', 'doc_list', 'doc_create', 'comments_list', 'comment_reply', 'comment_resolve', 'pubmed_search', 'doi_lookup', 'insert_citation', 'list_citations', 'asset_upload', 'verify_claims', 'claim_report', 'slide_read', 'deck_edit', 'layout_check', 'slide_render'].includes(c))
 
 // —— 1. 起草：带引用的证据段 ——
 const doc = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 司美格鲁肽', markdown: '# 引言\n\n司美格鲁肽是 GLP-1 受体激动剂。\n\n# 证据\n\n待补充。' }) })
@@ -145,7 +145,25 @@ check('导出：未改动的块原样写回', xml.includes(para('研究背景', 
   check('论断核对：只核对不改正文', !t8.calls.includes('doc_edit'))
 }
 
-// —— 9. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
+// —— 9. 幻灯片：从零做一份汇报，再插页、改页 ——
+let deckId = ''
+{
+  const deck = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e SELECT 汇报', kind: 'deck' }) })
+  deckId = deck.id
+  const t9 = await turn(`/api/docs/${deck.id}/chat`, { message: '把这份幻灯片做成 3 页的 SELECT 试验汇报：标题页（副标题写「心血管结局试验解读」）、研究设计、主要结果（写出主要终点 HR 与 95% CI，并按规范引用原始文献）。做完检查版面。' })
+  const d9 = await api(`/api/docs/${deck.id}/deck`)
+  const slides = d9.doc.content as any[]
+  const all = JSON.stringify(d9.doc)
+  check('幻灯片：AI 从零做出 3 页', slides.length === 3 && all.includes('研究设计') && /0\.80|HR/.test(all), summary(t9))
+  check('幻灯片：只用平台工具且做了版面检查', !shell(t9) && t9.calls.includes('deck_edit') && t9.calls.includes('layout_check'), t9.calls.join(' '))
+  check('幻灯片：引用经登记写入', (await api(`/api/docs/${deck.id}`)).citations.some((c: any) => c.number) && all.includes('"type":"citation"'))
+  const t10 = await turn(`/api/docs/${deck.id}/chat`, { message: '在「研究设计」之后插入一页「安全性」，列 2 条要点；并把标题页的副标题改成「SELECT 试验解读 · 2026」。' })
+  const d10 = await api(`/api/docs/${deck.id}/deck`)
+  const titles = (d10.doc.content as any[]).map(s => JSON.stringify(s))
+  check('幻灯片：插入新页并修改已有页', titles.length === 4 && titles[2]!.includes('安全性') && titles[0]!.includes('SELECT 试验解读 · 2026'), summary(t10))
+}
+
+// —— 10. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
 {
   const { execFileSync } = await import('node:child_process')
   const { mkdtempSync, writeFileSync, existsSync } = await import('node:fs')
@@ -158,15 +176,15 @@ check('导出：未改动的块原样写回', xml.includes(para('研究背景', 
   if (!engine) console.log('- 跳过 LibreOffice 校验：没有 podman/docker 或 heurion2:dev 镜像')
   else {
     const dir = mkdtempSync(join(tmpdir(), 'heurion-e2e-'))
-    for (const [name, id] of [['drafted', doc.id], ['imported', imported.id]] as const) {
-      const bytes = new Uint8Array(await (await fetch(`${BASE}/api/docs/${id}/export.docx`, { headers: H })).arrayBuffer())
-      writeFileSync(join(dir, `${name}.docx`), bytes)
+    for (const [name, id, ext] of [['drafted', doc.id, 'docx'], ['imported', imported.id, 'docx'], ['deck', deckId, 'pptx']] as const) {
+      const bytes = new Uint8Array(await (await fetch(`${BASE}/api/docs/${id}/export.${ext}`, { headers: H })).arrayBuffer())
+      writeFileSync(join(dir, `${name}.${ext}`), bytes)
     }
     try {
       execFileSync(engine, ['run', '--rm', '-v', `${dir}:/x:Z`, '--user', 'root', '--entrypoint', 'bash', 'heurion2:dev', '-c',
-        'export HOME=/tmp && cd /x && for f in *.docx; do timeout 120 soffice --headless --convert-to pdf --outdir /x "$f" >/dev/null 2>&1; done'], { stdio: 'ignore', timeout: 600_000 })
+        'export HOME=/tmp && cd /x && for f in *.docx *.pptx; do timeout 120 soffice --headless --convert-to pdf --outdir /x "$f" >/dev/null 2>&1; done'], { stdio: 'ignore', timeout: 600_000 })
     } catch { /* 结果按产物判断 */ }
-    check('导出：LibreOffice 能打开并转成 PDF', existsSync(join(dir, 'drafted.pdf')) && existsSync(join(dir, 'imported.pdf')), dir)
+    check('导出：LibreOffice 能打开 docx 与 pptx 并转成 PDF', existsSync(join(dir, 'drafted.pdf')) && existsSync(join(dir, 'imported.pdf')) && existsSync(join(dir, 'deck.pdf')), dir)
   }
 }
 

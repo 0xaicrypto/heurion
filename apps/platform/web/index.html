@@ -11,9 +11,10 @@
   <aside class="nav">
     <div class="brand">Heurion</div>
     <div class="actions">
-      <button id="newDoc">新建</button>
-      <button id="uploadBtn">上传 docx</button>
-      <input id="uploadInput" type="file" accept=".docx" hidden>
+      <button id="newDoc">新建文档</button>
+      <button id="newDeck">新建幻灯片</button>
+      <button id="uploadBtn">上传 docx / pptx</button>
+      <input id="uploadInput" type="file" accept=".docx,.pptx" hidden>
     </div>
     <ul class="doclist" id="docList"></ul>
   </aside>
@@ -23,6 +24,7 @@
       <span class="title" id="docTitle" title="点击重命名">未选择文档</span>
       <span class="status" id="syncStatus"></span>
       <button id="exportDocxBtn" disabled>导出 docx</button>
+      <button id="exportPptxBtn" disabled hidden>导出 pptx</button>
       <button id="exportMdBtn" disabled>导出 md</button>
       <button id="readBtn" disabled title="模型看到的读视图">读视图</button>
     </header>

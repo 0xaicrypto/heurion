@@ -6,6 +6,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod'
 import { canAccess, verifyToken, type Permission, type TokenClaims } from '../auth/token.ts'
 import type { ClaimService } from '../claims/service.ts'
+import { pptxFor } from '../convert/exports.ts'
+import { readLayouts } from '../convert/pptx-layouts.ts'
+import { pptxTemplate } from '../convert/pptx-template.ts'
+import { DeckOp, newDeckContent } from '../ops/deck.ts'
+import type { SlideRenderer } from '../render/slides.ts'
+import { deckOutline, deckRead, slideRead } from '../views/deck.ts'
+import { checkLayout } from '../views/layout.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
 import { formatAma, normalizeDoi } from '../literature/format.ts'
 import type { PubMedClient } from '../literature/pubmed.ts'
@@ -18,6 +25,7 @@ import type { TurnRegistry } from './turns.ts'
 
 export interface McpDeps {
   claims: ClaimService
+  renderer: SlideRenderer
   docs: Documents
   ops: OpService
   turns: TurnRegistry
@@ -46,7 +54,8 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 评论是用户锚定在具体文字上的修改要求：comments_list 读取 → 修改 → comment_reply 说明改了什么。
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
 - 图表用 shell 生成图片文件后，用 asset_upload 上传，再用 ![说明](asset:<asset_id>) 插入。
-- 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。`
+- 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
+- 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
 /** 一次 MCP 请求的上下文。 */
 class Ctx {
@@ -79,13 +88,21 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     .map(d => ({ doc_id: d.id, title: d.title, kind: d.kind, rev: d.rev, updated_at: d.updated_at }))))
 
   server.registerTool('doc_create', {
-    description: '新建 doc 文档，可附初始内容（markdown，同样受引用规范约束）。返回 doc_id 与 rev。',
+    description: '新建文档：kind=doc（Word 文档，可附初始 markdown，同样受引用规范约束）或 kind=deck（幻灯片，带一页标题页，之后用 deck_edit 添加内容）。返回 doc_id 与 rev。',
     inputSchema: {
       title: z.string().min(1).max(200),
-      markdown: z.string().optional().describe('初始内容'),
+      kind: z.enum(['doc', 'deck']).default('doc'),
+      markdown: z.string().optional().describe('doc 的初始内容'),
     },
-  }, async ({ title, markdown }) => {
+  }, async ({ title, kind, markdown }) => {
     if (!claims.p.includes('write') || claims.d !== '*') return fail('forbidden', '当前令牌不能新建文档')
+    if (kind === 'deck') {
+      const pkg = pptxTemplate()
+      const row = docs.create({ owner: claims.u, title, kind: 'deck', content: newDeckContent(readLayouts(pkg).layouts, title) })
+      store.putPackage(row.id, 'pptx', pkg)
+      deps.turns.touch(claims.u, row.id)
+      return json({ doc_id: row.id, kind: 'deck', title, rev: 0, layouts: readLayouts(pkg).layouts.map(l => l.name) })
+    }
     const row = docs.create({ owner: claims.u, title })
     if (markdown?.trim()) {
       const first = docs.get(row.id).child(0).attrs.id as string
@@ -109,6 +126,10 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     const denied = ctx.check(doc_id, 'read')
     if (denied) return denied
     const row = store.getDoc(doc_id)!
+    if (row.kind === 'deck') {
+      const info = deps.ops.deckContextInfo(doc_id)
+      return text(deckOutline({ doc: docs.get(doc_id), docId: doc_id, title: row.title, rev: docs.rev(doc_id), layouts: info.layouts, size: info.size, openComments: store.listComments(doc_id, 'open').length }))
+    }
     return text(outline({
       doc: docs.get(doc_id), docId: doc_id, title: row.title, rev: docs.rev(doc_id),
       citations: store.listCitations(doc_id), openComments: store.listComments(doc_id, 'open').length,
@@ -129,6 +150,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   }, async args => {
     const denied = ctx.check(args.doc_id, 'read')
     if (denied) return denied
+    if (store.getDoc(args.doc_id)!.kind === 'deck') return text(deckRead(docs.get(args.doc_id), docs.rev(args.doc_id), args.cursor ?? 0))
     try {
       return text(read({ ...args, doc: docs.get(args.doc_id), docId: args.doc_id, rev: docs.rev(args.doc_id), comments: store.listComments(args.doc_id, 'open') }))
     } catch (err) {
@@ -164,6 +186,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   }, async args => {
     const denied = ctx.check(args.doc_id, 'write')
     if (denied) return denied
+    if (store.getDoc(args.doc_id)!.kind === 'deck') return fail('wrong_tool', '这是幻灯片文档，请用 deck_edit')
     try {
       const forced = deps.turns.active(claims.u)?.mode
       const mode = forced === 'suggest' ? 'suggest' : args.mode ?? 'apply'
@@ -213,6 +236,83 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       })
     }
     return json({ from_version: seq, changes: diff(before, after) })
+  })
+
+  // —— 幻灯片（deck） ——
+
+  const deckOnly = (docId: string) => store.getDoc(docId)?.kind === 'deck' ? null : fail('wrong_tool', '这不是幻灯片文档，请用 doc_* 工具')
+
+  server.registerTool('slide_read', {
+    description: '读一页幻灯片：每个形状的 id、种类、占位符、位置与大小（pt）、文字（markdown，列表项按级别缩进）和备注。编辑前先读。',
+    inputSchema: { doc_id: z.string(), slide_id: z.string() },
+  }, async ({ doc_id, slide_id }) => {
+    const denied = ctx.check(doc_id, 'read') ?? deckOnly(doc_id)
+    if (denied) return denied
+    const doc = docs.get(doc_id)
+    let found: { node: Parameters<typeof slideRead>[0]; index: number } | null = null
+    doc.forEach((s, _o, i) => { if (s.attrs.id === slide_id) found = { node: s, index: i } })
+    if (!found) return fail('node_not_found', `找不到幻灯片 ${slide_id}`, { hint: '用 doc_outline 查看各页 id。' })
+    const f = found as { node: Parameters<typeof slideRead>[0]; index: number }
+    return text(slideRead(f.node, f.index, docs.rev(doc_id)))
+  })
+
+  server.registerTool('deck_edit', {
+    description:
+      '编辑幻灯片：一批操作原子提交，base_rev 用最近读到的 rev。几何单位 pt。操作：' +
+      'add_slide {after, layout?, title?, body?}（按版式填占位符，不需要算坐标）；delete_slide {slide_id}；move_slide {slide_id, after}；' +
+      'set_text {shape_id, markdown}（沿用原字号颜色；列表项 - 对应项目符号）；replace_text {shape_id, find, replace}（小改动首选）；' +
+      'add_shape {slide_id, markdown, x, y, w, h, font_size?}（文本框）；set_xfrm {shape_id, x?, y?, w?, h?}；delete_shape {shape_id}；' +
+      'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。改完用 layout_check 检查溢出与重叠。',
+    inputSchema: {
+      doc_id: z.string(),
+      base_rev: z.number().int().min(0),
+      mode: z.enum(['apply', 'suggest']).optional(),
+      ack_comments: z.array(z.string()).optional(),
+      ops: z.array(DeckOp).min(1).max(50),
+    },
+  }, async args => {
+    const denied = ctx.check(args.doc_id, 'write') ?? deckOnly(args.doc_id)
+    if (denied) return denied
+    try {
+      const forced = deps.turns.active(claims.u)?.mode
+      const mode = forced === 'suggest' ? 'suggest' : args.mode ?? 'apply'
+      const result = deps.ops.edit({ ...args, mode }, { actor: 'ai', turnId: ctx.turnId })
+      deps.turns.touch(claims.u, args.doc_id)
+      return json({ rev: result.rev, results: result.results, changed: result.changes.length, mode })
+    } catch (err) {
+      if (err instanceof OpError) return fail(err.code, err.message, err.extra)
+      throw err
+    }
+  })
+
+  server.registerTool('layout_check', {
+    description: '版面检查（近似）：文字溢出形状、形状重叠、超出页面、字号过小。返回问题列表（附形状 id）；为空表示没发现问题。',
+    inputSchema: { doc_id: z.string(), slide_ids: z.array(z.string()).optional() },
+  }, async ({ doc_id, slide_ids }) => {
+    const denied = ctx.check(doc_id, 'read') ?? deckOnly(doc_id)
+    if (denied) return denied
+    const issues = checkLayout(docs.get(doc_id), deps.ops.deckContextInfo(doc_id).size, slide_ids)
+    return json({ rev: docs.rev(doc_id), issues })
+  })
+
+  server.registerTool('slide_render', {
+    description: '把一页幻灯片渲染成图片（LibreOffice），用来目视检查排版。较慢（数秒），只在需要时用。',
+    inputSchema: { doc_id: z.string(), slide_id: z.string() },
+  }, async ({ doc_id, slide_id }) => {
+    const denied = ctx.check(doc_id, 'read') ?? deckOnly(doc_id)
+    if (denied) return denied
+    const doc = docs.get(doc_id)
+    let index = -1
+    doc.forEach((s, _o, i) => { if (s.attrs.id === slide_id) index = i })
+    if (index < 0) return fail('node_not_found', `找不到幻灯片 ${slide_id}`)
+    try {
+      const pngs = await deps.renderer.render(`${doc_id}/${docs.rev(doc_id)}`, () => pptxFor(docs, doc_id).bytes)
+      const png = pngs[index]
+      if (!png) return fail('render_failed', '渲染结果缺少这一页')
+      return { content: [{ type: 'image' as const, data: readFileSync(png).toString('base64'), mimeType: 'image/png' }] }
+    } catch (err) {
+      return fail('render_unavailable', (err as Error).message, { hint: '改用 layout_check 检查版面。' })
+    }
   })
 
   // —— 评论 ——

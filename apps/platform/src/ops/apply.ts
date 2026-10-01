@@ -191,7 +191,7 @@ function stripCitations(map: ReturnType<typeof textMap>): { text: string; index:
  * find 跨过了引用标记、而 replace 只是在 find 前 / 后追加文字时：不动原文（保留引用），
  * 只把追加的部分插到匹配处之后 / 之前。处理不了返回 false。
  */
-function appendAcrossCitation(tr: Transform, map: ReturnType<typeof textMap>, op: Extract<DocOp, { op: 'replace_text' }>): boolean {
+function appendAcrossCitation(tr: Transform, map: ReturnType<typeof textMap>, op: ReplaceArgs, parse: InlineParser): boolean {
   const stripped = stripCitations(map)
   for (const v of findVariants(op.find)) {
     const find = v.replace(/\[@c:[a-z0-9]+\]/g, '')
@@ -209,7 +209,7 @@ function appendAcrossCitation(tr: Transform, map: ReturnType<typeof textMap>, op
     else if (op.replace.endsWith(v)) { addition = op.replace.slice(0, op.replace.length - v.length); after = false }
     if (addition === null || !addition) return false
     const base = map.marks[after ? endIdx : startIdx]!.filter(m => m.type.name !== 'comment')
-    const inline = parseInline(addition).map(n => {
+    const inline = parse(addition).map(n => {
       let set = n.marks
       for (const m of base) if (!m.isInSet(set)) set = m.addToSet(set)
       return n.isText ? n.mark(set) : n
@@ -236,14 +236,20 @@ function findVariants(find: string): string[] {
   return [...new Set([find, unescaped, plain])]
 }
 
-function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>): string[] {
-  const target = find(tr, op.id)
-  if (!target.node.isTextblock) {
-    throw new OpError('invalid_structure', `replace_text 只能用于段落或标题，${op.id} 是 ${target.node.type.name}`, {
-      hint: target.node.type.name === 'list_item' ? '列表项的文字请用列表项 id 配合 replace_block。' : '表格请用 table_set_cells；其他块用 replace_block。',
-    })
-  }
-  const map = textMap(target.node, target.pos)
+export type InlineParser = (markdown: string) => PMNode[]
+export interface ReplaceArgs { find: string; replace: string; occurrence?: number }
+export type ReplaceOutcome =
+  | { ok: true }
+  | { ok: false; code: 'text_not_found'; crossesCitation: boolean }
+  | { ok: false; code: 'ambiguous_match'; count: number }
+  | { ok: false; code: 'occurrence_out_of_range'; count: number }
+
+/**
+ * 在一个文本块（doc 段落 / 标题，deck 形状里的段落）内做 replace_text：匹配原文（容忍 markdown 转义），
+ * 替换文字继承匹配起点的格式，评论锚点跟随；find 跳过引用标记且只是追加时保留引用。
+ */
+export function replaceInTextblock(tr: Transform, node: PMNode, pos: number, op: ReplaceArgs, parse: InlineParser): ReplaceOutcome {
+  const map = textMap(node, pos)
   let needle = ''
   let hits: number[] = []
   for (const v of findVariants(op.find)) {
@@ -252,38 +258,55 @@ function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>):
   }
   if (hits.length === 0) {
     // 常见失配：find 跳过了句中的引用标记（原文「…）[@c:x]。」，find 写成「…）。」）
-    const appended = appendAcrossCitation(tr, map, op)
-    if (appended) return [op.id]
+    if (appendAcrossCitation(tr, map, op, parse)) return { ok: true }
     const crossesCitation = findVariants(op.find).some(v => {
       const stripped = v.replace(/\[@c:[a-z0-9]+\]/g, '')
       return stripped.length > 0 && stripCitations(map).text.includes(stripped)
     })
-    throw new OpError('text_not_found', `块 ${op.id} 中找不到要替换的原文`, {
-      hint: crossesCitation
-        ? '原文在这段文字中间有引用标记 [@c:…]：find 与 replace 里要原样写出引用标记（否则会删掉引用），或者只匹配引用标记之前 / 之后的文字。'
-        : '按 current 中的原文逐字复制 find（不含 {#id} 前缀和 markdown 符号）。',
-      current: serializeBlock(target.node, { ids: true }, ''),
-    })
+    return { ok: false, code: 'text_not_found', crossesCitation }
   }
-  if (hits.length > 1 && op.occurrence === undefined) {
-    throw new OpError('ambiguous_match', `原文在块 ${op.id} 中出现 ${hits.length} 次`, { hint: '用 occurrence 指定第几处（从 1 开始），或把 find 写长一些。' })
-  }
-  const occurrence = op.occurrence ?? 1
-  const start = hits[occurrence - 1]
-  if (start === undefined) throw new OpError('text_not_found', `原文只出现 ${hits.length} 次，没有第 ${occurrence} 处`)
+  if (hits.length > 1 && op.occurrence === undefined) return { ok: false, code: 'ambiguous_match', count: hits.length }
+  const start = hits[(op.occurrence ?? 1) - 1]
+  if (start === undefined) return { ok: false, code: 'occurrence_out_of_range', count: hits.length }
   const end = start + needle.length - 1
   const from = map.from[start]!
   const to = map.to[end]!
   // 替换文本继承匹配起点的格式（评论锚点 mark 除外），再叠加替换文本自带的格式
   const base = map.marks[start]!.filter(m => m.type.name !== 'comment')
-  let inline = parseInline(op.replace).map(n => {
+  let inline = parse(op.replace).map(n => {
     let set = n.marks
     for (const m of base) if (!m.isInSet(set)) set = m.addToSet(set)
     return n.isText ? n.mark(set) : n
   })
-  inline = carryComments(inline, map, start, end)
+  inline = carryComments(node, inline, map, start, end)
   if (inline.length === 0) tr.delete(from, to)
   else tr.replaceWith(from, to, inline)
+  return { ok: true }
+}
+
+/** replace_text 失败时的结构化错误。 */
+export function replaceError(outcome: Exclude<ReplaceOutcome, { ok: true }>, where: string, current: string): OpError {
+  if (outcome.code === 'ambiguous_match') {
+    return new OpError('ambiguous_match', `原文在${where}中出现 ${outcome.count} 次`, { hint: '用 occurrence 指定第几处（从 1 开始），或把 find 写长一些。' })
+  }
+  if (outcome.code === 'occurrence_out_of_range') return new OpError('text_not_found', `原文只出现 ${outcome.count} 次`)
+  return new OpError('text_not_found', `${where}中找不到要替换的原文`, {
+    hint: outcome.crossesCitation
+      ? '原文在这段文字中间有引用标记 [@c:…]：find 与 replace 里要原样写出引用标记（否则会删掉引用），或者只匹配引用标记之前 / 之后的文字。'
+      : '按 current 中的原文逐字复制 find（不含 {#id} 前缀和 markdown 符号）。',
+    current,
+  })
+}
+
+function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>): string[] {
+  const target = find(tr, op.id)
+  if (!target.node.isTextblock) {
+    throw new OpError('invalid_structure', `replace_text 只能用于段落或标题，${op.id} 是 ${target.node.type.name}`, {
+      hint: target.node.type.name === 'list_item' ? '列表项的文字请用列表项 id 配合 replace_block。' : '表格请用 table_set_cells；其他块用 replace_block。',
+    })
+  }
+  const outcome = replaceInTextblock(tr, target.node, target.pos, op, parseInline)
+  if (!outcome.ok) throw replaceError(outcome, `块 ${op.id} `, serializeBlock(target.node, { ids: true }, ''))
   return [op.id]
 }
 
@@ -293,13 +316,13 @@ function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>):
  * 线程整体落在匹配范围内且被改写 → 锚点跟到整段替换文字；
  * 只部分重叠且被改写 → 不加（范围外的剩余文字继续承担锚点）。
  */
-function carryComments(inline: PMNode[], map: ReturnType<typeof textMap>, start: number, end: number): PMNode[] {
+function carryComments(block: PMNode, inline: PMNode[], map: ReturnType<typeof textMap>, start: number, end: number): PMNode[] {
   if (inline.length === 0) return inline
   const threads = new Map<string, Mark>()
   for (let i = start; i <= end; i++) for (const m of map.marks[i]!) if (m.type.name === 'comment') threads.set(m.attrs.thread as string, m)
   if (threads.size === 0) return inline
-  const paragraph = schema.node('paragraph', null, inline)
-  const tr = new Transform(schema.node('doc', null, [paragraph]))
+  const paragraph = block.type.create(null, inline)
+  const tr = new Transform(block.type.schema.topNodeType.create(null, [paragraph]))
   const replaced = textMap(paragraph, 0)
   for (const [thread, mark] of threads) {
     const has = (i: number) => map.marks[i]!.some(m => m.type.name === 'comment' && m.attrs.thread === thread)

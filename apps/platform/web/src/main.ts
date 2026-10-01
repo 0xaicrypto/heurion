@@ -3,6 +3,7 @@ import 'prosemirror-tables/style/tables.css'
 import 'prosemirror-gapcursor/style/gapcursor.css'
 import './style.css'
 import * as Y from 'yjs'
+import { DeckView } from './deck.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 
@@ -23,10 +24,14 @@ async function api<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
 
 interface Session {
   docId: string
-  ydoc: Y.Doc
-  provider: Provider
-  editor: Editor
+  kind: 'doc' | 'deck'
   stream: EventSource
+  /** doc：协同编辑器。 */
+  ydoc?: Y.Doc
+  provider?: Provider
+  editor?: Editor
+  /** deck：幻灯片查看器（编辑经对话）。 */
+  deck?: DeckView
 }
 
 let session: Session | null = null
@@ -40,7 +45,7 @@ let refreshTimer: number | undefined
 async function loadDocs(): Promise<void> {
   const docs = await api<any[]>('/api/docs')
   $('docList').innerHTML = docs.map(d =>
-    `<li data-id="${d.id}" class="${d.id === session?.docId ? 'active' : ''}" title="${esc(d.title)}">${esc(d.title)}</li>`).join('')
+    `<li data-id="${d.id}" class="${d.id === session?.docId ? 'active' : ''}" title="${esc(d.title)}">${d.kind === 'deck' ? '<span class="kind">PPT</span>' : ''}${esc(d.title)}</li>`).join('')
 }
 
 $('docList').onclick = e => {
@@ -52,6 +57,14 @@ $('newDoc').onclick = async () => {
   const title = prompt('文档标题', '未命名')
   if (title === null) return
   const d = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title }) })
+  await loadDocs()
+  await open(d.id)
+}
+
+$('newDeck').onclick = async () => {
+  const title = prompt('幻灯片标题', '未命名汇报')
+  if (title === null) return
+  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title, kind: 'deck' }) })
   await loadDocs()
   await open(d.id)
 }
@@ -80,33 +93,47 @@ async function open(docId: string): Promise<void> {
   close()
   $('chatLog').innerHTML = ''
   $('page').innerHTML = ''
-  const ydoc = new Y.Doc()
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const provider = new Provider(`${proto}://${location.host}/collab/${docId}?token=${encodeURIComponent(TOKEN)}`, ydoc, setSyncStatus)
-  const editor = new Editor($('page'), ydoc.getXmlFragment('body'), {
-    assetUrl: id => `/api/assets/${id}?token=${encodeURIComponent(TOKEN)}`,
-    uploadImage: async file => {
-      const fd = new FormData()
-      fd.append('file', file)
-      try {
-        return (await api(`/api/docs/${docId}/assets`, { method: 'POST', body: fd })).asset_id as string
-      } catch (err) {
-        showNotice(`图片上传失败：${(err as Error).message}`, true)
-        throw err
-      }
-    },
-    onCommentClick: thread => {
-      switchTab('commentPane')
-      document.querySelector(`[data-cid="${CSS.escape(thread)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    },
-    onSuggestion: (group, accept) => void resolveSuggestion(group, accept),
-    onSelection: a => { anchor = a; placeFab(); syncToolbar() },
-  })
+  const meta = await api(`/api/docs/${docId}`)
   const stream = new EventSource(`/api/docs/${docId}/stream?token=${encodeURIComponent(TOKEN)}`)
   stream.onmessage = e => onStreamEvent(JSON.parse(e.data))
-  session = { docId, ydoc, provider, editor, stream }
-  $('toolbar').hidden = false
-  for (const b of ['exportDocxBtn', 'exportMdBtn', 'readBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
+  const onCommentClick = (thread: string) => {
+    switchTab('commentPane')
+    document.querySelector(`[data-cid="${CSS.escape(thread)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  if (meta.kind === 'deck') {
+    const deck = new DeckView($('page'), { docId, token: TOKEN, onCommentClick, onSelection: a => { anchor = a; placeFab() } })
+    session = { docId, kind: 'deck', stream, deck }
+    $('page').classList.add('deck')
+    setSyncStatus('synced')
+    await deck.load()
+  } else {
+    const ydoc = new Y.Doc()
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    const provider = new Provider(`${proto}://${location.host}/collab/${docId}?token=${encodeURIComponent(TOKEN)}`, ydoc, setSyncStatus)
+    const editor = new Editor($('page'), ydoc.getXmlFragment('body'), {
+      assetUrl: id => `/api/assets/${id}?token=${encodeURIComponent(TOKEN)}`,
+      uploadImage: async file => {
+        const fd = new FormData()
+        fd.append('file', file)
+        try {
+          return (await api(`/api/docs/${docId}/assets`, { method: 'POST', body: fd })).asset_id as string
+        } catch (err) {
+          showNotice(`图片上传失败：${(err as Error).message}`, true)
+          throw err
+        }
+      },
+      onCommentClick,
+      onSuggestion: (group, accept) => void resolveSuggestion(group, accept),
+      onSelection: a => { anchor = a; placeFab(); syncToolbar() },
+    })
+    session = { docId, kind: 'doc', stream, ydoc, provider, editor }
+    $('page').classList.remove('deck')
+  }
+  $('toolbar').hidden = meta.kind === 'deck'
+  $('exportDocxBtn').hidden = meta.kind === 'deck'
+  $('exportMdBtn').hidden = meta.kind === 'deck'
+  $('exportPptxBtn').hidden = meta.kind !== 'deck'
+  for (const b of ['exportDocxBtn', 'exportMdBtn', 'exportPptxBtn', 'readBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
   await loadDocs()
   await refresh(true)
 }
@@ -114,9 +141,10 @@ async function open(docId: string): Promise<void> {
 function close(): void {
   if (!session) return
   session.stream.close()
-  session.editor.destroy()
-  session.provider.destroy()
-  session.ydoc.destroy()
+  session.editor?.destroy()
+  session.provider?.destroy()
+  session.ydoc?.destroy()
+  session.deck?.destroy()
   session = null
 }
 
@@ -130,7 +158,9 @@ function onStreamEvent(e: any): void {
   if (!session) return
   if (e.type === 'hello') { setBusy(Boolean(e.busy)); return }
   if (e.type === 'commit') {
-    if (e.actor === 'ai') session.editor.flash(e.changes.filter((c: any) => c.kind !== 'removed').map((c: any) => c.node_id))
+    const ids = e.changes.filter((c: any) => c.kind !== 'removed').map((c: any) => c.node_id)
+    if (session.deck) void session.deck.load().then(() => { if (e.actor === 'ai') session?.deck?.flash(ids) })
+    else if (e.actor === 'ai') session.editor?.flash(ids)
     scheduleRefresh()
     return
   }
@@ -173,7 +203,7 @@ $('docTitle').onclick = async () => {
 $('toolbar').onclick = e => {
   const btn = (e.target as HTMLElement).closest('button')
   const cmd = btn?.dataset.cmd
-  if (!cmd || !session) return
+  if (!cmd || !session?.editor) return
   const c = session.editor.commands as Record<string, (...a: any[]) => void>
   if (cmd === 'image') { $('imageInput').click(); return }
   if (cmd === 'cite') { void addCitation(); return }
@@ -181,12 +211,12 @@ $('toolbar').onclick = e => {
   else c[cmd]?.()
 }
 async function addCitation(): Promise<void> {
-  if (!session) return
+  if (!session?.editor) return
   const doi = prompt('输入要引用文献的 DOI（会经 Crossref 核实）')
   if (!doi?.trim()) return
   try {
     const r = await api(`/api/docs/${session.docId}/citations`, { method: 'POST', body: JSON.stringify({ doi }) })
-    session.editor.insertCitation(r.cite_id)
+    session.editor?.insertCitation(r.cite_id)
     showNotice(`已插入引用：${r.formatted}`)
     scheduleRefresh()
   } catch (err) {
@@ -198,16 +228,16 @@ $<HTMLInputElement>('imageInput').onchange = e => {
   const input = e.target as HTMLInputElement
   const files = [...(input.files ?? [])]
   input.value = ''
-  if (session && files.length > 0) void session.editor.insertImages(files).catch(() => {})
+  if (session?.editor && files.length > 0) void session.editor.insertImages(files).catch(() => {})
 }
 $<HTMLSelectElement>('blockType').onchange = e => {
   const v = (e.target as HTMLSelectElement).value
-  if (!session) return
+  if (!session?.editor) return
   if (v === 'p') session.editor.commands.paragraph()
   else session.editor.commands.heading(Number(v.slice(1)))
 }
 function syncToolbar(): void {
-  if (!session) return
+  if (!session?.editor) return
   const t = session.editor.blockType()
   $<HTMLSelectElement>('blockType').value = ['p', 'h1', 'h2', 'h3'].includes(t) ? t : 'p'
 }
@@ -508,6 +538,7 @@ document.querySelector<HTMLElement>('.tabs')!.onclick = e => {
 }
 
 $('exportDocxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.docx?token=${encodeURIComponent(TOKEN)}` }
+$('exportPptxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.pptx?token=${encodeURIComponent(TOKEN)}` }
 $('exportMdBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.md?token=${encodeURIComponent(TOKEN)}` }
 $('readBtn').onclick = async () => {
   if (!session) return

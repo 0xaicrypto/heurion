@@ -2,7 +2,13 @@ import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
-import { exportDocx } from '../convert/docx-export.ts'
+import { docxFor, pptxFor } from '../convert/exports.ts'
+import { bindDeckAssets, importPptx, PptxImportError } from '../convert/pptx-import.ts'
+import { readLayouts } from '../convert/pptx-layouts.ts'
+import { pptxTemplate } from '../convert/pptx-template.ts'
+import { newDeckContent } from '../ops/deck.ts'
+import { readFileSync } from 'node:fs'
+import type { SlideRenderer } from '../render/slides.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
 import { formatAma, normalizeDoi } from '../literature/format.ts'
 import { bindAssets, DocxImportError, importDocx } from '../convert/docx-import.ts'
@@ -13,8 +19,10 @@ import { schema } from '../model/schema.ts'
 import type { OpService } from '../ops/service.ts'
 import { pendingGroups, resolveSuggestions, withoutPending } from '../ops/suggest.ts'
 import { EditBatch, OpError } from '../ops/types.ts'
+import { DeckEditBatch } from '../ops/deck.ts'
 import { commentPrompt, wantsAi, type TurnBusEvent, type TurnOptions, type TurnService } from '../turns/service.ts'
 import { citationOrder, diff, read } from '../views/read.ts'
+import { deckRead } from '../views/deck.ts'
 import { exportMarkdown, renderHtml } from '../views/render.ts'
 
 export interface ApiDeps {
@@ -23,6 +31,7 @@ export interface ApiDeps {
   turns: TurnService
   postcheck: PostCheck
   crossref: CrossrefClient
+  renderer: SlideRenderer
   devToken: string
   devUser: string
 }
@@ -56,13 +65,34 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs', async c => {
     const user = c.get('user')
     if (c.req.header('content-type')?.includes('application/json')) {
-      const body = await c.req.json<{ title?: string; markdown?: string }>()
+      const body = await c.req.json<{ title?: string; markdown?: string; kind?: string }>()
+      const title = body.title?.trim() || '未命名'
+      if (body.kind === 'deck') {
+        const pkg = pptxTemplate()
+        const row = docs.create({ owner: user, title, kind: 'deck', content: newDeckContent(readLayouts(pkg).layouts, title) })
+        store.putPackage(row.id, 'pptx', pkg)
+        return c.json(row, 201)
+      }
       const content = body.markdown?.trim() ? schema.node('doc', null, parseBlocks(body.markdown)) : undefined
-      return c.json(docs.create({ owner: user, title: body.title?.trim() || '未命名', content }), 201)
+      return c.json(docs.create({ owner: user, title, content }), 201)
     }
     const form = await c.req.parseBody()
     const file = form.file instanceof File ? form.file : null
-    if (!file || !/\.docx$/i.test(file.name)) return c.json({ error: '只支持上传 .docx（pptx 在 P2）' }, 400)
+    if (file && /\.pptx$/i.test(file.name)) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        const imported = importPptx(bytes)
+        const ids = new Map(imported.assets.map(a => [a.key, store.putAsset({ owner: user, mime: a.mime, name: a.name, bytes: a.bytes }).id]))
+        const row = docs.create({ owner: user, title: file.name.replace(/\.pptx$/i, ''), kind: 'deck', content: bindDeckAssets(imported.doc, ids), source: 'import' })
+        store.putNodeSrc(row.id, imported.src)
+        store.putPackage(row.id, 'pptx', bytes)
+        return c.json({ ...row, warnings: imported.warnings }, 201)
+      } catch (err) {
+        if (err instanceof PptxImportError) return c.json({ error: err.message }, 400)
+        throw err
+      }
+    }
+    if (!file || !/\.docx$/i.test(file.name)) return c.json({ error: '只支持上传 .docx / .pptx' }, 400)
     try {
       const imported = importDocx(new Uint8Array(await file.arrayBuffer()))
       const ids = new Map(imported.assets.map(a => [a.key, store.putAsset({ owner: user, mime: a.mime, name: a.name, bytes: a.bytes }).id]))
@@ -125,6 +155,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.get('/api/docs/:id/read', c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
+    if (row.kind === 'deck') return c.text(deckRead(docs.get(row.id), docs.rev(row.id)))
     return c.text(read({ doc: docs.get(row.id), docId: row.id, rev: docs.rev(row.id), comments: store.listComments(row.id, 'open') }))
   })
 
@@ -148,11 +179,43 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     })
   })
 
+  app.get('/api/docs/:id/export.pptx', c => {
+    const row = owned(c)
+    if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
+    const result = pptxFor(docs, row.id)
+    return c.body(Buffer.from(result.bytes), 200, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}.pptx`,
+    })
+  })
+
+  /** deck 模型（页面渲染用）：幻灯片、形状、页面尺寸。 */
+  app.get('/api/docs/:id/deck', c => {
+    const row = owned(c)
+    if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
+    const info = ops.deckContextInfo(row.id)
+    return c.json({ rev: docs.rev(row.id), size: info.size, layouts: info.layouts.map(l => l.name), doc: docs.get(row.id).toJSON() })
+  })
+
+  /** 幻灯片的精确预览（LibreOffice 渲染，按 rev 缓存）。 */
+  app.get('/api/docs/:id/slides/:index/render.png', async c => {
+    const row = owned(c)
+    if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
+    try {
+      const pngs = await deps.renderer.render(`${row.id}/${docs.rev(row.id)}`, () => pptxFor(docs, row.id).bytes)
+      const png = pngs[Number(c.req.param('index'))]
+      if (!png) return c.json({ error: 'slide not found' }, 404)
+      return c.body(readFileSync(png), 200, { 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=3600' })
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 503)
+    }
+  })
+
   /** 用户编辑（P1 编辑器上线前的入口）：同一操作层，actor=user。 */
   app.post('/api/docs/:id/edit', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const parsed = EditBatch.safeParse({ ...(await c.req.json<object>()), doc_id: row.id })
+    const parsed = (row.kind === 'deck' ? DeckEditBatch : EditBatch).safeParse({ ...(await c.req.json<object>()), doc_id: row.id })
     if (!parsed.success) return c.json({ code: 'validation_error', message: parsed.error.message }, 400)
     try {
       return c.json(ops.edit(parsed.data, { actor: 'user', turnId: null }))
@@ -351,25 +414,6 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
 
   return app
-}
-
-/** 导出 docx：导入的文档以原始文件包为底座、未改动的块原样写回。 */
-export function docxFor(docs: Documents, docId: string) {
-  const store = docs.store
-  const pkg = store.getPackage(docId)
-  const first = store.listVersions(docId).at(-1)
-  return exportDocx({
-    doc: withoutPending(docs.get(docId)),
-    baseline: pkg && first?.source === 'import' ? docs.versionDoc(docId, first.seq) : null,
-    pkg,
-    src: id => store.getNodeSrc(docId, id),
-    citations: store.listCitations(docId),
-    comments: store.listComments(docId),
-    asset: id => {
-      const a = store.getAsset(id)
-      return a ? { mime: a.mime, bytes: store.getAssetBytes(id)! } : null
-    },
-  })
 }
 
 /**

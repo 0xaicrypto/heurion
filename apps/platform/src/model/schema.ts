@@ -159,10 +159,11 @@ export const schema = new Schema({
   },
 })
 
-/** 带平台 id 的节点类型。 */
-export const ADDRESSABLE = new Set(['heading', 'paragraph', 'bullet_list', 'ordered_list', 'list_item', 'table', 'figure', 'opaque'])
+/** 带平台 id 的节点类型（doc 与 deck 两套 schema 共用一个集合；deck 的段落不单独寻址）。 */
+export const ADDRESSABLE = new Set(['heading', 'paragraph', 'bullet_list', 'ordered_list', 'list_item', 'table', 'figure', 'opaque', 'slide', 'shape'])
 
-export const isAddressable = (n: PMNode): boolean => ADDRESSABLE.has(n.type.name)
+/** deck 里的段落、表格属于形状内部，不分配 id。 */
+export const isAddressable = (n: PMNode): boolean => ADDRESSABLE.has(n.type.name) && 'id' in (n.type.spec.attrs ?? {})
 
 /** 一个空文档（doc 至少要有一个块）。 */
 export function emptyDoc(id: string): PMNode {

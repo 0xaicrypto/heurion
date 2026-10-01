@@ -1,6 +1,6 @@
 # Heurion 2.0 平台架构
 
-**Status:** v0.3（2026-10-01）· P0、P1 已实现（`apps/platform`）· **跟踪:** epic [#16](https://github.com/0xaicrypto/heurion2/issues/16) · **决策人:** JZ
+**Status:** v0.4（2026-10-01）· P0、P1、M1 论断核对已实现；P2 后端与查看器已实现（`apps/platform`）· **跟踪:** epic [#16](https://github.com/0xaicrypto/heurion2/issues/16) · **决策人:** JZ
 **关系:** 本文是 v0.4 起的唯一架构。[DESIGN.md](DESIGN.md) 描述的 S 系列路线（dsh 用 python 改文件 + Collabora 编辑面）已于 2026-10-01 停用，保留为决策记录。
 
 ## 目录
@@ -159,13 +159,18 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 
 ## 7. deck 内核
 
-**底座：Univer slides（`@univerjs/slides` + `slides-ui`，Apache-2.0）+ fork Casual Slides 的 pptx 导入层。**
+**现状（P2 后端 + 查看器已实现）：平台自己的 deck 模型 + 自写 pptx 导入 / 修补式导出 + LibreOffice 渲染；直接编辑形状的画布（Univer）是 P2 的下一步。**
 
-- **内核**：Univer slides 供给画布、形状 / 文本编辑、命令管线（command/mutation + undo）。
-- **I/O 层**：fork Casual Slides 的导入器（2493 行，68/87 保真探针）移植到 Node；**导出不用 PptxGenJS 整份重建**，沿用 doc 内核的修补式思路：未改动的形状与页原样写回，改过的形状只重写被改的部分。
-- **fork 策略**：fork 分支补 Univer slides 的已知缺口（rev 跟踪、element mutations、table / chart / line 元素类型、facade）；每个补丁 = fork 内提交 + `pnpm patch` 产物 + 上游 PR。
-- **过渡**：Collabora / WOPI 已于 2026-10-01 随 S 系列停用；P2 之前平台不支持 pptx。
-- **MCP 面**：`slide_read`（页 / 形状树，含形状 id 与 pt 坐标）/ `deck_edit(ops)`（add_slide 按版式填占位符 / set_text / replace_text / set_xfrm / set_table / set_chart_data / set_image / set_notes / 增删排序）/ `layout_check`（溢出、重叠、越界）/ `slide_render`（P2 先用 LibreOffice 渲染，dsh 的 MCP 客户端支持把图片交给多模态模型）；守卫同 §5.3，按形状级判定。
+- **模型**（`model/deck-schema.ts`）：与 doc 一样用 ProseMirror + Yjs 表示（幻灯片 → 形状 → 段落），因此版本、op log、冲突守卫、修订、撤销本轮全部复用。形状记录种类（文本 / 图形 / 图片 / 表格 / 图表 / 组合 / 线条 / 不可编辑）、占位符、几何（EMU）、原 cNvPr id；段落与文字段的原始格式（`a:pPr` / `a:rPr`）以属性保留，改文字时沿用字号、颜色、字体。
+- **导入**（`convert/pptx-import.ts`）：自写。不用 Casual Slides 的导入器——它输出 Univer 的渲染结构，而后端需要的是形状 / 文字 / 占位符 / 几何与**逐字节原文**（修补式导出的前提）；Casual 的导入器留给画布阶段。没写位置的占位符从版式 / 母版继承几何；纯色填充与页面背景记下供查看器近似渲染；备注读入。
+- **导出**（`convert/pptx-export.ts`）：修补式。未改动的页原样保留；改过的页重建形状树（未改动的形状原样、改过的形状只替换文字体 / 位置、新形状按占位符或文本框生成）；新增页按版式生成；删页、调页序同步 presentation.xml / rels / content types；备注改动修补原备注页。3 份真实 deck「导入 → 不改 → 导出」所有部件逐字节一致；修改后 LibreOffice 渲染原设计完整保留。
+- **新建 deck**：内置最小模板（`convert/pptx-template.ts`：母版 + 标题页 / 标题和内容 / 空白三种版式 + 主题）。
+- **渲染**（`render/slides.ts`）：LibreOffice 转 PDF → pdftoppm 转 PNG，按（文档, rev）缓存；容器内直接运行，本地开发自动改用 heurion2:dev 镜像。
+- **版面检查**（`views/layout.ts`）：按字号近似估算文字溢出、形状重叠、超出页面、字号过小。
+- **MCP 面**：`doc_outline`（各页 id / 版式 / 标题 + 可用版式）/ `slide_read`（形状 id、种类、占位符、几何 pt、文字）/ `deck_edit(ops)`（add_slide 按版式填占位符 / delete_slide / move_slide / set_text / replace_text / add_shape / set_xfrm / delete_shape / set_notes / table_set_cells）/ `layout_check` / `slide_render`（PNG 交给多模态模型自查）；守卫同 §5.3，按形状判定。
+- **页面**：deck 查看器按模型近似渲染（位置、文字、填充、图片），每页可切换 LibreOffice 精确预览；AI 改动高亮、修订标红 / 绿、形状内选中文字可评论。编辑走对话。
+- **下一步（P2 画布）**：Univer slides 编辑面（Apache-2.0）+ Casual Slides 导入层作为渲染数据来源；拖拽 / 缩放形状、直接改字经同一操作层落库。图表数据编辑（`set_chart_data`）、插图（`set_image`）随画布一起做。
+- **过渡**：Collabora / WOPI 已于 2026-10-01 随 S 系列停用。
 
 ## 8. MCP 接口面
 
@@ -252,7 +257,7 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | --- | --- | --- | --- |
 | **P0 doc 模型与操作层** | 模型 + Yjs 持久化；操作层与写前守卫；MCP 工具面；dsh 接入；评论锚点与 @heurion；版本；docx 导入 / 修补式导出 | e2e 任务集全绿；未改动块导出逐字节保真；导出可被 LibreOffice 打开 | ✅ 2026-10-01 |
 | **P1 doc 编辑面** | ProseMirror 编辑器 + y-prosemirror + 自制 ws 协议；用户编辑合批落库与 id 修复；事后检查；用户撤销 + AI 回合撤销；修订（suggest）模式；回合队列 | 用户逐字编辑与 AI 修改并行无丢失；断线重连恢复 | ✅ 2026-10-01 |
-| **P2 deck 内核** | Casual 导入层移植；场景图模型；`deck_edit` / `slide_read` / `layout_check` / `slide_render`；修补式 pptx 导出；Univer 编辑面 | deck e2e 全绿；保真探针 ≥ 68/87 | 待开始 |
+| **P2 deck 内核** | deck 模型（PM + Yjs）；pptx 导入 / 修补式导出 / 新建模板；`slide_read` / `deck_edit` / `layout_check` / `slide_render`（LibreOffice）；deck 查看器；**Univer 画布编辑**（下一步） | deck e2e 全绿；未改动 deck 导出逐字节一致；画布编辑可用 | 🟡 2026-10-01 后端 + 查看器完成（e2e 25 项含幻灯片从零制作 / 插页改页；3 份真实 deck 往返逐字节一致）；画布编辑待做 |
 | **P3 硬化** | deck 多人协同 / 离线恢复 / 权限细化 / 大文档性能 | M1 同口径评测达标 | — |
 
 **验证（2026-10-01）**：单测 41 项（模型 / 操作层 / 守卫 / MCP / docx 往返 / 协同网关 / 修订）；浏览器测试 11 项（`pnpm ui`，真实 Chromium：打字同步、拆段 id、工具栏、选区评论、修订就地采纳、撤销、断线重连）；e2e 19 项（`pnpm e2e`，真实 dsh + deepseek-flash，含 @heurion 自动触发、修订模式、撤销本轮、LibreOffice 打开导出文件）；3 份真实 docx「导入 → 不改 → 导出」正文逐字节一致。

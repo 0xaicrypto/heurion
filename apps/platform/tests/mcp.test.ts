@@ -8,6 +8,7 @@ import { issueToken, verifyToken } from '../src/auth/token.ts'
 import type { CrossrefClient } from '../src/literature/crossref.ts'
 import type { PubMedClient } from '../src/literature/pubmed.ts'
 import { ClaimService } from '../src/claims/service.ts'
+import { SlideRenderer } from '../src/render/slides.ts'
 import { buildMcpServer } from '../src/mcp/server.ts'
 import { TurnRegistry } from '../src/mcp/turns.ts'
 import { setup } from './helpers.ts'
@@ -28,7 +29,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     abstract: async () => 'RESULTS: The primary outcome occurred in 6.5% vs 8.0% (HR 0.80; 95% CI 0.72-0.90). The trial was completed as planned.',
   } as unknown as PubMedClient
   const server = buildMcpServer({
-    docs: env.docs, ops: env.ops, turns: registry, secret: SECRET, claims: new ClaimService(env.docs, pubmed),
+    docs: env.docs, ops: env.ops, turns: registry, secret: SECRET, claims: new ClaimService(env.docs, pubmed), renderer: new SlideRenderer(workspace),
     pubmed, crossref,
     workspaceDir: () => workspace,
   }, claims)
