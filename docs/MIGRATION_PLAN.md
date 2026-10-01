@@ -1,8 +1,8 @@
 # Heurion 1.0 → 2.0 功能迁移计划
 
-**Status:** v0.1（2026-09-30）
+**Status:** v0.2（2026-10-01，按平台路线更新）
 **跟踪:** heurion 仓库 epic #1174
-**前提:** 2.0 架构见 [DESIGN.md](DESIGN.md)。1.0 的代码只作参考实现，按需复制逻辑，不共享包、不共享数据。
+**前提:** 2.0 架构见 [PLATFORM.md](PLATFORM.md)（平台持有结构化文档模型，AI 经 MCP 写入；S 系列路线 [DESIGN.md](DESIGN.md) 已停用）。1.0 的代码只作参考实现，按需复制逻辑，不共享包、不共享数据。
 
 ## 1. 迁移原则
 
@@ -11,14 +11,14 @@
 | 类别 | 判定 | 在 2.0 里的形态 |
 |---|---|---|
 | **A. dsh 替代** | 通用智能体能力 | 不迁移，1.0 实现直接废弃；最多写一份 skill 或 persona 说明 |
-| **B. 领域 MCP 工具** | 需要 AI 在编辑中调用的医疗能力 | `apps/server/src/<domain>/` + 注册进 `/mcp`，按文档或用户签发令牌 |
+| **B. 领域 MCP 工具** | 需要 AI 在编辑中调用的医疗能力 | `apps/platform/src/<domain>/` + 注册进 `/mcp`（与文档工具同一个 `heurion` server），按用户范围令牌 |
 | **C. 服务端模块 + UI** | 需要人直接操作的数据和流程 | REST 接口 + 前端页面；AI 需要用时，再同时开放 MCP 工具 |
 | **D. 暂缓或放弃** | 与"快速 AI 编辑 + 医学文献"主线关系弱 | 先不做，按需求再评估 |
 
 两条硬约束（与 DESIGN.md 一致）：
 
 - 所有外部检索只走 heurion 的 MCP，不给模型通用联网能力；
-- 引用只能来自 `insert_citation`，正文论断要经核对（见 M1）。
+- 引用只能来自 `insert_citation`（操作层写前强制），正文论断要经核对（见 M1）。
 
 ## 2. 1.0 功能清单与去向
 
@@ -34,8 +34,8 @@
 | MCP 客户端、运行时安装 MCP | `tools/mcp-client.ts`、`mcp-tools.ts` | `packages/mcp/mcp-client`（profile 声明） |
 | 看图 | `tools/view-image-tool.ts` | `read_image` |
 | 浏览器代理 | `tools/browser-agent-tool.ts`、`cf-browser-agent` | `packages/browser-use`（需要时经白名单开放） |
-| 文档和 deck 编辑引擎（EditOp、提案、重基、锚点守卫、pptx-viewer-core） | `edit-*`、`doc-proposal`、`deck-proposal`、`edit-deck-bytes-tool` 等 | office 技能 + 模型写 python-docx/pptx 脚本；heurion 只管版本 |
-| 图表渲染 | `render-chart-tool`、`chart-renderer`、`deck-chart-embed` | 容器内 matplotlib 或 python-pptx 原生图表，不需要单独服务 |
+| 文档和 deck 编辑引擎（EditOp、提案、重基、锚点守卫、pptx-viewer-core） | `edit-*`、`doc-proposal`、`deck-proposal`、`edit-deck-bytes-tool` 等 | **不属于 dsh 替代**：由平台自研（模型 + 操作层 + 写前守卫 + MCP，见 PLATFORM.md）。doc 已完成（P0–P1），deck 在 P2 |
+| 图表渲染 | `render-chart-tool`、`chart-renderer`、`deck-chart-embed` | dsh shell 里用 matplotlib 生成图片 → `asset_upload` → 插入文档；deck 原生图表数据在 P2 的 `set_chart_data` |
 | 技能沉淀 | `modules/skills`、`skill-tools` | `packages/skill`（文件系统 skill） |
 
 ### B. 领域 MCP 工具
@@ -44,7 +44,7 @@
 |---|---|---|---|
 | PubMed 检索 | `search-citation-tool`、`medical-web-tools` | ✅ 已完成 `pubmed_search` | M0 |
 | DOI 元数据、引用登记 | `crossref.client`、`insert-citation-tool`、`citation-store` | ✅ 已完成 `doi_lookup` / `insert_citation` / `list_citations` | M0 |
-| 引用守卫 | `citation-guard`、`citation-audit` | ✅ 已完成回合后 DOI 校验；**补：无 DOI 手写条目识别** | M1 |
+| 引用守卫 | `citation-guard`、`citation-audit` | ✅ 已完成：操作层写前拦截 DOI / PMID / 手写参考文献条目；人类编辑事后提示 | P0 |
 | 论断核对（1.0 没有） | — | **新：`verify_claims`**，正文论断对照已登记文献的摘要或全文 | M1 |
 | OpenAlex 检索 | `openalex-search-tool` | `openalex_search` | M3 |
 | OA 全文 | `oa-pdf-tool`（Unpaywall） | `oa_fulltext`，同时为论断核对供给全文 | M3 |
@@ -62,11 +62,11 @@
 | 1.0 功能 | 1.0 位置 | 2.0 计划 | 里程碑 |
 |---|---|---|---|
 | 文档列表、上传、版本、回滚、下载 | `modules/documents` | ✅ 已完成（M0） | M0 |
-| 文档预览 | 1.0 富编辑器 / deck 画布 | LibreOffice 渲染 PDF/PNG（容器内已有） | M1 |
-| 版本对比 | #1172 形状级 diff | 文本 diff（docx）+ 逐页渲染对比（pptx） | M1 |
-| 评论 → AI 处理 | `modules/comments`、`comment-tools` | 评论锚定"页码 + 引文片段"，发给 AI 作为带定位的指令；AI 回复写回评论线程 | M1 |
+| 文档预览 | 1.0 富编辑器 / deck 画布 | ✅ doc：平台编辑器即预览；deck：P2 | P1 |
+| 版本对比 | #1172 形状级 diff | ✅ doc：块级 diff（`doc_diff` / 版本面板）；deck：P2 形状级 | P0 |
+| 评论 → AI 处理 | `modules/comments`、`comment-tools` | ✅ 评论锚定在文字上（comment mark），@heurion 自动触发；AI 回复写回线程；导出写入 comments.xml | P0–P1 |
 | 导入 PDF、参考文献 | `doc-import`、`document-extractor`（OCR） | 上传 PDF 进工作区（模型用 pdf 技能读取）；参考文献批量导入到登记表 | M1 |
-| 在线手工编辑 | 1.0 DocEditor + deck 画布 | **决策点（见 §4）**：嵌入 Collabora Online（WOPI），直接编辑权威文件 | M2 |
+| 在线手工编辑 | 1.0 DocEditor + deck 画布 | ✅ doc：ProseMirror + Yjs 实时协同编辑器（修订模式、撤销本轮 AI 修改）；deck：P2 Univer | P1 |
 | 账户、登录、多用户 | `modules/auth`、`ownership` | JWT + 按用户划分数据 | M2 |
 | 每用户容器隔离、网络出口白名单 | —（1.0 没有） | 调度器按用户起容器；出口代理只放行 LLM 端点和 /mcp | M2 |
 | 审计日志 | `AuditLog`、EventLog | 每个 MCP 调用、每回合、每个版本都写审计日志 | M2 |
@@ -95,8 +95,10 @@
 | 里程碑 | 目标 | 退出标准 |
 |---|---|---|
 | **M0** ✅ | 架构跑通 | SDK 接入、文献 MCP、引用校验、版本回滚、容器化；3 个真实任务通过 |
-| **M1 写作可用** | 单用户能高质量完成医学写作 | 预览、版本对比、评论驱动 AI、PDF/参考文献导入、论断核对、手写引用识别；**10 份真实文档评测**（延迟、保真、论断正确率） |
-| **M2 可上线** | 多用户安全使用 | 账户、每用户容器、出口白名单、审计、PHI 扫描、导出、可观测性、在线手工编辑（按 §4 决策） |
+| **P0–P1** ✅ | 文档平台（doc） | 见 PLATFORM.md §12：模型 + 操作层 + MCP + docx 往返 + 协同编辑器 |
+| **P2** | 文档平台（deck） | 见 PLATFORM.md §12 |
+| **M1 写作可用** | 单用户能高质量完成医学写作 | PDF/参考文献导入、**论断核对（`verify_claims`）**；**10 份真实文档评测**（延迟、保真、论断正确率）。预览、版本对比、评论驱动 AI、手写引用识别已在 P0–P1 完成 |
+| **M2 可上线** | 多用户安全使用 | 账户、每用户容器、出口白名单、审计、PHI 扫描、导出、可观测性、多实例部署（按文档路由协同） |
 | **M3 文献与知识** | 检索覆盖面与知识库 | OpenAlex、Unpaywall 全文、全文抽取、多引用格式、用户知识库 |
 | **M4 统计与图表** | 可复核的统计 | 统计 skill + `run_stats`，输出结果表、图和方法学段落 |
 | **M5 投稿** | 从稿件到投稿 | 选刊、期刊格式重排、cover letter、导出审批 |
@@ -105,10 +107,7 @@
 
 ## 4. 待决策
 
-1. **在线手工编辑怎么做。** 2.0 以文件为权威，最自然的办法是嵌入基于 WOPI 的 Office 在线编辑器：
-   - **Collabora Online**（LibreOffice 内核，MPL，和容器里的 LibreOffice 同源）：**推荐**；
-   - ONLYOFFICE（AGPL，1.0 的 #1101 评估过）。
-   不做在线编辑的话，就只能"AI 改 + 下载"。
+1. ~~在线手工编辑怎么做~~ **已定（2026-10-01）**：自建编辑器内核（doc：ProseMirror + Yjs；deck：Univer），不嵌入 Collabora / ONLYOFFICE。见 PLATFORM.md §10。
 2. **患者、病历、影像是否留在 2.0 主线**，还是拆成独立产品线：它们的合规要求（PHI）远高于写作。
 3. **隔离粒度**：按用户（默认）还是按组织。
 4. **1.0 的数据要不要迁移**：用户、文档、引用、知识库。不迁移的话，1.0 保持只读，直到下线。
