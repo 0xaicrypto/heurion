@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { Projection } from './docs/office.ts'
 
 export type DocKind = 'docx' | 'pptx'
-export type VersionSource = 'upload' | 'ai' | 'restore'
+export type VersionSource = 'upload' | 'user' | 'ai' | 'restore'
 
 export interface DocRow {
   id: string

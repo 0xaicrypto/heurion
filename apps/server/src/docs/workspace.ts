@@ -69,6 +69,13 @@ export class DocFiles {
     return this.saveVersion(docId, kind, bytes, 'upload', '上传')
   }
 
+  /** 编辑面（WOPI PutFile）保存：用户手动编辑落一个 user 版本。 */
+  saveUserSave(docId: string, bytes: Uint8Array, note: string): VersionRow {
+    const doc = this.store.getDoc(docId)
+    if (!doc) throw new Error(`doc ${docId} not found`)
+    return this.saveVersion(docId, doc.kind, bytes, 'user', note)
+  }
+
   /** 回合开始：把 head 版本覆盖写入工作区，返回基准哈希（无版本时为 null）。 */
   materializeHead(docId: string): string | null {
     const doc = this.store.getDoc(docId)

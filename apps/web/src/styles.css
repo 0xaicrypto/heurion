@@ -65,6 +65,10 @@ a { color: var(--accent); }
 .reply.ai { border-left: 3px solid var(--accent); }
 .reply-input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
 .small { font-size: 11px; margin: 0; }
+/* Collabora 编辑面 overlay */
+.editor-overlay { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
+.editor-overlay header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.editor-frame { flex: 1; border: none; width: 100%; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--border); }

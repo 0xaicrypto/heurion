@@ -33,6 +33,10 @@ export const config = {
   mcpUrl: env('HEURION_MCP_URL', `http://127.0.0.1:${port}/mcp`),
   /** 单个 dsh 进程空闲多久回收（毫秒）。 */
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),
+  /** Collabora CODE（编辑面，#4 spike）：浏览器可达的 CODE 地址。 */
+  collaboraUrl: env('HEURION_COLLABORA_URL', 'http://127.0.0.1:9980'),
+  /** CODE 容器回连本服务的地址（WOPISrc 用；容器网络里指向宿主或服务容器）。 */
+  publicUrl: env('HEURION_PUBLIC_URL', `http://127.0.0.1:${port}`),
 }
 
 export type Config = typeof config

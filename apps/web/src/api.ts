@@ -60,6 +60,7 @@ export const api = {
   downloadUrl: (id: string, seq: number) => `/api/docs/${id}/versions/${seq}/file?token=${encodeURIComponent(TOKEN)}`,
 
   listComments: (id: string) => fetch(`/api/docs/${id}/comments`, { headers: auth }).then(r => json<{ comments: Comment[] }>(r)),
+  getEditor: (id: string) => fetch(`/api/docs/${id}/editor`, { headers: auth }).then(r => json<{ urlsrc: string; access_token: string; wopisrc: string }>(r)),
   createComment: (id: string, input: { text_snippet?: string; text?: string }) =>
     fetch(`/api/docs/${id}/comments`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }).then(r => json<Comment>(r)),
   replyComment: (id: string, cid: string, text: string) =>

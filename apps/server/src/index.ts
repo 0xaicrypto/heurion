@@ -11,6 +11,7 @@ import { CrossrefClient } from './literature/crossref.ts'
 import { handleMcpRequest } from './literature/mcp.ts'
 import { PubMedClient } from './literature/pubmed.ts'
 import { buildApi } from './routes/api.ts'
+import { buildWopi } from './routes/wopi.ts'
 
 const store = new Store(config.dbPath)
 const files = new DocFiles(store, config.workspacesDir, config.versionsDir)
@@ -23,6 +24,7 @@ const literature = {
   secret: config.secret,
 }
 const app = buildApi({ store, files, pool, turns, devToken: config.devToken })
+app.route('/', buildWopi({ store, files, pool, config }))
 // 容器里由 server 直接托管前端构建产物（WEB_DIST）；本地开发走 vite dev server。
 if (process.env.WEB_DIST) app.use('*', serveStatic({ root: relative(process.cwd(), process.env.WEB_DIST) }))
 const api = getRequestListener(app.fetch)

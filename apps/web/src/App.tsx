@@ -59,6 +59,7 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
   const [live, setLive] = useState<LiveStep[]>([])
   /** 评论触发的回合：线程 id → 处理中。 */
   const [processing, setProcessing] = useState<Record<string, boolean>>({})
+  const [inEditor, setInEditor] = useState(false)
   const reloadComments = useCallback(() => api.listComments(docId).then(r => setComments(r.comments)), [docId])
   const reload = useCallback(() => api.getDoc(docId).then(d => { setDoc(d); setRunning(d.busy) }), [docId])
   useEffect(() => { void reload(); void reloadComments() }, [reload, reloadComments])
@@ -126,14 +127,20 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
 
   if (!doc) return <div className="empty">加载中…</div>
   const head = doc.versions[0]
+  if (inEditor) {
+    return <EditorOverlay docId={docId} title={doc.title} onClose={() => { setInEditor(false); void reload(); void reloadComments(); onChanged() }} />
+  }
   return (
     <main className="workspace">
       <section className="chat">
         <header>
           <strong>{doc.title}</strong>
-          {head
-            ? <a className="button" href={api.downloadUrl(doc.id, head.seq)}>下载 v{head.seq}</a>
-            : <span className="muted">还没有文件，让 AI 起草一份</span>}
+          <span className="row">
+            {head && <button onClick={() => setInEditor(true)}>编辑器</button>}
+            {head
+              ? <a className="button" href={api.downloadUrl(doc.id, head.seq)}>下载 v{head.seq}</a>
+              : <span className="muted">还没有文件，让 AI 起草一份</span>}
+          </span>
         </header>
         <div className="messages">
           {doc.messages.map(m => <div key={m.id} className={`msg ${m.role}`}>{m.text}</div>)}
@@ -174,6 +181,43 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
         <ol className="citations">{doc.citations.map(c => <li key={c.doi}>{c.formatted}</li>)}</ol>
       </aside>
     </main>
+  )
+}
+
+/** Collabora 编辑面（#4 spike → S4）：iframe + 表单提交 access_token（WOPI 标准嵌入）。 */
+function EditorOverlay({ docId, title, onClose }: { docId: string; title: string; onClose: () => void }) {
+  const [info, setInfo] = useState<{ urlsrc: string; access_token: string; wopisrc: string } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    api.getEditor(docId).then(setInfo).catch(e => setErr((e as Error).message))
+  }, [docId])
+  useEffect(() => {
+    if (!info) return
+    // iframe 就绪后提交表单（WOPI 的 access_token 必须经 form POST 进入）
+    const t = setTimeout(() => formRef.current?.submit(), 200)
+    const onMessage = (e: MessageEvent) => {
+      if (e.data === 'close' || (e.data as { msgId?: string })?.msgId === 'close') onClose()
+    }
+    window.addEventListener('message', onMessage)
+    return () => { clearTimeout(t); window.removeEventListener('message', onMessage) }
+  }, [info, onClose])
+  return (
+    <div className="editor-overlay">
+      <header>
+        <strong>{title}</strong>
+        <button onClick={onClose}>返回列表</button>
+      </header>
+      {err ? <div className="empty">{err}</div>
+        : !info ? <div className="empty">加载编辑器…</div>
+        : <>
+          <form ref={formRef} action={`${info.urlsrc}WOPISrc=${encodeURIComponent(info.wopisrc)}&title=${encodeURIComponent(title)}&closebutton=1`} method="post" target="coolframe" style={{ display: 'none' }}>
+            <input type="hidden" name="access_token" value={info.access_token} />
+            <input type="hidden" name="access_token_ttl" value="0" />
+          </form>
+          <iframe name="coolframe" title="Collabora" className="editor-frame" />
+        </>}
+    </div>
   )
 }
 
