@@ -30,20 +30,16 @@ case "${1:-up}" in
   down) "$ENGINE" rm -f "$NAME" heurion2-collabora 2>/dev/null || true ;;
   logs) "$ENGINE" logs -f "$NAME" ;;
   collabora)
-    # 编辑面（#4 spike → S4）：Collabora CODE，明文 HTTP 仅限本地。
-    # 浏览器从宿主机访问 9980；它回连 WOPI host 走容器网络别名。
-    # CODE 镜像极简无 shell，中文字体用挂载注入（/tmp/h2-fonts/noto 由
-    #   podman cp heurion2:/usr/share/fonts/opentype/noto /private/tmp/h2-fonts/noto
-    # 生成；缺失时跳过挂载，退化为豆腐块）。
+    # 编辑面（#4 spike → S4）：Collabora CODE 自建镜像（生产许可决策：MPLv2 源码自建路线的
+    # POC 第一步——官方镜像 + COPY 注入中文字体与 Windows 字体替换规则；无 shell，COPY 可用）。
+    # 字体来源：heurion2 容器 podman cp 而来，一次性放到 scripts/collabora-fonts/noto/。
     "$ENGINE" network create heurion2-net 2>/dev/null || true
+    "$ENGINE" build -t heurion2-collabora:dev scripts/collabora-fonts/ 2>&1 | tail -1
     "$ENGINE" rm -f heurion2-collabora >/dev/null 2>&1 || true
-    FONT_ARGS=''
-    [ -d /private/tmp/h2-fonts/noto ] && FONT_ARGS="-v /private/tmp/h2-fonts/noto:/usr/share/fonts/opentype/noto-cjk:ro,Z"
-    # shellcheck disable=SC2086
     "$ENGINE" run -d --name heurion2-collabora --network heurion2-net \
-      -p 9980:9980 $FONT_ARGS \
+      -p 9980:9980 \
       -e extra_params='--o:ssl.enable=false --o:net.protocol=ipv4' \
-      docker.io/collabora/code:latest
+      heurion2-collabora:dev
     echo "http://localhost:9980" ;;
   *) echo "usage: $0 build|up|down|logs|collabora"; exit 2 ;;
 esac

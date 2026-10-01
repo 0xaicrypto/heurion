@@ -230,22 +230,56 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
 
 const openCount = (cs: Comment[]) => cs.filter(c => c.status === 'open').length
 
-/** 编辑器面板：Collabora iframe 常驻；表单提交 access_token（WOPI 标准嵌入）。 */
+/** 编辑器面板：Collabora iframe 常驻；表单提交 access_token（WOPI 标准嵌入）。
+ *  版本落地时自动重载（用户无未保存修改时）；有修改 → 横幅提示手动加载。 */
 function EditorPane({ docId, title, headSeq, busy, openAutoComments }: {
   docId: string; title: string; headSeq: number; busy: boolean; openAutoComments: number
 }) {
   const [info, setInfo] = useState<{ urlsrc: string; access_token: string; wopisrc: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [stale, setStale] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
+  const dirtyRef = useRef(false)
+  const loadedForRef = useRef<number | null>(null)
+  const lastReloadAtRef = useRef(0)
+
   useEffect(() => {
     setInfo(null); setErr(null)
+    loadedForRef.current = null
     api.getEditor(docId).then(setInfo).catch(e => setErr((e as Error).message))
   }, [docId])
+
+  // COOL postMessage：跟踪用户未保存状态（Doc_ModifiedStatus）
   useEffect(() => {
     if (!info) return
-    const t = setTimeout(() => formRef.current?.submit(), 150)
-    return () => clearTimeout(t)
+    const origin = new URL(info.urlsrc, window.location.href).origin
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== origin) return
+      const d = e.data as { MessageId?: string; Values?: { Modified?: boolean } } | string
+      if (typeof d === 'object' && d.MessageId === 'Doc_ModifiedStatus') {
+        dirtyRef.current = Boolean(d.Values?.Modified)
+        if (dirtyRef.current) setStale(false)
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
   }, [info])
+
+  const submit = () => { lastReloadAtRef.current = Date.now(); formRef.current?.submit() }
+
+  // 版本落地 → 重载：干净（无未保存修改）才自动；节流 15s（中间快照 8s 流出，避免连续闪屏）
+  useEffect(() => {
+    if (!info) return
+    if (loadedForRef.current === null) { loadedForRef.current = headSeq; submit(); return }
+    if (loadedForRef.current === headSeq) return
+    if (dirtyRef.current) { setStale(true); return }
+    if (Date.now() - lastReloadAtRef.current < 15_000) return // 太近：等下一个版本事件再刷
+    loadedForRef.current = headSeq
+    setStale(false)
+    submit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info, headSeq])
+
   return (
     <div className="editor-inner">
       <div className="pane-head editor-bar">
@@ -255,7 +289,13 @@ function EditorPane({ docId, title, headSeq, busy, openAutoComments }: {
       </div>
       {busy && (
         <div className="ai-banner">
-          <span className="pulse" /> AI 正在修改文档{openAutoComments > 0 ? `（评论队列 ${openAutoComments} 条待处理）` : ''} — 完成落版后编辑器会自动刷新，此刻保存会被暂时拒绝
+          <span className="pulse" /> AI 正在修改文档{openAutoComments > 0 ? `（评论队列 ${openAutoComments} 条待处理）` : ''} — 编辑器会随进度自动刷新，此刻保存会被暂时拒绝
+        </div>
+      )}
+      {stale && (
+        <div className="ai-banner stale">
+          <span className="pulse" /> 文档有新版本，但你有未保存的修改 — 保存或放弃后再加载
+          <button className="btn small" onClick={() => { setStale(false); loadedForRef.current = headSeq; submit() }}>放弃修改并加载新版本</button>
         </div>
       )}
       {err

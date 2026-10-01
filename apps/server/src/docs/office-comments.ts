@@ -1,4 +1,4 @@
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { Store } from '../db.ts'
 
 /**
@@ -47,11 +47,12 @@ export function syncFileComments(store: Store, docId: string, bytes: Uint8Array)
 
 function syncDocxComments(store: Store, docId: string, files: Record<string, Uint8Array>): SyncResult {
   const xml = strFromU8(files['word/comments.xml']!)
-  const comments = new Map<string, string>()
+  const comments = new Map<string, { text: string; author: string }>()
   for (const m of xml.matchAll(/<w:comment\b([^>]*)>([\s\S]*?)<\/w:comment>/g)) {
     const id = /\bw:id="([^"]+)"/.exec(m[1] ?? '')?.[1]
+    const author = /\bw:author="([^"]*)"/.exec(m[1] ?? '')?.[1] ?? ''
     const text = [...(m[2] ?? '').matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map(x => x[1]).join('').trim()
-    if (id && text) comments.set(id, text)
+    if (id && text) comments.set(id, { text, author })
   }
   if (comments.size === 0) return { imported: 0, commentIds: [] }
 
@@ -87,14 +88,31 @@ function syncDocxComments(store: Store, docId: string, files: Record<string, Uin
   }
 
   const out: SyncResult = { imported: 0, commentIds: [] }
-  for (const [fileId, text] of comments) {
+  for (const [fileId, c] of comments) {
+    // ① 线程本身（file_comment_id 直接命中）
     if (store.getCommentByFileId(docId, fileId)) continue
+    // ② 我们写回的 AI 回复：按 file_reply_map 归位到原线程（去重），不新建线程、不触发自动化
+    const mapped = store.getFileReplyMapping(fileId)
+    if (mapped) continue // 写回时已同时落 store 回复；文件里在 = 已同步过
+    // ③ 编辑器里用户对同一线程的追问在 Word 里是独立 w:comment（无父子链接）：
+    //    author != Heurion 且范围落在已知线程同一段落 → 归并为该线程的追问回复。
+    if (c.author !== 'Heurion') {
+      const paraId = anchorByComment.get(fileId)
+      const existing = paraId
+        ? store.listComments(docId, 'open').find(t => t.file_comment_id && t.anchor.para_id === paraId)
+        : undefined
+      if (existing && !existing.replies.some(r => r.role === 'user' && r.text === c.text)) {
+        store.addReply(docId, existing.id, 'user', c.text)
+        out.commentIds.push(existing.id) // 触发词扫描覆盖追问
+        continue
+      }
+    }
     const range = (rangeText.get(fileId) ?? []).join('').trim()
     const row = store.addComment(docId, {
-      para_id: anchorByComment.get(fileId),
-      text_snippet: range || text, // 范围文字优先；无范围（整段批注）退化为评论文字
+      para_id: paraIdOf(anchorByComment, fileId),
+      text_snippet: range || c.text, // 范围文字优先；无范围（整段批注）退化为评论文字
     }, fileId)
-    store.addReply(docId, row.id, 'user', text)
+    store.addReply(docId, row.id, 'user', c.text)
     out.imported++
     out.commentIds.push(row.id)
   }
@@ -102,7 +120,56 @@ function syncDocxComments(store: Store, docId: string, files: Record<string, Uin
   return out
 }
 
-// —— pptx ——
+const paraIdOf = (m: Map<string, string | undefined>, k: string): string | undefined => m.get(k)
+
+/**
+ * 把线程的 AI 回复写回文件的评论线程（Claude 式闭环：用户在编辑器里就能看到
+ * AI 的回应）。仅支持「线程本身来自文件评论」的情况（需要原始 range 做锚）。
+ * 写回的 w:comment 以 author='Heurion' 落 comments.xml（零长度 range 挂在原
+ * 评论 rangeEnd 旁边），并登记 file_reply_map —— 下次同步时识别为已有回复。
+ */
+export function injectFileReplies(
+  bytes: Uint8Array,
+  fileCommentId: string,
+  replies: string[],
+): { bytes: Uint8Array; ids: string[] } | null {
+  if (replies.length === 0) return null
+  let all: Record<string, Uint8Array>
+  try { all = unzipSync(bytes) } catch { return null }
+  const docEntry = all['word/document.xml']
+  const commentsEntry = all['word/comments.xml']
+  if (!docEntry || !commentsEntry) return null // 文件里没有评论 part → 不写回（新建 part 需要 content-types/关系改造）
+
+  const commentsXml = strFromU8(commentsEntry)
+  const docXml = strFromU8(docEntry)
+  let maxId = 0
+  for (const m of commentsXml.matchAll(/\bw:id="(\d+)"/g)) maxId = Math.max(maxId, Number(m[1]))
+
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+  const W14 = 'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+  const ids: string[] = []
+  let addComments = ''
+  for (const text of replies) {
+    maxId++
+    const id = `heurion${maxId}`
+    ids.push(id)
+    const safe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    addComments += `<w:comment w:id="${id}" w:author="Heurion" w:date="${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}">` +
+      `<w:p ${W} ${W14}><w:r><w:t xml:space="preserve">${safe}</w:t></w:r></w:p></w:comment>`
+  }
+  const nextComments = commentsXml.replace(/<\/w:comments>\s*$/, addComments + '</w:comments>')
+
+  // 范围：挂在原始评论的 commentRangeEnd 之后（零长度 range）。
+  const endTag = `<w:commentRangeEnd w:id="${fileCommentId}"`
+  const at = docXml.indexOf(endTag)
+  if (at < 0) return null
+  const closeAt = docXml.indexOf('>', at)
+  let addRanges = ''
+  for (const id of ids) addRanges += `<w:commentRangeStart w:id="${id}"/><w:commentRangeEnd w:id="${id}"/>`
+  const nextDoc = docXml.slice(0, closeAt + 1) + addRanges + docXml.slice(closeAt + 1)
+
+  return { bytes: zipSync({ ...all, 'word/document.xml': strToU8(nextDoc), 'word/comments.xml': strToU8(nextComments) }), ids }
+}
 
 /** 从文件名/关系提取页号：comment1.xml / threadedComment2.xml → slide2.xml。 */
 function slidePartOf(name: string, kind: 'comments' | 'threaded'): string | null {

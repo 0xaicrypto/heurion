@@ -91,6 +91,8 @@ export interface CommentRow {
   replies: CommentReplyRow[]
   /** 最近一次 @heurion 自动触发时的最新用户回复 id（null = 从未触发）。 */
   last_auto_reply_id: string | null
+  /** 线程来自编辑器文件评论时的原始 w:comment id（写回 AI 回复用它定位范围）。 */
+  file_comment_id: string | null
 }
 
 const SCHEMA = `
@@ -153,6 +155,13 @@ CREATE TABLE IF NOT EXISTS comment_replies (
   id TEXT PRIMARY KEY,
   comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user','ai')),
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+/** AI 回复写回文件时分配的 file comment id → 线程映射（同步时识别「这是我们的回复」）。 */
+CREATE TABLE IF NOT EXISTS file_reply_map (
+  file_comment_id TEXT PRIMARY KEY,
+  comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -290,7 +299,7 @@ export class Store {
     return {
       id: row.id, doc_id: row.doc_id, kind: row.kind, anchor, status: row.status,
       resolved_by: row.resolved_by, drifted: row.drifted === 1, created_at: row.created_at, replies,
-      last_auto_reply_id: row.last_auto_reply_id,
+      last_auto_reply_id: row.last_auto_reply_id, file_comment_id: row.file_comment_id,
     }
   }
 
@@ -340,6 +349,18 @@ export class Store {
     if (!comment) return false
     this.db.prepare('DELETE FROM comments WHERE id = ?').run(commentId)
     return true
+  }
+
+  // —— AI 回复写回文件的映射 ——
+
+  addFileReplyMapping(fileCommentId: string, commentId: string, text: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO file_reply_map (file_comment_id, comment_id, text, created_at) VALUES (?, ?, ?, ?)')
+      .run(fileCommentId, commentId, text, now())
+  }
+
+  getFileReplyMapping(fileCommentId: string): { comment_id: string; text: string } | undefined {
+    return this.db.prepare('SELECT comment_id, text FROM file_reply_map WHERE file_comment_id = ?').get(fileCommentId) as
+      { comment_id: string; text: string } | undefined
   }
 
   addMessage(docId: string, role: MessageRow['role'], text: string): void {
