@@ -238,15 +238,71 @@ function findVariants(find: string): string[] {
 
 export type InlineParser = (markdown: string) => PMNode[]
 export interface ReplaceArgs { find: string; replace: string; occurrence?: number }
+
+/** 原文失配时给模型的候选（PLATFORM.md §5.3，参照 Claude Docs 的 near / matches）。 */
+export interface MatchCandidate {
+  occurrence?: number
+  /** 文档里实际的写法。 */
+  text: string
+  before: string
+  after: string
+  /** 与 find 的差别：whitespace 空白不同 / case 大小写不同 / citation 中间隔着引用标记。 */
+  how?: 'whitespace' | 'case' | 'citation'
+}
+
 export type ReplaceOutcome =
   | { ok: true }
-  | { ok: false; code: 'text_not_found'; crossesCitation: boolean }
-  | { ok: false; code: 'ambiguous_match'; count: number }
-  | { ok: false; code: 'occurrence_out_of_range'; count: number }
+  | { ok: false; code: 'text_not_found'; near: MatchCandidate[] }
+  | { ok: false; code: 'ambiguous_match'; matches: MatchCandidate[] }
+  | { ok: false; code: 'occurrence_out_of_range'; matches: MatchCandidate[] }
+
+const CONTEXT = 12
+const context = (text: string, start: number, length: number, extra: Partial<MatchCandidate> = {}): MatchCandidate => ({
+  text: text.slice(start, start + length),
+  before: text.slice(Math.max(0, start - CONTEXT), start),
+  after: text.slice(start + length, start + length + CONTEXT),
+  ...extra,
+})
+
+/** 一个「内容单位」：一个字符或一个行内原子（引用、换行），带上非评论格式，用于新旧对比。 */
+interface Unit { key: string; from: number; to: number; marks: readonly Mark[] }
+
+function marksKey(marks: readonly Mark[]): string {
+  return marks.filter(m => m.type.name !== 'comment').map(m => `${m.type.name}${JSON.stringify(m.attrs)}`).sort().join('|')
+}
+
+/** 旧内容：匹配范围内的单位（引用的多个字符合成一个单位）。 */
+function oldUnits(tr: Transform, map: ReturnType<typeof textMap>, start: number, end: number): Unit[] {
+  const out: Unit[] = []
+  for (let i = start; i <= end; i++) {
+    if (i > start && map.from[i] === map.from[i - 1]) continue // 同一个原子
+    const atom = map.from[i]! + 1 !== map.to[i]! || map.cite[i] || map.text[i] === '\n'
+    const node = atom ? tr.doc.nodeAt(map.from[i]!) : null
+    const key = node && !node.isText
+      ? `atom:${node.type.name}${JSON.stringify(node.attrs)}`
+      : `t:${map.text[i]}|${marksKey(map.marks[i]!)}`
+    out.push({ key, from: map.from[i]!, to: map.to[i]!, marks: map.marks[i]! })
+  }
+  return out
+}
+
+/** 新内容：解析出的行内节点逐单位展开（文字逐字符、原子一个），位置即 Fragment 内偏移。 */
+function newUnits(nodes: readonly PMNode[]): string[] {
+  const out: string[] = []
+  for (const n of nodes) {
+    if (n.isText) for (const ch of n.text!) out.push(`t:${ch}|${marksKey(n.marks)}`)
+    else out.push(`atom:${n.type.name}${JSON.stringify(n.attrs)}`)
+  }
+  return out
+}
 
 /**
- * 在一个文本块（doc 段落 / 标题，deck 形状里的段落）内做 replace_text：匹配原文（容忍 markdown 转义），
- * 替换文字继承匹配起点的格式，评论锚点跟随；find 跳过引用标记且只是追加时保留引用。
+ * 在一个文本块（doc 段落 / 标题，deck 形状里的段落）内做 replace_text（参照 Claude Docs 的 find + as:text）：
+ * - 匹配：原样 → 去 markdown 转义 → 去强调符号 → 不区分大小写（唯一时）；空白不容错；
+ * - 只替换真正变化的部分：新旧内容去掉相同的开头与结尾后再替换，未变的文字保留原样
+ *   （格式、引用、评论锚点都不动）；被改写的锚定文字随之消失（锚点缩到剩下的文字）；
+ * - 失配时返回候选（空白 / 大小写不同、隔着引用标记、多处匹配），模型可直接据此重发；
+ * - find 跳过引用标记而 replace 只是在前后追加：保留引用，只插入追加部分。
  */
 export function replaceInTextblock(tr: Transform, node: PMNode, pos: number, op: ReplaceArgs, parse: InlineParser): ReplaceOutcome {
   const map = textMap(node, pos)
@@ -257,45 +313,117 @@ export function replaceInTextblock(tr: Transform, node: PMNode, pos: number, op:
     if (hits.length > 0) { needle = v; break }
   }
   if (hits.length === 0) {
-    // 常见失配：find 跳过了句中的引用标记（原文「…）[@c:x]。」，find 写成「…）。」）
-    if (appendAcrossCitation(tr, map, op, parse)) return { ok: true }
-    const crossesCitation = findVariants(op.find).some(v => {
-      const stripped = v.replace(/\[@c:[a-z0-9]+\]/g, '')
-      return stripped.length > 0 && stripCitations(map).text.includes(stripped)
-    })
-    return { ok: false, code: 'text_not_found', crossesCitation }
+    // 大小写不同：唯一匹配时接受（Claude Docs 默认不区分大小写）
+    const lower = map.text.toLowerCase()
+    for (const v of findVariants(op.find)) {
+      const ci = allIndexes(lower, v.toLowerCase())
+      if (ci.length === 1 || (ci.length > 1 && op.occurrence !== undefined)) { hits = ci; needle = v; break }
+    }
   }
-  if (hits.length > 1 && op.occurrence === undefined) return { ok: false, code: 'ambiguous_match', count: hits.length }
+  if (hits.length === 0) {
+    if (appendAcrossCitation(tr, map, op, parse)) return { ok: true }
+    return { ok: false, code: 'text_not_found', near: nearCandidates(map, op.find) }
+  }
+  const all = () => hits.map((h, i) => context(map.text, h, needle.length, { occurrence: i + 1 }))
+  if (hits.length > 1 && op.occurrence === undefined) return { ok: false, code: 'ambiguous_match', matches: all() }
   const start = hits[(op.occurrence ?? 1) - 1]
-  if (start === undefined) return { ok: false, code: 'occurrence_out_of_range', count: hits.length }
+  if (start === undefined) return { ok: false, code: 'occurrence_out_of_range', matches: all() }
   const end = start + needle.length - 1
-  const from = map.from[start]!
-  const to = map.to[end]!
-  // 替换文本继承匹配起点的格式（评论锚点 mark 除外），再叠加替换文本自带的格式
-  const base = map.marks[start]!.filter(m => m.type.name !== 'comment')
-  let inline = parse(op.replace).map(n => {
+
+  const parsed = parse(op.replace)
+  // 纯文字替换（不带任何格式）：只按文字比较，保留下来的字保持原格式。
+  // 带格式的替换：markdown 能表达的格式（粗体、斜体、链接…）以替换文字为准，不再从原文继承——否则
+  // 「**0.80**[@c]。」后追加的句子会被匹配起点的粗体染上；只继承 markdown 表达不了的格式（deck 的 rpr 字号颜色）。
+  const plain = parsed.every(n => !n.isText || n.marks.length === 0)
+  const inherit = (marks: readonly Mark[]) => marks.filter(m => m.type.name !== 'comment')
+  const base = inherit(map.marks[start]!)
+  const hidden = base.filter(m => m.type.name === 'rpr')
+  const inline = plain ? parsed : parsed.map(n => {
     let set = n.marks
-    for (const m of base) if (!m.isInSet(set)) set = m.addToSet(set)
-    return n.isText ? n.mark(set) : n
+    for (const m of hidden) if (!m.isInSet(set)) set = m.addToSet(set)
+    return n.mark(set)
   })
-  inline = carryComments(node, inline, map, start, end)
-  if (inline.length === 0) tr.delete(from, to)
-  else tr.replaceWith(from, to, inline)
+  const textOnly = (k: string) => (k.startsWith('t:') ? k.slice(0, k.lastIndexOf('|')) : k)
+
+  // 最小差异：去掉相同的开头与结尾
+  const olds = oldUnits(tr, map, start, end)
+  const news = newUnits(inline)
+  const same = (a: string, b: string) => (plain ? textOnly(a) === textOnly(b) : a === b)
+  let p = 0
+  while (p < olds.length && p < news.length && same(olds[p]!.key, news[p]!)) p++
+  let q = 0
+  while (q < olds.length - p && q < news.length - p && same(olds[olds.length - 1 - q]!.key, news[news.length - 1 - q]!)) q++
+  if (p === olds.length && p === news.length) return { ok: true } // 内容没变
+  const from = p < olds.length ? olds[p]!.from : olds[olds.length - 1]!.to
+  const to = olds.length - q > p ? olds[olds.length - 1 - q]!.to : from
+  let middle = node.type.create(null, inline).content.cut(p, news.length - q)
+  if (plain) {
+    // 替换掉旧字：沿用被替换的第一个字的格式；纯插入：取左右邻字共有的格式（插在粗体中间仍是粗体，贴着粗体边界插入的不变粗）
+    const left = p > 0 ? olds[p - 1]!.marks : map.marks[start - 1]
+    const right = olds.length - q < olds.length ? olds[olds.length - q]!.marks : map.marks[end + 1]
+    const near = inherit(from !== to ? olds[p]!.marks : left && right ? left.filter(m => m.isInSet(right)) : left ?? right ?? base)
+    const marked: PMNode[] = []
+    middle.forEach(n => marked.push(n.isText ? n.mark(near) : n.mark(near.filter(m => m.type.name !== 'link'))))
+    middle = Fragment.from(marked)
+  }
+  if (middle.size === 0) tr.delete(from, to)
+  else if (from === to) tr.insert(from, middle)
+  else tr.replaceWith(from, to, middle)
   return { ok: true }
 }
 
-/** replace_text 失败时的结构化错误。 */
+/** 失配候选：空白或大小写不同的写法、中间隔着引用标记的写法。 */
+function nearCandidates(map: ReturnType<typeof textMap>, find: string): MatchCandidate[] {
+  const out: MatchCandidate[] = []
+  const squash = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+  for (const v of findVariants(find)) {
+    const target = squash(v)
+    if (!target) continue
+    // 去空白、转小写后的逐字比较，映射回原文位置
+    const idx: number[] = []
+    let flat = ''
+    for (let i = 0; i < map.text.length; i++) {
+      if (/\s/.test(map.text[i]!)) continue
+      flat += map.text[i]!.toLowerCase()
+      idx.push(i)
+    }
+    for (let at = flat.indexOf(target); at !== -1 && out.length < 3; at = flat.indexOf(target, at + 1)) {
+      const s0 = idx[at]!
+      const s1 = idx[at + target.length - 1]!
+      const actual = map.text.slice(s0, s1 + 1)
+      out.push(context(map.text, s0, s1 - s0 + 1, { how: actual.toLowerCase() === v.toLowerCase() ? 'case' : 'whitespace' }))
+    }
+    if (out.length > 0) return out
+    const stripped = stripCitations(map)
+    const bare = v.replace(/\[@c:[a-z0-9]+\]/g, '')
+    const at = bare ? stripped.text.indexOf(bare) : -1
+    if (at !== -1) {
+      const s0 = stripped.index[at]!
+      const s1 = stripped.index[at + bare.length - 1]!
+      return [context(map.text, s0, s1 - s0 + 1, { how: 'citation' })]
+    }
+  }
+  return out
+}
+
+/** replace_text 失败时的结构化错误（附候选，模型可直接据此重发）。 */
 export function replaceError(outcome: Exclude<ReplaceOutcome, { ok: true }>, where: string, current: string): OpError {
   if (outcome.code === 'ambiguous_match') {
-    return new OpError('ambiguous_match', `原文在${where}中出现 ${outcome.count} 次`, { hint: '用 occurrence 指定第几处（从 1 开始），或把 find 写长一些。' })
+    return new OpError('ambiguous_match', `原文在${where}中出现 ${outcome.matches.length} 次`, {
+      hint: '用 occurrence 指定第几处（matches 列出了每一处的前后文），或把 find 写长一些。',
+      current: { matches: outcome.matches },
+    })
   }
-  if (outcome.code === 'occurrence_out_of_range') return new OpError('text_not_found', `原文只出现 ${outcome.count} 次`)
-  return new OpError('text_not_found', `${where}中找不到要替换的原文`, {
-    hint: outcome.crossesCitation
-      ? '原文在这段文字中间有引用标记 [@c:…]：find 与 replace 里要原样写出引用标记（否则会删掉引用），或者只匹配引用标记之前 / 之后的文字。'
-      : '按 current 中的原文逐字复制 find（不含 {#id} 前缀和 markdown 符号）。',
-    current,
-  })
+  if (outcome.code === 'occurrence_out_of_range') {
+    return new OpError('text_not_found', `原文只出现 ${outcome.matches.length} 次`, { current: { matches: outcome.matches } })
+  }
+  const near = outcome.near
+  const hint = near[0]?.how === 'citation'
+    ? '原文在这段文字中间有引用标记 [@c:…]：find 与 replace 里要原样写出引用标记（否则会删掉引用），或者只匹配引用标记之前 / 之后的文字。'
+    : near.length > 0
+      ? '原文的空白或大小写与 find 不同：按 near 里的 text 原样写 find 重发。'
+      : '按 current 中的原文逐字复制 find（不含 {#id} 前缀和 markdown 符号）。'
+  return new OpError('text_not_found', `${where}中找不到要替换的原文`, { hint, current: near.length > 0 ? { near, text: current } : current })
 }
 
 function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>): string[] {
@@ -308,39 +436,6 @@ function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>):
   const outcome = replaceInTextblock(tr, target.node, target.pos, op, parseInline)
   if (!outcome.ok) throw replaceError(outcome, `块 ${op.id} `, serializeBlock(target.node, { ids: true }, ''))
   return [op.id]
-}
-
-/**
- * 评论锚点跟随替换（PLATFORM.md §5.3 锚点保护）：对与匹配范围相交的每条线程——
- * 替换文字里原样包含被锚定的那段文字 → 锚点精确落回这段文字；
- * 线程整体落在匹配范围内且被改写 → 锚点跟到整段替换文字；
- * 只部分重叠且被改写 → 不加（范围外的剩余文字继续承担锚点）。
- */
-function carryComments(block: PMNode, inline: PMNode[], map: ReturnType<typeof textMap>, start: number, end: number): PMNode[] {
-  if (inline.length === 0) return inline
-  const threads = new Map<string, Mark>()
-  for (let i = start; i <= end; i++) for (const m of map.marks[i]!) if (m.type.name === 'comment') threads.set(m.attrs.thread as string, m)
-  if (threads.size === 0) return inline
-  const paragraph = block.type.create(null, inline)
-  const tr = new Transform(block.type.schema.topNodeType.create(null, [paragraph]))
-  const replaced = textMap(paragraph, 0)
-  for (const [thread, mark] of threads) {
-    const has = (i: number) => map.marks[i]!.some(m => m.type.name === 'comment' && m.attrs.thread === thread)
-    const inside: number[] = []
-    let outside = false
-    for (let i = 0; i < map.text.length; i++) {
-      if (!has(i)) continue
-      if (i >= start && i <= end) inside.push(i)
-      else outside = true
-    }
-    const anchored = map.text.slice(inside[0]!, inside[inside.length - 1]! + 1)
-    const at = anchored ? replaced.text.indexOf(anchored) : -1
-    if (at !== -1) tr.addMark(replaced.from[at]!, replaced.to[at + anchored.length - 1]!, mark)
-    else if (!outside) tr.addMark(1, paragraph.nodeSize - 1, mark)
-  }
-  const out: PMNode[] = []
-  tr.doc.child(0).forEach(n => out.push(n))
-  return out
 }
 
 function deleteBlock(tr: Transform, id: string, ctx: ApplyContext): void {

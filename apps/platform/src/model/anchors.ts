@@ -58,41 +58,67 @@ export function locate(doc: PMNode, comment: Pick<CommentRow, 'id' | 'node_id' |
 export class AnchorError extends Error {}
 
 /**
- * 给新评论打锚点：在块 nodeId 的文字里找 snippet，挂上 thread mark。
- * snippet 为空 → 文本块整段挂 mark；无文字的块不挂 mark（块级锚点）。
+ * 给新评论打锚点（PLATFORM.md §5.4）。颗粒度只有两种：
+ * - 一个段落内的连续文字：doc 的段落 / 标题；deck 形状里的某一段（paragraph = 该段在形状里的序号）；
+ * - 一整块：snippet 为空——doc 的块（列表项、表格、图……）或 deck 的整个形状。
+ * 跨段落、跨块的选区不接受（与 Claude Docs 一致），调用方应在选区阶段就拦下。
  */
-export function attachComment(doc: PMNode, nodeId: string, snippet: string, thread: string): { doc: PMNode; snippet: string } {
+export function attachComment(doc: PMNode, nodeId: string, snippet: string, thread: string, paragraph?: number): { doc: PMNode; snippet: string } {
   const hit = indexById(doc).get(nodeId)
   if (!hit) throw new AnchorError(`找不到块 ${nodeId}`)
   const { node, pos } = hit
+  const mark = doc.type.schema.marks.comment!.create({ thread })
+  const tr = new Transform(doc)
   const textblocks: Array<{ node: PMNode; pos: number }> = []
   if (node.isTextblock) textblocks.push({ node, pos })
   else node.descendants((n, p) => { if (n.isTextblock) textblocks.push({ node: n, pos: pos + 1 + p }); return !n.isTextblock })
-  if (textblocks.length === 0) return { doc, snippet: '' }
-  // 用文档自己的 schema（doc / deck 各有一套）
-  const mark = doc.type.schema.marks.comment!.create({ thread })
-  const tr = new Transform(doc)
-  const whole = () => {
+
+  const wanted = snippet.replace(/\r\n?/g, '\n').trim()
+  if (!wanted) {
+    // 整块 / 整个形状
     for (const tb of textblocks) if (tb.node.content.size > 0) tr.addMark(tb.pos + 1, tb.pos + tb.node.nodeSize - 1, mark)
-    return { doc: tr.doc, snippet: plainText(node).slice(0, 200) }
+    return { doc: tr.doc, snippet: '' }
   }
-  if (!snippet.trim()) return whole()
-  // 在整个块（可能有多个段落、换行）的文字里找，忽略空白与换行：浏览器选区跨段落时带的是换行
+  let scope: Array<{ node: PMNode; pos: number }>
+  if (node.isTextblock) scope = textblocks
+  else if (node.type.name === 'shape') {
+    if (paragraph !== undefined) {
+      const tb = textblocks[paragraph]
+      if (!tb) throw new AnchorError(`形状 ${nodeId} 没有第 ${paragraph + 1} 段`)
+      scope = [tb]
+    } else scope = textblocks
+  } else {
+    throw new AnchorError('选中的文字要落在一个段落内；要评论整块请不带选中文字')
+  }
+  const found: Array<{ from: number; to: number }> = []
+  for (const tb of scope) {
+    const r = findInParagraph(tb.node, tb.pos, wanted)
+    if (r) found.push(r)
+  }
+  if (found.length === 0) throw new AnchorError(`块 ${nodeId} 中找不到选中的文字（评论只能落在一个段落内）`)
+  if (found.length > 1) throw new AnchorError('选中的文字在多个段落里都有，请带上段落位置')
+  tr.addMark(found[0]!.from, found[0]!.to, mark)
+  return { doc: tr.doc, snippet: wanted }
+}
+
+/** 在一个段落里找文字：硬换行记作换行；先精确，再不区分大小写。 */
+function findInParagraph(block: PMNode, pos: number, wanted: string): { from: number; to: number } | null {
   let text = ''
-  const positions: number[] = []
-  for (const tb of textblocks) {
-    tb.node.forEach((child, offset) => {
-      if (!child.isText) return
-      for (let i = 0; i < child.text!.length; i++) {
-        if (/\s/.test(child.text![i]!)) continue
-        text += child.text![i]
-        positions.push(tb.pos + 1 + offset + i)
-      }
-    })
+  const from: number[] = []
+  const to: number[] = []
+  block.forEach((child, offset) => {
+    const start = pos + 1 + offset
+    if (child.isText) {
+      for (let i = 0; i < child.text!.length; i++) { text += child.text![i]; from.push(start + i); to.push(start + i + 1) }
+    } else if (child.type.name === 'hard_break') {
+      text += '\n'; from.push(start); to.push(start + child.nodeSize)
+    }
+  })
+  let at = text.indexOf(wanted)
+  if (at === -1) {
+    const lower = text.toLowerCase()
+    at = lower.indexOf(wanted.toLowerCase())
+    if (at !== -1 && lower.indexOf(wanted.toLowerCase(), at + 1) !== -1) at = -1
   }
-  const needle = snippet.replace(/\s+/g, '')
-  const at = text.indexOf(needle)
-  if (at === -1) throw new AnchorError(`块 ${nodeId} 中找不到选中的文字`)
-  tr.addMark(positions[at]!, positions[at + needle.length - 1]! + 1, mark)
-  return { doc: tr.doc, snippet: snippet.trim() }
+  return at === -1 ? null : { from: from[at]!, to: to[at + wanted.length - 1]! }
 }

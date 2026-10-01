@@ -12,6 +12,8 @@ export interface ActiveTurn {
   notify: (n: TurnNotice) => void
   /** 本回合 AI 写入的方式：suggest = 一律作为待采纳修订（服务端强制，不依赖模型传参）。 */
   mode: 'apply' | 'suggest'
+  /** 评论触发的回合：正在回答的评论线程。 */
+  answering?: string | null
 }
 
 export class TurnRegistry {

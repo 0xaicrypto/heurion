@@ -48,7 +48,7 @@ const MAX_ASSET = 10 * 1024 * 1024
 
 const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读写，不要用 python 或 shell 改文档文件。
 工作流程：doc_outline 看结构 → doc_read 读相关章节（拿到块 id 与 rev）→ doc_edit 一次提交一批操作（base_rev 用读到的 rev）。
-- 小改动优先 replace_text（保留原格式）；整段重写用 replace_block；新增用 insert_after / insert_before。
+- 小改动优先 replace_text：find 写块内原文（不能跨块），只改变化的字，格式、引用、评论锚点保留；失配时按返回的 near / matches 修正后重试。整段重写用 replace_block；新增用 insert_after / insert_before。
 - 内容格式是 markdown：标题 #、列表 -、表格 GFM、粗体 **、上标 <sup>、图片 ![说明](asset:<asset_id>)。
 - 引用：pubmed_search 找文献 → insert_citation 登记 → 正文写返回的 [@c:<cite_id>]。正文中不能出现 DOI、PMID 或手写参考文献，参考文献表由平台自动生成。
 - 评论是用户锚定在具体文字上的修改要求：comments_list 读取 → 修改 → comment_reply 说明改了什么。
@@ -172,7 +172,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description:
       '按块 id 编辑文档：一批操作原子提交（任一失败则全部不生效）。base_rev 用最近一次读到的 rev。' +
       '操作：insert_after / insert_before {anchor_id, markdown}；replace_block {id, markdown}；' +
-      'replace_text {id, find, replace, occurrence?}（块内替换，保留格式，小改动首选）；delete {ids}；' +
+      'replace_text {id, find, replace, occurrence?}（块内替换，小改动首选：find 即守卫，不受 base_rev 限制；只改变化的字）；delete {ids}；' +
       'move {ids, after}；set_block_style {id, type?, level?, align?, style?}；' +
       'table_set_cells {id, cells:[{row, col, markdown}]}；table_insert_rows {id, at, rows}；table_delete_rows {id, at, count}。' +
       '会移除 open 评论锚点时，需把线程 id 放进 ack_comments 并在线程里说明。',
@@ -190,7 +190,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     try {
       const forced = deps.turns.active(claims.u)?.mode
       const mode = forced === 'suggest' ? 'suggest' : args.mode ?? 'apply'
-      const result = deps.ops.edit({ ...args, mode }, { actor: 'ai', turnId: ctx.turnId })
+      const result = deps.ops.edit({ ...args, mode }, { actor: 'ai', turnId: ctx.turnId, answering: deps.turns.active(claims.u)?.answering ?? null })
       deps.turns.touch(claims.u, args.doc_id)
       return json({
         rev: result.rev,
@@ -276,7 +276,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     try {
       const forced = deps.turns.active(claims.u)?.mode
       const mode = forced === 'suggest' ? 'suggest' : args.mode ?? 'apply'
-      const result = deps.ops.edit({ ...args, mode }, { actor: 'ai', turnId: ctx.turnId })
+      const result = deps.ops.edit({ ...args, mode }, { actor: 'ai', turnId: ctx.turnId, answering: deps.turns.active(claims.u)?.answering ?? null })
       deps.turns.touch(claims.u, args.doc_id)
       return json({ rev: result.rev, results: result.results, changed: result.changes.length, mode })
     } catch (err) {

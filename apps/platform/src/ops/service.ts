@@ -1,5 +1,5 @@
 import type { Node as PMNode } from 'prosemirror-model'
-import { locate, threadMarks } from '../model/anchors.ts'
+import { attachComment, locate, threadMarks } from '../model/anchors.ts'
 import { indexById } from '../model/ids.ts'
 import { serializeBlock } from '../model/markdown.ts'
 import type { Documents, NodeChange } from '../model/runtime.ts'
@@ -41,7 +41,11 @@ export class OpService {
     return info
   }
 
-  edit(batch: EditBatch | DeckEditBatch, meta: { actor: Actor; turnId: string | null }): EditResult {
+  /**
+   * meta.answering：本回合正在回答的评论线程。它的锚点被改没时（用户要求改的正是被评论的文字），
+   * 重新锚定到原来所在的块 / 形状上，而不是拦下（其他线程仍按锚点守卫）。
+   */
+  edit(batch: EditBatch | DeckEditBatch, meta: { actor: Actor; turnId: string | null; answering?: string | null }): EditResult {
     const store = this.docs.store
     const row = store.getDoc(batch.doc_id)
     if (!row) throw new OpError('doc_not_found', `文档 ${batch.doc_id} 不存在`)
@@ -68,10 +72,12 @@ export class OpService {
       ? applyDeckOps(before, batch.ops as DeckOp[], { taken, ...this.deckContextInfo(batch.doc_id) })
       : applyOps(before, batch.ops as DocOp[], { taken })
     const results = applied.results
-    const after = batch.mode === 'suggest'
+    let after = batch.mode === 'suggest'
       ? toSuggestion(before, applied.doc, `g${randomBytes(4).toString('hex')}`)
       : applied.doc
 
+    if (meta.answering) after = this.keepAnswering(batch.doc_id, meta.answering, before, after)
+    after = this.keepWholeNode(batch.doc_id, after)
     if (ai) this.guardAnchors(batch, before, after)
 
     const event = this.docs.commit(batch.doc_id, after, { actor: meta.actor, turnId: meta.turnId, ops: batch.ops })
@@ -97,6 +103,8 @@ export class OpService {
   private guardConflicts(batch: EditBatch | DeckEditBatch, before: PMNode, targetsOf: (op: unknown) => string[]): void {
     const index = indexById(before)
     batch.ops.forEach((op, i) => {
+      // 按原文修改（replace_text）不看 rev：原文本身就是守卫——用户改了这几个字，原文就匹配不上
+      if ((op as { op: string }).op === 'replace_text') return
       for (const id of targetsOf(op)) {
         const userRev = this.docs.store.lastChangeBy(batch.doc_id, id, 'user')
         if (userRev > batch.base_rev) {
@@ -138,6 +146,31 @@ export class OpService {
   }
 
   /** 锚点守卫：本批操作会让 open 评论失去锚点，且未在 ack_comments 中确认 → 拒绝。 */
+  private keepAnswering(docId: string, thread: string, before: PMNode, after: PMNode): PMNode {
+    const comment = this.docs.store.getComment(docId, thread)
+    if (!comment || comment.status !== 'open') return after
+    const was = locate(before, comment)
+    if (!was.located || locate(after, comment).located) return after
+    for (const id of was.node_ids) {
+      try {
+        return attachComment(after, id, '', thread).doc
+      } catch { /* 块也被删了：交给锚点守卫 */ }
+    }
+    return after
+  }
+
+  /** 整块 / 整个形状的评论锚的是块本身：块还在而文字被整体改写时，把标记补回整块。 */
+  private keepWholeNode(docId: string, after: PMNode): PMNode {
+    const whole = this.docs.store.listComments(docId, 'open').filter(c => !c.snippet)
+    if (whole.length === 0) return after
+    const marks = threadMarks(after)
+    for (const c of whole) {
+      if (marks.has(c.id)) continue
+      try { after = attachComment(after, c.node_id, '', c.id).doc } catch { /* 块已不在：交给锚点守卫 */ }
+    }
+    return after
+  }
+
   private guardAnchors(batch: EditBatch | DeckEditBatch, before: PMNode, after: PMNode): void {
     const open = this.docs.store.listComments(batch.doc_id, 'open')
     if (open.length === 0) return

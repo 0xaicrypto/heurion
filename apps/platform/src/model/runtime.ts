@@ -59,8 +59,40 @@ export function stateToDoc(state: Uint8Array, kind: DocKind = 'doc'): PMNode {
 
 function docToState(doc: PMNode): Uint8Array {
   const ydoc = new Y.Doc()
-  ydoc.transact(() => updateYFragment(ydoc, ydoc.getXmlFragment(BODY), doc, { mapping: new Map(), isOMark: new Map() } as never))
+  ydoc.transact(() => writeFragment(ydoc, doc))
   return Y.encodeStateAsUpdate(ydoc)
+}
+
+/**
+ * 把模型写入 Y.Doc：updateYFragment 做最小差异，然后读回逐个顶层块核对。y-prosemirror 1.3.7 在
+ * 行内原子节点（引用）之后的文字只改格式时不会更新格式属性（实测：粗体 → 评论标记无效），
+ * 核对不一致的顶层块整块重写——内容一定对，代价只是该块在协同端的光标位置。
+ */
+export function writeFragment(ydoc: Y.Doc, next: PMNode): void {
+  const fragment = ydoc.getXmlFragment(BODY)
+  updateYFragment(ydoc, fragment, next, { mapping: new Map(), isOMark: new Map() } as never)
+  const got = yXmlFragmentToProseMirrorRootNode(fragment, next.type.schema)
+  if (got.eq(next)) return
+  if (got.childCount !== next.childCount) {
+    fragment.delete(0, fragment.length)
+    fragment.insert(0, freshElements(next, 0, next.childCount))
+    return
+  }
+  for (let i = 0; i < next.childCount; i++) {
+    if (got.child(i).eq(next.child(i))) continue
+    fragment.delete(i, 1)
+    fragment.insert(i, freshElements(next, i, i + 1))
+  }
+}
+
+/** 顶层块 [from, to) 的全新 Yjs 元素（在临时 Y.Doc 里生成后克隆，可插入任何文档）。 */
+function freshElements(doc: PMNode, from: number, to: number): Y.XmlElement[] {
+  const tmp = new Y.Doc()
+  const nodes: PMNode[] = []
+  for (let i = from; i < to; i++) nodes.push(doc.child(i))
+  const part = doc.type.create(doc.attrs, nodes)
+  tmp.transact(() => updateYFragment(tmp, tmp.getXmlFragment(BODY), part, { mapping: new Map(), isOMark: new Map() } as never))
+  return tmp.getXmlFragment(BODY).toArray().map(el => (el as Y.XmlElement).clone())
 }
 
 /** 服务端提交的 Yjs origin（区别于浏览器经协同网关送来的更新）。 */
@@ -165,7 +197,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
     const fixed = assignIds(after, collectIds(after))
     if (!fixed.eq(after)) {
       l.ydoc.transact(() => {
-        updateYFragment(l.ydoc, l.ydoc.getXmlFragment(BODY), fixed, { mapping: new Map(), isOMark: new Map() } as never)
+        writeFragment(l.ydoc, fixed)
       }, { server: true, actor: 'system', turnId: null } satisfies ServerOrigin)
       l.cache = null
       after = this.get(docId)
@@ -197,9 +229,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
     // AI 回合第一次写这份文档：记下回合开始前的状态（服务重启后按节点撤销的依据）
     if (meta.actor === 'ai' && meta.turnId) this.store.putTurnBase(meta.turnId, docId, Y.encodeStateAsUpdate(l.ydoc))
     const origin = this.originFor(docId, l, meta)
-    l.ydoc.transact(() => {
-      updateYFragment(l.ydoc, l.ydoc.getXmlFragment(BODY), next, { mapping: new Map(), isOMark: new Map() } as never)
-    }, origin)
+    l.ydoc.transact(() => writeFragment(l.ydoc, next), origin)
     l.cache = null
     return this.record(docId, l, this.get(docId), meta)
   }

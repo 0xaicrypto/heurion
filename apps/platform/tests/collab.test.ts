@@ -131,7 +131,7 @@ describe('协同网关', () => {
     await until(() => t.docs.get(t.docId).child(0).textContent === '用户正在改。')
     let err: unknown
     try {
-      t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id, find: '用户正在改', replace: 'AI 覆盖' }] }, { actor: 'ai', turnId: null })
+      t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id, markdown: 'AI 覆盖。' }] }, { actor: 'ai', turnId: null })
     } catch (e) { err = e }
     expect((err as OpError).code).toBe('conflict_user_edited')
     expect(t.docs.get(t.docId).child(0).textContent).toBe('用户正在改。')

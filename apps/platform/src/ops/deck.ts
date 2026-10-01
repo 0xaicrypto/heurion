@@ -250,7 +250,7 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
         else if (outcome.code !== 'text_not_found' || !last) last = outcome
         return false
       })
-      if (!done) throw replaceError(last ?? { ok: false, code: 'text_not_found', crossesCitation: false }, `形状 ${op.shape_id} `, hit.node.textContent)
+      if (!done) throw replaceError(last ?? { ok: false, code: 'text_not_found', near: [] }, `形状 ${op.shape_id} `, hit.node.textContent)
       return [op.shape_id]
     }
     case 'add_shape': {

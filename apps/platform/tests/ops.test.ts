@@ -125,16 +125,28 @@ describe('doc_edit 操作', () => {
 })
 
 describe('守卫', () => {
-  it('冲突：用户在 base_rev 之后改过的块，AI 不能改；用户改不受限', () => {
+  it('冲突：用户在 base_rev 之后改过的块，AI 不能整块改；用户改不受限', () => {
     const { docs, ops, docId } = setup(SAMPLE)
     const [, p1, , p2] = ids(docs, docId)
     ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '常见', replace: '少见' }] }, { actor: 'user', turnId: null })
-    const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '常见', replace: '高发' }] }, { actor: 'ai', turnId: null }), 'conflict_user_edited')
+    const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p1!, markdown: '心力衰竭是高发疾病。' }] }, { actor: 'ai', turnId: null }), 'conflict_user_edited')
     expect(JSON.stringify(e.extra.current)).toContain('少见')
     // 别的块不受影响；用新 rev 后可以改
     ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p2!, markdown: '- 改写项' }] }, { actor: 'ai', turnId: null })
-    ops.edit({ doc_id: docId, base_rev: 2, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '少见', replace: '高发' }] }, { actor: 'ai', turnId: null })
+    ops.edit({ doc_id: docId, base_rev: 2, mode: 'apply', ops: [{ op: 'replace_block', id: p1!, markdown: '心力衰竭是高发疾病。' }] }, { actor: 'ai', turnId: null })
     expect(docs.get(docId).textContent).toContain('高发')
+  })
+
+  it('replace_text 以原文为守卫：旧 rev 也能改（原文还在），原文被用户改掉则匹配不上', () => {
+    const { docs, ops, docId } = setup(SAMPLE)
+    const [, p1] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '心力衰竭', replace: '心衰' }] }, { actor: 'user', turnId: null })
+    // 用户改的是别的字：AI 按原文改仍然成功
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '常见', replace: '高发' }] }, { actor: 'ai', turnId: null })
+    expect(docs.get(docId).child(1).textContent).toBe('心衰是高发疾病。')
+    // 用户改掉的原文：匹配不上，返回当前内容供重读
+    const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '心力衰竭', replace: 'HF' }] }, { actor: 'ai', turnId: null }), 'text_not_found')
+    expect(JSON.stringify(e.extra.current)).toContain('心衰')
   })
 
   it('引用：DOI、手写参考文献、未登记的 cite_id 被拒绝', () => {
@@ -149,33 +161,29 @@ describe('守卫', () => {
     expect(exportMarkdown(docs.get(docId), store.listCitations(docId))).toContain('获益[1]')
   })
 
-  it('锚点：会移除 open 评论锚点的修改需要 ack', () => {
+  it('锚点：被锚定的文字全部被改掉、或整块删除，需要 ack', () => {
     const { store, docs, ops, docId } = setup(SAMPLE)
     const [, p1] = ids(docs, docId)
     const comment = store.addComment({ doc_id: docId, node_id: p1!, snippet: '常见' })
     const anchored = attachComment(docs.get(docId), p1!, '常见', comment.id)
     docs.commit(docId, anchored.doc, { actor: 'user', turnId: null, ops: [] })
     store.addReply(comment.id, 'user', '这里改成具体发病率')
-    // 在被评论文字内部替换：锚点保留，允许
-    ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '常见', replace: '约 2% 成人罹患的' }] }, { actor: 'ai', turnId: null })
-    // 匹配跨出评论范围：锚点精确落回被锚定的文字，不随替换扩张
-    ops.edit({ doc_id: docId, base_rev: 2, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '罹患的疾病', replace: '罹患的慢性病' }] }, { actor: 'ai', turnId: null })
-    const anchoredText = [...docs.get(docId).child(1).content.content].filter(n => n.marks.some(m => m.type.name === 'comment')).map(n => n.text).join('')
-    expect(anchoredText).toBe('约 2% 成人罹患的')
-    // 删除整段：锚点消失，必须 ack
-    expectOpError(() => ops.edit({ doc_id: docId, base_rev: 3, mode: 'apply', ops: [{ op: 'delete', ids: [p1!] }] }, { actor: 'ai', turnId: null }), 'anchor_has_open_comments')
-    ops.edit({ doc_id: docId, base_rev: 3, mode: 'apply', ack_comments: [comment.id], ops: [{ op: 'delete', ids: [p1!] }] }, { actor: 'ai', turnId: null })
+    // 被锚定的两个字全被换掉：锚点消失，拦下
+    expectOpError(() => ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p1!, find: '常见', replace: '约 2% 成人罹患的' }] }, { actor: 'ai', turnId: null }), 'anchor_has_open_comments')
+    // 删除整段：同样必须 ack
+    expectOpError(() => ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'delete', ids: [p1!] }] }, { actor: 'ai', turnId: null }), 'anchor_has_open_comments')
+    ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ack_comments: [comment.id], ops: [{ op: 'delete', ids: [p1!] }] }, { actor: 'ai', turnId: null })
   })
 })
 
-describe('锚点跟随替换', () => {
+describe('评论锚点：最小 diff 下的跟随（与 Claude Docs 一致）', () => {
   function withComment(text: string, snippet: string) {
     const env = setup(text)
     const [p1] = ids(env.docs, env.docId)
     const c = env.store.addComment({ doc_id: env.docId, node_id: p1!, snippet })
     env.docs.commit(env.docId, attachComment(env.docs.get(env.docId), p1!, snippet, c.id).doc, { actor: 'user', turnId: null, ops: [] })
     const anchored = () => [...env.docs.get(env.docId).child(0).content.content].filter(n => n.marks.some(m => m.type.name === 'comment')).map(n => n.text).join('')
-    return { ...env, p1: p1!, anchored }
+    return { ...env, p1: p1!, comment: c, anchored }
   }
 
   it('保留原文再补充：锚点精确保留，无需 ack', () => {
@@ -184,10 +192,88 @@ describe('锚点跟随替换', () => {
     expect(t.anchored()).toBe('GLP-1 受体激动剂')
   })
 
-  it('被锚定的文字整体改写：锚点跟到新文字', () => {
+  it('部分改写：锚点收缩到保留下来的字，不随替换扩张', () => {
     const t = withComment('心衰很常见。', '很常见')
-    t.ops.edit({ doc_id: t.docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: t.p1, find: '很常见。', replace: '约影响 2% 的成人。' }] }, { actor: 'ai', turnId: null })
-    expect(t.anchored()).toBe('约影响 2% 的成人。')
+    t.ops.edit({ doc_id: t.docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: t.p1, find: '很常见。', replace: '很少见。' }] }, { actor: 'ai', turnId: null })
+    expect(t.docs.get(t.docId).child(0).textContent).toBe('心衰很少见。')
+    expect(t.anchored()).toBe('很见')
+  })
+
+  it('被锚定的文字整体改写：普通回合被拦下；正在回答这条评论的回合重新锚定到整段', () => {
+    const t = withComment('心衰很常见。', '很常见')
+    const op = { op: 'replace_text' as const, id: t.p1, find: '很常见。', replace: '约影响 2% 的成人。' }
+    expectOpError(() => t.ops.edit({ doc_id: t.docId, base_rev: 1, mode: 'apply', ops: [op] }, { actor: 'ai', turnId: null }), 'anchor_has_open_comments')
+    t.ops.edit({ doc_id: t.docId, base_rev: 1, mode: 'apply', ops: [op] }, { actor: 'ai', turnId: null, answering: t.comment.id })
+    expect(t.anchored()).toBe('心衰约影响 2% 的成人。')
+    expect(t.store.getComment(t.docId, t.comment.id)!.status).toBe('open')
+  })
+
+  it('正在回答的评论不豁免别的评论', () => {
+    const t = withComment('心衰很常见。', '很常见')
+    const other = t.store.addComment({ doc_id: t.docId, node_id: t.p1, snippet: '心衰' })
+    t.docs.commit(t.docId, attachComment(t.docs.get(t.docId), t.p1, '心衰', other.id).doc, { actor: 'user', turnId: null, ops: [] })
+    expectOpError(() => t.ops.edit({ doc_id: t.docId, base_rev: 2, mode: 'apply', ops: [{ op: 'replace_block', id: t.p1, markdown: 'HF 约影响 2% 的成人。' }] }, { actor: 'ai', turnId: null, answering: t.comment.id }), 'anchor_has_open_comments')
+  })
+})
+
+describe('replace_text 匹配', () => {
+  it('最小 diff：只改变化的字，格式与引用保留', () => {
+    const { store, docs, ops, docId } = setup('占位。')
+    const c = store.upsertCitation({ doc_id: docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    const [p] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p!, markdown: `心衰是**常见**疾病[@c:${c.id}]，预后差。` }] }, { actor: 'user', turnId: null })
+    ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [
+      { op: 'replace_text', id: p!, find: '是常见疾病', replace: '是常见慢性疾病' },
+      { op: 'replace_text', id: p!, find: '预后差', replace: '预后较差' },
+    ] }, { actor: 'ai', turnId: null })
+    const node = docs.get(docId).child(0)
+    expect(node.textContent).toBe('心衰是常见慢性疾病，预后较差。')
+    let bold = '', cites = 0
+    node.forEach(n => { if (n.marks.some(m => m.type.name === 'bold')) bold += n.text; if (n.type.name === 'citation') cites++ })
+    expect(bold).toBe('常见')
+    expect(cites).toBe(1)
+  })
+
+  it('多处匹配：拒绝并列出每处上下文；带 occurrence 即可改指定一处', () => {
+    const { docs, ops, docId } = setup('风险降低，死亡风险降低。')
+    const [p] = ids(docs, docId)
+    const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: '风险降低', replace: '风险下降' }] }, { actor: 'ai', turnId: null }), 'ambiguous_match')
+    expect((e.extra.current as { matches: unknown[] }).matches).toHaveLength(2)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: '风险降低', replace: '风险下降', occurrence: 2 }] }, { actor: 'ai', turnId: null })
+    expect(docs.get(docId).child(0).textContent).toBe('风险降低，死亡风险下降。')
+  })
+
+  it('大小写不同：唯一时回退为不区分大小写匹配', () => {
+    const { docs, ops, docId } = setup('The SELECT trial enrolled patients.')
+    const [p] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: 'select trial', replace: 'SELECT 试验' }] }, { actor: 'ai', turnId: null })
+    expect(docs.get(docId).child(0).textContent).toBe('The SELECT 试验 enrolled patients.')
+  })
+
+  it('空白不一致：不猜，返回近似候选', () => {
+    const { docs, ops, docId } = setup('HR 0.80 (95% CI 0.72-0.90).')
+    const [p] = ids(docs, docId)
+    const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: 'HR  0.80', replace: 'HR 0.81' }] }, { actor: 'ai', turnId: null }), 'text_not_found')
+    expect(JSON.stringify((e.extra.current as { near: unknown[] }).near)).toContain('HR 0.80')
+    expect(docs.get(docId).child(0).textContent).toBe('HR 0.80 (95% CI 0.72-0.90).')
+  })
+})
+
+describe('评论锚点颗粒度（doc）', () => {
+  it('段落内的文字可锚定（大小写不敏感回退）；跨块、不在块内的文字拒绝', async () => {
+    const { AnchorError } = await import('../src/model/anchors.ts')
+    const { docs, docId } = setup(SAMPLE)
+    const doc = docs.get(docId)
+    const [, p1, , list] = ids(docs, docId)
+    expect(attachComment(doc, p1!, '常见疾病', 'c1').snippet).toBe('常见疾病')
+    expect(() => attachComment(doc, p1!, '常见疾病\n\n方法', 'c2')).toThrow(AnchorError)
+    expect(() => attachComment(doc, p1!, '第一项', 'c3')).toThrow(AnchorError)
+    // 非文本块（列表）只能整块评论
+    expect(() => attachComment(doc, list!, '第一项', 'c4')).toThrow(AnchorError)
+    const whole = attachComment(doc, list!, '', 'c5').doc
+    let marked = ''
+    whole.descendants(n => { if (n.isText && n.marks.some(m => m.attrs.thread === 'c5')) marked += n.text; return true })
+    expect(marked).toBe('第一项第二项')
   })
 })
 
@@ -226,5 +312,28 @@ describe('replace_text 跨引用标记', () => {
     ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p!, markdown: `风险降低[@c:${c.id}]。` }] }, { actor: 'user', turnId: null })
     const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: '风险降低。', replace: '风险显著降低。' }] }, { actor: 'ai', turnId: null }), 'text_not_found')
     expect(e.extra.hint).toContain('引用标记')
+  })
+})
+
+describe('格式写入回归', () => {
+  it('带格式的 replace_text 追加句子：新句子不被匹配起点的粗体染上', () => {
+    const { store, docs, ops, docId } = setup('占位。')
+    const c = store.upsertCitation({ doc_id: docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    const [p] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p!, markdown: `HR **0.80（95% CI 0.72–0.90）**[@c:${c.id}]。` }] }, { actor: 'user', turnId: null })
+    ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: `**0.80（95% CI 0.72–0.90）**[@c:${c.id}]。`, replace: `**0.80（95% CI 0.72–0.90）**[@c:${c.id}]。结论不宜外推。` }] }, { actor: 'ai', turnId: null })
+    expect(read({ doc: docs.get(docId), docId, rev: 0, comments: [] })).toContain(`HR **0.80（95% CI 0.72–0.90）**[@c:${c.id}]。结论不宜外推。`)
+  })
+
+  it('引用之后的文字只改格式：Yjs 里同样生效', () => {
+    const { docs, docId } = setup('占位。')
+    const [p] = ids(docs, docId)
+    const b = schema.marks.bold!.create()
+    const cm = schema.marks.comment!.create({ thread: 't1' })
+    const cite = schema.nodes.citation!.create({ cite_id: 'cx' })
+    const mk = (tail: Parameters<typeof schema.text>[1]) => schema.node('doc', null, [schema.node('paragraph', { id: p }, [schema.text('HR ', [cm]), schema.text('0.80', [b, cm]), cite, schema.text('。尾。', tail)])])
+    docs.commit(docId, mk([b]), { actor: 'user', turnId: null, ops: [] })
+    docs.commit(docId, mk([cm]), { actor: 'user', turnId: null, ops: [] })
+    expect(docs.get(docId).eq(mk([cm]))).toBe(true)
   })
 })

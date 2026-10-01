@@ -143,20 +143,47 @@ describe('deck：导出 XML 结构', () => {
 })
 
 describe('deck：评论锚点', () => {
-  it('选区跨段落与换行（浏览器选区带换行）也能锚定，标记用 deck 自己的 schema', async () => {
-    const { attachComment, locate } = await import('../src/model/anchors.ts')
+  it('最小颗粒度：形状里的某一段（含换行）或整个形状；跨段落拒绝；标记用 deck 自己的 schema', async () => {
+    const { attachComment, locate, AnchorError } = await import('../src/model/anchors.ts')
     const { deckSchema } = await import('../src/model/deck-schema.ts')
     const t = newDeck()
     t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, title: 'SELECT 试验', body: '- x' }] }, { actor: 'ai', turnId: null })
     const title = shapesOf(t, 1).find(s => s.ph === 'title')!.id
     // 标题形状里放两段，第二段带换行
     t.ops.edit({ doc_id: t.docId, base_rev: 1, mode: 'apply', ops: [{ op: 'set_text', shape_id: title, markdown: 'SELECT 试验\n\n司美格鲁肽用于无糖尿病的<br>超重/肥胖心血管病患者' }] }, { actor: 'user', turnId: null })
+    const doc = t.docs.get(t.docId)
+    const marked = (d: typeof doc, thread: string) => {
+      let s = ''
+      d.descendants(n => { if (n.isText && n.marks.some(m => m.type === deckSchema.marks.comment && m.attrs.thread === thread)) s += n.text; return true })
+      return s
+    }
+    // 跨段落：拒绝
+    expect(() => attachComment(doc, title, 'SELECT 试验\n司美格鲁肽用于无糖尿病的', 'x1')).toThrow(AnchorError)
+    // 第 2 段内、跨换行：可以
+    const inPara = attachComment(doc, title, '无糖尿病的\n超重', 'x2', 1)
+    expect(marked(inPara.doc, 'x2')).toBe('无糖尿病的超重')
+    // 段落序号与文字不符：拒绝
+    expect(() => attachComment(doc, title, '无糖尿病', 'x3', 0)).toThrow(AnchorError)
+    // 整个形状
     const c = t.store.addComment({ doc_id: t.docId, node_id: title, snippet: '' })
-    const anchored = attachComment(t.docs.get(t.docId), title, 'SELECT 试验\n司美格鲁肽用于无糖尿病的\n超重/肥胖心血管病患者', c.id)
-    t.docs.commit(t.docId, anchored.doc, { actor: 'user', turnId: null, ops: [] })
-    let marked = ''
-    t.docs.get(t.docId).descendants(n => { if (n.isText && n.marks.some(m => m.type === deckSchema.marks.comment)) marked += n.text; return true })
-    expect(marked).toBe('SELECT 试验司美格鲁肽用于无糖尿病的超重/肥胖心血管病患者')
-    expect(locate(t.docs.get(t.docId), { ...c, snippet: 'x' }).located).toBe(true)
+    const whole = attachComment(doc, title, '', c.id)
+    expect(marked(whole.doc, c.id)).toBe('SELECT 试验司美格鲁肽用于无糖尿病的超重/肥胖心血管病患者')
+    t.docs.commit(t.docId, whole.doc, { actor: 'user', turnId: null, ops: [] })
+    expect(locate(t.docs.get(t.docId), c).located).toBe(true)
+  })
+
+  it('整形状评论：形状文字整体改写后标记补回整个形状，不被拦下；删形状才需要 ack', async () => {
+    const { attachComment, locate } = await import('../src/model/anchors.ts')
+    const t = newDeck()
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, title: 'SELECT 试验', body: '- x' }] }, { actor: 'ai', turnId: null })
+    const title = shapesOf(t, 1).find(s => s.ph === 'title')!.id
+    const c = t.store.addComment({ doc_id: t.docId, node_id: title, snippet: '' })
+    t.docs.commit(t.docId, attachComment(t.docs.get(t.docId), title, '', c.id).doc, { actor: 'user', turnId: null, ops: [] })
+    const op = { op: 'set_text' as const, shape_id: title, markdown: 'The SELECT trial' }
+    t.ops.edit({ doc_id: t.docId, base_rev: 2, mode: 'apply', ops: [op] }, { actor: 'ai', turnId: null })
+    const loc = locate(t.docs.get(t.docId), c)
+    expect(loc.located).toBe(true)
+    expect(loc.text).toBe('The SELECT trial')
+    expect(() => t.ops.edit({ doc_id: t.docId, base_rev: 3, mode: 'apply', ops: [{ op: 'delete_shape', shape_id: title }] }, { actor: 'ai', turnId: null })).toThrow(/open 评论/)
   })
 })
