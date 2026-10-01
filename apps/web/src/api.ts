@@ -61,6 +61,7 @@ export interface Projection { nodes?: ProjectionNode[]; slides?: ProjectionSlide
 
 export const api = {
   listDocs: () => fetch('/api/docs', { headers: auth }).then(r => json<Doc[]>(r)),
+  deleteDoc: (id: string) => fetch(`/api/docs/${id}`, { method: 'DELETE', headers: auth }).then(r => json<{ ok: boolean }>(r)),
   getDoc: (id: string) => fetch(`/api/docs/${id}`, { headers: auth }).then(r => json<DocDetail>(r)),
   createDoc: (input: { title: string; kind: DocKind } | { file: File }) => {
     const form = new FormData()

@@ -209,6 +209,14 @@ export class Store {
     return this.db.prepare('SELECT * FROM docs ORDER BY updated_at DESC').all() as unknown as DocRow[]
   }
 
+  /** 删除文档（versions/messages/citations/comments/projections 随 FK 级联）。 */
+  deleteDoc(id: string): boolean {
+    const doc = this.getDoc(id)
+    if (!doc) return false
+    this.db.prepare('DELETE FROM docs WHERE id = ?').run(id)
+    return true
+  }
+
   setSession(docId: string, sessionId: string): void {
     this.db.prepare('UPDATE docs SET session_id = ?, updated_at = ? WHERE id = ?').run(sessionId, now(), docId)
   }

@@ -53,6 +53,16 @@ export function buildApi(deps: ApiDeps): Hono {
     return c.json(store.getDoc(doc.id), 201)
   })
 
+  app.delete('/api/docs/:id', c => {
+    const docId = c.req.param('id')
+    if (!store.getDoc(docId)) return c.json({ error: 'not found' }, 404)
+    if (pool.isBusy(docId)) return c.json({ error: 'AI 正在编辑这份文档' }, 409)
+    void pool.cancel(docId) // dsh 进程一起回收
+    store.deleteDoc(docId)
+    files.deleteDocFiles(docId)
+    return c.json({ ok: true })
+  })
+
   app.get('/api/docs/:id', c => {
     const doc = store.getDoc(c.req.param('id'))
     if (!doc) return c.json({ error: 'not found' }, 404)

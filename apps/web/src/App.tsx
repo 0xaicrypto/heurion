@@ -25,17 +25,23 @@ export function App() {
 
   return (
     <div className="shell">
-      <Sidebar docs={docs} activeId={activeId} onSelect={setActiveId} onCreated={d => { void refreshDocs(); setActiveId(d.id) }} />
+      <Sidebar docs={docs} activeId={activeId} onSelect={setActiveId} onCreated={d => { void refreshDocs(); setActiveId(d.id) }} onChanged={refreshDocs} />
       {activeId ? <Workspace key={activeId} docId={activeId} onChanged={refreshDocs} /> : <div className="empty">选择或新建一份文档</div>}
     </div>
   )
 }
 
-function Sidebar({ docs, activeId, onSelect, onCreated }: {
-  docs: Doc[]; activeId: string | null; onSelect: (id: string) => void; onCreated: (d: Doc) => void
+function Sidebar({ docs, activeId, onSelect, onCreated, onChanged }: {
+  docs: Doc[]; activeId: string | null; onSelect: (id: string | null) => void; onCreated: (d: Doc) => void; onChanged: () => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const create = async (kind: DocKind) => onCreated(await api.createDoc({ title: kind === 'docx' ? '新文档' : '新幻灯片', kind }))
+  const remove = async (id: string, title: string) => {
+    if (!confirm(`删除「${title}」？版本与评论一并删除，不可恢复。`)) return
+    await api.deleteDoc(id)
+    if (activeId === id) onSelect(null)
+    onChanged()
+  }
   return (
     <aside className="sidebar">
       <h1><span className="logo">H</span>Heurion 2.0</h1>
@@ -51,12 +57,13 @@ function Sidebar({ docs, activeId, onSelect, onCreated }: {
       </div>
       <ul className="doclist">
         {docs.map(d => (
-          <li key={d.id}>
+          <li key={d.id} className="doc-item">
             <button className={d.id === activeId ? 'active' : ''} onClick={() => onSelect(d.id)}>
               <span className={`badge ${d.kind}`}>{d.kind === 'docx' ? 'W' : 'P'}</span>
               <span className="doc-title">{d.title}</span>
               <span className="muted">v{d.head_seq}</span>
             </button>
+            <button className="doc-del" title="删除文档" onClick={e => { e.stopPropagation(); void remove(d.id, d.title) }}>×</button>
           </li>
         ))}
       </ul>

@@ -57,6 +57,12 @@ export class DocFiles {
     return dir
   }
 
+  /** 删除文档的全部文件（工作区 + 版本库目录）。 */
+  deleteDocFiles(docId: string): void {
+    rmSync(join(this.workspacesDir, docId), { recursive: true, force: true })
+    rmSync(join(this.versionsDir, docId), { recursive: true, force: true })
+  }
+
   workspaceFile(docId: string, kind: DocKind): string {
     return join(this.workspaceDir(docId), canonicalFileName(kind))
   }
