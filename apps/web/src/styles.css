@@ -69,6 +69,24 @@ a { color: var(--accent); }
 .editor-overlay { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
 .editor-overlay header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .editor-frame { flex: 1; border: none; width: 100%; }
+/* 评审面（S5）：diff 三态 + deck 画布 + 锚点两态 */
+.diff, .slide { list-style: none; margin: 0 0 14px; padding: 0; }
+.diff { font-size: 12px; }
+.diff li { padding: 4px 8px; border-radius: 4px; margin-bottom: 2px; }
+.diff li > span { display: inline-block; width: 14px; opacity: .7; }
+.diff-added { background: rgba(34, 197, 94, .16); color: var(--ok); }
+.diff-removed { background: rgba(239, 68, 68, .14); color: var(--danger); text-decoration: line-through; }
+.diff-modified { background: var(--soft); color: var(--accent); }
+.slide { margin-bottom: 10px; }
+.slide-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.slide-canvas { position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); overflow: hidden; }
+.shape { position: absolute; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font-size: 11px; overflow: hidden; background: color-mix(in srgb, var(--surface) 85%, var(--soft)); }
+.shape.diff-added { border: 2px solid var(--ok); }
+.shape.diff-removed { border: 2px solid var(--danger); opacity: .5; }
+.shape.diff-modified { border: 2px solid var(--accent); }
+.shape.anchor { border: 2px solid var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.shape.anchor-drift { border: 2px solid var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }
+.diff-tag { position: absolute; top: 2px; right: 2px; font-size: 9px; padding: 0 4px; border-radius: 999px; background: var(--soft); color: var(--muted); }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--border); }

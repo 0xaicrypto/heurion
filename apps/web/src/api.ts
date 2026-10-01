@@ -33,6 +33,7 @@ export type UiEvent =
   | { type: 'citation_audit'; ok: boolean; unregisteredDois: string[] }
   | { type: 'id_survival_warning'; rate: number }
   | { type: 'comment_updates'; updated: string[]; drifted: string[] }
+  | { type: 'merge_result'; applied: string[]; overridden: Array<{ id: string; text: string }> }
   | { type: 'error'; message: string }
   | { type: 'done' }
 
@@ -44,6 +45,17 @@ async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)
   return res.json() as Promise<T>
 }
+
+export interface ProjectionNode {
+  id: string
+  kind: 'heading' | 'paragraph' | 'list' | 'table' | 'opaque'
+  level?: number
+  text: string
+  geometry?: { x: number; y: number; w: number; h: number; rot?: number }
+  locked?: boolean
+}
+export interface ProjectionSlide { id: string; index: number; shapes: ProjectionNode[] }
+export interface Projection { nodes?: ProjectionNode[]; slides?: ProjectionSlide[] }
 
 export const api = {
   listDocs: () => fetch('/api/docs', { headers: auth }).then(r => json<Doc[]>(r)),
@@ -61,6 +73,8 @@ export const api = {
 
   listComments: (id: string) => fetch(`/api/docs/${id}/comments`, { headers: auth }).then(r => json<{ comments: Comment[] }>(r)),
   getEditor: (id: string) => fetch(`/api/docs/${id}/editor`, { headers: auth }).then(r => json<{ urlsrc: string; access_token: string; wopisrc: string }>(r)),
+  getProjection: (id: string, seq?: number) =>
+    fetch(`/api/docs/${id}/projection${seq ? `?seq=${seq}` : ''}`, { headers: auth }).then(r => json<{ seq: number; projection: Projection }>(r)),
   createComment: (id: string, input: { text_snippet?: string; text?: string }) =>
     fetch(`/api/docs/${id}/comments`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }).then(r => json<Comment>(r)),
   replyComment: (id: string, cid: string, text: string) =>

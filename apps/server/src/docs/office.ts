@@ -41,7 +41,7 @@ export interface IdStats { assigned: number; reassigned: number }
 export const ID_SURVIVAL_WARN = 0.8
 
 const W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml'
-const DOC_XML = 'word/document.xml'
+export const DOC_XML = 'word/document.xml'
 
 const decodeXml = (s: string) =>
   s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
@@ -520,4 +520,61 @@ export function diffProjectionOps(
   const removed = flat(prev).filter(n => !nextIds.has(n.id)).map(n => n.id)
   if (added.length === 0 && removed.length === 0 && modified.length === 0) return null
   return { added, removed, modified }
+}
+
+// —— S5 三方合并的段落级手术原语（整元素拼接，未触碰内容零损失） ——
+
+/** 定位某 paraId 的完整 <w:p> 元素（深度计数，容忍段落内嵌套 w:p，如文本框）。 */
+export function paragraphSpan(xml: string, paraId: string): { start: number; end: number; element: string } | null {
+  const it = tokenize(xml)
+  for (const tok of it) {
+    if (tok.t === 'open' && tok.name === 'w:p' && tok.attrs['w14:paraId'] === paraId) {
+      let depth = 1
+      for (const t2 of it) {
+        if (t2.t === 'open' && t2.name === 'w:p') depth++
+        else if (t2.t === 'close' && t2.name === 'w:p') {
+          depth--
+          if (depth === 0) return { start: tok.at, end: t2.end, element: xml.slice(tok.at, t2.end) }
+        }
+      }
+      return null
+    }
+  }
+  return null
+}
+
+function rewriteDocumentXml(bytes: Uint8Array, mutate: (xml: string) => string | null): Uint8Array {
+  const all = unzipSync(bytes)
+  const entry = all[DOC_XML]
+  if (!entry) return bytes
+  const next = mutate(strFromU8(entry))
+  if (next === null) return bytes
+  return zipSync({ ...all, [DOC_XML]: strToU8(next) })
+}
+
+/** 用 srcElement 替换目标段落（AI 对未触碰节点的修改落到用户 head 上）。 */
+export function spliceReplaceParagraph(bytes: Uint8Array, paraId: string, srcElement: string): Uint8Array {
+  return rewriteDocumentXml(bytes, xml => {
+    const span = paragraphSpan(xml, paraId)
+    if (!span) return null
+    return xml.slice(0, span.start) + srcElement + xml.slice(span.end)
+  })
+}
+
+/** 删除目标段落。 */
+export function spliceDeleteParagraph(bytes: Uint8Array, paraId: string): Uint8Array {
+  return rewriteDocumentXml(bytes, xml => {
+    const span = paragraphSpan(xml, paraId)
+    if (!span) return null
+    return xml.slice(0, span.start) + xml.slice(span.end)
+  })
+}
+
+/** 在目标段落之后插入新段落元素（AI 新增节点落到用户 head 上）。 */
+export function spliceInsertAfter(bytes: Uint8Array, afterParaId: string, srcElement: string): Uint8Array {
+  return rewriteDocumentXml(bytes, xml => {
+    const span = paragraphSpan(xml, afterParaId)
+    if (!span) return null
+    return xml.slice(0, span.end) + srcElement + xml.slice(span.end)
+  })
 }

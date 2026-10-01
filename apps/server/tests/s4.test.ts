@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
@@ -92,37 +92,68 @@ describe('用户保存提取 user_ops（S5 合并输入）', () => {
   })
 })
 
-describe('AI 回合期间用户推进 → 拒落版（TurnService 守护）', () => {
-  it('head 被 user 保存推进后，AI 回合不落版且工作区回到 head', async () => {
-    // 正文同 user_ops 用例
-    const body = '<w:p><w:r><w:t>一</w:t></w:r></w:p><w:p><w:r><w:t>二</w:t></w:r></w:p>'
+describe('AI 回合期间用户推进（S5：docx 三方合并 / deck 丢弃）', () => {
+  function makePool(files: DocFiles, aiText: string, userText: string) {
+    return {
+      isBusy: () => false,
+      liveSession: () => 's',
+      run: async (_docId: string, _prompt: string, onNotification: (n: unknown, s: string) => void) => {
+        // 模拟 dsh 改工作区文件的同时，用户保存推进 head
+        writeFileSync(files.workspaceFile('d', 'docx'), docx(`<w:p><w:r><w:t>${aiText}</w:t></w:r></w:p>`))
+        files.saveUserSave('d', docx(`<w:p><w:r><w:t>${userText}</w:t></w:r></w:p>`), '用户保存')
+        return { sessionId: 's', finalResponse: '完成', events: [] }
+      },
+      close: async () => {},
+    }
+  }
+
+  it('docx：AI 的未锚定新增节点被覆盖记录（用户赢），合并版落库', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'h2-guard-'))
     const store = new Store(':memory:')
     const files = new DocFiles(store, join(dir, 'ws'), join(dir, 'versions'))
     store.createDoc('d', 'Paper', 'docx')
+    const body = '<w:p><w:r><w:t>一</w:t></w:r></w:p><w:p><w:r><w:t>二</w:t></w:r></w:p>'
+
+    const { TurnService } = await import('../src/docs/turn.ts')
+    const events: unknown[] = []
+    const pool = makePool(files, 'AI 的新版本', '用户抢先保存')
+    const turns = new TurnService(store, files, pool as never)
+    files.importUpload('d', 'docx', docx(body))
+
+    await turns.run('d', '帮我改', e => events.push(e))
+    const merge = events.find(e => (e as { type: string }).type === 'merge_result') as { overridden: Array<{ text: string }> } | undefined
+    expect(merge?.overridden.some(o => o.text.includes('AI 的新版本'))).toBe(true) // 用户赢
+    // 合并版落库：v3 字节 = 用户 v2 字节（AI 无可落地改动）
+    expect(store.getDoc('d')!.head_seq).toBe(3)
+    const v3 = strFromU8(unzipSync(files.readVersion('d', 3))['word/document.xml']!)
+    expect(v3).toContain('用户抢先保存')
+    expect(v3).not.toContain('AI 的新版本')
+  })
+
+  it('pptx：形状级并行暂缓 → 维持丢弃 + 提示', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'h2-guard2-'))
+    const store = new Store(':memory:')
+    const files = new DocFiles(store, join(dir, 'ws'), join(dir, 'versions'))
+    store.createDoc('d', 'Deck', 'pptx')
 
     const { TurnService } = await import('../src/docs/turn.ts')
     const events: unknown[] = []
     const pool = {
       isBusy: () => false,
       liveSession: () => 's',
-      run: async (_docId: string, _prompt: string, onNotification: (n: unknown, s: string) => void) => {
-        // 模拟 dsh 改工作区文件的同时，用户保存推进 head
-        writeFileSync(files.workspaceFile('d', 'docx'), docx('<w:p><w:r><w:t>AI 的新版本</w:t></w:r></w:p>'))
-        files.saveUserSave('d', docx('<w:p><w:r><w:t>用户抢先保存</w:t></w:r></w:p>'), '用户保存')
+      run: async () => {
+        writeFileSync(files.workspaceFile('d', 'pptx'), zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>') }))
+        files.saveUserSave('d', zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>') }), '用户保存')
         return { sessionId: 's', finalResponse: '完成', events: [] }
       },
       close: async () => {},
     }
     const turns = new TurnService(store, files, pool as never)
-    files.importUpload('d', 'docx', docx(body))
+    files.importUpload('d', 'pptx', zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld/>') }))
 
     await turns.run('d', '帮我改', e => events.push(e))
     const errors = events.filter(e => (e as { type: string }).type === 'error') as Array<{ message: string }>
     expect(errors.some(e => e.message.includes('手动更新') && e.message.includes('已丢弃'))).toBe(true)
-    // 工作区回到 head（用户版本），AI 改动被重置
-    expect(readFileSync(files.workspaceFile('d', 'docx'))).toEqual(files.readVersion('d', 2))
-    // AI 没落新版本：head 仍是用户的 v2
     expect(store.getDoc('d')!.head_seq).toBe(2)
     expect(store.listVersions('d')).toHaveLength(2)
   })

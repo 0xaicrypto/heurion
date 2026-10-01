@@ -12,6 +12,7 @@ export type UiEvent =
   | { type: 'citation_audit'; ok: boolean; unregisteredDois: string[] }
   | { type: 'id_survival_warning'; rate: number }
   | { type: 'comment_updates'; updated: string[]; drifted: string[] }
+  | { type: 'merge_result'; applied: string[]; overridden: Array<{ id: string; text: string }> }
   | { type: 'error'; message: string }
 
 interface Block { type: string; text?: string; id?: string; name?: string; arguments?: string }

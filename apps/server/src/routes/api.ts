@@ -172,7 +172,7 @@ export function buildApi(deps: ApiDeps): Hono {
       `3. 若修改涉及检索文献，按引用规范走 pubmed_search / insert_citation；\n` +
       `4. 完成后用 reply_comment 在线程内说明改了什么、改在哪；确实无需改动才允许 resolve_comment。\n` +
       `只处理这一条评论，不要动它以外的内容。`
-    return streamTurn(c, deps, docId, prompt)
+    return streamTurn(c, deps, docId, prompt, { commentId: cid })
   })
 
   app.post('/api/docs/:id/cancel', async c => {
@@ -184,14 +184,14 @@ export function buildApi(deps: ApiDeps): Hono {
 }
 
 /** 聊天与评论触发共用的 SSE 回合管线。 */
-function streamTurn(c: Context, deps: ApiDeps, docId: string, message: string) {
+function streamTurn(c: Context, deps: ApiDeps, docId: string, message: string, opts: { commentId?: string } = {}) {
   const { turns } = deps
   return streamSSE(c, async stream => {
     // 串行写入并在结束前等待全部写完：否则回调返回、流关闭时未写出的事件会丢失
     let writes = Promise.resolve()
     const emit = (e: unknown) => { writes = writes.then(() => stream.writeSSE({ data: JSON.stringify(e) })) }
     try {
-      await turns.run(docId, message, emit)
+      await turns.run(docId, message, emit, opts)
     } catch (err) {
       console.error('[chat] turn failed', err)
       emit({ type: 'error', message: err instanceof BusyError ? err.message : String((err as Error).message ?? err) })

@@ -109,6 +109,13 @@ export class DocFiles {
     return this.saveVersion(docId, doc.kind, bytes, 'ai', note)
   }
 
+  /** S5：三方合并后的 AI 版本直接落库（字节已合并好，不依赖工作区）。 */
+  landMerged(docId: string, bytes: Uint8Array, note: string): VersionRow {
+    const doc = this.store.getDoc(docId)
+    if (!doc) throw new Error(`doc ${docId} not found`)
+    return this.saveVersion(docId, doc.kind, bytes, 'ai', note)
+  }
+
   /** 回滚 = 把旧版本复制成新的 head 版本（历史只增不改）。 */
   restore(docId: string, seq: number): VersionRow {
     const doc = this.store.getDoc(docId)

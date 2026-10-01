@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { ID_SURVIVAL_WARN } from './office.ts'
+import { ID_SURVIVAL_WARN, buildProjection, ensureDocxParaIds } from './office.ts'
+import { mergeAiOpsOntoHead } from './merge.ts'
 import type { Store } from '../db.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
 import type { HarnessPool } from '../harness/pool.ts'
@@ -19,7 +20,8 @@ export class TurnService {
     private readonly pool: HarnessPool,
   ) {}
 
-  async run(docId: string, message: string, emit: (e: UiEvent) => void): Promise<void> {
+  async run(docId: string, message: string, emit: (e: UiEvent) => void, opts: { commentId?: string } = {}): Promise<void> {
+    const commentId = opts.commentId
     const doc = this.store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
     if (this.pool.isBusy(docId)) throw new BusyError('AI 正在编辑这份文档')
@@ -67,12 +69,35 @@ export class TurnService {
       emit({ type: 'error', message: '引用校验仍未通过，本轮文件改动已丢弃。' })
       return
     }
-    // 用户优先（DESIGN.md §4.3 的另一半）：回合开始后用户手动保存推进了 head
-    // → AI 是基于旧基线改的，直接落版会覆盖用户改动 → 拒绝落版、提示重试。
+    // 用户优先（DESIGN.md §4.3）：回合开始后用户手动保存推进了 head。
+    // - docx：三方合并 —— AI 变更重放到用户 head 上（同节点用户赢），合并结果落 AI 版本；
+    // - pptx：形状级并行暂缓（#6）→ 维持丢弃 + 提示。
     const headNow = this.store.getDoc(docId)!.head_seq
     if (headNow !== baseSeq) {
-      this.files.materializeHead(docId)
-      emit({ type: 'error', message: `回合期间文档被手动更新（当前 v${headNow}），本轮 AI 改动已丢弃，请基于新版本重试。` })
+      const merged = doc.kind === 'docx' ? this.mergeOntoUserHead(docId, baseSeq, headNow) : null
+      if (!merged) {
+        this.files.materializeHead(docId)
+        emit({ type: 'error', message: `回合期间文档被手动更新（当前 v${headNow}），本轮 AI 改动已丢弃，请基于新版本重试。` })
+        return
+      }
+      // 合并后重跑引用审计（AI 带来的引用文本已并入）
+      const mergedAudit = auditCitations(extractOfficeText(merged.bytes), this.store.listCitations(docId).map(c => c.doi))
+      if (!mergedAudit.ok) {
+        emit({ type: 'citation_audit', ...mergedAudit })
+        this.files.materializeHead(docId)
+        emit({ type: 'error', message: '合并结果引用校验未通过，本轮 AI 改动已丢弃。' })
+        return
+      }
+      const version = this.files.landMerged(docId, merged.bytes, message.slice(0, 80))
+      emit({ type: 'merge_result', applied: merged.applied.map(a => `${a.kind}:${a.id}`), overridden: merged.overridden })
+      emit({ type: 'version', seq: version.seq })
+      // 同节点冲突在线程里说明（评论驱动的回合）
+      if (merged.overridden.length > 0 && commentId) {
+        const list = merged.overridden.map(o => o.text.slice(0, 40)).join('；')
+        this.store.addReply(docId, commentId, 'ai',
+          `并行合并：你手动更新的 ${merged.overridden.length} 处内容保留了你的版本，AI 对同一处的修改已丢弃（${list}）。其余改动已合并为 v${version.seq}。`)
+      }
+      this.emitCommentEvents(docId, openBefore, emit)
       return
     }
     const version = this.files.snapshotAfterTurn(docId, baseSha, message.slice(0, 80))
@@ -82,11 +107,30 @@ export class TurnService {
       const rate = version.meta?.id_survival
       if (typeof rate === 'number' && rate < ID_SURVIVAL_WARN) emit({ type: 'id_survival_warning', rate })
     }
-    // 评论状态变化（S2/S3）：漂移由落版审计写入；updated = 本回合被关闭的线程。
+    this.emitCommentEvents(docId, openBefore, emit)
+  }
+
+  /** 回合结束时评论状态事件（S2/S3）。 */
+  private emitCommentEvents(docId: string, openBefore: Set<string>, emit: (e: UiEvent) => void): void {
     const openAfter = this.store.listComments(docId, 'open')
     const updated = [...openBefore].filter(id => !openAfter.some(c => c.id === id))
     const drifted = openAfter.filter(c => c.drifted).map(c => c.id)
     if (updated.length > 0 || drifted.length > 0) emit({ type: 'comment_updates', updated, drifted })
+  }
+
+  /**
+   * S5 三方合并：AI 工作区文件（基于 baseSeq 基线）× 用户当前 head。
+   * 任何一步拿不到就返回 null（调用方走丢弃路径）。
+   */
+  private mergeOntoUserHead(docId: string, baseSeq: number, headNow: number) {
+    const baseProj = this.store.getProjection(docId, baseSeq)?.projection
+    const headProj = this.store.getProjection(docId, headNow)?.projection
+    if (!baseProj || !headProj) return null
+    const aiBytes = ensureDocxParaIds(readFileSync(this.files.workspaceFile(docId, 'docx'))).bytes
+    const aiProj = buildProjection('docx', aiBytes)
+    if ((aiProj.nodes ?? []).length === 0) return null
+    const headBytes = this.files.readVersion(docId, headNow)
+    return mergeAiOpsOntoHead({ baseProj, aiBytes, aiProj, headBytes, headProj })
   }
 
   /** 最近 6 条对话，作为新会话首轮的背景（不含本轮消息）。 */

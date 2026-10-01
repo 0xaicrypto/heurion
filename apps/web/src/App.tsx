@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Comment, type Doc, type DocDetail, type DocKind, type UiEvent } from './api.ts'
+import { api, type Comment, type Doc, type DocDetail, type DocKind, type Projection, type ProjectionNode, type UiEvent } from './api.ts'
 
 interface LiveStep { kind: 'reasoning' | 'assistant' | 'tool' | 'notice' | 'error'; text: string }
 
@@ -60,6 +60,8 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
   /** 评论触发的回合：线程 id → 处理中。 */
   const [processing, setProcessing] = useState<Record<string, boolean>>({})
   const [inEditor, setInEditor] = useState(false)
+  /** 版本对比展开的 seq（null = 收起）。 */
+  const [diffSeq, setDiffSeq] = useState<number | null>(null)
   const reloadComments = useCallback(() => api.listComments(docId).then(r => setComments(r.comments)), [docId])
   const reload = useCallback(() => api.getDoc(docId).then(d => { setDoc(d); setRunning(d.busy) }), [docId])
   useEffect(() => { void reload(); void reloadComments() }, [reload, reloadComments])
@@ -80,6 +82,14 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
         void reloadComments()
         if (e.drifted.length > 0) push({ kind: 'error', text: `${e.drifted.length} 条评论锚点漂移` })
         return
+      case 'merge_result': {
+        void reloadComments()
+        const parts: string[] = []
+        if (e.applied.length > 0) parts.push(`合并 ${e.applied.length} 处 AI 改动`)
+        if (e.overridden.length > 0) parts.push(`你手动更新的 ${e.overridden.length} 处保留了你的版本（AI 改动已丢弃）`)
+        if (parts.length > 0) push({ kind: 'notice', text: `并行合并：${parts.join('；')}` })
+        return
+      }
       case 'error': return push({ kind: 'error', text: e.message })
       default: return
     }
@@ -170,6 +180,7 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
               <span className="muted ellipsis" title={v.note}>{v.note}</span>
               <span className="actions">
                 <a href={api.downloadUrl(doc.id, v.seq)}>下载</a>
+                {v.seq > 1 && <button className="link" onClick={() => setDiffSeq(diffSeq === v.seq ? null : v.seq)}>{diffSeq === v.seq ? '收起' : '对比'}</button>}
                 {v.seq !== head?.seq && !running && (
                   <button className="link" onClick={async () => { await api.restore(doc.id, v.seq); await reload(); await reloadComments(); onChanged() }}>回滚</button>
                 )}
@@ -177,10 +188,115 @@ function Workspace({ docId, onChanged }: { docId: string; onChanged: () => void 
             </li>
           ))}
         </ul>
+        {diffSeq && <DiffView docId={docId} kind={doc.kind} seq={diffSeq} />}
+        {doc.kind === 'pptx' && head && (
+          <>
+            <h2>画布评审</h2>
+            <DeckCanvas docId={docId} headSeq={head.seq} comments={comments} />
+          </>
+        )}
         <h2>引用（{doc.citations.length}）</h2>
         <ol className="citations">{doc.citations.map(c => <li key={c.doi}>{c.formatted}</li>)}</ol>
       </aside>
     </main>
+  )
+}
+
+/** 版本对比（S5 评审面）：与上一版投影按 id 三态 diff。 */
+function DiffView({ docId, kind, seq }: { docId: string; kind: DocKind; seq: number }) {
+  const [rows, setRows] = useState<Array<{ state: 'added' | 'removed' | 'modified'; text: string }> | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    let ok = true
+    void (async () => {
+      try {
+        const now = await api.getProjection(docId, seq)
+        const prev = await api.getProjection(docId, seq - 1)
+        const a = (p: Projection) => [...(p.nodes ?? []), ...(p.slides ?? []).flatMap(s => s.shapes)]
+        const prevById = new Map(a(prev.projection).map(n => [n.id, n]))
+        const out: Array<{ state: 'added' | 'removed' | 'modified'; text: string }> = []
+        for (const n of a(now.projection)) {
+          const p = prevById.get(n.id)
+          if (!p) out.push({ state: 'added', text: n.text })
+          else if (p.text !== n.text) out.push({ state: 'modified', text: `${p.text.slice(0, 40)} → ${n.text.slice(0, 40)}` })
+        }
+        const nowIds = new Set(a(now.projection).map(n => n.id))
+        for (const n of a(prev.projection)) if (!nowIds.has(n.id)) out.push({ state: 'removed', text: n.text })
+        if (ok) setRows(out)
+      } catch (e) { if (ok) setErr((e as Error).message) }
+    })()
+    return () => { ok = false }
+  }, [docId, seq])
+  if (err) return <p className="muted small">diff 不可用：{err}</p>
+  if (!rows) return <p className="muted small">计算 diff…</p>
+  if (rows.length === 0) return <p className="muted small">v{seq - 1} → v{seq} 无文本变化</p>
+  return (
+    <ul className="diff">
+      {rows.map((r, i) => (
+        <li key={i} className={`diff-${r.state}`}>
+          <span>{r.state === 'added' ? '+' : r.state === 'removed' ? '−' : '~'}</span>{r.text}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** deck 评审画布（S5）：投影几何画形状 + 评论锚点两态 overlay + 三态 diff。DOM 实现，不依赖画布库。 */
+const SLIDE_W = 12192000
+const SLIDE_H = 6858000
+
+function DeckCanvas({ docId, headSeq, comments }: { docId: string; headSeq: number; comments: Comment[] }) {
+  const [proj, setProj] = useState<Projection | null>(null)
+  const [prev, setPrev] = useState<Projection | null>(null)
+  const [diffOn, setDiffOn] = useState(true)
+  useEffect(() => {
+    void api.getProjection(docId).then(r => setProj(r.projection)).catch(() => setProj(null))
+    if (headSeq > 1) void api.getProjection(docId, headSeq - 1).then(r => setPrev(r.projection)).catch(() => setPrev(null))
+  }, [docId, headSeq])
+
+  const shapeState = (n: ProjectionNode): 'added' | 'removed' | 'modified' | null => {
+    if (!diffOn || !prev) return null
+    const prevShapes = new Map((prev.slides ?? []).flatMap(s => s.shapes).map(x => [x.id, x]))
+    const p = prevShapes.get(n.id)
+    if (!p) return 'added'
+    if (p.text !== n.text) return 'modified'
+    return null
+  }
+  const openComments = comments.filter(c => c.status === 'open' && c.anchor.shape_id)
+  const commentByShape = new Map(openComments.map(c => [c.anchor.shape_id!, c]))
+
+  if (!proj) return <p className="muted small">暂无画布投影</p>
+  return (
+    <div>
+      {prev && (
+        <label className="muted small"><input type="checkbox" checked={diffOn} onChange={e => setDiffOn(e.target.checked)} /> 形状级 diff（对照上一版）</label>
+      )}
+      {(proj.slides ?? []).map(slide => (
+        <div key={slide.id} className="slide">
+          <div className="slide-label">第 {slide.index} 页</div>
+          <div className="slide-canvas">
+            {slide.shapes.map(sh => {
+              const st = shapeState(sh)
+              const c = commentByShape.get(sh.id)
+              const cls = ['shape', c ? (c.drifted ? 'anchor-drift' : 'anchor') : '', st ? `diff-${st}` : ''].filter(Boolean).join(' ')
+              const g = sh.geometry
+              const style = g ? {
+                left: `${(g.x / SLIDE_W) * 100}%`, top: `${(g.y / SLIDE_H) * 100}%`,
+                width: `${(g.w / SLIDE_W) * 100}%`, height: `${(g.h / SLIDE_H) * 100}%`,
+                transform: g.rot ? `rotate(${g.rot}deg)` : undefined,
+              } : undefined
+              return (
+                <div key={sh.id} className={cls} style={style} title={sh.id}>
+                  {sh.kind === 'opaque' && !sh.text ? <span className="muted small">[无预览对象]</span> : sh.text}
+                  {st && <span className="diff-tag">{st}</span>}
+                  {c && <span className="diff-tag">{c.drifted ? '评论漂移' : '评论'}</span>}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 
