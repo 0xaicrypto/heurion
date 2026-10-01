@@ -28,7 +28,12 @@ export interface EditorOptions {
 
 export interface SelectionAnchor {
   node_id: string
+  /** 空串表示整块 / 整个形状。 */
   snippet: string
+  /** deck：选区所在段落在形状里的序号。 */
+  paragraph?: number
+  /** 选区不能评论时的提示（跨段落、跨形状…）；有值时只提示不评论。 */
+  blocked?: string
   /** 选区在视口中的位置（浮动按钮用）。 */
   rect: { top: number; left: number; width: number }
 }
@@ -300,7 +305,13 @@ export class Editor {
   /** 当前选区是否在单个块内（可评论），给出锚点。 */
   private reportSelection(): void {
     const { from, to, empty, $from, $to } = this.view.state.selection
-    if (empty || !$from.parent.isTextblock || $from.parent !== $to.parent) { this.opts.onSelection(null); return }
+    if (empty) { this.opts.onSelection(null); return }
+    if (!$from.parent.isTextblock || $from.parent !== $to.parent) {
+      // 与 Claude Docs 一致：评论只能落在一个段落内
+      const start = this.view.coordsAtPos(from)
+      this.opts.onSelection({ node_id: '', snippet: '', blocked: '评论只能选在一个段落内', rect: { top: start.top, left: start.left, width: 120 } })
+      return
+    }
     let nodeId: string | null = null
     for (let d = $from.depth; d > 0 && !nodeId; d--) nodeId = ($from.node(d).attrs.id as string | null) ?? null
     const snippet = this.view.state.doc.textBetween(from, to, '\n', '')

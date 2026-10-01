@@ -37,15 +37,18 @@ interface Session {
 let session: Session | null = null
 let detail: any = null
 let anchor: SelectionAnchor | null = null
-let pendingAnchor: { node_id: string; snippet: string } | null = null
+let pendingAnchor: { node_id: string; snippet: string; paragraph?: number } | null = null
 let refreshTimer: number | undefined
 
 // —— 文档列表 ——
 
+const ICON_DOC = '<svg class="kind doc" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-label="文档"><path d="M4 1.75h5.5L12.5 4.75v9.5H4z"/><path d="M9.25 1.75v3.25h3.25M6 8h4.5M6 10.75h4.5"/></svg>'
+const ICON_DECK = '<svg class="kind deck" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-label="幻灯片"><rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1.5"/><path d="M8 11.25v2.5M5.5 13.75h5"/></svg>'
+
 async function loadDocs(): Promise<void> {
   const docs = await api<any[]>('/api/docs')
   $('docList').innerHTML = docs.map(d =>
-    `<li data-id="${d.id}" class="${d.id === session?.docId ? 'active' : ''}" title="${esc(d.title)}">${d.kind === 'deck' ? '<span class="kind">PPT</span>' : ''}${esc(d.title)}</li>`).join('')
+    `<li data-id="${d.id}" class="${d.id === session?.docId ? 'active' : ''}" title="${esc(d.title)}">${d.kind === 'deck' ? ICON_DECK : ICON_DOC}<span class="label">${esc(d.title)}</span></li>`).join('')
 }
 
 $('docList').onclick = e => {
@@ -180,7 +183,13 @@ async function refresh(full: boolean): Promise<void> {
   $('docTitle').textContent = d.title
   if (full) {
     setBusy(d.busy)
-    for (const m of d.messages) addMsg(m.role, displayMessage(m.text), m.role === 'assistant' && d.revertable.includes(m.turn_id) ? m.turn_id : null)
+    const failed = new Map<string, { status: string; error: string | null }>((d.failed_turns ?? []).map((t: any) => [t.id, t]))
+    for (const m of d.messages) {
+      addMsg(m.role, displayMessage(m.text), m.role === 'assistant' && d.revertable.includes(m.turn_id) ? m.turn_id : null)
+      // 没正常完成的回合：在该轮用户消息后标出原因（刷新页面后也看得到）
+      const f = m.role === 'user' && m.turn_id ? failed.get(m.turn_id) : undefined
+      if (f) addStep(`${TURN_STATUS[f.status] ?? f.status}${f.error ? `：${f.error}` : ''}`, 'err')
+    }
   }
   renderComments()
   renderSuggestions()
@@ -257,6 +266,8 @@ $('notice').onclick = () => { $('notice').hidden = true }
 
 // —— 对话 ——
 
+const TURN_STATUS: Record<string, string> = { error: '本轮出错', cancelled: '本轮已取消', timeout: '本轮超时', interrupted: '本轮被中断' }
+
 function displayMessage(text: string): string {
   const m = /^请处理文档 \S+ 中的评论 (\S+)：/.exec(text)
   if (m) return `处理评论 ${m[1]}`
@@ -264,10 +275,17 @@ function displayMessage(text: string): string {
   return text
 }
 
+/** AI 文字常带 **粗体** 与 `代码`：转义后只渲染这两种。 */
+function lightMarkdown(text: string): string {
+  return esc(text).replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`\n]+)`/g, '<code>$1</code>')
+}
+
 function addMsg(role: 'user' | 'assistant', text: string, revertTurn: string | null = null): HTMLElement {
   const div = document.createElement('div')
   div.className = `msg ${role}`
-  div.textContent = text
+  // AI 回复常带 **粗体** 与 `代码`：转义后只渲染这两种
+  if (role === 'assistant') div.innerHTML = lightMarkdown(text)
+  else div.textContent = text
   if (revertTurn) attachRevert(div, revertTurn)
   $('chatLog').appendChild(div)
   $('chatLog').scrollTop = 1e9
@@ -310,8 +328,9 @@ let lastAssistant: HTMLElement | null = null
 
 function renderTurnEvent(ev: any): void {
   switch (ev.type) {
-    case 'queued': addStep(`排队中（第 ${ev.position} 位）：${displayMessage(ev.message).slice(0, 40)}`); break
+    case 'queued': addStep(`排队中（第 ${ev.position} 位）：${displayMessage(ev.message).slice(0, 40)}`); void loadQueue(); break
     case 'turn':
+      void loadQueue()
       lastAssistant = null
       setBusy(true)
       addMsg('user', displayMessage(ev.message))
@@ -325,6 +344,7 @@ function renderTurnEvent(ev: any): void {
     case 'error': addStep(ev.message, 'err'); break
     case 'turn_done':
       setBusy(false)
+      void loadQueue()
       if (ev.docs.includes(session?.docId) && ev.status !== 'error') {
         void refresh(false).then(() => {
           if (detail?.revertable.includes(ev.turn_id)) attachRevert(lastAssistant ?? addMsg('assistant', '（本轮已完成）'), ev.turn_id)
@@ -351,7 +371,74 @@ async function send(): Promise<void> {
 }
 $('sendBtn').onclick = () => void send()
 $<HTMLTextAreaElement>('chatInput').onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send() }
-$('cancelBtn').onclick = () => void api('/api/cancel', { method: 'POST' })
+// 「停止」只停当前任务，排在后面的照常执行；清空排队在任务队列里
+$('cancelBtn').onclick = () => { if (queue.running) void cancelJob(queue.running.id) }
+
+// —— 任务队列（同一用户的所有文档共用一个队列） ——
+
+interface QueueItem { id: string; doc_id: string; doc_title: string; label: string; suggest: boolean; since: string }
+let queue: { running: QueueItem | null; queued: QueueItem[] } = { running: null, queued: [] }
+
+async function loadQueue(): Promise<void> {
+  try {
+    queue = await api('/api/queue')
+  } catch { return }
+  renderQueue()
+}
+
+function elapsed(since: string): string {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(since)) / 1000))
+  return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`
+}
+
+function renderQueue(): void {
+  const items = [...(queue.running ? [{ ...queue.running, running: true }] : []), ...queue.queued.map(q => ({ ...q, running: false }))]
+  // 面板常驻：空闲时只显示一行，有任务时展开
+  $('queuePanel').classList.toggle('idle', items.length === 0)
+  $('queueClear').hidden = items.length === 0
+  $('queueSummary').textContent = items.length === 0 ? '空闲' : `${queue.running ? '1 个执行中' : ''}${queue.running && queue.queued.length ? '，' : ''}${queue.queued.length ? `${queue.queued.length} 个排队` : ''}`
+  setBusy(!!queue.running)
+  $('queueList').innerHTML = items.map((q, i) => `
+    <li class="${q.running ? 'running' : ''}">
+      <div class="queue-main">
+        <span class="queue-state">${q.running ? '执行中' : `第 ${i + (queue.running ? 0 : 1)} 位`}</span>
+        <span class="queue-doc${q.doc_id === session?.docId ? ' here' : ''}" data-open="${esc(q.doc_id)}" title="打开这份文档">《${esc(q.doc_title)}》</span>
+        ${q.suggest ? '<span class="queue-tag">修订</span>' : ''}
+        <div class="queue-label" title="${esc(q.label)}">${esc(q.label)}</div>
+        <div class="muted">${q.running ? '已运行' : '已等待'} ${elapsed(q.since)}</div>
+      </div>
+      <button data-cancel="${esc(q.id)}">${q.running ? '停止' : '取消'}</button>
+    </li>`).join('')
+}
+
+async function cancelJob(id: string): Promise<void> {
+  try {
+    await api(`/api/queue/${id}/cancel`, { method: 'POST' })
+  } catch (err) {
+    showNotice((err as Error).message, true)
+  }
+  await loadQueue()
+}
+
+$('queueList').onclick = e => {
+  const t = e.target as HTMLElement
+  const cancel = t.closest('[data-cancel]') as HTMLElement | null
+  if (cancel) { void cancelJob(cancel.dataset.cancel!); return }
+  const open = t.closest('[data-open]') as HTMLElement | null
+  if (open && open.dataset.open !== session?.docId) document.querySelector<HTMLElement>(`li[data-id="${CSS.escape(open.dataset.open!)}"]`)?.click()
+}
+$('queueClear').onclick = async () => {
+  await api('/api/cancel', { method: 'POST' }).catch(err => showNotice((err as Error).message, true))
+  await loadQueue()
+}
+// 队列跨文档（别的文档里的任务、@heurion 自动触发），定时刷新；有任务时刷得勤一些
+let queueTick = 0
+setInterval(() => {
+  queueTick++
+  if (queue.running || queue.queued.length > 0 || queueTick % 5 === 0) void loadQueue()
+  else renderQueue()
+}, 2000)
+void loadQueue()
 
 // —— 选区评论 ——
 
@@ -360,6 +447,8 @@ function placeFab(): void {
   if (!anchor) { fab.style.display = 'none'; return }
   const main = document.querySelector('.center')!.getBoundingClientRect()
   fab.style.display = 'block'
+  fab.textContent = anchor.blocked ?? (anchor.snippet ? '评论' : '评论此形状')
+  fab.classList.toggle('blocked', !!anchor.blocked)
   fab.style.top = `${anchor.rect.top - main.top - 36}px`
   fab.style.left = `${anchor.rect.left - main.left + anchor.rect.width / 2 - 24}px`
 }
@@ -367,12 +456,12 @@ $('scroller').addEventListener('scroll', () => { $('commentFab').style.display =
 
 $('commentFab').onmousedown = e => {
   e.preventDefault()
-  if (!anchor) return
-  pendingAnchor = { node_id: anchor.node_id, snippet: anchor.snippet }
+  if (!anchor || anchor.blocked) return
+  pendingAnchor = { node_id: anchor.node_id, snippet: anchor.snippet, paragraph: anchor.paragraph }
   $('commentFab').style.display = 'none'
   switchTab('commentPane')
   $('newComment').hidden = false
-  $('newCommentQuote').textContent = pendingAnchor.snippet
+  $('newCommentQuote').textContent = pendingAnchor.snippet || '（整个形状）'
   $<HTMLTextAreaElement>('newCommentText').value = ''
   $('newCommentText').focus()
 }
@@ -403,7 +492,7 @@ function renderComments(): void {
     : list.map(c => `
     <div class="card ${c.status}" data-cid="${c.id}">
       <div class="quote ${c.anchor.located ? '' : 'lost'}">${esc(c.anchor.text || c.snippet || '（整块）')}${c.anchor.located ? '' : ' · 锚点已移除'}</div>
-      ${c.replies.map((r: any) => `<div class="reply ${r.role}"><b>${r.role === 'ai' ? 'Heurion' : '我'}</b>：${esc(r.text)}</div>`).join('')}
+      ${c.replies.map((r: any) => `<div class="reply ${r.role}"><b>${r.role === 'ai' ? 'Heurion' : '我'}</b>：${r.role === 'ai' ? lightMarkdown(r.text) : esc(r.text)}</div>`).join('')}
       <div class="row">
         ${c.status === 'open'
           ? `<input type="text" placeholder="追问或补充（含 @heurion 自动处理）" data-reply><button data-act="reply">回复</button><button data-act="ask" class="ai">让 AI 处理</button><button data-act="resolve">关闭</button><button data-act="delete" title="删除评论">删除</button>`
@@ -450,23 +539,30 @@ async function resolveSuggestion(group: string, accept: boolean): Promise<void> 
   }
 }
 
+// 待采纳修订：只在有修订时出现在正文上方（不单设页签）；逐处采纳 / 拒绝在正文里的修订条上
+let suggestCursor = -1
+
 function renderSuggestions(): void {
   const groups: any[] = detail?.suggestions ?? []
-  $('suggestCount').textContent = groups.length ? String(groups.length) : ''
-  $('suggestions').innerHTML = groups.length === 0
-    ? '<div class="muted">勾选「修订模式」后，AI 的修改会先作为待采纳修订出现在正文里</div>'
-    : `<div class="row" style="margin-bottom:8px"><button data-all="1" class="primary">全部采纳</button><button data-all="0">全部拒绝</button></div>` +
-      groups.map(g => `<div class="card" data-group="${g.group}"><div>新增 ${g.inserts} 块 · 删除 ${g.deletes} 块</div>
-        <div class="row end"><button data-jump>定位</button><button data-accept="0">拒绝</button><button data-accept="1" class="primary">采纳</button></div></div>`).join('')
+  $('suggestBanner').hidden = groups.length === 0
+  if (groups.length === 0) { suggestCursor = -1; return }
+  const blocks = groups.reduce((n, g) => n + g.inserts + g.deletes, 0)
+  $('suggestSummary').textContent = `${groups.length} 处待采纳修订（涉及 ${blocks} 块）· AI 的修改需你采纳后生效`
+  if (suggestCursor >= groups.length) suggestCursor = groups.length - 1
 }
 
-$('suggestions').onclick = e => {
-  const t = e.target as HTMLElement
+$('suggestBanner').onclick = e => {
+  const t = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null
+  if (!t) return
+  const groups: any[] = detail?.suggestions ?? []
   if (t.dataset.all) { void resolveSuggestion('all', t.dataset.all === '1'); return }
-  const card = t.closest('[data-group]') as HTMLElement | null
-  if (!card) return
-  if (t.dataset.accept) void resolveSuggestion(card.dataset.group!, t.dataset.accept === '1')
-  if (t.hasAttribute('data-jump')) document.querySelector(`[data-suggest-group="${CSS.escape(card.dataset.group!)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (t.dataset.nav && groups.length > 0) {
+    suggestCursor = (suggestCursor + Number(t.dataset.nav) + groups.length) % groups.length
+    const el = document.querySelector(`[data-suggest-group="${CSS.escape(groups[suggestCursor].group)}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.classList.add('ai-flash')
+    setTimeout(() => el?.classList.remove('ai-flash'), 1200)
+  }
 }
 
 // —— 版本与引用 ——

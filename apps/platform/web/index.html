@@ -4,18 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Heurion</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 2 104 96'%3E%3Crect x='-6' y='2' width='104' height='96' rx='22' fill='%230F172A'/%3E%3Crect x='6' y='18' width='16' height='66' rx='8' fill='%23F8FAFC'/%3E%3Crect x='60' y='35' width='16' height='49' rx='8' fill='%23F8FAFC'/%3E%3Crect x='18' y='45' width='46' height='16' rx='8' fill='%230EA5E9'/%3E%3Ccircle cx='76' cy='24' r='10' fill='%230EA5E9'/%3E%3C/svg%3E">
 </head>
 <body>
 <div class="app">
   <aside class="nav">
-    <div class="brand">Heurion</div>
+    <div class="brand">
+      <svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg>
+      <div class="wordmark"><span class="name">HEURION</span><span class="tagline">CLINICAL AI WORKSTATION</span></div>
+    </div>
     <div class="actions">
-      <button id="newDoc">新建文档</button>
-      <button id="newDeck">新建幻灯片</button>
-      <button id="uploadBtn">上传 docx / pptx</button>
+      <button id="newDoc" class="sky block">＋ 新建文档</button>
+      <div class="split">
+        <button id="newDeck" class="ghost-dark">新建幻灯片</button>
+        <button id="uploadBtn" class="ghost-dark" title="导入 docx / pptx">上传文件</button>
+      </div>
       <input id="uploadInput" type="file" accept=".docx,.pptx" hidden>
     </div>
+    <div class="nav-label">文档</div>
     <ul class="doclist" id="docList"></ul>
   </aside>
 
@@ -23,10 +29,12 @@
     <header class="topbar">
       <span class="title" id="docTitle" title="点击重命名">未选择文档</span>
       <span class="status" id="syncStatus"></span>
-      <button id="exportDocxBtn" disabled>导出 docx</button>
-      <button id="exportPptxBtn" disabled hidden>导出 pptx</button>
-      <button id="exportMdBtn" disabled>导出 md</button>
-      <button id="readBtn" disabled title="模型看到的读视图">读视图</button>
+      <div class="btn-group">
+        <button id="exportDocxBtn" disabled>导出 docx</button>
+        <button id="exportPptxBtn" disabled hidden>导出 pptx</button>
+        <button id="exportMdBtn" disabled>导出 md</button>
+      </div>
+      <button id="readBtn" class="quiet" disabled title="模型看到的读视图">读视图</button>
     </header>
     <div class="toolbar" id="toolbar" hidden>
       <select id="blockType" title="段落样式">
@@ -51,9 +59,18 @@
       <button data-cmd="undo" title="撤销 ⌘Z">↶</button>
       <button data-cmd="redo" title="重做 ⌘⇧Z">↷</button>
     </div>
+    <div class="suggest-banner" id="suggestBanner" hidden>
+      <span class="dot"></span><span id="suggestSummary"></span>
+      <span class="grow"></span>
+      <button data-nav="-1" title="上一处修订">上一处</button>
+      <button data-nav="1" title="下一处修订">下一处</button>
+      <span class="sep"></span>
+      <button data-all="0">全部拒绝</button>
+      <button data-all="1" class="primary">全部采纳</button>
+    </div>
     <div class="notice" id="notice" hidden></div>
     <div class="scroller" id="scroller">
-      <div class="page" id="page"><div class="empty">在左侧新建或上传文档</div></div>
+      <div class="page" id="page"><div class="empty"><svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg><p>在左侧新建或上传文档</p></div></div>
     </div>
     <button id="commentFab" class="primary fab">评论</button>
   </main>
@@ -62,11 +79,14 @@
     <div class="tabs">
       <button data-tab="chatPane" class="active">对话</button>
       <button data-tab="commentPane">评论</button>
-      <button data-tab="suggestPane">修订 <span id="suggestCount" class="count"></span></button>
       <button data-tab="versionPane">版本</button>
       <button data-tab="citePane">引用</button>
     </div>
     <div class="tabpane active" id="chatPane">
+      <div class="queue idle" id="queuePanel">
+        <div class="queue-head"><span>任务队列</span><span class="queue-summary" id="queueSummary">空闲</span><span class="grow"></span><button id="queueClear" title="停止当前任务并清空排队" hidden>全部停止</button></div>
+        <ol id="queueList"></ol>
+      </div>
       <div class="log" id="chatLog"></div>
       <div class="composer">
         <textarea id="chatInput" rows="3" placeholder="让 Heurion 修改文档，例如：在方法部分补充纳入标准，并引用相关 RCT（⌘↩ 发送）"></textarea>
@@ -90,7 +110,6 @@
       </div>
       <div id="comments"></div>
     </div>
-    <div class="tabpane" id="suggestPane"><div id="suggestions"></div></div>
     <div class="tabpane" id="versionPane"><div id="versions"></div><div id="diffView" class="diff"></div></div>
     <div class="tabpane" id="citePane"><div id="cites"></div></div>
   </section>
