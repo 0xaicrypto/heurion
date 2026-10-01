@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Heurion</title>
+  <link rel="icon" href="data:,">
+</head>
+<body>
+<div class="app">
+  <aside class="nav">
+    <div class="brand">Heurion</div>
+    <div class="actions">
+      <button id="newDoc">新建</button>
+      <button id="uploadBtn">上传 docx</button>
+      <input id="uploadInput" type="file" accept=".docx" hidden>
+    </div>
+    <ul class="doclist" id="docList"></ul>
+  </aside>
+
+  <main class="center">
+    <header class="topbar">
+      <span class="title" id="docTitle" title="点击重命名">未选择文档</span>
+      <span class="status" id="syncStatus"></span>
+      <button id="exportDocxBtn" disabled>导出 docx</button>
+      <button id="exportMdBtn" disabled>导出 md</button>
+      <button id="readBtn" disabled title="模型看到的读视图">读视图</button>
+    </header>
+    <div class="toolbar" id="toolbar" hidden>
+      <select id="blockType" title="段落样式">
+        <option value="p">正文</option>
+        <option value="h1">标题 1</option>
+        <option value="h2">标题 2</option>
+        <option value="h3">标题 3</option>
+      </select>
+      <button data-cmd="bold" title="粗体 ⌘B"><b>B</b></button>
+      <button data-cmd="italic" title="斜体 ⌘I"><i>I</i></button>
+      <button data-cmd="underline" title="下划线 ⌘U"><u>U</u></button>
+      <button data-cmd="sup" title="上标">x²</button>
+      <button data-cmd="sub" title="下标">x₂</button>
+      <span class="sep"></span>
+      <button data-cmd="bulletList" title="无序列表">• 列表</button>
+      <button data-cmd="orderedList" title="有序列表">1. 列表</button>
+      <button data-cmd="table" title="插入表格">表格</button>
+      <span class="sep"></span>
+      <button data-cmd="undo" title="撤销 ⌘Z">↶</button>
+      <button data-cmd="redo" title="重做 ⌘⇧Z">↷</button>
+    </div>
+    <div class="notice" id="notice" hidden></div>
+    <div class="scroller" id="scroller">
+      <div class="page" id="page"><div class="empty">在左侧新建或上传文档</div></div>
+    </div>
+    <button id="commentFab" class="primary fab">评论</button>
+  </main>
+
+  <section class="side">
+    <div class="tabs">
+      <button data-tab="chatPane" class="active">对话</button>
+      <button data-tab="commentPane">评论</button>
+      <button data-tab="suggestPane">修订 <span id="suggestCount" class="count"></span></button>
+      <button data-tab="versionPane">版本</button>
+      <button data-tab="citePane">引用</button>
+    </div>
+    <div class="tabpane active" id="chatPane">
+      <div class="log" id="chatLog"></div>
+      <div class="composer">
+        <textarea id="chatInput" rows="3" placeholder="让 Heurion 修改文档，例如：在方法部分补充纳入标准，并引用相关 RCT（⌘↩ 发送）"></textarea>
+        <div class="row">
+          <label class="toggle" title="AI 的修改作为待采纳修订，由你逐条采纳"><input type="checkbox" id="suggestMode"> 修订模式</label>
+          <span class="grow"></span>
+          <button id="cancelBtn" disabled>停止</button>
+          <button id="sendBtn" class="ai" disabled>发送</button>
+        </div>
+      </div>
+    </div>
+    <div class="tabpane" id="commentPane">
+      <div id="newComment" class="card" hidden>
+        <div class="quote" id="newCommentQuote"></div>
+        <textarea id="newCommentText" rows="2" placeholder="写下修改要求；含 @heurion 时 AI 自动处理"></textarea>
+        <div class="row end">
+          <button id="newCommentCancel">取消</button>
+          <button id="newCommentSave">评论</button>
+          <button id="newCommentAsk" class="ai">评论并让 AI 处理</button>
+        </div>
+      </div>
+      <div id="comments"></div>
+    </div>
+    <div class="tabpane" id="suggestPane"><div id="suggestions"></div></div>
+    <div class="tabpane" id="versionPane"><div id="versions"></div><div id="diffView" class="diff"></div></div>
+    <div class="tabpane" id="citePane"><div id="cites"></div></div>
+  </section>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

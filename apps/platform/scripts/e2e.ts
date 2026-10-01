@@ -89,6 +89,70 @@ const xml = strFromU8(unzipSync(exported)['word/document.xml']!)
 check('导入：AI 只改了第一段', t4.calls.includes('doc_edit') && !xml.includes('相关研究近年来数量很多'), summary(t4))
 check('导出：未改动的块原样写回', xml.includes(para('研究背景', 'Heading1')) && xml.includes(para('早期 RCT 提示强化血糖控制可降低微血管并发症风险。')))
 
+// —— 5. @heurion 自动触发（评论即指令，事件经文档流推送） ——
+{
+  const html5 = (await api(`/api/docs/${doc.id}/html`)).html as string
+  const evidenceId = [...html5.matchAll(/<p data-id="([a-z0-9]+)">/g)].map(m => m[1]).at(-1)
+  const t0 = Date.now()
+  const created = await api(`/api/docs/${doc.id}/comments`, { method: 'POST', body: JSON.stringify({ node_id: evidenceId, snippet: '', text: '@heurion 在这段末尾加一句局限性说明（不超过 30 字）' }) })
+  check('@heurion：创建评论即排队', created.queued === true)
+  let replied = false
+  for (let i = 0; i < 120 && !replied; i++) {
+    await new Promise(r => setTimeout(r, 1000))
+    const d = await api(`/api/docs/${doc.id}`)
+    replied = !d.busy && d.comments.find((c: any) => c.id === created.id)?.replies.some((r: any) => r.role === 'ai')
+  }
+  check('@heurion：AI 自动处理并在线程里回复', replied, `${((Date.now() - t0) / 1000).toFixed(1)}s`)
+}
+
+// —— 6. 修订模式：AI 的修改先作为待采纳修订，采纳后生效 ——
+{
+  const before = await api<string>(`/api/docs/${doc.id}/export.md`)
+  const t6 = await turn(`/api/docs/${doc.id}/chat`, { message: '把「引言」这一节的正文改写得更正式一些。', suggest: true })
+  const d6 = await api(`/api/docs/${doc.id}`)
+  const after = await api<string>(`/api/docs/${doc.id}/export.md`)
+  check('修订模式：生成待采纳修订，导出内容不变', d6.suggestions.length > 0 && after === before, summary(t6))
+  await api(`/api/docs/${doc.id}/suggestions/all/accept`, { method: 'POST' })
+  const accepted = await api(`/api/docs/${doc.id}`)
+  check('修订模式：全部采纳后生效', accepted.suggestions.length === 0 && (await api<string>(`/api/docs/${doc.id}/export.md`)) !== before)
+}
+
+// —— 7. 撤销本轮：只撤该回合的改动 ——
+{
+  const before = await api<string>(`/api/docs/${doc.id}/export.md`)
+  const t7 = await turn(`/api/docs/${doc.id}/chat`, { message: '在文末新增一个「结论」小节，写一句话总结。' })
+  const turnId = t7.events.find(e => e.type === 'turn')?.turn_id
+  const changed = await api<string>(`/api/docs/${doc.id}/export.md`)
+  const r = await api(`/api/docs/${doc.id}/turns/${turnId}/revert`, { method: 'POST' })
+  const reverted = await api<string>(`/api/docs/${doc.id}/export.md`)
+  check('撤销本轮：恢复到该回合之前', changed !== before && reverted === before, `${summary(t7)} · 撤销 ${r.changes} 处`)
+}
+
+// —— 8. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
+{
+  const { execFileSync } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  let engine: string | null = null
+  for (const e of ['podman', 'docker']) {
+    try { execFileSync(e, ['image', 'exists', 'heurion2:dev'], { stdio: 'ignore' }); engine = e; break } catch { /* 下一个 */ }
+  }
+  if (!engine) console.log('- 跳过 LibreOffice 校验：没有 podman/docker 或 heurion2:dev 镜像')
+  else {
+    const dir = mkdtempSync(join(tmpdir(), 'heurion-e2e-'))
+    for (const [name, id] of [['drafted', doc.id], ['imported', imported.id]] as const) {
+      const bytes = new Uint8Array(await (await fetch(`${BASE}/api/docs/${id}/export.docx`, { headers: H })).arrayBuffer())
+      writeFileSync(join(dir, `${name}.docx`), bytes)
+    }
+    try {
+      execFileSync(engine, ['run', '--rm', '-v', `${dir}:/x:Z`, '--user', 'root', '--entrypoint', 'bash', 'heurion2:dev', '-c',
+        'export HOME=/tmp && cd /x && for f in *.docx; do timeout 120 soffice --headless --convert-to pdf --outdir /x "$f" >/dev/null 2>&1; done'], { stdio: 'ignore', timeout: 600_000 })
+    } catch { /* 结果按产物判断 */ }
+    check('导出：LibreOffice 能打开并转成 PDF', existsSync(join(dir, 'drafted.pdf')) && existsSync(join(dir, 'imported.pdf')), dir)
+  }
+}
+
 const passed = results.filter(r => r.ok).length
 console.log(`\n${passed}/${results.length} 通过`)
 process.exit(passed === results.length ? 0 : 1)
