@@ -1,8 +1,8 @@
 # Heurion 2.0
 
-用 AI 编辑 Word/PPT 医学文档，内置医学文献检索与引用规范。AI 执行层基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) TypeScript SDK。
+用 AI 编辑医学文档，内置医学文献检索与引用规范。平台持有带稳定 id 的结构化文档模型，经 MCP 向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）暴露结构化编辑操作，所有 AI 写入在操作层经写前守卫（用户优先、引用规范、评论锚点保护）。
 
-设计与决策：[docs/DESIGN.md](docs/DESIGN.md)
+架构：[docs/PLATFORM.md](docs/PLATFORM.md)
 
 ## 快速开始
 
@@ -11,22 +11,31 @@
 ```sh
 cp .env.example .env        # 填 DEEPSEEK_API_KEY
 pnpm install
-pnpm --filter @heurion2/server dev   # http://127.0.0.1:8787
-pnpm --filter @heurion2/web dev      # http://127.0.0.1:5173
+pnpm --filter @heurion2/platform dev   # http://127.0.0.1:8787（页面 + REST + /mcp）
 ```
+
+容器：`scripts/container.sh build && scripts/container.sh up`。
 
 ## 结构
 
 ```
-apps/server   Hono API + dsh 进程池 + 医疗文献 MCP（/mcp）+ SQLite
-apps/web      React 前端：文档列表 / 对话 / 版本与回滚 / 引用
-docs/         设计文档
+apps/platform/src
+  model/     schema、块 id、markdown 方言、评论锚点、Documents（Yjs）
+  ops/       操作层：校验 → 写前守卫 → 原子应用
+  mcp/       MCP 工具面（dsh 调用）
+  views/     读视图与渲染
+  convert/   docx 导入 / 修补式导出
+  turns/     AI 回合
+  harness/   dsh 进程池与 profile
+  http/      REST + SSE
+  web/       P0 单页
+docs/        架构与决策记录
 ```
 
 ## 检查
 
 ```sh
-pnpm typecheck
-pnpm test
-pnpm --filter @heurion2/server smoke <docId>   # 需要 server 在运行；dsh 握手 +（有 key 时）一轮真实对话
+pnpm --filter @heurion2/platform typecheck
+pnpm --filter @heurion2/platform test
+pnpm --filter @heurion2/platform e2e   # 需要 server 在运行与 DEEPSEEK_API_KEY；真实 dsh 回合
 ```

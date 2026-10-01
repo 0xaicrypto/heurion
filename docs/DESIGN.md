@@ -1,8 +1,10 @@
 # Heurion 2.0 设计
 
-**版本：** v0.3（2026-09-30）· **跟踪：** epic [#16](https://github.com/0xaicrypto/heurion2/issues/16) · **前端 Mock：** [docs/mock/README.md](mock/README.md) · **1.0 迁移：** [MIGRATION_PLAN.md](MIGRATION_PLAN.md)
+**版本：** v0.4（2026-10-01）· **跟踪：** epic [#16](https://github.com/0xaicrypto/heurion2/issues/16) · **现行架构：** [PLATFORM.md](PLATFORM.md) · **前端 Mock：** [docs/mock/README.md](mock/README.md) · **1.0 迁移：** [MIGRATION_PLAN.md](MIGRATION_PLAN.md)
 
 Heurion 2.0 让用户用 AI 快速编辑 Word/PPT 医学文档，并在编辑中检索、规范引用医学文献。执行层是 DeepSeek Harness（dsh）TypeScript SDK `@deepseek-ai/dsh-sdk-client@0.2.0-rc.2`（npm `next`，MIT），heurion 是管理面。
+
+> **已停用（2026-10-01）：** 本文描述的 S 系列路线（dsh 在工作区用 python 改文件、heurion 写后审计与合并、Collabora 编辑面）已停用，代码由 `apps/platform` 取代。现行架构见 [PLATFORM.md](PLATFORM.md)。本文保留为决策记录：§5 的产品规则（评论即指令、用户优先、引用规范）在平台中延续，§10 的风险与评审结论是平台设计的输入。
 
 **目录**
 
@@ -36,12 +38,15 @@ Heurion 2.0 让用户用 AI 快速编辑 Word/PPT 医学文档，并在编辑中
 - heurion 负责：真相存储与版本、投影与 id、评论与锚点、合并治理、文献与引用、审计、前端。
 - dsh 已有的能力不在本仓库重复实现；确需自研的在本文档记录原因（见 `CLAUDE.md`）。
 
+> **v0.4 调整：** 「office 文件读写」移出 dsh 职责。文档模型、结构化编辑操作与写前守卫是平台核心，由 heurion 自研并经 MCP 暴露（[PLATFORM.md §2](PLATFORM.md#2-原则)）；dsh 仍负责对话循环、工具执行、LLM 调用、子代理与上下文压缩。
+
 ### 1.3 当前状态
 
 | 阶段 | 状态 |
 | --- | --- |
 | M0 架构跑通 | ✅ 已完成（提交 `fd0791e`）：SDK 接入、文献 MCP、引用校验与自修、版本与回滚、精简前端、Podman 容器。实测 Word 起草 36s、Word 编辑 43s、PPT 新建 245s |
-| S1 id 底座 | 进行中（本地未提交）：`docs/office.ts` 做 paraId 补号 / 去重、docx/pptx 投影、id 存活率；落版时（`DocFiles`）生成投影并写 `versions.meta.id_survival`；新增 `GET /api/docs/:id/projection` 与 `id_survival_warning` 事件 |
+| S1–S5 | ✅ 已提交（至 `253e215`）：id 底座与投影、评论底座与 MCP 三工具、评论触发回合与 @heurion 自动触发、Collabora 编辑面（WOPI）与文件内评论同步、三方合并与评审面。评审发现的缺陷见 [§10](#10-已知限制与风险) |
+| 平台 P0 | 待启动：见 [PLATFORM.md §12](PLATFORM.md#12-分期) |
 | 其余 | 见 [§11](#11-里程碑) |
 
 ## 2. 架构
@@ -202,6 +207,8 @@ interface ProjectionNode {
 
 ## 5. 统一编辑框架
 
+> **v0.4：被 [PLATFORM.md](PLATFORM.md) 取代（P0 验证通过后生效）。** 本节「id 在文件里 + dsh 改文件 + 写后合并」的框架，在目标架构中改为「平台模型持有 id + MCP 结构化操作 + 写前守卫」。评论锚点语义、用户优先、引用规范等产品规则保留，实现位置从写后审计移到操作层（[PLATFORM.md §5.3](PLATFORM.md#53-守卫写前强制)）。
+
 持久 id 写在文件里，模型只管改内容、不管寻址；管理面按 id 对比前后版本，得出谁改了哪个节点。
 
 ### 5.1 身份：持久 id 在文件里
@@ -330,6 +337,8 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 
 ### 9.1 已定
 
+> **v0.4：** 下表中「进程粒度」「权威文件」「寻址」「AI 编辑方式」「守卫」五行在目标架构中改变，新决策见 [PLATFORM.md §10](PLATFORM.md#10-决策记录)。在 P0 验证结论出来之前，现有实现仍按下表运行。
+
 | 决策 | 选择 | 原因 / 代价 |
 | --- | --- | --- |
 | 执行层 | dsh TS SDK；harness 依赖只在 `HarnessPool` 与事件映射 | 与前后端同栈。代价：无取消、无权限回调、无会话恢复。同类备选 Claude Agent SDK（仅 Claude 模型、商业条款、默认收集使用数据），暂不切换 |
@@ -379,12 +388,19 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 | SDK 没有权限回调 | 无法逐次审批工具调用 | 容器隔离兜底；确需逐次审批就改用 ACP |
 | PPT 生成偏慢 | 实测 4 页 245s | M1 #11 评测中拆分模型耗时与渲染自查耗时 |
 | dsh 0.x 不兼容变更 | 升级可能出问题 | 锁精确版本；升级单独提交，跑冒烟与评测 |
+| **缺陷：校验失败 / 取消未真正丢弃 AI 改动**（2026-10-01 评审） | 回合中每 8s 的中间快照（`turn.ts` progress）走普通落版、推进 head 且不经引用校验；校验失败或取消时 `materializeHead` 恢复的是已含 AI 改动的中间版，提示「已丢弃」与实际不符 | 回合失败 / 取消时把 `baseSeq` 版本恢复为新 head，或让中间快照只用于预览、不推进 head；补测试 |
+| **缺陷：S5 三方合并在运行中不可达**（2026-10-01 评审） | AI 回合期间 WOPI PutFile 与回滚均返回 409，中间快照来源为 `ai`，`userAdvancedBetween` 几乎不会为真；实际仍是 busy 锁串行 | 若保留此架构：放开 PutFile 并让合并同时搬运 rels / numbering / 媒体 / 评论范围；否则在 v0.4 平台中以写前冲突守卫替代 |
+| WOPI 令牌与 MCP 令牌同值且不过期 | 浏览器拿到的 `access_token` 可直接以 AI 身份调用 MCP 工具 | 拆分令牌并加过期；`PostMessageOrigin` 收紧为前端域 |
+| 正文发往 DeepSeek 官方 API | 即使关闭会话日志上传，正文仍出境到第三方模型 | M2 PHI 合规评审单列；预留私有部署模型路由 |
+| Collabora 字体（约 89MB）直接进 git | 仓库膨胀 | 改用 LFS 或镜像构建时下载 |
 
 ## 11. 里程碑
 
 ![里程碑：S1–S5 协作框架 ∥ M1 评测 → M2](images/roadmap.png)
 
 进入 M2 上线的闸：**S5 完成且 M1 评测达标**。M3 起（文献扩展、统计、投稿、记忆）见 [MIGRATION_PLAN.md](MIGRATION_PLAN.md)。
+
+> **v0.4：** 平台路线的分期 P0–P3 见 [PLATFORM.md §12](PLATFORM.md#12-分期)。P0（doc 模型 + 操作层 + MCP，dsh 关闭 shell）与 M1 评测共用 2.0 e2e 任务集，作为两条路线的对照；P0 结论出来前，现有 S 系列只做缺陷修复（§10 的两项评审缺陷），不再扩展文件级合并。
 
 | 里程碑 | 内容 | Issue |
 | --- | --- | --- |
