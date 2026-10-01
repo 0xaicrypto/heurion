@@ -126,6 +126,10 @@ export class Store {
         doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, node_id TEXT NOT NULL, xml TEXT NOT NULL,
         PRIMARY KEY (doc_id, node_id)
       );
+      CREATE TABLE IF NOT EXISTS turn_bases (
+        turn_id TEXT NOT NULL, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+        state BLOB NOT NULL, reverted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (turn_id, doc_id)
+      );
       CREATE TABLE IF NOT EXISTS doc_packages (
         doc_id TEXT PRIMARY KEY REFERENCES docs(id) ON DELETE CASCADE, kind TEXT NOT NULL, bytes BLOB NOT NULL
       );
@@ -277,6 +281,37 @@ export class Store {
   getNodeSrc(docId: string, nodeId: string): string | null {
     const row = this.db.prepare('SELECT xml FROM node_src WHERE doc_id = ? AND node_id = ?').get(docId, nodeId) as { xml: string } | undefined
     return row?.xml ?? null
+  }
+
+  // —— AI 回合开始前的状态（撤销本轮的持久化依据） ——
+
+  putTurnBase(turnId: string, docId: string, state: Uint8Array): void {
+    this.db.prepare('INSERT OR IGNORE INTO turn_bases (turn_id, doc_id, state) VALUES (?, ?, ?)').run(turnId, docId, state)
+  }
+
+  getTurnBase(turnId: string, docId: string): { state: Uint8Array; reverted: boolean } | null {
+    const row = this.db.prepare('SELECT state, reverted FROM turn_bases WHERE turn_id = ? AND doc_id = ?').get(turnId, docId) as { state: Uint8Array; reverted: number } | undefined
+    return row ? { state: row.state, reverted: row.reverted === 1 } : null
+  }
+
+  markTurnReverted(turnId: string, docId: string): void {
+    this.db.prepare('UPDATE turn_bases SET reverted = 1 WHERE turn_id = ? AND doc_id = ?').run(turnId, docId)
+  }
+
+  /** 某回合在某文档上的节点变更（按 rev 顺序）与该回合的 rev 范围。 */
+  turnChanges(turnId: string, docId: string): { changes: Array<{ node_id: string; kind: 'added' | 'modified' | 'removed' }>; minRev: number; maxRev: number } {
+    const rows = this.db.prepare('SELECT rev, affected FROM op_log WHERE doc_id = ? AND turn_id = ? ORDER BY rev').all(docId, turnId) as Array<{ rev: number; affected: string }>
+    return {
+      changes: rows.flatMap(r => JSON.parse(r.affected) as Array<{ node_id: string; kind: 'added' | 'modified' | 'removed' }>),
+      minRev: rows[0]?.rev ?? 0,
+      maxRev: rows.at(-1)?.rev ?? 0,
+    }
+  }
+
+  /** sinceRev 之后被用户改过的节点。 */
+  userTouchedSince(docId: string, sinceRev: number): Set<string> {
+    const rows = this.db.prepare('SELECT DISTINCT node_id FROM node_changes WHERE doc_id = ? AND actor = \'user\' AND rev > ?').all(docId, sinceRev) as Array<{ node_id: string }>
+    return new Set(rows.map(r => r.node_id))
   }
 
   // —— 原始文件包（修补式导出的底座：样式、编号、关系、媒体） ——

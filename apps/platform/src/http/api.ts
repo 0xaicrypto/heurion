@@ -174,10 +174,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
     const turnId = c.req.param('turnId')
-    if (!docs.canRevertTurn(row.id, turnId)) return c.json({ error: '这一轮已不能撤销（已撤销过，或服务重启后撤销记录不在），请用版本回滚' }, 409)
-    const event = docs.revertTurn(row.id, turnId)
+    if (!docs.canRevertTurn(row.id, turnId)) return c.json({ error: '这一轮已经撤销过，或没有改动可撤销' }, 409)
+    const result = docs.revertTurn(row.id, turnId)
     const version = docs.snapshot(row.id, 'user', '撤销一轮 AI 修改')
-    return c.json({ rev: docs.rev(row.id), changes: event?.changes.length ?? 0, version })
+    return c.json({ rev: docs.rev(row.id), changes: result?.event?.changes.length ?? 0, skipped: result?.skipped ?? [], version })
   })
 
   /** 用户显式保存一个版本。 */
@@ -306,6 +306,19 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
 
   // —— 资产 ——
+
+  /** 用户在编辑器里插图：上传图片为资产（导出 docx 支持 png / jpeg / gif）。 */
+  app.post('/api/docs/:id/assets', async c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const form = await c.req.parseBody()
+    const file = form.file instanceof File ? form.file : null
+    if (!file) return c.json({ error: '缺少图片文件' }, 400)
+    if (!['image/png', 'image/jpeg', 'image/gif'].includes(file.type)) return c.json({ error: '只支持 png / jpg / gif 图片' }, 400)
+    if (file.size > 10 * 1024 * 1024) return c.json({ error: '图片超过 10MB' }, 400)
+    const asset = store.putAsset({ owner: c.get('user'), mime: file.type, name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
+    return c.json({ asset_id: asset.id, name: asset.name }, 201)
+  })
 
   app.get('/api/assets/:id', c => {
     const asset = store.getAsset(c.req.param('id'))

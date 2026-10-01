@@ -5,7 +5,7 @@ import { InputRule, inputRules, wrappingInputRule } from 'prosemirror-inputrules
 import { keymap } from 'prosemirror-keymap'
 import type { Node as PMNode, NodeType } from 'prosemirror-model'
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirror-schema-list'
-import { EditorState, Plugin, PluginKey, type Command } from 'prosemirror-state'
+import { EditorState, Plugin, PluginKey, TextSelection, type Command } from 'prosemirror-state'
 import { goToNextCell, tableEditing } from 'prosemirror-tables'
 import { Decoration, DecorationSet, EditorView, type NodeView } from 'prosemirror-view'
 import { redo, undo, ySyncPlugin, ySyncPluginKey, yUndoPlugin } from 'y-prosemirror'
@@ -19,6 +19,8 @@ import { ADDRESSABLE, schema } from '../../src/model/schema.ts'
 
 export interface EditorOptions {
   assetUrl: (assetId: string) => string
+  /** 上传图片为资产，返回 asset_id（失败抛错）。 */
+  uploadImage: (file: File) => Promise<string>
   onCommentClick: (thread: string) => void
   onSuggestion: (group: string, accept: boolean) => void
   onSelection: (anchor: SelectionAnchor | null) => void
@@ -244,7 +246,7 @@ export class Editor {
           dom.textContent = '[?]'
           return { dom, ignoreMutation: () => true } satisfies NodeView
         },
-        figure: node => {
+        figure: (node, view, getPos) => {
           const dom = document.createElement('figure')
           if (node.attrs.id) dom.dataset.id = node.attrs.id as string
           if (node.attrs.suggest) dom.dataset.suggest = node.attrs.suggest as string
@@ -252,13 +254,35 @@ export class Editor {
           img.src = opts.assetUrl(node.attrs.asset_id as string)
           img.alt = (node.attrs.alt as string) ?? ''
           dom.appendChild(img)
-          if (node.attrs.caption) {
-            const cap = document.createElement('figcaption')
-            cap.textContent = node.attrs.caption as string
-            dom.appendChild(cap)
-          }
+          const cap = document.createElement('figcaption')
+          cap.textContent = (node.attrs.caption as string) || '双击添加图注'
+          if (!node.attrs.caption) cap.className = 'placeholder'
+          dom.appendChild(cap)
+          dom.title = '双击编辑图注'
+          dom.addEventListener('dblclick', () => {
+            const pos = getPos()
+            if (pos === undefined) return
+            const current = view.state.doc.nodeAt(pos)
+            const caption = prompt('图注', (current?.attrs.caption as string) ?? '')
+            if (caption === null || !current) return
+            view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, caption: caption.trim() }))
+          })
           return { dom, ignoreMutation: () => true } satisfies NodeView
         },
+      },
+      handlePaste: (_view, event) => {
+        const files = [...(event.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'))
+        if (files.length === 0) return false
+        void editor.insertImages(files)
+        return true
+      },
+      handleDrop: (view, event) => {
+        const files = [...((event as DragEvent).dataTransfer?.files ?? [])].filter(f => f.type.startsWith('image/'))
+        if (files.length === 0) return false
+        const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+        if (at) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(at.pos))))
+        void editor.insertImages(files)
+        return true
       },
       handleClickOn: (_view, _pos, _node, _nodePos, event) => {
         const mark = (event.target as HTMLElement).closest('mark.comment') as HTMLElement | null
@@ -293,6 +317,16 @@ export class Editor {
       this.view.dispatch(this.view.state.tr.setMeta(flashKey, ids).setMeta('addToHistory', false))
       setTimeout(() => this.view.dispatch(this.view.state.tr.setMeta(flashKey, 'clear').setMeta('addToHistory', false)), 2200)
     }, 250)
+  }
+
+  /** 上传图片并在光标处插入图块（逐张，保持顺序）。 */
+  async insertImages(files: File[]): Promise<void> {
+    for (const file of files) {
+      const assetId = await this.opts.uploadImage(file)
+      const figure = schema.nodes.figure!.create({ asset_id: assetId, alt: file.name.replace(/\.[^.]+$/, '') })
+      this.view.dispatch(this.view.state.tr.replaceSelectionWith(figure).scrollIntoView())
+    }
+    this.view.focus()
   }
 
   run(command: Command): void {

@@ -85,6 +85,16 @@ async function open(docId: string): Promise<void> {
   const provider = new Provider(`${proto}://${location.host}/collab/${docId}?token=${encodeURIComponent(TOKEN)}`, ydoc, setSyncStatus)
   const editor = new Editor($('page'), ydoc.getXmlFragment('body'), {
     assetUrl: id => `/api/assets/${id}?token=${encodeURIComponent(TOKEN)}`,
+    uploadImage: async file => {
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        return (await api(`/api/docs/${docId}/assets`, { method: 'POST', body: fd })).asset_id as string
+      } catch (err) {
+        showNotice(`图片上传失败：${(err as Error).message}`, true)
+        throw err
+      }
+    },
     onCommentClick: thread => {
       switchTab('commentPane')
       document.querySelector(`[data-cid="${CSS.escape(thread)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -165,8 +175,15 @@ $('toolbar').onclick = e => {
   const cmd = btn?.dataset.cmd
   if (!cmd || !session) return
   const c = session.editor.commands as Record<string, (...a: any[]) => void>
+  if (cmd === 'image') { $('imageInput').click(); return }
   if (['bold', 'italic', 'underline', 'sup', 'sub'].includes(cmd)) session.editor.commands.mark(cmd as 'bold')
   else c[cmd]?.()
+}
+$<HTMLInputElement>('imageInput').onchange = e => {
+  const input = e.target as HTMLInputElement
+  const files = [...(input.files ?? [])]
+  input.value = ''
+  if (session && files.length > 0) void session.editor.insertImages(files).catch(() => {})
 }
 $<HTMLSelectElement>('blockType').onchange = e => {
   const v = (e.target as HTMLSelectElement).value
@@ -219,7 +236,8 @@ function attachRevert(el: HTMLElement, turnId: string): void {
     if (!session) return
     try {
       const r = await api(`/api/docs/${session.docId}/turns/${turnId}/revert`, { method: 'POST' })
-      btn.replaceWith(Object.assign(document.createElement('div'), { className: 'step ok', textContent: `已撤销本轮修改（${r.changes} 处）` }))
+      const kept = r.skipped.length > 0 ? `；${r.skipped.length} 处你之后改过，已保留你的版本` : ''
+      btn.replaceWith(Object.assign(document.createElement('div'), { className: 'step ok', textContent: `已撤销本轮修改（${r.changes} 处）${kept}` }))
     } catch (err) {
       showNotice((err as Error).message, true)
     }

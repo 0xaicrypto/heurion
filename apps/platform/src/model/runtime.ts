@@ -5,6 +5,7 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from 'y-prosemirro
 import type { Actor, DocKind, DocRow, Store, VersionRow, VersionSource } from '../store/db.ts'
 import { assignIds, collectIds } from './ids.ts'
 import { schema } from './schema.ts'
+import { revertByNodes } from '../ops/revert.ts'
 
 /** Yjs 里存放正文的 fragment 名。 */
 const BODY = 'body'
@@ -184,6 +185,8 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
     this.flush(docId)
     const before = this.get(docId)
     if (before.eq(next)) return null
+    // AI 回合第一次写这份文档：记下回合开始前的状态（服务重启后按节点撤销的依据）
+    if (meta.actor === 'ai' && meta.turnId) this.store.putTurnBase(meta.turnId, docId, Y.encodeStateAsUpdate(l.ydoc))
     const origin = this.originFor(docId, l, meta)
     l.ydoc.transact(() => {
       updateYFragment(l.ydoc, l.ydoc.getXmlFragment(BODY), next, { mapping: new Map(), isOMark: new Map() } as never)
@@ -210,24 +213,37 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
     return entry.origin
   }
 
-  /** 该回合能否撤销（服务进程重启后撤销器不在，改用版本回滚）。 */
+  /** 该回合能否撤销：内存里有撤销器，或有持久化的回合起点且未撤销过。 */
   canRevertTurn(docId: string, turnId: string): boolean {
-    return this.load(docId).turnUndo.get(turnId)?.um.canUndo() ?? false
+    if (this.load(docId).turnUndo.get(turnId)?.um.canUndo()) return true
+    const base = this.store.getTurnBase(turnId, docId)
+    return Boolean(base && !base.reverted)
   }
 
   /**
-   * 撤销某个 AI 回合对本文档的全部改动：Yjs 撤销只移除该回合插入 / 恢复该回合删除的内容，
-   * 用户在此期间的编辑保留。落成一次用户提交。
+   * 撤销某个 AI 回合对本文档的全部改动，落成一次用户提交。
+   * 有撤销器（服务未重启）：Yjs 撤销只移除该回合插入 / 恢复该回合删除的内容，用户期间的编辑保留；
+   * 否则按节点撤销（revertByNodes）：用户之后改过的块跳过，返回跳过的块 id。
    */
-  revertTurn(docId: string, turnId: string): CommitEvent | null {
+  revertTurn(docId: string, turnId: string): { event: CommitEvent | null; skipped: string[] } | null {
     const l = this.load(docId)
     const entry = l.turnUndo.get(turnId)
-    if (!entry || !entry.um.canUndo()) return null
+    if (entry?.um.canUndo()) {
+      this.flush(docId)
+      while (entry.um.canUndo()) entry.um.undo()
+      entry.um.destroy()
+      l.turnUndo.delete(turnId)
+      this.store.markTurnReverted(turnId, docId)
+      return { event: this.flush(docId, [{ op: 'revert_turn', turn_id: turnId }]), skipped: [] }
+    }
+    const base = this.store.getTurnBase(turnId, docId)
+    if (!base || base.reverted) return null
     this.flush(docId)
-    while (entry.um.canUndo()) entry.um.undo()
-    entry.um.destroy()
-    l.turnUndo.delete(turnId)
-    return this.flush(docId, [{ op: 'revert_turn', turn_id: turnId }])
+    const turn = this.store.turnChanges(turnId, docId)
+    const { doc, skipped } = revertByNodes(this.get(docId), stateToDoc(base.state), turn.changes, this.store.userTouchedSince(docId, turn.minRev))
+    const event = this.commit(docId, doc, { actor: 'user', turnId: null, ops: [{ op: 'revert_turn', turn_id: turnId, by: 'nodes' }] })
+    this.store.markTurnReverted(turnId, docId)
+    return { event, skipped }
   }
 
   /** 打版本快照（回合结束、用户保存、导入、回滚）。与上一版本 rev 相同则不重复打。 */

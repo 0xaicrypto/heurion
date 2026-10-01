@@ -56,6 +56,9 @@ textarea, input[type=text] { font: inherit; width: 100%; border: 1px solid var(-
 .ProseMirror figure { margin: 16px 0; text-align: center; }
 .ProseMirror figure img { max-width: 100%; }
 .ProseMirror figcaption { color: var(--muted); font-size: 13px; }
+.ProseMirror figcaption.placeholder { opacity: .5; }
+.ProseMirror figure { cursor: default; }
+.ProseMirror figure.ProseMirror-selectednode { outline: 2px solid var(--accent); border-radius: 4px; }
 .ProseMirror .opaque { border: 1px dashed var(--line); color: var(--muted); padding: 8px; border-radius: 6px; font-size: 13px; margin: 8px 0; }
 .ProseMirror mark.comment { background: var(--warn-soft); color: inherit; border-bottom: 2px solid var(--warn); cursor: pointer; }
 .ProseMirror sup.cite { color: var(--accent); }
