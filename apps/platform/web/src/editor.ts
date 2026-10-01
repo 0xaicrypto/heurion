@@ -319,6 +319,12 @@ export class Editor {
     }, 250)
   }
 
+  /** 在光标处插入引用（cite_id 已在服务端登记）。 */
+  insertCitation(citeId: string): void {
+    this.view.dispatch(this.view.state.tr.replaceSelectionWith(schema.nodes.citation!.create({ cite_id: citeId })).scrollIntoView())
+    this.view.focus()
+  }
+
   /** 上传图片并在光标处插入图块（逐张，保持顺序）。 */
   async insertImages(files: File[]): Promise<void> {
     for (const file of files) {

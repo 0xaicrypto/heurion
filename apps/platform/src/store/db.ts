@@ -65,6 +65,20 @@ export interface ReplyRow {
   created_at: string
 }
 
+export type ClaimVerdict = 'supported' | 'unsupported' | 'unclear' | 'missing_citation'
+
+export interface ClaimCheckRow {
+  doc_id: string
+  claim_id: string
+  node_id: string
+  sentence: string
+  verdict: ClaimVerdict
+  reason: string
+  comment_id: string | null
+  rev: number
+  created_at: string
+}
+
 export interface AssetRow {
   id: string
   owner: string
@@ -125,6 +139,14 @@ export class Store {
       CREATE TABLE IF NOT EXISTS node_src (
         doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, node_id TEXT NOT NULL, xml TEXT NOT NULL,
         PRIMARY KEY (doc_id, node_id)
+      );
+      CREATE TABLE IF NOT EXISTS citation_abstracts (
+        doi TEXT PRIMARY KEY, pmid TEXT, abstract TEXT, fetched_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS claim_checks (
+        doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, claim_id TEXT NOT NULL, node_id TEXT NOT NULL,
+        sentence TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT NOT NULL, comment_id TEXT, rev INTEGER NOT NULL,
+        created_at TEXT NOT NULL, PRIMARY KEY (doc_id, claim_id)
       );
       CREATE TABLE IF NOT EXISTS turn_bases (
         turn_id TEXT NOT NULL, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
@@ -281,6 +303,29 @@ export class Store {
   getNodeSrc(docId: string, nodeId: string): string | null {
     const row = this.db.prepare('SELECT xml FROM node_src WHERE doc_id = ? AND node_id = ?').get(docId, nodeId) as { xml: string } | undefined
     return row?.xml ?? null
+  }
+
+  // —— 论断核对 ——
+
+  getAbstract(doi: string): { pmid: string | null; abstract: string | null } | null {
+    return (this.db.prepare('SELECT pmid, abstract FROM citation_abstracts WHERE doi = ?').get(doi) as { pmid: string | null; abstract: string | null } | undefined) ?? null
+  }
+
+  putAbstract(doi: string, pmid: string | null, abstract: string | null): void {
+    this.db.prepare('INSERT OR REPLACE INTO citation_abstracts (doi, pmid, abstract, fetched_at) VALUES (?, ?, ?, ?)').run(doi, pmid, abstract, now())
+  }
+
+  getClaimCheck(docId: string, claimId: string): ClaimCheckRow | undefined {
+    return this.db.prepare('SELECT * FROM claim_checks WHERE doc_id = ? AND claim_id = ?').get(docId, claimId) as ClaimCheckRow | undefined
+  }
+
+  putClaimCheck(row: Omit<ClaimCheckRow, 'created_at'>): void {
+    this.db.prepare('INSERT OR REPLACE INTO claim_checks (doc_id, claim_id, node_id, sentence, verdict, reason, comment_id, rev, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(row.doc_id, row.claim_id, row.node_id, row.sentence, row.verdict, row.reason, row.comment_id, row.rev, now())
+  }
+
+  listClaimChecks(docId: string): ClaimCheckRow[] {
+    return this.db.prepare('SELECT * FROM claim_checks WHERE doc_id = ? ORDER BY created_at DESC').all(docId) as unknown as ClaimCheckRow[]
   }
 
   // —— AI 回合开始前的状态（撤销本轮的持久化依据） ——

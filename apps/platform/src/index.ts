@@ -3,6 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
+import { ClaimService } from './claims/service.ts'
 import { attachCollab } from './collab/gateway.ts'
 import { PostCheck } from './collab/postcheck.ts'
 import { config } from './config.ts'
@@ -25,14 +26,17 @@ const pool = new HarnessPool(config)
 const turns = new TurnService(docs, pool, registry)
 const postcheck = new PostCheck(docs)
 
+const pubmed = new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail)
+const crossref = new CrossrefClient(fetch, config.contactEmail)
+const claims = new ClaimService(docs, pubmed)
 const mcpDeps = {
-  docs, ops, turns: registry, secret: config.secret,
-  pubmed: new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail),
-  crossref: new CrossrefClient(fetch, config.contactEmail),
+  docs, ops, claims, turns: registry, secret: config.secret,
+  pubmed,
+  crossref,
   workspaceDir: (userId: string) => pool.workspaceDir(userId),
 }
 
-const app = buildApi({ docs, ops, turns, postcheck, devToken: config.devToken, devUser: config.devUser })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, devToken: config.devToken, devUser: config.devUser })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

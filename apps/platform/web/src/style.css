@@ -107,3 +107,8 @@ textarea, input[type=text] { font: inherit; width: 100%; border: 1px solid var(-
 .diff .added { color: var(--ok); }
 .diff .removed { color: var(--danger); text-decoration: line-through; }
 .diff .modified { color: var(--accent); }
+.verdict { font-size: 12px; padding: 0 6px; border-radius: 8px; background: var(--bg); }
+.verdict.supported { color: var(--ok); background: var(--ok-soft); }
+.verdict.unsupported { color: var(--danger); background: var(--danger-soft); }
+.verdict.unclear, .verdict.missing_citation { color: var(--warn); background: var(--warn-soft); }
+.claim { font-size: 13px; margin-top: 8px; }

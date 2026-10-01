@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { canAccess, verifyToken, type Permission, type TokenClaims } from '../auth/token.ts'
+import type { ClaimService } from '../claims/service.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
 import { formatAma, normalizeDoi } from '../literature/format.ts'
 import type { PubMedClient } from '../literature/pubmed.ts'
@@ -16,6 +17,7 @@ import { citationOrder, diff, outline, read, ReadError, search } from '../views/
 import type { TurnRegistry } from './turns.ts'
 
 export interface McpDeps {
+  claims: ClaimService
   docs: Documents
   ops: OpService
   turns: TurnRegistry
@@ -43,7 +45,8 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 引用：pubmed_search 找文献 → insert_citation 登记 → 正文写返回的 [@c:<cite_id>]。正文中不能出现 DOI、PMID 或手写参考文献，参考文献表由平台自动生成。
 - 评论是用户锚定在具体文字上的修改要求：comments_list 读取 → 修改 → comment_reply 说明改了什么。
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
-- 图表用 shell 生成图片文件后，用 asset_upload 上传，再用 ![说明](asset:<asset_id>) 插入。`
+- 图表用 shell 生成图片文件后，用 asset_upload 上传，再用 ![说明](asset:<asset_id>) 插入。
+- 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。`
 
 /** 一次 MCP 请求的上下文。 */
 class Ctx {
@@ -189,15 +192,27 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   })
 
   server.registerTool('doc_diff', {
-    description: '两个版本之间的块级变化（新增 / 删除 / 修改，附前后文字）。to_version 缺省为当前内容。',
-    inputSchema: { doc_id: z.string(), from_version: z.number().int().min(1), to_version: z.number().int().min(1).optional() },
-  }, async ({ doc_id, from_version, to_version }) => {
+    description: '两个版本之间的块级变化（新增 / 删除 / 修改，附前后文字）。版本号是 doc_history 的 seq（不是 rev）；也可以给 from_rev，取该 rev 时或之前最近的版本。to_version 缺省为当前内容。',
+    inputSchema: {
+      doc_id: z.string(),
+      from_version: z.number().int().min(1).optional(),
+      from_rev: z.number().int().min(0).optional(),
+      to_version: z.number().int().min(1).optional(),
+    },
+  }, async ({ doc_id, from_version, from_rev, to_version }) => {
     const denied = ctx.check(doc_id, 'read')
     if (denied) return denied
-    const before = docs.versionDoc(doc_id, from_version)
+    const versions = store.listVersions(doc_id)
+    const seq = from_version ?? (from_rev !== undefined ? versions.find(v => v.rev <= from_rev)?.seq : undefined)
+    const before = seq ? docs.versionDoc(doc_id, seq) : null
     const after = to_version ? docs.versionDoc(doc_id, to_version) : docs.get(doc_id)
-    if (!before || !after) return fail('version_not_found', '版本不存在', { hint: '用 doc_history 查看版本号。' })
-    return json({ changes: diff(before, after) })
+    if (!before || !after) {
+      return fail('version_not_found', '版本不存在', {
+        hint: '版本号是下面 available 里的 seq（不是 rev）。',
+        available: versions.slice(0, 10).map(v => ({ seq: v.seq, rev: v.rev, source: v.source, note: v.note })),
+      })
+    }
+    return json({ from_version: seq, changes: diff(before, after) })
   })
 
   // —— 评论 ——
@@ -294,6 +309,39 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     return json(store.listCitations(doc_id).map(c => ({
       cite_id: c.id, number: order.includes(c.id) ? order.indexOf(c.id) + 1 : null, doi: c.doi, formatted: c.formatted,
     })))
+  })
+
+  // —— 论断核对（M1） ——
+
+  server.registerTool('verify_claims', {
+    description:
+      '论断核对：返回一页带引用的句子及所引文献的 PubMed 摘要，以及含数值却没有引用的句子（unsourced，仅第一页）。' +
+      '逐条判断后用 claim_report 提交；按 next_cursor 翻页。只核对，不修改正文。',
+    inputSchema: { doc_id: z.string(), cursor: z.number().int().min(0).optional() },
+  }, async ({ doc_id, cursor }) => {
+    const denied = ctx.check(doc_id, 'read')
+    if (denied) return denied
+    return json(await deps.claims.evidence(doc_id, cursor ?? 0))
+  })
+
+  server.registerTool('claim_report', {
+    description:
+      '提交论断核对结果。verdict：supported / unsupported / unclear / missing_citation（unsourced 的数值句）。' +
+      '除 supported 外，平台会在该句挂一条 AI 评论供用户决定是否修改；reason 写明依据。',
+    inputSchema: {
+      doc_id: z.string(),
+      results: z.array(z.object({
+        claim_id: z.string(),
+        verdict: z.enum(['supported', 'unsupported', 'unclear', 'missing_citation']),
+        reason: z.string().min(1).max(1000),
+      })).min(1).max(50),
+    },
+  }, async ({ doc_id, results }) => {
+    const denied = ctx.check(doc_id, 'write')
+    if (denied) return denied
+    const out = deps.claims.report(doc_id, results)
+    if (out.some(r => r.status === 'commented')) deps.turns.notify(claims.u, { type: 'comment_reply', doc_id, comment_id: '' })
+    return json({ results: out, note: out.some(r => r.status === 'stale') ? 'stale：该句已被修改或不存在，请重新 verify_claims' : undefined })
   })
 
   // —— 资产 ——

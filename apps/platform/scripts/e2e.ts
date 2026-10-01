@@ -26,7 +26,10 @@ async function turn(path: string, body: unknown): Promise<Turn> {
     ms: Date.now() - t0,
     events,
     calls: events.filter(e => e.type === 'tool_call').map(e => String(e.name).replace(/^mcp__heurion__/, '')),
-    errors: events.filter(e => e.type === 'tool_result' && e.isError).map(e => e.code ?? 'error'),
+    errors: events.filter(e => e.type === 'tool_result' && e.isError).map(e => {
+      const call = events.find(x => x.type === 'tool_call' && x.callId === e.callId)
+      return `${String(call?.name ?? '?').replace(/^mcp__heurion__/, '')}${e.code ? `(${e.code})` : ''}`
+    }),
   }
 }
 
@@ -36,7 +39,7 @@ function check(name: string, ok: boolean, detail = '') {
   console.log(`${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
 const summary = (t: Turn) => `${(t.ms / 1000).toFixed(1)}s · 工具 ${t.calls.length}（${[...new Set(t.calls)].join(', ')}）· 工具报错 ${t.errors.length}${t.errors.length ? `：${t.errors.join(', ')}` : ''}`
-const shell = (t: Turn) => t.calls.some(c => !['doc_outline', 'doc_read', 'doc_search', 'doc_edit', 'doc_history', 'doc_diff', 'doc_list', 'doc_create', 'comments_list', 'comment_reply', 'comment_resolve', 'pubmed_search', 'doi_lookup', 'insert_citation', 'list_citations', 'asset_upload'].includes(c))
+const shell = (t: Turn) => t.calls.some(c => !['doc_outline', 'doc_read', 'doc_search', 'doc_edit', 'doc_history', 'doc_diff', 'doc_list', 'doc_create', 'comments_list', 'comment_reply', 'comment_resolve', 'pubmed_search', 'doi_lookup', 'insert_citation', 'list_citations', 'asset_upload', 'verify_claims', 'claim_report'].includes(c))
 
 // —— 1. 起草：带引用的证据段 ——
 const doc = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 司美格鲁肽', markdown: '# 引言\n\n司美格鲁肽是 GLP-1 受体激动剂。\n\n# 证据\n\n待补充。' }) })
@@ -128,7 +131,21 @@ check('导出：未改动的块原样写回', xml.includes(para('研究背景', 
   check('撤销本轮：恢复到该回合之前', changed !== before && reverted === before, `${summary(t7)} · 撤销 ${r.changes} 处`)
 }
 
-// —— 8. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
+// —— 8. 论断核对：故意写错的论断被标出 ——
+{
+  const wrong = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 论断核对', markdown: '# 证据\n\n占位。' }) })
+  const cite = await api(`/api/docs/${wrong.id}/citations`, { method: 'POST', body: JSON.stringify({ doi: '10.1056/NEJMoa2307563' }) })
+  const read8 = await api<string>(`/api/docs/${wrong.id}/read`)
+  const pid = /\{#([a-z0-9]+)\} 占位/.exec(read8)![1]
+  await api(`/api/docs/${wrong.id}/edit`, { method: 'POST', body: JSON.stringify({ base_rev: 0, ops: [{ op: 'replace_block', id: pid, markdown: `SELECT 试验在 2 型糖尿病患者中进行，因安全性问题提前终止[@c:${cite.cite_id}]。` }] }) })
+  const t8 = await turn(`/api/docs/${wrong.id}/verify`, {})
+  const d8 = await api(`/api/docs/${wrong.id}`)
+  const flagged = d8.claim_checks.filter((c: any) => c.verdict === 'unsupported')
+  check('论断核对：错误论断被判为不支持并挂评论', flagged.length === 1 && d8.comments.some((c: any) => c.id === flagged[0].comment_id), `${summary(t8)} · ${flagged[0]?.reason ?? ''}`)
+  check('论断核对：只核对不改正文', !t8.calls.includes('doc_edit'))
+}
+
+// —— 9. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
 {
   const { execFileSync } = await import('node:child_process')
   const { mkdtempSync, writeFileSync, existsSync } = await import('node:fs')

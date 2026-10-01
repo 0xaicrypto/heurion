@@ -1,7 +1,10 @@
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
+import { verifyPrompt } from '../claims/service.ts'
 import { exportDocx } from '../convert/docx-export.ts'
+import type { CrossrefClient } from '../literature/crossref.ts'
+import { formatAma, normalizeDoi } from '../literature/format.ts'
 import { bindAssets, DocxImportError, importDocx } from '../convert/docx-import.ts'
 import { AnchorError, attachComment, locate, threadMarks } from '../model/anchors.ts'
 import { parseBlocks } from '../model/markdown.ts'
@@ -19,6 +22,7 @@ export interface ApiDeps {
   ops: OpService
   turns: TurnService
   postcheck: PostCheck
+  crossref: CrossrefClient
   devToken: string
   devUser: string
 }
@@ -85,6 +89,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       versions: store.listVersions(row.id),
       messages: store.listMessages(row.id),
       suggestions: pendingGroups(doc),
+      claim_checks: store.listClaimChecks(row.id),
       revertable: [...new Set(store.listMessages(row.id).map(m => m.turn_id).filter((t): t is string => !!t))].filter(t => docs.canRevertTurn(row.id, t)),
       citations: store.listCitations(row.id).map(x => ({ ...x, number: order.includes(x.id) ? order.indexOf(x.id) + 1 : null })),
       comments: store.listComments(row.id).map(x => ({ ...x, anchor: locate(doc, x, marks) })),
@@ -155,6 +160,25 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       if (err instanceof OpError) return c.json(err.toJSON(), 409)
       throw err
     }
+  })
+
+  /** 用户按 DOI 登记引用（Crossref 核实），返回 cite_id，编辑器在光标处插入引用。 */
+  app.post('/api/docs/:id/citations', async c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const { doi } = await c.req.json<{ doi?: string }>()
+    if (!doi?.trim()) return c.json({ error: 'doi 必填' }, 400)
+    const article = await deps.crossref.lookup(doi.trim())
+    if (!article) return c.json({ error: `DOI ${normalizeDoi(doi)} 在 Crossref 查不到` }, 404)
+    const cite = store.upsertCitation({ doc_id: row.id, doi: article.doi!, pmid: null, formatted: formatAma(article), url: `https://doi.org/${article.doi}` })
+    return c.json({ cite_id: cite.id, formatted: cite.formatted }, 201)
+  })
+
+  /** 核对全部论断：排一个只核对、不改正文的回合。 */
+  app.post('/api/docs/:id/verify', c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    return streamTurn(c, deps, row.id, verifyPrompt(row.id))
   })
 
   /** 采纳 / 拒绝待采纳修订（group = all 表示全部）。 */

@@ -145,11 +145,12 @@ function replaceBlock(tr: Transform, id: string, markdown: string, ctx: ApplyCon
 }
 
 /** 块内字符 → 文档位置的映射。citation 以 `[@c:id]` 参与匹配，hard_break 记作换行。 */
-function textMap(node: PMNode, nodePos: number): { text: string; from: number[]; to: number[]; marks: Array<readonly Mark[]> } {
+function textMap(node: PMNode, nodePos: number): { text: string; from: number[]; to: number[]; marks: Array<readonly Mark[]>; cite: boolean[] } {
   let text = ''
   const from: number[] = []
   const to: number[] = []
   const marks: Array<readonly Mark[]> = []
+  const cite: boolean[] = []
   node.forEach((child, offset) => {
     const start = nodePos + 1 + offset
     if (child.isText) {
@@ -158,6 +159,7 @@ function textMap(node: PMNode, nodePos: number): { text: string; from: number[];
         from.push(start + i)
         to.push(start + i + 1)
         marks.push(child.marks)
+        cite.push(false)
       }
     } else {
       const s = child.type.name === 'citation' ? `[@c:${child.attrs.cite_id}]` : child.type.name === 'hard_break' ? '\n' : '￼'
@@ -166,10 +168,59 @@ function textMap(node: PMNode, nodePos: number): { text: string; from: number[];
         from.push(start)
         to.push(start + child.nodeSize)
         marks.push(child.marks)
+        cite.push(child.type.name === 'citation')
       }
     }
   })
-  return { text, from, to, marks }
+  return { text, from, to, marks, cite }
+}
+
+/** 去掉引用标记后的文字，index[i] = 去标记文字第 i 个字符在原映射里的下标。 */
+function stripCitations(map: ReturnType<typeof textMap>): { text: string; index: number[] } {
+  let text = ''
+  const index: number[] = []
+  for (let i = 0; i < map.text.length; i++) {
+    if (map.cite[i]) continue
+    text += map.text[i]
+    index.push(i)
+  }
+  return { text, index }
+}
+
+/**
+ * find 跨过了引用标记、而 replace 只是在 find 前 / 后追加文字时：不动原文（保留引用），
+ * 只把追加的部分插到匹配处之后 / 之前。处理不了返回 false。
+ */
+function appendAcrossCitation(tr: Transform, map: ReturnType<typeof textMap>, op: Extract<DocOp, { op: 'replace_text' }>): boolean {
+  const stripped = stripCitations(map)
+  for (const v of findVariants(op.find)) {
+    const find = v.replace(/\[@c:[a-z0-9]+\]/g, '')
+    if (!find) continue
+    const hits = allIndexes(stripped.text, find)
+    if (hits.length === 0) continue
+    if (hits.length > 1 && op.occurrence === undefined) return false
+    const at = hits[(op.occurrence ?? 1) - 1]
+    if (at === undefined) return false
+    const startIdx = stripped.index[at]!
+    const endIdx = stripped.index[at + find.length - 1]!
+    let addition: string | null = null
+    let after = true
+    if (op.replace.startsWith(v)) addition = op.replace.slice(v.length)
+    else if (op.replace.endsWith(v)) { addition = op.replace.slice(0, op.replace.length - v.length); after = false }
+    if (addition === null || !addition) return false
+    const base = map.marks[after ? endIdx : startIdx]!.filter(m => m.type.name !== 'comment')
+    const inline = parseInline(addition).map(n => {
+      let set = n.marks
+      for (const m of base) if (!m.isInSet(set)) set = m.addToSet(set)
+      return n.isText ? n.mark(set) : n
+    })
+    // 插在匹配末尾所在位置之后（若末尾紧跟引用，插在引用之后）
+    let pos = after ? map.to[endIdx]! : map.from[startIdx]!
+    if (after) for (let i = endIdx + 1; i < map.text.length && map.cite[i]; i++) pos = map.to[i]!
+    tr.insert(pos, inline)
+    return true
+  }
+  return false
 }
 
 function allIndexes(hay: string, needle: string): number[] {
@@ -200,8 +251,17 @@ function replaceText(tr: Transform, op: Extract<DocOp, { op: 'replace_text' }>):
     if (hits.length > 0) { needle = v; break }
   }
   if (hits.length === 0) {
+    // 常见失配：find 跳过了句中的引用标记（原文「…）[@c:x]。」，find 写成「…）。」）
+    const appended = appendAcrossCitation(tr, map, op)
+    if (appended) return [op.id]
+    const crossesCitation = findVariants(op.find).some(v => {
+      const stripped = v.replace(/\[@c:[a-z0-9]+\]/g, '')
+      return stripped.length > 0 && stripCitations(map).text.includes(stripped)
+    })
     throw new OpError('text_not_found', `块 ${op.id} 中找不到要替换的原文`, {
-      hint: '按 current 中的原文逐字复制 find（不含 {#id} 前缀和 markdown 符号）。',
+      hint: crossesCitation
+        ? '原文在这段文字中间有引用标记 [@c:…]：find 与 replace 里要原样写出引用标记（否则会删掉引用），或者只匹配引用标记之前 / 之后的文字。'
+        : '按 current 中的原文逐字复制 find（不含 {#id} 前缀和 markdown 符号）。',
       current: serializeBlock(target.node, { ids: true }, ''),
     })
   }

@@ -204,3 +204,27 @@ describe('读视图', () => {
     expect(r).not.toContain('心力衰竭')
   })
 })
+
+describe('replace_text 跨引用标记', () => {
+  it('find 跳过了引用标记、replace 只是追加：保留引用，只插入追加的部分', () => {
+    const { store, docs, ops, docId } = setup('占位。')
+    const c = store.upsertCitation({ doc_id: docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    const [p] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p!, markdown: `HR 0.80（95% CI 0.72–0.90）[@c:${c.id}]。` }] }, { actor: 'user', turnId: null })
+    ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: '0.72–0.90）。', replace: '0.72–0.90）。局限：随访较短。' }] }, { actor: 'ai', turnId: null })
+    const node = docs.get(docId).child(0)
+    expect(node.textContent).toBe('HR 0.80（95% CI 0.72–0.90）。局限：随访较短。')
+    let cites = 0
+    node.forEach(n => { if (n.type.name === 'citation') cites++ })
+    expect(cites).toBe(1)
+  })
+
+  it('真正的改写跨过引用：拒绝并提示原样写出引用标记', () => {
+    const { store, docs, ops, docId } = setup('占位。')
+    const c = store.upsertCitation({ doc_id: docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    const [p] = ids(docs, docId)
+    ops.edit({ doc_id: docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id: p!, markdown: `风险降低[@c:${c.id}]。` }] }, { actor: 'user', turnId: null })
+    const e = expectOpError(() => ops.edit({ doc_id: docId, base_rev: 1, mode: 'apply', ops: [{ op: 'replace_text', id: p!, find: '风险降低。', replace: '风险显著降低。' }] }, { actor: 'ai', turnId: null }), 'text_not_found')
+    expect(e.extra.hint).toContain('引用标记')
+  })
+})

@@ -176,9 +176,24 @@ $('toolbar').onclick = e => {
   if (!cmd || !session) return
   const c = session.editor.commands as Record<string, (...a: any[]) => void>
   if (cmd === 'image') { $('imageInput').click(); return }
+  if (cmd === 'cite') { void addCitation(); return }
   if (['bold', 'italic', 'underline', 'sup', 'sub'].includes(cmd)) session.editor.commands.mark(cmd as 'bold')
   else c[cmd]?.()
 }
+async function addCitation(): Promise<void> {
+  if (!session) return
+  const doi = prompt('输入要引用文献的 DOI（会经 Crossref 核实）')
+  if (!doi?.trim()) return
+  try {
+    const r = await api(`/api/docs/${session.docId}/citations`, { method: 'POST', body: JSON.stringify({ doi }) })
+    session.editor.insertCitation(r.cite_id)
+    showNotice(`已插入引用：${r.formatted}`)
+    scheduleRefresh()
+  } catch (err) {
+    showNotice((err as Error).message, true)
+  }
+}
+
 $<HTMLInputElement>('imageInput').onchange = e => {
   const input = e.target as HTMLInputElement
   const files = [...(input.files ?? [])]
@@ -214,7 +229,9 @@ $('notice').onclick = () => { $('notice').hidden = true }
 
 function displayMessage(text: string): string {
   const m = /^请处理文档 \S+ 中的评论 (\S+)：/.exec(text)
-  return m ? `处理评论 ${m[1]}` : text
+  if (m) return `处理评论 ${m[1]}`
+  if (/^请核对文档 \S+ 中带引用的论断/.test(text)) return '核对全部论断'
+  return text
 }
 
 function addMsg(role: 'user' | 'assistant', text: string, revertTurn: string | null = null): HTMLElement {
@@ -453,10 +470,30 @@ $('versions').onclick = async e => {
   }
 }
 
+const VERDICT: Record<string, string> = { supported: '支持', unsupported: '不支持', unclear: '无法判断', missing_citation: '缺出处' }
+
 function renderCites(): void {
   const list: any[] = detail?.citations ?? []
-  $('cites').innerHTML = list.length === 0 ? '<div class="muted">AI 通过文献检索登记的引用会显示在这里</div>' : list.map(c =>
-    `<div class="card"><b>${c.number ? `[${c.number}]` : '未使用'}</b> ${esc(c.formatted)} <a href="${esc(c.url || `https://doi.org/${c.doi}`)}" target="_blank" rel="noopener">原文</a></div>`).join('')
+  const checks: any[] = detail?.claim_checks ?? []
+  const counts = checks.reduce((m: Record<string, number>, c: any) => { m[c.verdict] = (m[c.verdict] ?? 0) + 1; return m }, {})
+  const summary = checks.length === 0 ? '<span class="muted">还没有核对过</span>'
+    : Object.entries(counts).map(([v, n]) => `<span class="verdict ${v}">${VERDICT[v] ?? v} ${n}</span>`).join(' ')
+  const flagged = checks.filter(c => c.verdict !== 'supported').map(c =>
+    `<div class="claim"><span class="verdict ${c.verdict}">${VERDICT[c.verdict] ?? c.verdict}</span> ${esc(c.sentence)}<div class="muted">${esc(c.reason)}</div></div>`).join('')
+  $('cites').innerHTML = `<div class="card"><div class="row"><b>论断核对</b><span class="grow"></span><button id="verifyBtn" class="ai">核对全部论断</button></div>
+      <div class="muted" style="margin:4px 0">对照所引文献的 PubMed 摘要逐句核对；有问题的句子会挂一条 AI 评论，不会自动改写。</div>
+      <div>${summary}</div>${flagged}</div>` +
+    (list.length === 0 ? '<div class="muted">AI 通过文献检索登记的引用会显示在这里</div>' : list.map(c =>
+      `<div class="card"><b>${c.number ? `[${c.number}]` : '未使用'}</b> ${esc(c.formatted)} <a href="${esc(c.url || `https://doi.org/${c.doi}`)}" target="_blank" rel="noopener">原文</a></div>`).join(''))
+  $('verifyBtn').onclick = async () => {
+    if (!session) return
+    try {
+      await api(`/api/docs/${session.docId}/verify?async=1`, { method: 'POST' })
+      switchTab('chatPane')
+    } catch (err) {
+      showNotice((err as Error).message, true)
+    }
+  }
 }
 
 // —— 杂项 ——
