@@ -2,6 +2,11 @@
 # 用 podman（或 docker）构建并运行 Heurion 2.0 单机容器。
 #   scripts/container.sh build | up | down | logs | collabora
 # 数据在命名卷 heurion2-data（macOS 上 bind mount 的属主映射会让非 root 用户无法写入）。
+#
+# ⚠️ 不要用 `lsof -ti :8787 | xargs kill` 之类按端口杀进程：podman 的网络进程
+#    gvproxy 同时监听 8787（容器端口转发）和 machine 控制通道，误杀它会让
+#    machine 显示"运行中"却完全失联。杀本地 dev server 用：
+#      pkill -f 'tsx.*src/index.ts'
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ENGINE="${ENGINE:-$(command -v podman || command -v docker)}"
