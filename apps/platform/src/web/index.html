@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heurion</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1f2328; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2f6fed; --accent-soft: #e8efff; --ai: #7c3aed; --ai-soft: #f3edff;
+    --warn: #b45309; --warn-soft: #fff4e5; --danger: #c0392b; --ok: #15803d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a; --panel: #1d2024; --text: #e6e6e6; --muted: #9aa0a6; --line: #2e3238;
+      --accent: #6b9bff; --accent-soft: #1f2a44; --ai: #b794f6; --ai-soft: #2a2140;
+      --warn: #f0a24b; --warn-soft: #3a2a14; --danger: #ef6b5b; --ok: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif; background: var(--bg); color: var(--text); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.ai { background: var(--ai); border-color: var(--ai); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  textarea, input[type=text] { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: var(--panel); color: var(--text); }
+  .app { display: grid; grid-template-columns: 220px 1fr 380px; height: 100vh; }
+  aside, .side { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; }
+  .side { border-right: 0; border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+  .brand { padding: 14px 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .doclist { list-style: none; margin: 0; padding: 0 8px; }
+  .doclist li { padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doclist li.active { background: var(--accent-soft); color: var(--accent); }
+  .doclist li:hover:not(.active) { background: var(--bg); }
+  .actions { display: flex; gap: 6px; padding: 8px 16px 16px; flex-wrap: wrap; }
+  main { overflow: auto; position: relative; }
+  .toolbar { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 32px; display: flex; gap: 8px; align-items: center; }
+  .toolbar .title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 12px; color: var(--muted); }
+  .badge.live { color: var(--ai); }
+  .page { max-width: 820px; margin: 24px auto 120px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 48px 64px; min-height: 60vh; }
+  .page [data-id] { transition: background .6s; border-radius: 3px; }
+  .page .flash { background: var(--ai-soft); }
+  .page table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  .page td, .page th { border: 1px solid var(--line); padding: 4px 8px; vertical-align: top; }
+  .page td p, .page th p { margin: 0; }
+  .page figure { margin: 16px 0; text-align: center; }
+  .page figure img { max-width: 100%; }
+  .page figcaption { color: var(--muted); font-size: 13px; }
+  .page .opaque { border: 1px dashed var(--line); color: var(--muted); padding: 8px; border-radius: 6px; font-size: 13px; }
+  .page mark.comment { background: var(--warn-soft); color: inherit; border-bottom: 2px solid var(--warn); cursor: pointer; }
+  .page sup.cite { color: var(--accent); }
+  .page .references { border-top: 1px solid var(--line); margin-top: 32px; font-size: 13px; }
+  .page .style-Quote { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); }
+  .page .style-Code { font-family: ui-monospace, monospace; background: var(--bg); padding: 8px; }
+  .empty { color: var(--muted); text-align: center; padding: 80px 0; }
+  #commentFab { position: absolute; display: none; z-index: 5; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; border-radius: 0; flex: 1; padding: 10px 0; background: transparent; color: var(--muted); }
+  .tabs button.active { color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+  .tabpane { flex: 1; overflow: auto; padding: 12px; display: none; }
+  .tabpane.active { display: block; }
+  #chatPane.active { display: flex; flex-direction: column; padding: 0; }
+  .log { flex: 1; overflow: auto; padding: 12px; }
+  .msg { margin: 8px 0; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: var(--accent-soft); margin-left: 32px; }
+  .msg.assistant { background: var(--ai-soft); margin-right: 32px; }
+  .step { font-size: 12px; color: var(--muted); margin: 2px 0 2px 4px; font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step.err { color: var(--danger); }
+  .step.ok { color: var(--ok); }
+  .composer { border-top: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .composer .row { display: flex; gap: 6px; justify-content: flex-end; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .card.resolved { opacity: .6; }
+  .card .quote { border-left: 3px solid var(--warn); padding-left: 8px; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+  .card .quote.lost { border-color: var(--danger); }
+  .reply { font-size: 13px; margin: 4px 0; }
+  .reply b { font-weight: 600; }
+  .reply.ai b { color: var(--ai); }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .vitem { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .diff div { font-size: 13px; margin: 6px 0; }
+  .diff .added { color: var(--ok); } .diff .removed { color: var(--danger); text-decoration: line-through; } .diff .modified { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">Heurion <span class="muted">平台 P0</span></div>
+    <div class="actions">
+      <button id="newDoc">新建</button>
+      <button id="uploadBtn">上传 docx</button>
+      <input id="uploadInput" type="file" accept=".docx" hidden>
+    </div>
+    <ul class="doclist" id="docList"></ul>
+  </aside>
+  <main id="main">
+    <div class="toolbar">
+      <span class="title" id="docTitle">未选择文档</span>
+      <span class="badge" id="revBadge"></span>
+      <button id="exportDocxBtn" disabled>导出 docx</button>
+      <button id="exportBtn" disabled>导出 md</button>
+      <button id="readBtn" disabled title="查看模型看到的读视图">读视图</button>
+    </div>
+    <div class="page" id="page"><div class="empty">在左侧新建或上传文档</div></div>
+    <button id="commentFab" class="primary">评论</button>
+  </main>
+  <section class="side">
+    <div class="tabs">
+      <button data-tab="chatPane" class="active">对话</button>
+      <button data-tab="commentPane">评论</button>
+      <button data-tab="versionPane">版本</button>
+      <button data-tab="citePane">引用</button>
+    </div>
+    <div class="tabpane active" id="chatPane">
+      <div class="log" id="chatLog"></div>
+      <div class="composer">
+        <textarea id="chatInput" rows="3" placeholder="让 Heurion 修改文档，例如：在方法部分补充纳入标准，并引用相关 RCT"></textarea>
+        <div class="row"><button id="cancelBtn" disabled>停止</button><button id="sendBtn" class="ai" disabled>发送</button></div>
+      </div>
+    </div>
+    <div class="tabpane" id="commentPane">
+      <div id="newComment" class="card" hidden>
+        <div class="quote" id="newCommentQuote"></div>
+        <textarea id="newCommentText" rows="2" placeholder="写下修改要求"></textarea>
+        <div class="row" style="margin-top:6px;justify-content:flex-end">
+          <button id="newCommentCancel">取消</button>
+          <button id="newCommentSave">评论</button>
+          <button id="newCommentAsk" class="ai">评论并让 AI 处理</button>
+        </div>
+      </div>
+      <div id="comments"></div>
+    </div>
+    <div class="tabpane" id="versionPane"><div id="versions"></div><div id="diffView" class="diff"></div></div>
+    <div class="tabpane" id="citePane"><div id="cites"></div></div>
+  </section>
+</div>
+<script>
+const TOKEN = localStorage.getItem('heurion.token') || 'dev'
+const $ = id => document.getElementById(id)
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+let current = null, detail = null, stream = null, busy = false, pendingAnchor = null
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { Authorization: `Bearer ${TOKEN}`, ...(opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } })
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || e.message || res.statusText) }
+  return res.headers.get('content-type')?.includes('json') ? res.json() : res.text()
+}
+
+async function loadDocs() {
+  const docs = await api('/api/docs')
+  $('docList').innerHTML = docs.map(d => `<li data-id="${d.id}" class="${d.id === current ? 'active' : ''}" title="${esc(d.title)}">${esc(d.title)}</li>`).join('')
+}
+$('docList').onclick = e => { const li = e.target.closest('li'); if (li) open(li.dataset.id) }
+
+$('newDoc').onclick = async () => {
+  const title = prompt('文档标题', '未命名'); if (title === null) return
+  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title }) })
+  await loadDocs(); open(d.id)
+}
+$('uploadBtn').onclick = () => $('uploadInput').click()
+$('uploadInput').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return
+  const fd = new FormData(); fd.append('file', f)
+  try {
+    const d = await api('/api/docs', { method: 'POST', body: fd })
+    if (d.warnings?.length) alertLine(`导入提示：${d.warnings.join('；')}`)
+    await loadDocs(); open(d.id)
+  } catch (err) { alertLine(`导入失败：${err.message}`, true) }
+  e.target.value = ''
+}
+
+async function open(id) {
+  current = id
+  stream?.close()
+  $('chatLog').innerHTML = ''
+  await loadDocs()
+  await refresh(true)
+  stream = new EventSource(`/api/docs/${id}/stream?token=${encodeURIComponent(TOKEN)}`)
+  stream.onmessage = e => { const d = JSON.parse(e.data); if (detail && d.rev !== detail.rev) refresh(false, d.actor === 'ai') }
+  ;['exportBtn', 'exportDocxBtn', 'readBtn', 'sendBtn'].forEach(b => $(b).disabled = false)
+}
+
+async function refresh(full, flash) {
+  if (!current) return
+  const prevHtml = new Map([...$('page').querySelectorAll('[data-id]')].map(el => [el.dataset.id, el.innerHTML]))
+  const [d, h] = await Promise.all([api(`/api/docs/${current}`), api(`/api/docs/${current}/html?token=${encodeURIComponent(TOKEN)}`)])
+  detail = d
+  $('docTitle').textContent = d.title
+  $('revBadge').textContent = `rev ${d.rev}`
+  $('page').innerHTML = h.html || '<div class="empty">空文档</div>'
+  if (flash) $('page').querySelectorAll('[data-id]').forEach(el => { if (prevHtml.get(el.dataset.id) !== el.innerHTML) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1500) } })
+  if (full) d.messages.forEach(m => addMsg(m.role, m.text))
+  renderComments(); renderVersions(); renderCites()
+}
+
+// —— 对话 ——
+function addMsg(role, text) {
+  const div = document.createElement('div'); div.className = `msg ${role}`; div.textContent = text
+  $('chatLog').appendChild(div); $('chatLog').scrollTop = 1e9; return div
+}
+function addStep(text, cls = '') {
+  const div = document.createElement('div'); div.className = `step ${cls}`; div.textContent = text; div.title = text
+  $('chatLog').appendChild(div); $('chatLog').scrollTop = 1e9
+}
+function alertLine(text, err) { addStep(text, err ? 'err' : ''); }
+
+async function runTurn(path, body, label) {
+  if (busy) return
+  busy = true; $('sendBtn').disabled = true; $('cancelBtn').disabled = false
+  if (label) addMsg('user', label)
+  let assistant = null
+  try {
+    const res = await fetch(path, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || res.statusText) }
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break
+      buf += value
+      let i
+      while ((i = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, i); buf = buf.slice(i + 2)
+        const line = frame.split('\n').find(l => l.startsWith('data:')); if (!line) continue
+        const ev = JSON.parse(line.slice(5))
+        if (ev.type === 'assistant') { assistant = addMsg('assistant', ev.text) }
+        else if (ev.type === 'tool_call') addStep(`→ ${ev.name.replace(/^mcp__heurion__/, '')} ${ev.arguments.slice(0, 160)}`)
+        else if (ev.type === 'tool_result' && ev.isError) addStep(`  ✗ 工具报错${ev.code ? `：${ev.code}` : ''}`, 'err')
+        else if (ev.type === 'doc_updated') addStep(`  ✓ 文档已更新 rev ${ev.rev}（${ev.changes} 处）`, 'ok')
+        else if (ev.type === 'version') addStep(`  ✓ 已保存为 v${ev.seq}`, 'ok')
+        else if (ev.type === 'comment_reply') refresh(false)
+        else if (ev.type === 'error') addStep(ev.message, 'err')
+      }
+    }
+  } catch (err) { addStep(err.message, 'err') }
+  busy = false; $('sendBtn').disabled = !current; $('cancelBtn').disabled = true
+  refresh(false)
+}
+$('sendBtn').onclick = () => {
+  const text = $('chatInput').value.trim(); if (!text || !current) return
+  $('chatInput').value = ''
+  runTurn(`/api/docs/${current}/chat`, { message: text }, text)
+}
+$('chatInput').onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('sendBtn').click() }
+$('cancelBtn').onclick = () => api('/api/cancel', { method: 'POST' })
+
+// —— 选区评论 ——
+document.addEventListener('selectionchange', () => {
+  const sel = getSelection(); const fab = $('commentFab')
+  if (!sel || sel.isCollapsed || !$('page').contains(sel.anchorNode)) { fab.style.display = 'none'; return }
+  const block = el => (el.nodeType === 3 ? el.parentElement : el).closest('p[data-id],h1[data-id],h2[data-id],h3[data-id],h4[data-id],h5[data-id],h6[data-id],li[data-id],table[data-id],figure[data-id]')
+  const a = block(sel.anchorNode), b = block(sel.focusNode)
+  if (!a || a !== b) { fab.style.display = 'none'; return }
+  const rect = sel.getRangeAt(0).getBoundingClientRect(), main = $('main').getBoundingClientRect()
+  fab.style.display = 'block'
+  fab.style.top = `${rect.top - main.top + $('main').scrollTop - 34}px`
+  fab.style.left = `${rect.left - main.left + rect.width / 2 - 24}px`
+  pendingAnchor = { node_id: a.dataset.id, snippet: sel.toString() }
+})
+$('commentFab').onmousedown = e => {
+  e.preventDefault()
+  if (!pendingAnchor) return
+  $('commentFab').style.display = 'none'
+  switchTab('commentPane')
+  $('newComment').hidden = false
+  $('newCommentQuote').textContent = pendingAnchor.snippet
+  $('newCommentText').value = ''; $('newCommentText').focus()
+}
+$('newCommentCancel').onclick = () => { $('newComment').hidden = true; pendingAnchor = null }
+async function saveComment(ask) {
+  const text = $('newCommentText').value.trim(); if (!text || !pendingAnchor) return
+  try {
+    const c = await api(`/api/docs/${current}/comments`, { method: 'POST', body: JSON.stringify({ ...pendingAnchor, text }) })
+    $('newComment').hidden = true; pendingAnchor = null
+    await refresh(false)
+    if (ask) { switchTab('chatPane'); runTurn(`/api/docs/${current}/comments/${c.id}/ask`, {}, `处理评论：${text}`) }
+  } catch (err) { alert(err.message) }
+}
+$('newCommentSave').onclick = () => saveComment(false)
+$('newCommentAsk').onclick = () => saveComment(true)
+
+function renderComments() {
+  const list = detail?.comments ?? []
+  $('comments').innerHTML = list.length === 0 ? '<div class="muted">在正文中选中文字即可评论</div>' : list.map(c => `
+    <div class="card ${c.status}" data-cid="${c.id}">
+      <div class="quote ${c.anchor.located ? '' : 'lost'}">${esc(c.anchor.text || c.snippet || '（整块）')}${c.anchor.located ? '' : ' · 锚点已移除'}</div>
+      ${c.replies.map(r => `<div class="reply ${r.role}"><b>${r.role === 'ai' ? 'Heurion' : '我'}</b>：${esc(r.text)}</div>`).join('')}
+      <div class="row" style="margin-top:6px">
+        ${c.status === 'open'
+          ? `<input type="text" placeholder="追问或补充…" data-reply><button data-act="ask" class="ai">让 AI 处理</button><button data-act="resolve">关闭</button>`
+          : `<span class="muted">已关闭（${c.resolved_by === 'ai' ? 'AI' : '我'}）</span><button data-act="reopen">重新打开</button>`}
+      </div>
+    </div>`).join('')
+}
+$('comments').onclick = async e => {
+  const btn = e.target.closest('button[data-act]'); if (!btn) return
+  const card = btn.closest('[data-cid]'), cid = card.dataset.cid
+  const text = card.querySelector('[data-reply]')?.value.trim()
+  if (btn.dataset.act === 'ask') { switchTab('chatPane'); runTurn(`/api/docs/${current}/comments/${cid}/ask`, { text }, `处理评论${text ? `：${text}` : ''}`) }
+  else { await api(`/api/docs/${current}/comments/${cid}/${btn.dataset.act}`, { method: 'POST' }); refresh(false) }
+}
+$('page').onclick = e => {
+  const m = e.target.closest('mark.comment'); if (!m) return
+  switchTab('commentPane')
+  document.querySelector(`[data-cid="${m.dataset.thread}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+// —— 版本与引用 ——
+const SOURCE = { create: '新建', import: '导入', turn: 'AI', user: '保存', restore: '回滚' }
+function renderVersions() {
+  $('versions').innerHTML = `<div class="row" style="margin-bottom:8px"><button id="saveVersion">保存当前为版本</button></div>` +
+    (detail?.versions ?? []).map(v => `<div class="vitem"><div><b>v${v.seq}</b> · ${SOURCE[v.source] ?? v.source} · ${esc(v.note)}<div class="muted">rev ${v.rev} · ${new Date(v.created_at).toLocaleString()}</div></div>
+      <div class="row"><button data-diff="${v.seq}">对比</button><button data-restore="${v.seq}">回滚</button></div></div>`).join('')
+  $('saveVersion').onclick = async () => { await api(`/api/docs/${current}/save`, { method: 'POST' }); refresh(false) }
+}
+$('versions').onclick = async e => {
+  const d = e.target.dataset
+  if (d.restore && confirm(`回滚到 v${d.restore}？（会生成新版本，历史保留）`)) { await api(`/api/docs/${current}/versions/${d.restore}/restore`, { method: 'POST' }); refresh(false) }
+  if (d.diff) {
+    const r = await api(`/api/docs/${current}/diff?from=${d.diff}`)
+    const label = { added: '新增', removed: '删除', modified: '修改' }
+    $('diffView').innerHTML = `<h4>v${d.diff} → 当前</h4>` + (r.changes.length === 0 ? '<div class="muted">无变化</div>' : r.changes.map(c =>
+      `<div class="${c.kind}">[${label[c.kind]}] ${esc(c.kind === 'removed' ? c.before : c.after)}${c.kind === 'modified' ? `<div class="muted">原：${esc(c.before)}</div>` : ''}</div>`).join(''))
+  }
+}
+function renderCites() {
+  const list = detail?.citations ?? []
+  $('cites').innerHTML = list.length === 0 ? '<div class="muted">AI 通过 insert_citation 登记的文献会显示在这里</div>' : list.map(c =>
+    `<div class="card"><b>${c.number ? `[${c.number}]` : '未使用'}</b> ${esc(c.formatted)} <a href="${esc(c.url || `https://doi.org/${c.doi}`)}" target="_blank" rel="noopener">原文</a></div>`).join('')
+}
+
+function switchTab(id) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id))
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === id))
+}
+document.querySelector('.tabs').onclick = e => { if (e.target.dataset.tab) switchTab(e.target.dataset.tab) }
+$('exportBtn').onclick = () => { location.href = `/api/docs/${current}/export.md?token=${encodeURIComponent(TOKEN)}` }
+$('exportDocxBtn').onclick = () => { location.href = `/api/docs/${current}/export.docx?token=${encodeURIComponent(TOKEN)}` }
+$('readBtn').onclick = async () => { const w = window.open('', '_blank'); w.document.body.innerHTML = `<pre style="white-space:pre-wrap;font:13px ui-monospace,monospace">${esc(await api(`/api/docs/${current}/read`))}</pre>` }
+
+loadDocs().catch(err => { $('page').innerHTML = `<div class="empty">${esc(err.message)}（令牌：localStorage heurion.token）</div>` })
+</script>
+</body>
+</html>

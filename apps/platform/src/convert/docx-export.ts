@@ -1,0 +1,430 @@
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import type { Mark, Node as PMNode } from 'prosemirror-model'
+import type { CitationRow, CommentRow } from '../store/db.ts'
+import { citationOrder } from '../views/read.ts'
+import { bodyChildrenRaw } from './docx-import.ts'
+
+/**
+ * 平台模型 → docx（PLATFORM.md §6 导出）：修补式。
+ *
+ * - 有原始文件包（导入的文档）：沿用其样式、编号、关系、媒体、页面设置；
+ *   导入后没改过的块直接写回原始 XML（字节不变），改过 / 新增的块按模型生成。
+ * - 没有原始文件包（平台新建）：用内置模板（标题样式、列表编号、宋体 / Times New Roman）。
+ * - 引用按文中首次出现顺序编号为上标 [n]，末尾生成参考文献表；open 评论写入 comments.xml。
+ */
+
+export interface ExportInput {
+  doc: PMNode
+  /** 导入时的模型（判断块是否改过）；平台新建的文档为 null。 */
+  baseline: PMNode | null
+  /** 原始文件包；平台新建的文档为 null。 */
+  pkg: Uint8Array | null
+  src: (nodeId: string) => string | null
+  citations: CitationRow[]
+  comments: CommentRow[]
+  asset: (id: string) => { mime: string; bytes: Uint8Array } | null
+}
+
+export interface ExportResult { bytes: Uint8Array; warnings: string[] }
+
+const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"'
+const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+const SECT = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr>'
+
+// XML 1.0 不允许的控制字符
+const INVALID_XML = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g
+const esc = (s: string) => s.replace(INVALID_XML, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+class Package {
+  files: Record<string, Uint8Array>
+  private relsXml: string
+  private nextRel: number
+  constructor(files: Record<string, Uint8Array>) {
+    this.files = files
+    this.relsXml = this.text('word/_rels/document.xml.rels') ?? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`
+    const ids = [...this.relsXml.matchAll(/Id="rId(\d+)"/g)].map(m => Number(m[1]))
+    this.nextRel = Math.max(1000, ...ids) + 1
+  }
+  text(name: string): string | null { return this.files[name] ? strFromU8(this.files[name]!) : null }
+  put(name: string, content: string | Uint8Array): void { this.files[name] = typeof content === 'string' ? strToU8(content) : content }
+  /** 已存在同类型同目标的关系就复用。 */
+  rel(type: string, target: string, external = false): string {
+    const existing = new RegExp(`<Relationship[^>]*Id="([^"]+)"[^>]*Type="${REL}/${type}"[^>]*Target="${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).exec(this.relsXml)
+      ?? new RegExp(`<Relationship[^>]*Target="${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*Type="${REL}/${type}"[^>]*Id="([^"]+)"`).exec(this.relsXml)
+    if (existing) return existing[1]!
+    const id = `rId${this.nextRel++}`
+    this.relsXml = this.relsXml.replace('</Relationships>', `<Relationship Id="${id}" Type="${REL}/${type}" Target="${esc(target)}"${external ? ' TargetMode="External"' : ''}/></Relationships>`)
+    return id
+  }
+  contentDefault(ext: string, type: string): void {
+    const ct = this.text('[Content_Types].xml')!
+    if (new RegExp(`Extension="${ext}"`, 'i').test(ct)) return
+    this.put('[Content_Types].xml', ct.replace('</Types>', `<Default Extension="${ext}" ContentType="${type}"/></Types>`))
+  }
+  contentOverride(part: string, type: string): void {
+    const ct = this.text('[Content_Types].xml')!
+    if (ct.includes(`PartName="${part}"`)) return
+    this.put('[Content_Types].xml', ct.replace('</Types>', `<Override PartName="${part}" ContentType="${type}"/></Types>`))
+  }
+  finish(): Uint8Array {
+    this.put('word/_rels/document.xml.rels', this.relsXml)
+    return zipSync(this.files)
+  }
+}
+
+function template(): Record<string, Uint8Array> {
+  const heading = (n: number) => `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="${n === 1 ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="${n - 1}"/></w:pPr><w:rPr><w:b/><w:sz w:val="${[36, 32, 28, 26, 24, 24][n - 1]}"/></w:rPr></w:style>`
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}>
+<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="宋体" w:cs="Times New Roman"/><w:sz w:val="24"/><w:lang w:val="en-US" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+${[1, 2, 3, 4, 5, 6].map(heading).join('')}
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style>
+<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>
+<w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style>
+</w:styles>`
+  return {
+    '[Content_Types].xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`),
+    '_rels/.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="word/document.xml"/></Relationships>`),
+    'word/styles.xml': strToU8(styles),
+    'word/_rels/document.xml.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/styles" Target="styles.xml"/></Relationships>`),
+  }
+}
+
+/** 段落样式名 → styleId（按包里的 styles.xml）。 */
+function styleIndex(stylesXml: string | null): Map<string, string> {
+  const map = new Map<string, string>()
+  if (!stylesXml) return map
+  for (const m of stylesXml.matchAll(/<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>[\s\S]*?<w:name w:val="([^"]+)"/g)) {
+    map.set(m[2]!.toLowerCase(), m[1]!)
+    map.set(m[1]!.toLowerCase(), m[1]!)
+  }
+  return map
+}
+
+function imageSize(bytes: Uint8Array, mime: string): { w: number; h: number } | null {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  try {
+    if (mime === 'image/png' && bytes.length > 24) return { w: dv.getUint32(16), h: dv.getUint32(20) }
+    if (mime === 'image/gif' && bytes.length > 10) return { w: dv.getUint16(6, true), h: dv.getUint16(8, true) }
+    if (mime === 'image/jpeg') {
+      let i = 2
+      while (i + 9 < bytes.length) {
+        if (bytes[i] !== 0xff) return null
+        const marker = bytes[i + 1]!
+        const len = dv.getUint16(i + 2)
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return { w: dv.getUint16(i + 7), h: dv.getUint16(i + 5) }
+        i += 2 + len
+      }
+    }
+  } catch { /* 尺寸未知 */ }
+  return null
+}
+
+const IMAGE_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' }
+
+export function exportDocx(input: ExportInput): ExportResult {
+  const warnings: string[] = []
+  const pkg = new Package(input.pkg ? unzipSync(input.pkg) : template())
+  const originalXml = pkg.text('word/document.xml')
+  const styles = styleIndex(pkg.text('word/styles.xml'))
+  const baseline = new Map<string, PMNode>()
+  input.baseline?.descendants(n => { if (n.attrs.id) baseline.set(n.attrs.id as string, n) })
+  const unchanged = (n: PMNode) => {
+    const id = n.attrs.id as string | null
+    const before = id ? baseline.get(id) : undefined
+    return before !== undefined && before.eq(n) ? input.src(id!) : null
+  }
+
+  // 编号：生成的列表用平台自己的 abstractNum（ids 9000+，不与原文件冲突）
+  let numberingXml = pkg.text('word/numbering.xml')
+  const newNums: string[] = []
+  let nextNum = 9001
+  const numFor = (ordered: boolean): string => {
+    const id = String(nextNum++)
+    newNums.push(`<w:num w:numId="${id}"><w:abstractNumId w:val="${ordered ? 9002 : 9001}"/>${ordered ? '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>' : ''}</w:num>`)
+    return id
+  }
+
+  // 引用编号与评论
+  const order = citationOrder(input.doc)
+  const citeNumber = new Map(order.map((id, i) => [id, i + 1]))
+  const openComments = new Map(input.comments.filter(c => c.status === 'open').map(c => [c.id, c]))
+  const commentIds = new Map<string, number>()
+  let nextCommentId = Math.max(-1, ...[...(pkg.text('word/comments.xml') ?? '').matchAll(/<w:comment\b[^>]*w:id="(\d+)"/g)].map(m => Number(m[1]))) + 1
+  // 每条线程最后出现在哪个段落（跨段落的评论范围在最后一段结束）
+  const lastPara = new Map<string, PMNode>()
+  input.doc.descendants(n => {
+    if (n.isTextblock) n.forEach(c => c.marks.forEach(m => { if (m.type.name === 'comment' && openComments.has(m.attrs.thread as string)) lastPara.set(m.attrs.thread as string, n) }))
+  })
+  const started = new Set<string>()
+
+  const headingStyle = (level: number) => styles.get(`heading ${level}`) ?? styles.get(`标题 ${level}`) ?? `Heading${level}`
+  const missingHeading = new Set<number>()
+  let nextDocPr = 90_001
+
+  const runProps = (marks: readonly Mark[], extra = ''): string => {
+    let p = extra
+    for (const m of marks) {
+      if (m.type.name === 'bold') p += '<w:b/>'
+      else if (m.type.name === 'italic') p += '<w:i/>'
+      else if (m.type.name === 'underline') p += '<w:u w:val="single"/>'
+      else if (m.type.name === 'sup') p += '<w:vertAlign w:val="superscript"/>'
+      else if (m.type.name === 'sub') p += '<w:vertAlign w:val="subscript"/>'
+      else if (m.type.name === 'code') p += '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/>'
+      else if (m.type.name === 'link') p += '<w:rStyle w:val="Hyperlink"/>'
+    }
+    return p ? `<w:rPr>${p}</w:rPr>` : ''
+  }
+
+  const textRuns = (text: string, marks: readonly Mark[]): string =>
+    text.split('\t').map((part, i) => `${i > 0 ? `<w:r>${runProps(marks)}<w:tab/></w:r>` : ''}${part ? `<w:r>${runProps(marks)}<w:t xml:space="preserve">${esc(part)}</w:t></w:r>` : ''}`).join('')
+
+  const inline = (para: PMNode): string => {
+    let out = ''
+    const activeHere = new Set<string>()
+    para.forEach(child => {
+      const threads = child.marks.filter(m => m.type.name === 'comment' && openComments.has(m.attrs.thread as string)).map(m => m.attrs.thread as string)
+      for (const t of threads) {
+        if (!started.has(t)) {
+          started.add(t)
+          commentIds.set(t, nextCommentId++)
+          out += `<w:commentRangeStart w:id="${commentIds.get(t)}"/>`
+        }
+        activeHere.add(t)
+      }
+      let run = ''
+      if (child.isText) run = textRuns(child.text!, child.marks)
+      else if (child.type.name === 'hard_break') run = '<w:r><w:br/></w:r>'
+      else if (child.type.name === 'citation') {
+        const n = citeNumber.get(child.attrs.cite_id as string)
+        run = `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>[${n ?? '?'}]</w:t></w:r>`
+      }
+      const link = child.marks.find(m => m.type.name === 'link')
+      if (link && run) {
+        const href = String(link.attrs.href)
+        run = href.startsWith('#')
+          ? `<w:hyperlink w:anchor="${esc(href.slice(1))}">${run}</w:hyperlink>`
+          : `<w:hyperlink r:id="${pkg.rel('hyperlink', href, true)}">${run}</w:hyperlink>`
+      }
+      out += run
+    })
+    for (const t of activeHere) {
+      if (lastPara.get(t) !== para) continue
+      const id = commentIds.get(t)!
+      out += `<w:commentRangeEnd w:id="${id}"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${id}"/></w:r>`
+    }
+    return out
+  }
+
+  const pPr = (node: PMNode, extra = ''): string => {
+    let p = ''
+    if (node.type.name === 'heading') {
+      const level = Math.min(6, Math.max(1, node.attrs.level as number))
+      const id = headingStyle(level)
+      if (!styles.has(id.toLowerCase())) missingHeading.add(level)
+      p += `<w:pStyle w:val="${esc(id)}"/>`
+    } else if (node.attrs.style) {
+      const id = styles.get(String(node.attrs.style).toLowerCase())
+      if (id) p += `<w:pStyle w:val="${esc(id)}"/>`
+    }
+    p += extra
+    const align = node.attrs.align as string | null
+    if (align) p += `<w:jc w:val="${align === 'justify' ? 'both' : align === 'left' ? 'left' : align}"/>`
+    return p ? `<w:pPr>${p}</w:pPr>` : ''
+  }
+
+  const paragraph = (node: PMNode, extraPPr = ''): string => unchanged(node) ?? `<w:p>${pPr(node, extraPPr)}${inline(node)}</w:p>`
+
+  const figure = (node: PMNode): string => {
+    const asset = input.asset(String(node.attrs.asset_id))
+    const ext = asset ? IMAGE_EXT[asset.mime] : undefined
+    if (!asset || !ext) {
+      warnings.push(`图片 ${node.attrs.asset_id} 无法嵌入（${asset ? asset.mime : '资产不存在'}），以文字占位`)
+      return `<w:p><w:r><w:t xml:space="preserve">[图：${esc(String(node.attrs.alt || node.attrs.caption || ''))}]</w:t></w:r></w:p>`
+    }
+    const name = `media/heurion-${node.attrs.asset_id}.${ext}`
+    pkg.put(`word/${name}`, asset.bytes)
+    pkg.contentDefault(ext, asset.mime)
+    const rid = pkg.rel('image', name)
+    const size = imageSize(asset.bytes, asset.mime) ?? { w: 800, h: 600 }
+    const maxW = 5_486_400 // 6 英寸
+    let cx = size.w * 9525
+    let cy = size.h * 9525
+    if (cx > maxW) { cy = Math.round(cy * maxW / cx); cx = maxW }
+    const docPr = nextDocPr++
+    const drawing = `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${docPr}" name="${esc(String(node.attrs.alt || 'figure'))}" descr="${esc(String(node.attrs.alt ?? ''))}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="${esc(name)}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`
+    const caption = node.attrs.caption
+      ? `<w:p><w:pPr>${styles.has('caption') ? `<w:pStyle w:val="${styles.get('caption')}"/>` : ''}<w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">${esc(String(node.attrs.caption))}</w:t></w:r></w:p>`
+      : ''
+    return `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>${drawing}</w:r></w:p>${caption}`
+  }
+
+  const table = (node: PMNode): string => {
+    const src = unchanged(node)
+    if (src) return src
+    // 网格：rowspan 用 vMerge 续行单元格补位
+    const width = Math.max(1, ...Array.from({ length: node.childCount }, (_, r) => {
+      let w = 0
+      node.child(r).forEach(c => { w += c.attrs.colspan as number })
+      return w
+    }))
+    const carry = new Map<number, { left: number; span: number }>()
+    const colW = Math.floor(9000 / width)
+    const rows: string[] = []
+    node.forEach(row => {
+      const cells: string[] = []
+      let col = 0
+      const pushContinue = () => {
+        while (carry.has(col)) {
+          const c = carry.get(col)!
+          cells.push(`<w:tc><w:tcPr><w:tcW w:w="${colW * c.span}" w:type="dxa"/>${c.span > 1 ? `<w:gridSpan w:val="${c.span}"/>` : ''}<w:vMerge/></w:tcPr><w:p/></w:tc>`)
+          if (--c.left === 0) carry.delete(col)
+          col += c.span
+        }
+      }
+      row.forEach(cell => {
+        pushContinue()
+        const span = cell.attrs.colspan as number
+        const rowspan = cell.attrs.rowspan as number
+        let paras = ''
+        cell.forEach(p => { paras += paragraph(p) })
+        cells.push(`<w:tc><w:tcPr><w:tcW w:w="${colW * span}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ''}${rowspan > 1 ? '<w:vMerge w:val="restart"/>' : ''}</w:tcPr>${paras || '<w:p/>'}</w:tc>`)
+        if (rowspan > 1) carry.set(col, { left: rowspan - 1, span })
+        col += span
+      })
+      pushContinue()
+      rows.push(`<w:tr>${row.firstChild?.attrs.header ? '<w:trPr><w:tblHeader/></w:trPr>' : ''}${cells.join('')}</w:tr>`)
+    })
+    const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`
+    return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders><w:tblLook w:val="04A0"/></w:tblPr><w:tblGrid>${Array.from({ length: width }, () => `<w:gridCol w:w="${colW}"/>`).join('')}</w:tblGrid>${rows.join('')}</w:tbl>`
+  }
+
+  const list = (node: PMNode, ilvl: number, numId: string | null): string => {
+    const ordered = node.type.name === 'ordered_list'
+    // 与原文件里同列表的项共用编号（取第一个原样写回项的 numId）
+    let id = numId
+    if (!id) {
+      node.forEach(item => {
+        const src = item.firstChild ? unchanged(item.firstChild) : null
+        const m = src ? /<w:numId w:val="(\d+)"/.exec(src) : null
+        if (!id && m) id = m[1]!
+      })
+    }
+    id ??= numFor(ordered)
+    let out = ''
+    node.forEach(item => {
+      item.forEach((child, _o, idx) => {
+        if (idx === 0 && child.type.name === 'paragraph') {
+          // 没有自带样式的列表段落用 List Paragraph（包里有该样式时）
+          const styled = child.attrs.style ? child : child.type.create({ ...child.attrs, style: 'List Paragraph' }, child.content, child.marks)
+          out += unchanged(child) ?? `<w:p>${pPr(styled, `<w:numPr><w:ilvl w:val="${ilvl}"/><w:numId w:val="${id}"/></w:numPr>`)}${inline(child)}</w:p>`
+        } else if (/_list$/.test(child.type.name)) {
+          out += list(child, Math.min(8, ilvl + 1), child.type === node.type ? id : null)
+        } else out += block(child)
+      })
+    })
+    return out
+  }
+
+  const block = (node: PMNode): string => {
+    switch (node.type.name) {
+      case 'paragraph':
+      case 'heading':
+        return paragraph(node)
+      case 'bullet_list':
+      case 'ordered_list':
+        return list(node, 0, null)
+      case 'table':
+        return table(node)
+      case 'figure':
+        return figure(node)
+      case 'opaque': {
+        const src = input.src(node.attrs.id as string)
+        if (src) return src
+        warnings.push(`不可编辑块 ${node.attrs.id} 缺少原始内容，以文字占位`)
+        return `<w:p><w:r><w:t xml:space="preserve">[${esc(String(node.attrs.description))}]</w:t></w:r></w:p>`
+      }
+      default:
+        return ''
+    }
+  }
+
+  let body = ''
+  input.doc.forEach(n => { body += block(n) })
+
+  // 参考文献表（平台生成）
+  const byId = new Map(input.citations.map(c => [c.id, c]))
+  const used = order.filter(id => byId.has(id))
+  if (used.length > 0) {
+    const h = headingStyle(1)
+    if (!styles.has(h.toLowerCase())) missingHeading.add(1)
+    body += `<w:p><w:pPr><w:pStyle w:val="${esc(h)}"/></w:pPr><w:r><w:t>参考文献</w:t></w:r></w:p>`
+    used.forEach((id, i) => {
+      body += `<w:p><w:pPr><w:ind w:left="440" w:hanging="440"/></w:pPr><w:r><w:t xml:space="preserve">[${i + 1}] ${esc(byId.get(id)!.formatted)}</w:t></w:r></w:p>`
+    })
+  }
+
+  // document.xml：沿用原文件的根元素（命名空间）与页面设置
+  let head = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>`
+  let sect = SECT
+  if (originalXml) {
+    const bodyStart = /<w:body\b[^>]*>/.exec(originalXml)
+    if (bodyStart) head = originalXml.slice(0, bodyStart.index + bodyStart[0].length)
+    const last = bodyChildrenRaw(originalXml).at(-1)
+    sect = last && /^<w:sectPr\b/.test(last) ? last : ''
+    // 确保生成内容用到的命名空间都已声明
+    for (const [prefix, uri] of [['r', REL], ['wp', 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'], ['a', 'http://schemas.openxmlformats.org/drawingml/2006/main'], ['pic', 'http://schemas.openxmlformats.org/drawingml/2006/picture']] as const) {
+      if (!new RegExp(`xmlns:${prefix}=`).test(head)) head = head.replace(/<w:document\b/, `<w:document xmlns:${prefix}="${uri}"`)
+    }
+  }
+  pkg.put('word/document.xml', `${head}${body}${sect}</w:body></w:document>`)
+
+  // 补齐缺失的标题样式
+  if (missingHeading.size > 0) {
+    const stylesXml = pkg.text('word/styles.xml')
+    if (stylesXml) {
+      const add = [...missingHeading].map(n => `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:outlineLvl w:val="${n - 1}"/></w:pPr><w:rPr><w:b/><w:sz w:val="${[36, 32, 28, 26, 24, 24][n - 1]}"/></w:rPr></w:style>`).join('')
+      pkg.put('word/styles.xml', stylesXml.replace('</w:styles>', `${add}</w:styles>`))
+    }
+  }
+
+  // 编号
+  if (newNums.length > 0) {
+    const lvls = (ordered: boolean) => Array.from({ length: 9 }, (_, i) => ordered
+      ? `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="${['decimal', 'lowerLetter', 'lowerRoman'][i % 3]}"/><w:lvlText w:val="%${i + 1}."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${420 * (i + 1)}" w:hanging="420"/></w:pPr></w:lvl>`
+      : `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="${['•', '◦', '▪'][i % 3]}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${420 * (i + 1)}" w:hanging="420"/></w:pPr></w:lvl>`).join('')
+    const abstracts = `<w:abstractNum w:abstractNumId="9001"><w:multiLevelType w:val="hybridMultilevel"/>${lvls(false)}</w:abstractNum><w:abstractNum w:abstractNumId="9002"><w:multiLevelType w:val="hybridMultilevel"/>${lvls(true)}</w:abstractNum>`
+    if (!numberingXml) {
+      numberingXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}></w:numbering>`
+      pkg.rel('numbering', 'numbering.xml')
+      pkg.contentOverride('/word/numbering.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml')
+    }
+    // abstractNum 必须排在所有 num 之前
+    const firstNum = numberingXml.search(/<w:num\b/)
+    numberingXml = firstNum === -1
+      ? numberingXml.replace('</w:numbering>', `${abstracts}</w:numbering>`)
+      : numberingXml.slice(0, firstNum) + abstracts + numberingXml.slice(firstNum)
+    numberingXml = numberingXml.replace('</w:numbering>', `${newNums.join('')}</w:numbering>`)
+    pkg.put('word/numbering.xml', numberingXml)
+  }
+
+  // 评论
+  if (commentIds.size > 0) {
+    const entries = [...commentIds].map(([thread, id]) => {
+      const c = openComments.get(thread)!
+      const paras = c.replies.map(r => `<w:p><w:r><w:t xml:space="preserve">${r.role === 'ai' ? 'Heurion' : '用户'}：${esc(r.text)}</w:t></w:r></w:p>`).join('') || '<w:p/>'
+      return `<w:comment w:id="${id}" w:author="Heurion" w:initials="H" w:date="${c.created_at.slice(0, 19)}Z">${paras}</w:comment>`
+    }).join('')
+    const existing = pkg.text('word/comments.xml')
+    pkg.put('word/comments.xml', existing
+      ? existing.replace('</w:comments>', `${entries}</w:comments>`)
+      : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments ${NS}>${entries}</w:comments>`)
+    pkg.rel('comments', 'comments.xml')
+    pkg.contentOverride('/word/comments.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml')
+  }
+
+  return { bytes: pkg.finish(), warnings: [...new Set(warnings)] }
+}
