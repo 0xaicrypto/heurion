@@ -339,18 +339,20 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 | 隔离粒度 | 按用户 | 安全边界最清楚 |
 | 范围 | 2.0 先不做患者、病历、影像 | PHI 合规要求远高于写作，后续再增加 |
 
-### 9.2 待定：用户编辑面（spike #4）
+### 9.2 已定：用户编辑面 = Collabora Online（spike #4，2026-10-01）
 
-**当前倾向 Collabora Online。** 定稿前验证：嵌入 API 能否拿到选区与段落 id（决定选中即评论能否实现）；许可与商用条款。
+**结论：采纳。** spike 完整验证记录见 [SPIKE_COLLABORA.md](SPIKE_COLLABORA.md)。要点：许可（源码 MPL-2.0，官方 CODE 二进制附专有条件、仅限测试/小团队——POC 合规，生产前在自建构建与 COOL 订阅间拍板）；集成面为最小 WOPI host（CheckFileInfo / GetFile / PutFile，`routes/wopi.ts`，协议层三入口已实测通过）；**PutFile 时间戳 + 409 `COOLStatusCode:1010` 原生承接「用户编辑期间 AI 落新版」的冲突询问（用户优先）**。
 
-| 维度 | Collabora Online（WOPI 嵌入） | TipTap + XML 补丁器（doc）+ pptx-react-viewer（deck） |
+| 维度 | Collabora Online（WOPI 嵌入） | TipTap + XML 补丁器（备选，弃） |
 | --- | --- | --- |
 | 保真 | 直接编辑权威文件，LibreOffice 内核，与容器渲染同源 | 结构级视图；字体与页面观感有损，schema 外内容锁定 |
 | doc/deck 一致性 | 一套编辑器覆盖两种格式 | 两套编辑器、两种保存模型 |
-| 自研量 | WOPI 接口 + 保存后按 paraId 对比 | 补丁器 1–2k 行 + 两套编辑器集成 |
-| 选中即评论、锚点高亮 | 需验证 | 完全可控 |
-| 部署与许可 | 独立服务；许可待核实 | TipTap 核心开源；pptx-react-viewer 许可待核实 |
-| 与合并的关系 | 整文件保存，按 id 对比得到用户 ops | 直接产出节点 ops |
+| 自研量 | WOPI 三入口 ~150 行（已验证） | 补丁器 1–2k 行 + 两套编辑器集成 |
+| 冲突治理 | 编辑器原生弹「覆盖 / 重载」（409:1010），用户优先 | 需自建冲突 UI |
+| 评论锚定 | 需同步文件内评论（`word/comments.xml` → paraId）→ S4 开放项 | 投影内选区直锚（面板已建） |
+| 部署与许可 | 独立容器 ~1GB 内存；生产许可待拍板（不阻塞 S4/S5） | 无额外基建；pptx-react-viewer 许可待核实 |
+
+用户 ops 的提取口径相应变化：Collabora 保存的是**整文件**，管理面把新文件与 base 投影按 paraId/shapeId 对比，diff 出用户 ops（同 §5.3 的合并输入）。
 
 ## 10. 已知限制与风险
 
@@ -364,7 +366,9 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 | 论断正确性未校验 | 引用真实但论断可能错 | M1 #8 `verify_claims` |
 | 锚点保护是软门 | AI 可能清空锚点后才被发现 | 漂移审计 + 整轮回滚；按触规率决定是否升级硬闸 |
 | AI 回合窗口内暂停用户保存（S4） | 伪并行 | S5 三方合并后解除 |
-| 投影 schema 外内容不可编辑（TipTap 方案） | SmartArt、域代码等锁定 | 可评论不可编辑；schema 按需扩展 |
+| Collabora CODE 生产许可 | CODE 二进制附专有条件、不建议生产 | POC/本地合规；M2 前拍板：MPLv2 自建去标 vs COOL 订阅（[SPIKE_COLLABORA.md](SPIKE_COLLABORA.md)） |
+| Collabora 文件内评论与评论表双源 | 用户在编辑器里写的评论需同步 | S4：解析 `word/comments.xml` 按 paraId 同步进评论表；AI 只写线程不回写 OOXML 评论 |
+| frame_ancestors 限制 | 生产域名无法嵌入 iframe | M2：把集成域写进 coolwsd 配置 |
 | SDK 没有权限回调 | 无法逐次审批工具调用 | 容器隔离兜底；确需逐次审批就改用 ACP |
 | PPT 生成偏慢 | 实测 4 页 245s | M1 #11 评测中拆分模型耗时与渲染自查耗时 |
 | dsh 0.x 不兼容变更 | 升级可能出问题 | 锁精确版本；升级单独提交，跑冒烟与评测 |
@@ -381,7 +385,7 @@ pnpm --filter @heurion2/server smoke <docId>   # dsh 握手 +（有 key 时）�
 | S2 评论底座 | 评论表 + REST + MCP 三工具 + 漂移审计 + 评论面板 | [#2](https://github.com/0xaicrypto/heurion2/issues/2) |
 | S3 AI 闭环 | 评论触发回合、人设纪律、draft 路径、新事件 | [#3](https://github.com/0xaicrypto/heurion2/issues/3) |
 | 编辑面 spike | Collabora 嵌入 API 与许可验证 | [#4](https://github.com/0xaicrypto/heurion2/issues/4) |
-| S4 用户编辑面 | 编辑器集成、用户 ops 提取、busy 锁 | [#5](https://github.com/0xaicrypto/heurion2/issues/5) |
+| S4 用户编辑面 | Collabora 集成（WOPI host 已具雏形）+ 文件内评论同步 + busy 锁 | [#5](https://github.com/0xaicrypto/heurion2/issues/5) |
 | S5 并行合并 + 评审面 | 三方合并、冲突 UI、段落 / 形状 diff | [#6](https://github.com/0xaicrypto/heurion2/issues/6) |
 | M1 写作可用 | office 运行时 / `verify_claims` / 手写引用 / 原文链接 / 10 份文档评测 | [#7](https://github.com/0xaicrypto/heurion2/issues/7) [#8](https://github.com/0xaicrypto/heurion2/issues/8) [#9](https://github.com/0xaicrypto/heurion2/issues/9) [#10](https://github.com/0xaicrypto/heurion2/issues/10) [#11](https://github.com/0xaicrypto/heurion2/issues/11) |
 | M2 可上线 | 账户 / 每用户容器 + 出口白名单 / 审计 + PHI + 导出 + 可观测性 | [#12](https://github.com/0xaicrypto/heurion2/issues/12) [#13](https://github.com/0xaicrypto/heurion2/issues/13) [#14](https://github.com/0xaicrypto/heurion2/issues/14) |
