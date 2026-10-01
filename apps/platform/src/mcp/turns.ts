@@ -10,6 +10,8 @@ export interface ActiveTurn {
   /** 本回合写过的文档。 */
   touched: Set<string>
   notify: (n: TurnNotice) => void
+  /** 本回合 AI 写入的方式：suggest = 一律作为待采纳修订（服务端强制，不依赖模型传参）。 */
+  mode: 'apply' | 'suggest'
 }
 
 export class TurnRegistry {

@@ -4,7 +4,10 @@ import { indexById } from '../model/ids.ts'
 import { serializeBlock } from '../model/markdown.ts'
 import type { Documents, NodeChange } from '../model/runtime.ts'
 import type { Actor } from '../store/db.ts'
+import { randomBytes } from 'node:crypto'
 import { applyOps, type OpResult } from './apply.ts'
+import { toSuggestion } from './suggest.ts'
+import { DOI, manualCitation } from './citation-check.ts'
 import { OpError, opTexts, targetIds, type EditBatch } from './types.ts'
 
 export interface EditResult {
@@ -14,10 +17,6 @@ export interface EditResult {
   changes: NodeChange[]
 }
 
-const DOI = /\b10\.\d{4,9}\/[^\s"<>)\]]+/i
-const PMID = /\bPMID\s*[:：]?\s*\d{5,9}\b/i
-/** 手写参考文献条目：作者缩写 + et al / 期刊年份卷期。 */
-const REFERENCE_ENTRY = /(\bet al\b\.?.{0,200}\b(19|20)\d{2}\b)|(\b(19|20)\d{2}\s*;\s*\d+\s*(\(\d+\))?\s*:\s*\d+)/i
 
 /**
  * 操作层（PLATFORM.md §5）：唯一的 MCP 写入口。
@@ -32,7 +31,8 @@ export class OpService {
     const row = store.getDoc(batch.doc_id)
     if (!row) throw new OpError('doc_not_found', `文档 ${batch.doc_id} 不存在`)
     if (row.kind !== 'doc') throw new OpError('unsupported_kind', 'doc_edit 只能编辑 doc 类型文档')
-    if (batch.mode === 'suggest') throw new OpError('unsupported_mode', 'suggest 模式尚未开放（P1），请用 apply')
+    // 先落掉尚未落库的浏览器编辑：冲突守卫要看到用户最新的改动
+    this.docs.flush(batch.doc_id)
     const rev = this.docs.rev(batch.doc_id)
     if (batch.base_rev > rev) {
       throw new OpError('invalid_base_rev', `base_rev ${batch.base_rev} 大于当前 rev ${rev}`, { hint: '使用 doc_outline / doc_read 返回的 rev。' })
@@ -40,17 +40,37 @@ export class OpService {
     const before = this.docs.get(batch.doc_id)
     const ai = meta.actor === 'ai'
 
+    this.guardPending(batch, before)
     if (ai) {
       this.guardConflicts(batch, before)
       this.guardCitations(batch)
     }
 
-    const { doc: after, results } = applyOps(before, batch.ops, { taken: this.docs.takenIds(batch.doc_id) })
+    const applied = applyOps(before, batch.ops, { taken: this.docs.takenIds(batch.doc_id) })
+    const results = applied.results
+    const after = batch.mode === 'suggest'
+      ? toSuggestion(before, applied.doc, `g${randomBytes(4).toString('hex')}`)
+      : applied.doc
 
     if (ai) this.guardAnchors(batch, before, after)
 
     const event = this.docs.commit(batch.doc_id, after, { actor: meta.actor, turnId: meta.turnId, ops: batch.ops })
     return { doc_id: batch.doc_id, rev: event?.rev ?? rev, results, changes: event?.changes ?? [] }
+  }
+
+  /** 待采纳修订中的块不能再改（先由用户采纳或拒绝）。 */
+  private guardPending(batch: EditBatch, before: PMNode): void {
+    const index = indexById(before)
+    batch.ops.forEach((op, i) => {
+      for (const id of [...targetIds(op), ...('anchor_id' in op ? [op.anchor_id] : [])]) {
+        const node = index.get(id)?.node
+        if (node?.attrs.suggest) {
+          throw new OpError('pending_suggestion', `块 ${id} 在待采纳的修订里`, {
+            op_index: i, hint: '等用户采纳或拒绝这条修订后再改；需要时在回复里说明。',
+          })
+        }
+      }
+    })
   }
 
   /** 冲突守卫：目标块在 base_rev 之后被用户改过 → 拒绝，附当前内容。 */
@@ -78,7 +98,7 @@ export class OpService {
       for (const text of opTexts(op)) {
         const withoutCites = text.replace(/\[@c:[a-z0-9]+\]/g, '')
         const doi = DOI.exec(withoutCites)?.[0]
-        if (doi || PMID.test(withoutCites) || REFERENCE_ENTRY.test(withoutCites)) {
+        if (manualCitation(withoutCites)) {
           throw new OpError('citation_not_registered', doi ? `正文里不能直接写 DOI（${doi}）` : '正文里不能手写参考文献条目或 PMID', {
             op_index: i,
             hint: doi

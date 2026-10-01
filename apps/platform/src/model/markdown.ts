@@ -245,7 +245,8 @@ export function serializeBlocks(nodes: readonly PMNode[], opts: SerializeOptions
 }
 
 export function serializeBlock(node: PMNode, opts: SerializeOptions, indent: string): string {
-  const pre = opts.ids && node.attrs.id ? `{#${node.attrs.id}} ` : ''
+  const pending = node.attrs.suggest === 'insert' ? '⟨待采纳·新增⟩ ' : node.attrs.suggest === 'delete' ? '⟨待采纳·删除⟩ ' : ''
+  const pre = opts.ids && node.attrs.id ? `{#${node.attrs.id}} ${pending}` : ''
   switch (node.type.name) {
     case 'paragraph':
       return indent + pre + serializeInline(node)

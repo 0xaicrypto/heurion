@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { exportDocx } from '../convert/docx-export.ts'
 import { bindAssets, DocxImportError, importDocx } from '../convert/docx-import.ts'
 import { AnchorError, attachComment, locate, threadMarks } from '../model/anchors.ts'
@@ -7,8 +8,9 @@ import { parseBlocks } from '../model/markdown.ts'
 import type { CommitEvent, Documents } from '../model/runtime.ts'
 import { schema } from '../model/schema.ts'
 import type { OpService } from '../ops/service.ts'
+import { pendingGroups, resolveSuggestions, withoutPending } from '../ops/suggest.ts'
 import { EditBatch, OpError } from '../ops/types.ts'
-import { BusyError, commentPrompt, type TurnService } from '../turns/service.ts'
+import { commentPrompt, wantsAi, type TurnBusEvent, type TurnOptions, type TurnService } from '../turns/service.ts'
 import { citationOrder, diff, read } from '../views/read.ts'
 import { exportMarkdown, renderHtml } from '../views/render.ts'
 
@@ -16,6 +18,7 @@ export interface ApiDeps {
   docs: Documents
   ops: OpService
   turns: TurnService
+  postcheck: PostCheck
   devToken: string
   devUser: string
 }
@@ -81,6 +84,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       busy: turns.isBusy(c.get('user')),
       versions: store.listVersions(row.id),
       messages: store.listMessages(row.id),
+      suggestions: pendingGroups(doc),
+      revertable: [...new Set(store.listMessages(row.id).map(m => m.turn_id).filter((t): t is string => !!t))].filter(t => docs.canRevertTurn(row.id, t)),
       citations: store.listCitations(row.id).map(x => ({ ...x, number: order.includes(x.id) ? order.indexOf(x.id) + 1 : null })),
       comments: store.listComments(row.id).map(x => ({ ...x, anchor: locate(doc, x, marks) })),
     })
@@ -121,7 +126,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.get('/api/docs/:id/export.md', c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    return c.body(exportMarkdown(docs.get(row.id), store.listCitations(row.id)), 200, {
+    return c.body(exportMarkdown(withoutPending(docs.get(row.id)), store.listCitations(row.id)), 200, {
       'Content-Type': 'text/markdown; charset=utf-8',
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}.md`,
     })
@@ -150,6 +155,29 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       if (err instanceof OpError) return c.json(err.toJSON(), 409)
       throw err
     }
+  })
+
+  /** 采纳 / 拒绝待采纳修订（group = all 表示全部）。 */
+  app.post('/api/docs/:id/suggestions/:group/:action{accept|reject}', c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    docs.flush(row.id)
+    const group = c.req.param('group') === 'all' ? null : c.req.param('group')
+    const accept = c.req.param('action') === 'accept'
+    const next = resolveSuggestions(docs.get(row.id), group, accept)
+    const event = docs.commit(row.id, next, { actor: 'user', turnId: null, ops: [{ op: accept ? 'accept_suggestion' : 'reject_suggestion', group }] })
+    return c.json({ rev: docs.rev(row.id), changes: event?.changes.length ?? 0 })
+  })
+
+  /** 撤销某个 AI 回合对本文档的改动（用户在此期间的编辑保留）。 */
+  app.post('/api/docs/:id/turns/:turnId/revert', c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const turnId = c.req.param('turnId')
+    if (!docs.canRevertTurn(row.id, turnId)) return c.json({ error: '这一轮已不能撤销（已撤销过，或服务重启后撤销记录不在），请用版本回滚' }, 409)
+    const event = docs.revertTurn(row.id, turnId)
+    const version = docs.snapshot(row.id, 'user', '撤销一轮 AI 修改')
+    return c.json({ rev: docs.rev(row.id), changes: event?.changes.length ?? 0, version })
   })
 
   /** 用户显式保存一个版本。 */
@@ -182,26 +210,34 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!row) return c.json({ error: 'not found' }, 404)
     return streamSSE(c, async stream => {
       let closed = false
-      const queue: CommitEvent[] = []
+      const queue: unknown[] = []
       let wake: (() => void) | null = null
-      const listener = (e: CommitEvent) => {
-        if (e.docId !== row.id) return
-        queue.push(e)
-        wake?.()
+      const push = (e: unknown) => { queue.push(e); wake?.() }
+      const onCommit = (e: CommitEvent) => {
+        if (e.docId === row.id) push({ type: 'commit', rev: e.rev, actor: e.actor, turn_id: e.turnId, changes: e.changes })
       }
-      docs.on('commit', listener)
+      // 该用户的回合事件（含 @heurion 自动触发的回合）：只转发与本文档相关的
+      const onTurn = (e: TurnBusEvent) => {
+        if (e.userId === c.get('user') && e.docId === row.id && e.event.type !== 'reasoning') push({ type: 'turn_event', event: e.event })
+      }
+      const onNotice = (n: Notice) => { if (n.doc_id === row.id) push({ type: 'notice', ...n }) }
+      docs.on('commit', onCommit)
+      turns.events.on('event', onTurn)
+      deps.postcheck.on('notice', onNotice)
       stream.onAbort(() => { closed = true; wake?.() })
-      await stream.writeSSE({ data: JSON.stringify({ rev: docs.rev(row.id) }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'hello', rev: docs.rev(row.id), busy: turns.isBusy(c.get('user')) }) })
       try {
         while (!closed) {
           if (queue.length === 0) await new Promise<void>(r => { wake = r; setTimeout(r, 25_000) })
           wake = null
           const batch = queue.splice(0)
-          const last = batch.at(-1)
-          await stream.writeSSE(last ? { data: JSON.stringify({ rev: last.rev, actor: last.actor }) } : { event: 'ping', data: '' })
+          if (batch.length === 0) await stream.writeSSE({ event: 'ping', data: '' })
+          for (const e of batch) await stream.writeSSE({ data: JSON.stringify(e) })
         }
       } finally {
-        docs.off('commit', listener)
+        docs.off('commit', onCommit)
+        turns.events.off('event', onTurn)
+        deps.postcheck.off('notice', onNotice)
       }
     })
   })
@@ -223,7 +259,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       throw err
     }
     store.addReply(comment.id, 'user', body.text.trim())
-    return c.json(store.getComment(row.id, comment.id), 201)
+    // @heurion：评论即指令，自动排队处理
+    if (wantsAi(body.text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, comment.id))
+    return c.json({ ...store.getComment(row.id, comment.id), queued: wantsAi(body.text) }, 201)
   })
 
   app.post('/api/docs/:id/comments/:cid/replies', async c => {
@@ -231,7 +269,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!row || !store.getComment(row.id, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
     const { text } = await c.req.json<{ text?: string }>()
     if (!text?.trim()) return c.json({ error: 'text 必填' }, 400)
-    return c.json(store.addReply(c.req.param('cid'), 'user', text.trim()), 201)
+    const reply = store.addReply(c.req.param('cid'), 'user', text.trim())
+    if (wantsAi(text)) void turns.submit(c.get('user'), row.id, commentPrompt(row.id, c.req.param('cid')))
+    return c.json({ ...reply, queued: wantsAi(text) }, 201)
   })
 
   app.post('/api/docs/:id/comments/:cid/:action{resolve|reopen}', c => {
@@ -245,9 +285,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/comments/:cid/ask', async c => {
     const row = owned(c)
     if (!row || !store.getComment(row.id, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
-    const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }))
+    const body = await c.req.json<{ text?: string; suggest?: boolean }>().catch(() => ({} as { text?: string; suggest?: boolean }))
     if (body.text?.trim()) store.addReply(c.req.param('cid'), 'user', body.text.trim())
-    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid')))
+    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid')), { suggest: body.suggest })
   })
 
   // —— 对话 ——
@@ -255,9 +295,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { message } = await c.req.json<{ message?: string }>()
+    const { message, suggest } = await c.req.json<{ message?: string; suggest?: boolean }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
-    return streamTurn(c, deps, row.id, message.trim())
+    return streamTurn(c, deps, row.id, message.trim(), { suggest })
   })
 
   app.post('/api/cancel', async c => {
@@ -282,7 +322,7 @@ export function docxFor(docs: Documents, docId: string) {
   const pkg = store.getPackage(docId)
   const first = store.listVersions(docId).at(-1)
   return exportDocx({
-    doc: docs.get(docId),
+    doc: withoutPending(docs.get(docId)),
     baseline: pkg && first?.source === 'import' ? docs.versionDoc(docId, first.seq) : null,
     pkg,
     src: id => store.getNodeSrc(docId, id),
@@ -295,19 +335,21 @@ export function docxFor(docs: Documents, docId: string) {
   })
 }
 
-function streamTurn(c: Context<{ Variables: { user: string } }>, deps: ApiDeps, docId: string, message: string) {
+/**
+ * 对话 / 评论触发的回合。默认以 SSE 返回本回合事件（API 调用方）；`?async=1` 立即返回 202，
+ * 事件经文档流（/stream）推送（页面用这种方式，自动触发的回合也走同一条路）。
+ */
+function streamTurn(c: Context<{ Variables: { user: string } }>, deps: ApiDeps, docId: string, message: string, opts: TurnOptions = {}) {
   const user = c.get('user')
-  if (deps.turns.isBusy(user)) return c.json({ error: 'AI 正在处理上一条请求' }, 409)
+  if (c.req.query('async')) {
+    void deps.turns.submit(user, docId, message, undefined, opts)
+    return c.json({ queued: deps.turns.isBusy(user) }, 202)
+  }
   return streamSSE(c, async stream => {
     // 串行写出，结束前等全部写完
     let writes = Promise.resolve()
-    const emit = (e: unknown) => { writes = writes.then(() => stream.writeSSE({ data: JSON.stringify(e) })) }
-    try {
-      await deps.turns.run(user, docId, message, emit)
-    } catch (err) {
-      emit({ type: 'error', message: err instanceof BusyError ? err.message : String((err as Error).message ?? err) })
-    }
-    emit({ type: 'done' })
+    const emit = (e: unknown) => { writes = writes.then(() => stream.writeSSE({ data: JSON.stringify(e) })).catch(() => {}) }
+    await deps.turns.submit(user, docId, message, emit, opts)
     await writes
   })
 }

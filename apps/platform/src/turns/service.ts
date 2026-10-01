@@ -1,9 +1,8 @@
+import { EventEmitter } from 'node:events'
 import type { Documents, CommitEvent } from '../model/runtime.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import type { TurnRegistry } from '../mcp/turns.ts'
-
-export class BusyError extends Error {}
 
 /** 评论触发回合的提示（服务端组装，前端不拼自然语言）。 */
 export function commentPrompt(docId: string, commentId: string): string {
@@ -16,13 +15,36 @@ export function commentPrompt(docId: string, commentId: string): string {
   )
 }
 
+/** 评论 / 回复里召唤 AI 的触发词。 */
+export const wantsAi = (text: string): boolean => /[@＠]heurion\b/i.test(text)
+
+export interface TurnBusEvent { userId: string; docId: string; event: UiEvent }
+
+export interface TurnOptions {
+  /** AI 的写入一律作为待采纳修订。 */
+  suggest?: boolean
+}
+
+interface Job {
+  docId: string
+  message: string
+  opts: TurnOptions
+  emit: (e: UiEvent) => void
+  done: () => void
+}
+
 /**
  * 一轮 AI 编辑（PLATFORM.md §6.5）：登记回合 → dsh 执行（经 MCP 读写文档，改动实时提交）
- * → 回合结束为本回合改过的每份文档打一个版本快照。没有「落版前审计 / 丢弃」：
- * 守卫已在每次写入前执行，违规的写入根本不会发生。
+ * → 回合结束为本回合改过的每份文档打一个版本快照。守卫已在每次写入前执行，没有落版前审计 / 丢弃。
+ *
+ * 每个用户一个 FIFO 队列（一个用户一个 dsh 进程）：对话、评论「让 AI 处理」、@heurion 自动触发
+ * 都排进同一队列。所有回合事件同时发到 events（文档的 SSE 流转发给页面）。
  */
 export class TurnService {
+  readonly events = new EventEmitter<{ event: [TurnBusEvent] }>()
   private readonly cancelling = new Set<string>()
+  private readonly queues = new Map<string, Job[]>()
+  private readonly running = new Set<string>()
 
   constructor(
     private readonly docs: Documents,
@@ -31,29 +53,66 @@ export class TurnService {
   ) {}
 
   isBusy(userId: string): boolean {
-    return this.pool.isBusy(userId)
+    return this.running.has(userId)
   }
 
-  async run(userId: string, docId: string, message: string, emit: (e: UiEvent) => void): Promise<void> {
+  queued(userId: string): number {
+    return this.queues.get(userId)?.length ?? 0
+  }
+
+  /** 排队执行一轮；返回的 Promise 在该回合结束时完成。emit 收到本回合的全部事件。 */
+  submit(userId: string, docId: string, message: string, emit: (e: UiEvent) => void = () => {}, opts: TurnOptions = {}): Promise<void> {
+    if (!this.docs.store.getDoc(docId)) return Promise.reject(new Error(`doc ${docId} not found`))
+    return new Promise(resolve => {
+      const publish = (e: UiEvent) => {
+        emit(e)
+        this.events.emit('event', { userId, docId, event: e })
+      }
+      const q = this.queues.get(userId) ?? []
+      q.push({ docId, message, opts, emit: publish, done: resolve })
+      this.queues.set(userId, q)
+      if (this.running.has(userId)) publish({ type: 'queued', position: q.length, message })
+      void this.drain(userId)
+    })
+  }
+
+  private async drain(userId: string): Promise<void> {
+    if (this.running.has(userId)) return
+    const job = this.queues.get(userId)?.shift()
+    if (!job) return
+    this.running.add(userId)
+    try {
+      await this.execute(userId, job.docId, job.message, job.emit, job.opts)
+    } catch (err) {
+      job.emit({ type: 'error', message: String((err as Error).message ?? err) })
+    } finally {
+      this.running.delete(userId)
+      job.emit({ type: 'done' })
+      job.done()
+      void this.drain(userId)
+    }
+  }
+
+  private async execute(userId: string, docId: string, message: string, emit: (e: UiEvent) => void, opts: TurnOptions): Promise<void> {
     const store = this.docs.store
     const doc = store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
-    if (this.pool.isBusy(userId) || this.registry.active(userId)) throw new BusyError('AI 正在处理上一条请求')
 
     const turn = store.createTurn({ user_id: userId, doc_id: docId, message })
     const touched = new Set<string>()
-    this.registry.begin(userId, { turnId: turn.id, touched, notify: n => emit(n) })
+    this.registry.begin(userId, { turnId: turn.id, touched, notify: n => emit(n), mode: opts.suggest ? 'suggest' : 'apply' })
     const onCommit = (e: CommitEvent) => {
       if (e.turnId !== turn.id) return
       touched.add(e.docId)
       emit({ type: 'doc_updated', doc_id: e.docId, rev: e.rev, changes: e.changes.length })
     }
     this.docs.on('commit', onCommit)
-    emit({ type: 'turn', turn_id: turn.id })
+    emit({ type: 'turn', turn_id: turn.id, message })
 
     const history = this.pool.liveSession(userId) === null ? this.recentHistory(docId) : ''
     store.addMessage(docId, 'user', message, turn.id)
-    const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）\n\n${message}`
+    const suggestNote = opts.suggest ? '本轮的修改会作为待用户采纳的修订提交。' : ''
+    const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}\n\n${message}`
 
     let status: 'done' | 'error' | 'cancelled' = 'done'
     try {
@@ -63,7 +122,7 @@ export class TurnService {
       if (result.finalResponse) store.addMessage(docId, 'assistant', result.finalResponse, turn.id)
     } catch (err) {
       status = this.cancelling.has(userId) ? 'cancelled' : 'error'
-      emit({ type: 'error', message: status === 'cancelled' ? '已取消；已提交的修改保留，可按版本回滚。' : String((err as Error).message ?? err) })
+      emit({ type: 'error', message: status === 'cancelled' ? '已取消；已提交的修改保留，可撤销本轮或按版本回滚。' : String((err as Error).message ?? err) })
     } finally {
       this.docs.off('commit', onCommit)
       this.registry.end(userId, turn.id)
@@ -72,11 +131,19 @@ export class TurnService {
         if (v) emit({ type: 'version', doc_id: id, seq: v.seq })
       }
       store.endTurn(turn.id, status)
+      emit({ type: 'turn_done', turn_id: turn.id, status, docs: [...touched] })
       this.cancelling.delete(userId)
     }
   }
 
+  /** 取消当前回合并清空排队。 */
   async cancel(userId: string): Promise<void> {
+    for (const job of this.queues.get(userId) ?? []) {
+      job.emit({ type: 'error', message: '已取消（排队中）' })
+      job.emit({ type: 'done' })
+      job.done()
+    }
+    this.queues.delete(userId)
     if (this.registry.active(userId)) this.cancelling.add(userId)
     await this.pool.cancel(userId)
   }

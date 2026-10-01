@@ -162,13 +162,16 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     const denied = ctx.check(args.doc_id, 'write')
     if (denied) return denied
     try {
-      const result = deps.ops.edit({ ...args, mode: args.mode ?? 'apply' }, { actor: 'ai', turnId: ctx.turnId })
+      const forced = deps.turns.active(claims.u)?.mode
+      const mode = forced === 'suggest' ? 'suggest' : args.mode ?? 'apply'
+      const result = deps.ops.edit({ ...args, mode }, { actor: 'ai', turnId: ctx.turnId })
       deps.turns.touch(claims.u, args.doc_id)
       return json({
         rev: result.rev,
         results: result.results,
         changed: result.changes.length,
-        note: result.changes.length === 0 ? '操作没有改变文档内容' : undefined,
+        mode,
+        note: result.changes.length === 0 ? '操作没有改变文档内容' : mode === 'suggest' ? '已作为待采纳修订提交，用户采纳后生效' : undefined,
       })
     } catch (err) {
       if (err instanceof OpError) return fail(err.code, err.message, err.extra)

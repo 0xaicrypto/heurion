@@ -73,7 +73,7 @@ describe('MCP 工具', () => {
   it('回合内的写入带 turn_id，并通知回合', async () => {
     const t = await connect('段落。')
     const notices: unknown[] = []
-    t.registry.begin('u1', { turnId: 'r1', touched: new Set(), notify: n => notices.push(n) })
+    t.registry.begin('u1', { turnId: 'r1', touched: new Set(), notify: n => notices.push(n), mode: 'apply' })
     const read = await t.call('doc_read', { doc_id: t.docId })
     const id = /\{#([a-z0-9]+)\}/.exec(read.text)![1]!
     await t.call('doc_edit', { doc_id: t.docId, base_rev: 0, ops: [{ op: 'replace_text', id, find: '段落', replace: '新段落' }] })
@@ -133,7 +133,7 @@ describe('评论规则', () => {
     const t = await connect('心衰常见。')
     const node = t.docs.get(t.docId).child(0).attrs.id as string
     const c = t.store.addComment({ doc_id: t.docId, node_id: node, snippet: '' })
-    t.registry.begin('u1', { turnId: 'r1', touched: new Set(), notify: () => {} })
+    t.registry.begin('u1', { turnId: 'r1', touched: new Set(), notify: () => {}, mode: 'apply' })
     await t.call('doc_edit', { doc_id: t.docId, base_rev: 0, ops: [{ op: 'replace_text', id: node, find: '常见', replace: '高发' }] })
     await t.call('comment_reply', { doc_id: t.docId, comment_id: c.id, text: '已改' })
     expect((await t.call('comment_resolve', { doc_id: t.docId, comment_id: c.id })).body.code).toBe('user_confirms_changes')
