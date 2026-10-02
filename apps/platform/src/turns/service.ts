@@ -231,7 +231,8 @@ export class TurnService {
     const suggestNote = opts.suggest ? '本轮的修改会作为待用户采纳的修订提交。' : ''
     const memoryBlock = memoryOn ? await this.memory!.forPrompt(userId, docId, message) : ''
     const memoryNote = memoryOn ? '' : opts.memory === false ? '（用户本轮关闭了记忆：不要使用 memory_* 工具，也不要沿用之前回合提到的记忆。）' : ''
-    const prompt = `${history}${memoryBlock}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}${memoryNote}\n\n${message}`
+    // 记忆紧挨着本轮消息（放在最前面时模型容易照抄消息里的写法而忽略偏好）
+    const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}${memoryNote}\n\n${memoryBlock}${message}`
 
     let status: 'done' | 'error' | 'cancelled' | 'timeout' = 'done'
     let failure: string | null = null

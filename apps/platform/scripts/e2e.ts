@@ -229,11 +229,13 @@ let deckId = ''
   // C1 图表：AI 建原生图表、再改数据（画布的「＋图表」与数据表是同一个 add_chart / chart_set_data）
   const charts = async () => ((await api(`/api/docs/${deck.id}/deck`)).doc.content as any[]).flatMap(s => (s.content ?? []).filter((c: any) => c.attrs?.kind === 'chart'))
   const t15 = await turn(`/api/docs/${deck.id}/chat`, { message: '在「主要结果」那一页加一张柱状图：类别为「主要终点」「心血管死亡」，系列「司美格鲁肽」数值 6.5、2.5，系列「安慰剂」数值 8.0、3.0，图表标题「事件发生率（%）」。不要用图片，用原生图表。' })
-  const c15 = (await charts())[0]
+  // 前面的步骤里 AI 可能已经画过别的图表：按内容找这一张
+  const ours = async () => (await charts()).find(c => JSON.stringify(c.attrs.chart).includes('心血管死亡'))
+  const c15 = await ours()
   check('幻灯片：AI 新建原生图表（与画布同一个 add_chart）', !!c15 && c15.attrs.chart.series.length === 2 && JSON.stringify(c15.attrs.chart).includes('6.5') && t15.calls.includes('deck_edit') && !shell(t15),
     `${summary(t15)} · 工具 ${[...new Set(t15.calls)].join(' ')}`)
   const t16 = await turn(`/api/docs/${deck.id}/chat`, { message: '把「主要结果」页图表里安慰剂的心血管死亡改成 3.2，并加一个类别「心衰住院」：司美格鲁肽 1.4、安慰剂 1.7。' })
-  const c16 = (await charts())[0]
+  const c16 = await ours()
   const placebo = c16?.attrs.chart.series.find((s: any) => s.name.includes('安慰剂'))
   check('幻灯片：AI 改图表数据（与画布数据表同一个 chart_set_data）', !!placebo && placebo.values.includes(3.2) && placebo.values.includes(1.7) && c16.attrs.chart.categories.length === 3,
     `${summary(t16)} · ${JSON.stringify(c16?.attrs.chart)}`)

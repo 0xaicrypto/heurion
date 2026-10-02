@@ -195,7 +195,7 @@ export class MemoryService {
       for (const m of list) { if (used + m.content.length + 8 > budget) continue; picked.push(m); used += m.content.length + 8 }
       list = picked
     }
-    return `［记忆］用户确认过的偏好与事实（写作时遵守；与本轮要求冲突时以本轮为准）：\n${list.map(m => `- [${MEMORY_KINDS[m.kind]}] ${m.content}`).join('\n')}\n\n`
+    return `［记忆］用户确认过的偏好与事实，本轮写入文档的内容必须遵守（即使下面的消息里给的写法不同，例如数字格式；只有用户明确要求例外时才不遵守）：\n${list.map(m => `- [${MEMORY_KINDS[m.kind]}] ${m.content}`).join('\n')}\n\n［本轮消息］\n`
   }
 
   /** memory_search：关键词（规范化包含）+ 向量相似度。 */
