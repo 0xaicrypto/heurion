@@ -111,6 +111,17 @@ describe('deck：模型与编辑', () => {
 })
 
 describe('deck：导出 XML 结构', () => {
+  it('新建的占位符写明位置、文字顶端左对齐（与画布一致，不靠版式继承）', () => {
+    const t = newDeck()
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, layout: 'Title Slide', title: '免疫疗法', subtitle: '科普汇报' }] }, { actor: 'ai', turnId: null })
+    const files = unzipSync(t.exportNow().bytes)
+    const xml = Object.keys(files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f)).map(f => strFromU8(files[f]!)).find(x => x.includes('免疫疗法'))!
+    for (const sp of xml.match(/<p:sp>[\s\S]*?<\/p:sp>/g)!.filter(x => x.includes('<p:ph'))) {
+      expect(sp).toMatch(/<p:spPr><a:xfrm><a:off x="\d+" y="\d+"\/><a:ext cx="\d+" cy="\d+"\/><\/a:xfrm>/)
+      expect(sp).toContain('<a:bodyPr anchor="t"/><a:lstStyle><a:lvl1pPr algn="l"/></a:lstStyle>')
+    }
+  })
+
   it('带子元素的 bodyPr / lstStyle 在修补时保持完整，导出的每页 XML 格式良好', async () => {
     const { DOMParser } = await import('@xmldom/xmldom')
     const t = newDeck()
@@ -118,7 +129,7 @@ describe('deck：导出 XML 结构', () => {
     // 给正文形状换上带子元素的 bodyPr（真实文件常见）后再导出、导入、修改
     const original = t.exportNow().bytes
     const files = unzipSync(original)
-    const slide = strFromU8(files['ppt/slides/slide2.xml']!).replace(/<a:bodyPr\/>/g, '<a:bodyPr wrap="square"><a:spAutoFit/></a:bodyPr>').replace(/<a:lstStyle\/>/g, '<a:lstStyle><a:lvl1pPr marL="0"/></a:lstStyle>')
+    const slide = strFromU8(files['ppt/slides/slide2.xml']!).replace(/<a:bodyPr[^>]*\/>/g, '<a:bodyPr wrap="square"><a:spAutoFit/></a:bodyPr>').replace(/<a:lstStyle\/>|<a:lstStyle>[\s\S]*?<\/a:lstStyle>/g, '<a:lstStyle><a:lvl1pPr marL="0"/></a:lstStyle>')
     files['ppt/slides/slide2.xml'] = new TextEncoder().encode(slide)
     const { zipSync } = await import('fflate')
     const pkg = zipSync(files)

@@ -213,12 +213,16 @@ function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, 
     return `<p:sp><p:nvSpPr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm}<a:prstGeom prst="${geom}"><a:avLst/></a:prstGeom>${fillXml((a.fill as string | null) ?? 'none')}<a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" rtlCol="0" anchor="ctr"/><a:lstStyle/>${txBodyInner(shape, numbers)}</p:txBody></p:sp>`
   }
   const ph = a.ph ? `<p:ph${a.ph === 'body' ? '' : ` type="${a.ph}"`}${a.ph_idx !== null ? ` idx="${a.ph_idx}"` : ''}/>` : ''
-  const xfrm = a.xfrm_inherited ? '' : `<a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm>`
+  // 平台新建的形状一律写明位置（占位符也写，不靠版式继承）：画布按模型位置画，导出要一致；
+  // Keynote 对只靠版式继承位置的占位符显示不全
+  const xfrm = `<a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm>`
   const spPr = a.ph
-    ? (xfrm || a.fill ? `<p:spPr>${xfrm}${a.fill ? fillXml(a.fill as string) : ''}</p:spPr>` : '<p:spPr/>')
+    ? `<p:spPr>${xfrm}${a.fill ? fillXml(a.fill as string) : ''}</p:spPr>`
     : `<p:spPr>${xfrm}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml((a.fill as string | null) ?? 'none')}</p:spPr>`
-  const bodyPr = a.ph ? '<a:bodyPr/>' : '<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr>'
-  return `<p:sp><p:nvSpPr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvSpPr${a.ph ? '><a:spLocks noGrp="1"/></p:cNvSpPr>' : ' txBox="1"/>'}<p:nvPr>${ph}</p:nvPr></p:nvSpPr>${spPr}<p:txBody>${bodyPr}<a:lstStyle/>${txBodyInner(shape, numbers)}</p:txBody></p:sp>`
+  // 占位符的文字与画布一致：顶端、左对齐（版式里标题页常是底端居中，不覆盖会和画布对不上）
+  const bodyPr = a.ph ? '<a:bodyPr anchor="t"/>' : '<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr>'
+  const lstStyle = a.ph ? '<a:lstStyle><a:lvl1pPr algn="l"/></a:lstStyle>' : '<a:lstStyle/>'
+  return `<p:sp><p:nvSpPr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvSpPr${a.ph ? '><a:spLocks noGrp="1"/></p:cNvSpPr>' : ' txBox="1"/>'}<p:nvPr>${ph}</p:nvPr></p:nvSpPr>${spPr}<p:txBody>${bodyPr}${lstStyle}${txBodyInner(shape, numbers)}</p:txBody></p:sp>`
 }
 
 export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warnings: string[] } {
