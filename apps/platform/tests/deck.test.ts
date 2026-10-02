@@ -113,7 +113,7 @@ describe('deck：模型与编辑', () => {
 describe('deck：导出 XML 结构', () => {
   it('新建的占位符写明位置、文字顶端左对齐（与画布一致，不靠版式继承）', () => {
     const t = newDeck()
-    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, layout: 'Title Slide', title: '免疫疗法', subtitle: '科普汇报' }] }, { actor: 'ai', turnId: null })
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, layout: 'Title Slide', title: '免疫疗法', body: '科普汇报' }] }, { actor: 'ai', turnId: null })
     const files = unzipSync(t.exportNow().bytes)
     const xml = Object.keys(files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f)).map(f => strFromU8(files[f]!)).find(x => x.includes('免疫疗法'))!
     for (const sp of xml.match(/<p:sp>[\s\S]*?<\/p:sp>/g)!.filter(x => x.includes('<p:ph'))) {

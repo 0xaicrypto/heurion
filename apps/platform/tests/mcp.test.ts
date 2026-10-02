@@ -299,5 +299,13 @@ describe('文档仓库（AI 一侧）', () => {
     const off = await t.call('memory_propose', { content: '别的偏好', kind: 'preference' })
     expect(JSON.parse(off.text).code).toBe('memory_off')
     expect(JSON.parse((await t.call('memory_search', { query: '统计' })).text).code).toBe('memory_off')
+    // 忘掉：本轮关闭记忆时也能用，并通知对话
+    const gone: any[] = []
+    t.registry.end('u1', 't2')
+    t.registry.begin('u1', { turnId: 't3', docId: t.docId, touched: new Set(), notify: n => gone.push(n), mode: 'apply', memory: false })
+    const f = await t.call('memory_forget', { target: '统计软件用 R' })
+    expect(f.body).toMatchObject({ result: 'forgotten', forgotten: ['统计软件用 R'] })
+    expect(gone[0]).toMatchObject({ type: 'memory', result: 'forgotten' })
+    expect(JSON.parse((await t.call('memory_forget', { target: '统计软件用 R' })).text).code).toBe('not_found')
   })
 })

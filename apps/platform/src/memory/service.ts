@@ -24,6 +24,16 @@ export type ProposeResult = { result: 'proposed' | 'active' | 'merged' | 'previo
 export const normalize = (s: string) => s.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
 
 const SIMILAR = 0.95
+
+/** 用户说法的字二元组有多少出现在记忆里（「百分比保留两位小数」对「百分比一律保留两位小数」≈ 0.9）。 */
+function coverage(q: string, text: string): number {
+  if (q.length < 2) return 0
+  const grams = new Set<string>()
+  for (let i = 0; i + 2 <= q.length; i++) grams.add(q.slice(i, i + 2))
+  let hit = 0
+  for (const g of grams) if (text.includes(g)) hit++
+  return hit / grams.size
+}
 const dot = (a: Float32Array, b: Float32Array) => { let d = 0; for (let i = 0; i < a.length && i < b.length; i++) d += a[i]! * b[i]!; return d }
 
 export class MemoryService {
@@ -125,6 +135,39 @@ export class MemoryService {
     if (!m || m.owner !== owner) return false
     this.store.deleteMemory(id)
     return true
+  }
+
+  /**
+   * 忘掉（用户明确要求「忘掉…」时 AI 调用）：按描述找已生效 / 待确认的记忆，唯一命中就彻底删除；
+   * 命中多条且没指定 ids 时返回候选，让 AI 跟用户确认。暂停记忆、本轮不用记忆时也能忘（删除是用户的权利）。
+   */
+  async forget(owner: string, target: string, ids?: string[]): Promise<
+    | { result: 'forgotten'; memories: MemoryRow[] }
+    | { result: 'ambiguous'; candidates: MemoryRow[] }
+    | { result: 'not_found' }
+  > {
+    if (!this.instanceEnabled()) throw new MemoryError('memory_disabled', '管理员已停用记忆，没有可忘的内容')
+    const all = this.store.listMemories(owner, ['active', 'proposed'])
+    let hits: MemoryRow[]
+    if (ids?.length) hits = all.filter(m => ids.includes(m.id))
+    else {
+      // 去掉「那条、这个、记忆、忘掉」之类的说法，只留要找的内容
+      const q = normalize(target).replace(/那条|这条|那个|这个|那句|这句|记忆|要求|偏好|规则|以后|不用了|忘掉|忘记|删掉|删除|请|吧|的/g, '')
+      const qv = await this.embed(target)
+      const vecs = qv ? new Map(this.store.memoryVectors(owner, ['active', 'proposed']).map(x => [x.id, x.v])) : new Map<string, Float32Array>()
+      const scored = all.map(m => {
+        const n = normalize(m.content)
+        const text = q && (n.includes(q) || q.includes(n)) ? 1 : coverage(q, n)
+        const vec = qv && vecs.get(m.id) ? dot(qv, vecs.get(m.id)!) : 0
+        return { m, s: Math.max(text, vec), ok: text >= 0.6 || vec >= 0.75 }
+      }).filter(x => x.ok).sort((a, b) => b.s - a.s)
+      // 明显的最佳匹配（文字包含，或比第二名高出一截）当作唯一命中
+      if (scored.length > 1 && scored[0]!.s - scored[1]!.s < 0.05) return { result: 'ambiguous', candidates: scored.slice(0, 8).map(x => x.m) }
+      hits = scored.slice(0, 1).map(x => x.m)
+    }
+    if (hits.length === 0) return { result: 'not_found' }
+    for (const m of hits) this.store.deleteMemory(m.id)
+    return { result: 'forgotten', memories: hits }
   }
 
   // —— 使用 ——

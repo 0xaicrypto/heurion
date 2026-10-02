@@ -116,12 +116,15 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
   }
 
   /** 对话里 AI 提议（或按用户要求记下）一条记忆时的卡片。 */
-  function memoryCard(ev: { result: 'proposed' | 'active'; memory: Memory }): HTMLElement {
+  function memoryCard(ev: { result: 'proposed' | 'active' | 'forgotten'; memory: Memory }): HTMLElement {
     const m = ev.memory
     const card = document.createElement('div')
     card.className = 'mem-card'
     const done = (text: string) => { card.querySelector('.actions-row')!.outerHTML = `<div class="muted small">${esc(text)}</div>` }
-    card.innerHTML = ev.result === 'active'
+    card.innerHTML = ev.result === 'forgotten'
+      ? `<div class="mem-card-head">已忘记</div><div class="mem-text"><span class="mem-kind">${KINDS[m.kind]}</span><s>${esc(m.content)}</s></div>
+         <div class="actions-row"><button data-act="restore">撤销</button></div>`
+      : ev.result === 'active'
       ? `<div class="mem-card-head">已记住</div><div class="mem-text"><span class="mem-kind">${KINDS[m.kind]}</span>${esc(m.content)}</div>
          <div class="actions-row"><button data-act="undo">撤销</button><button data-act="manage">管理记忆</button></div>`
       : `<div class="mem-card-head">记住这条？</div><div class="mem-text"><span class="mem-kind">${KINDS[m.kind]}</span>${esc(m.content)}</div>
@@ -132,6 +135,11 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
       if (!act) return
       try {
         if (act === 'manage') { void openMemory(); return }
+        if (act === 'restore') {
+          await api('/api/memory', { method: 'POST', body: JSON.stringify({ content: m.content, kind: m.kind, scope: m.scope, project_id: m.project_id }) })
+          done('已恢复这条记忆')
+          return
+        }
         if (act === 'undo') { await api(`/api/memory/${m.id}`, { method: 'DELETE' }); done('已撤销，不会记住这条'); return }
         if (act === 'edit') {
           const content = await askText({ title: '改写后记住', label: KINDS[m.kind], value: m.content, confirm: '记住' })

@@ -161,6 +161,9 @@ check('导出：未改动的块原样写回', xml.includes(para('研究背景', 
   const t3 = await turn(`/api/docs/${c.id}/chat`, { message: '请记住：表格标题放在表格上方。把「待补充」改成「见下表」。', memory: false })
   const after = (await api<any>('/api/memory')).items as any[]
   check('记忆：本轮不用记忆时不新增', !after.some(m => /表格标题/.test(m.content)), `${summary(t3)}`)
+  const t4 = await turn(`/api/docs/${c.id}/chat`, { message: '请忘掉「百分比保留两位小数」这条要求，以后不用了。不用改文档。' })
+  const left = (await api<any>('/api/memory')).items as any[]
+  check('记忆：用户要求忘掉后删除', t4.calls.includes('memory_forget') && !left.some(m => /两位小数/.test(m.content)), `${summary(t4)}`)
   await api('/api/memory', { method: 'DELETE' })
 }
 

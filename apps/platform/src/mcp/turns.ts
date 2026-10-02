@@ -8,7 +8,7 @@ import type { MemoryRow } from '../store/db.ts'
 export type TurnNotice =
   | { type: 'comment_reply'; doc_id: string; comment_id: string }
   /** AI 提议了一条记忆（待确认）或按用户明确要求记下了一条：对话里显示卡片。 */
-  | { type: 'memory'; result: 'proposed' | 'active'; memory: MemoryRow }
+  | { type: 'memory'; result: 'proposed' | 'active' | 'forgotten'; memory: MemoryRow }
 
 export interface ActiveTurn {
   turnId: string

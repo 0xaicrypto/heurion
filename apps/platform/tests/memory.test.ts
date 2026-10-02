@@ -111,3 +111,26 @@ describe('记忆：三层开关与注入', () => {
     expect(t.store.listMemories('u2')[0]!.status).toBe('proposed')
   })
 })
+
+describe('记忆：忘掉', () => {
+  it('唯一命中彻底删除；多条相近返回候选，按 ids 删；没有返回 not_found；暂停时也能忘', async () => {
+    const t = env()
+    const a = await t.memory.propose('u1', { content: '文档中的百分比一律保留两位小数，例如 6.50%', kind: 'preference', scope: 'global', explicit: true }, ai)
+    await t.memory.propose('u1', { content: '表格标题放在表格上方', kind: 'style', scope: 'global', explicit: true }, ai)
+    await t.memory.propose('u1', { content: '表格标题用中文', kind: 'style', scope: 'global', explicit: true }, ai)
+    t.memory.setPaused('u1', true)
+    const r = await t.memory.forget('u1', '百分比两位小数那条')
+    expect(r).toMatchObject({ result: 'forgotten', memories: [{ id: a.memory.id }] })
+    expect(t.store.getMemory(a.memory.id)).toBeUndefined()
+
+    const amb = await t.memory.forget('u1', '表格标题')
+    expect(amb.result).toBe('ambiguous')
+    const ids = amb.result === 'ambiguous' ? amb.candidates.map(m => m.id) : []
+    expect(ids.length).toBe(2)
+    expect((await t.memory.forget('u1', '表格标题', ids)).result).toBe('forgotten')
+    expect(t.store.listMemories('u1')).toEqual([])
+    expect((await t.memory.forget('u1', '不存在的东西')).result).toBe('not_found')
+    expect((await t.memory.forget('u2', '百分比', ids)).result).toBe('not_found') // 不能删别人的
+  })
+})
+

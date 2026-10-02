@@ -65,7 +65,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
 - 插图：数据图（曲线、森林图、柱状图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
 - 参考资料库：写作需要依据时用 kb_search 检索用户上传的资料（论文、指南、内部材料），kb_read 读原文；资料是文献时仍用 insert_citation 规范引用。
-- 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
+- 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；用户说「忘掉…」「别再…」时用 memory_forget；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -536,6 +536,30 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       if (r.result === 'proposed' || r.result === 'active') deps.turns.notify(claims.u, { type: 'memory', result: r.result, memory: r.memory })
       const said = { proposed: '已提议，等用户确认', active: '已记住（用户明确要求，直接生效）', merged: '已有相同的记忆，未重复添加', previously_rejected: '用户之前拒绝过这条，不再提议' }[r.result]
       return json({ result: r.result, message: said })
+    } catch (err) {
+      if (err instanceof MemoryError) return fail(err.code, err.message, err.hint ? { hint: err.hint } : {})
+      throw err
+    }
+  })
+
+  server.registerTool('memory_forget', {
+    description:
+      '忘掉记忆：只在用户明确要求「忘掉 / 别再… / 删掉那条记忆」时调用。target 写用户要忘的内容；唯一命中就彻底删除，' +
+      '命中多条时返回候选（ambiguous），先问用户指的是哪几条，再用 memory_ids 指定。暂停记忆或本轮不用记忆时也可以用。',
+    inputSchema: {
+      target: z.string().min(1).describe('用户要忘掉的内容（用户的原话或概括）'),
+      memory_ids: z.array(z.string()).optional().describe('从 ambiguous 候选里确认后的 id'),
+    },
+  }, async ({ target, memory_ids }) => {
+    if (!deps.memory) return fail('memory_unavailable', '记忆未启用')
+    try {
+      const r = await deps.memory.forget(claims.u, target, memory_ids)
+      if (r.result === 'not_found') return fail('not_found', '没有找到相关的记忆', { hint: '告诉用户没有这样的记忆；可以请用户在「记忆」页里查看。' })
+      if (r.result === 'ambiguous') {
+        return json({ result: 'ambiguous', message: '有多条相近的记忆，先跟用户确认要忘哪几条（复述内容，不要提 id）', candidates: r.candidates.map(m => ({ id: m.id, content: m.content, status: m.status })) })
+      }
+      for (const m of r.memories) deps.turns.notify(claims.u, { type: 'memory', result: 'forgotten', memory: m })
+      return json({ result: 'forgotten', forgotten: r.memories.map(m => m.content), message: '已彻底删除，之后的对话不再使用' })
     } catch (err) {
       if (err instanceof MemoryError) return fail(err.code, err.message, err.hint ? { hint: err.hint } : {})
       throw err
