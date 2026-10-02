@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { KbChunkHit, KbFileRow, Store } from '../store/db.ts'
 import type { Embedder } from './embedder.ts'
 import { chunkPages, extractText, ExtractError, KB_TYPES } from './extract.ts'
+import type { Ocr } from './ocr.ts'
 
 /**
  * 参考资料库（MIGRATION_PLAN.md R2b）：上传 → 抽取文字（保留页码）→ 切块 → 向量化（本地 bge-m3，可选）。
@@ -12,7 +13,7 @@ export class KbService {
   private queue: string[] = []
   private running = false
 
-  constructor(private readonly store: Store, private readonly embedder: Embedder | null) {}
+  constructor(private readonly store: Store, private readonly embedder: Embedder | null, private readonly ocr: Ocr | null = null) {}
 
   async upload(owner: string, input: { name: string; bytes: Uint8Array; project_id?: string | null }): Promise<{ file: KbFileRow; duplicate: boolean }> {
     const ext = input.name.toLowerCase().split('.').pop() ?? ''
@@ -65,10 +66,13 @@ export class KbService {
   private async process(id: string): Promise<void> {
     const file = this.store.getKbFile(id)
     if (!file) return
-    if (file.chunks === 0 || file.status === 'pending' || file.status === 'extracting') {
-      this.store.updateKbFile(id, { status: 'extracting' })
+    if (file.chunks === 0 || file.status === 'pending' || file.status === 'extracting' || file.status === 'ocr') {
+      this.store.updateKbFile(id, { status: 'extracting', note: null })
       const bytes = this.store.getKbBytes(id)!
-      const extracted = await extractText(file.name, bytes)
+      const extracted = await extractText(file.name, bytes, {
+        ocr: this.ocr ?? undefined,
+        onOcr: (done, total) => this.store.updateKbFile(id, { status: 'ocr', note: `扫描页识别文字：${done} / ${total} 页` }),
+      })
       const chunks = chunkPages(extracted.pages)
       this.store.putKbChunks(file, chunks)
       this.store.updateKbFile(id, { pages: extracted.pages.length, chunks: chunks.length, embedded: 0, doi: extracted.doi, pmid: extracted.pmid, note: extracted.note })

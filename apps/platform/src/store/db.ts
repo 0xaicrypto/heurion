@@ -46,7 +46,7 @@ export interface DocRow {
   deleted_at: string | null
 }
 
-export type KbStatus = 'pending' | 'extracting' | 'embedding' | 'ready' | 'failed'
+export type KbStatus = 'pending' | 'extracting' | 'ocr' | 'embedding' | 'ready' | 'failed'
 
 /** 参考资料库里的一份资料（R2）。 */
 export interface KbFileRow {
@@ -499,7 +499,7 @@ export class Store {
 
   /** 未处理完的资料（启动时继续处理）。 */
   listKbUnfinished(): KbFileRow[] {
-    return this.db.prepare(`SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE status IN ('pending', 'extracting', 'embedding') OR (status = 'ready' AND embedded < chunks) ORDER BY created_at`).all() as unknown as KbFileRow[]
+    return this.db.prepare(`SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE status IN ('pending', 'extracting', 'ocr', 'embedding') OR (status = 'ready' AND embedded < chunks) ORDER BY created_at`).all() as unknown as KbFileRow[]
   }
 
   updateKbFile(id: string, patch: Partial<Pick<KbFileRow, 'status' | 'note' | 'pages' | 'chunks' | 'embedded' | 'doi' | 'pmid' | 'project_id' | 'name'>>): void {

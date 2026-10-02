@@ -7,12 +7,12 @@ import { askConfirm } from './dialogs.ts'
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 
 interface KbFile {
-  id: string; name: string; status: 'pending' | 'extracting' | 'embedding' | 'ready' | 'failed'
+  id: string; name: string; status: 'pending' | 'extracting' | 'ocr' | 'embedding' | 'ready' | 'failed'
   project_id: string | null; note: string | null; pages: number; chunks: number; embedded: number; doi: string | null; pmid: string | null; size: number; created_at: string
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
-const STATUS: Record<KbFile['status'], string> = { pending: '排队中', extracting: '抽取文字', embedding: '向量化', ready: '可检索', failed: '失败' }
+const STATUS: Record<KbFile['status'], string> = { pending: '排队中', extracting: '抽取文字', ocr: '识别文字', embedding: '向量化', ready: '可检索', failed: '失败' }
 const ACCEPT = '.pdf,.docx,.pptx,.txt,.md'
 
 function size(n: number): string {

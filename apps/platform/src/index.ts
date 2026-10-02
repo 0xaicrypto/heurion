@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { basename, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
@@ -7,6 +7,7 @@ import { Accounts } from './auth/accounts.ts'
 import { createMailer } from './auth/mailer.ts'
 import { SearchIndex } from './model/search-index.ts'
 import { HttpEmbedder } from './kb/embedder.ts'
+import { localOcr } from './kb/ocr.ts'
 import { KbService } from './kb/service.ts'
 import { MemoryService } from './memory/service.ts'
 import { ClaimService } from './claims/service.ts'
@@ -38,7 +39,7 @@ const claims = new ClaimService(docs, pubmed)
 const renderer = new SlideRenderer(config.renderDir)
 // 参考资料库：本地嵌入服务（apps/embedder）可选，不在时只用关键词检索
 const embedder = config.embeddingUrl ? new HttpEmbedder(config.embeddingUrl) : null
-const kb = new KbService(store, embedder)
+const kb = new KbService(store, embedder, localOcr(resolve(config.dataDir, 'ocr-cache')))
 kb.resume()
 // 记忆（R3）：相似去重与按相关度注入用同一个嵌入服务，不在时按文本
 const memory = new MemoryService(store, embedder)

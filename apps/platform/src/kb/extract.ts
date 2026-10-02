@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { importDocx } from '../convert/docx-import.ts'
 import { importPptx } from '../convert/pptx-import.ts'
+import type { Ocr } from './ocr.ts'
 
 const run = promisify(execFile)
 
@@ -27,11 +28,29 @@ export const KB_TYPES: Record<string, string> = {
   md: 'text/markdown',
 }
 
-/** 按文件名后缀抽取文字（PDF 用 poppler 的 pdftotext，按换页符分页）。 */
-export async function extractText(name: string, bytes: Uint8Array): Promise<Extracted> {
+/** OCR 最多识别的页数（扫描的整本书只取前面这些页）。 */
+const OCR_MAX_PAGES = 200
+
+/**
+ * 按文件名后缀抽取文字（PDF 用 poppler 的 pdftotext，按换页符分页）。
+ * 给了 ocr 时，没有文字层的页（扫描件、扫描页）做 OCR。
+ */
+export async function extractText(name: string, bytes: Uint8Array, opts: { ocr?: Ocr; onOcr?: (done: number, total: number) => void } = {}): Promise<Extracted> {
   const ext = name.toLowerCase().split('.').pop() ?? ''
   let pages: string[]
-  if (ext === 'pdf') pages = await pdfPages(bytes)
+  let ocred = 0
+  if (ext === 'pdf') {
+    pages = await pdfPages(bytes)
+    const empty = pages.map((p, i) => (p.trim().length < 20 ? i + 1 : 0)).filter(Boolean).slice(0, OCR_MAX_PAGES)
+    if (opts.ocr && empty.length > 0) {
+      try {
+        const got = await opts.ocr(bytes, empty, opts.onOcr)
+        for (const [page, text] of got) if (text.trim()) { pages[page - 1] = text; ocred++ }
+      } catch (err) {
+        throw new ExtractError(`扫描页文字识别（OCR）失败：${(err as Error).message.slice(0, 200)}`)
+      }
+    }
+  }
   else if (ext === 'docx') {
     const doc = importDocx(bytes).doc
     pages = [doc.textBetween(0, doc.content.size, '\n', ' ')]
@@ -45,9 +64,11 @@ export async function extractText(name: string, bytes: Uint8Array): Promise<Extr
     throw new ExtractError(`不支持的文件类型 .${ext}（支持 PDF、docx、pptx、txt、md）`)
   }
   const total = pages.reduce((n, p) => n + p.trim().length, 0)
-  const note = ext === 'pdf' && total < pages.length * 20
-    ? '这份 PDF 几乎没有文字层（可能是扫描件），暂不支持 OCR，检索不到内容'
-    : total === 0 ? '没有抽取到文字' : null
+  const note = ocred > 0
+    ? `${ocred} 页是扫描页，已用 OCR 识别文字（可能有识别错误）`
+    : ext === 'pdf' && total < pages.length * 20
+      ? '这份 PDF 几乎没有文字层（可能是扫描件），没有识别到文字，检索不到内容'
+      : total === 0 ? '没有抽取到文字' : null
   const head = pages.slice(0, 2).join('\n')
   const doi = /\b(10\.\d{4,9}\/[^\s"<>,;]+[^\s"<>,;.)\]])/i.exec(head)?.[1] ?? null
   const pmid = /\bPMID:?\s*(\d{6,9})\b/i.exec(head)?.[1] ?? null

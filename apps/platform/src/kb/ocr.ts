@@ -1,0 +1,49 @@
+import { execFile } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { createWorker } from 'tesseract.js'
+
+const run = promisify(execFile)
+
+/** 给扫描页做 OCR：返回页码（1 起）→ 文字。onPage 报进度（第几页 / 共几页）。 */
+export type Ocr = (pdf: Uint8Array, pages: number[], onPage?: (done: number, total: number) => void) => Promise<Map<number, string>>
+
+/**
+ * 本地 OCR（tesseract.js，简体中文 + 英文）：poppler 的 pdftoppm 把页面渲染成 200 dpi 的图，逐页识别。
+ * 资料不出本机；语言模型第一次用时下载到 cacheDir，之后离线可用。
+ */
+export function localOcr(cacheDir: string, langs = 'chi_sim+eng'): Ocr {
+  mkdirSync(cacheDir, { recursive: true })
+  return async (pdf, pages, onPage) => {
+    const out = new Map<number, string>()
+    if (pages.length === 0) return out
+    const dir = mkdtempSync(join(tmpdir(), 'heurion-ocr-'))
+    const worker = await createWorker(langs, 1, { cachePath: cacheDir })
+    try {
+      const file = join(dir, 'in.pdf')
+      writeFileSync(file, pdf)
+      for (const [i, page] of pages.entries()) {
+        await run('pdftoppm', ['-r', '200', '-gray', '-png', '-f', String(page), '-l', String(page), file, join(dir, `p${page}`)], { timeout: 120_000 })
+        const img = readdirSync(dir).find(f => f.startsWith(`p${page}-`) || f === `p${page}.png`)
+        if (img) {
+          const { data } = await worker.recognize(join(dir, img))
+          out.set(page, tidy(data.text))
+          rmSync(join(dir, img), { force: true })
+        }
+        onPage?.(i + 1, pages.length)
+      }
+      return out
+    } finally {
+      await worker.terminate()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
+
+/** tesseract 在汉字之间加空格：去掉汉字（及中文标点）之间的空格。 */
+export function tidy(text: string): string {
+  const cjk = '[\\u3000-\\u303f\\u3400-\\u9fff\\uff00-\\uffef]'
+  return text.replace(new RegExp(`(${cjk}) +(?=${cjk})`, 'g'), '$1').replace(/[ \t]+\n/g, '\n').trim()
+}

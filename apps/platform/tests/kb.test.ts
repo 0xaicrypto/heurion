@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Embedder } from '../src/kb/embedder.ts'
 import { chunkPages, extractText } from '../src/kb/extract.ts'
+import { tidy, type Ocr } from '../src/kb/ocr.ts'
 import { KbService } from '../src/kb/service.ts'
 import { kbQueryTerms, Store } from '../src/store/db.ts'
 
@@ -55,6 +56,29 @@ describe('参考资料库：抽取与切块', () => {
     const chunks = chunkPages(x.pages, 80, 10)
     expect(chunks.length).toBeGreaterThan(1)
     expect(chunks.some(c => c.page === 2 && c.text.includes('safety'))).toBe(true)
+  })
+
+  it('扫描页走 OCR：只识别没有文字层的页，汉字间空格去掉，进度与提示可见', async () => {
+    const calls: number[][] = []
+    const progress: string[] = []
+    const fake: Ocr = async (_pdf, pages, onPage) => {
+      calls.push(pages)
+      pages.forEach((_, i) => onPage?.(i + 1, pages.length))
+      return new Map(pages.map(p => [p, tidy(`第 ${p} 页 扫 描 内 容 ： 心 力 衰 竭 患 者 的 随 访 ， 共 120 例 。`)]))
+    }
+    const x = await extractText('mixed.pdf', pdf(['Page one has a real text layer about heart failure outcomes.', '', '']), { ocr: fake, onOcr: (d, n) => progress.push(`${d}/${n}`) })
+    expect(calls).toEqual([[2, 3]])
+    expect(progress).toEqual(['1/2', '2/2'])
+    expect(x.pages[0]).toContain('heart failure')
+    expect(x.pages[1]).toBe('第 2 页扫描内容：心力衰竭患者的随访，共 120 例。')
+    expect(x.note).toContain('2 页是扫描页')
+
+    const store = new Store(':memory:')
+    const kb = new KbService(store, null, fake)
+    const { file } = await kb.upload('u1', { name: 'scan.pdf', bytes: pdf(['', '']) })
+    await kb.idle()
+    expect(store.getKbFile(file.id)).toMatchObject({ status: 'ready', pages: 2 })
+    expect((await kb.search('u1', '心力衰竭患者'))[0]?.file_id).toBe(file.id)
   })
 
   it('没有文字层的 PDF 标注为扫描件', async () => {
