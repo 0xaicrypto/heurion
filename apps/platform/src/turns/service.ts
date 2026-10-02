@@ -196,7 +196,7 @@ export class TurnService {
     const doc = store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
 
-    const turn = store.createTurn({ user_id: userId, doc_id: docId, message })
+    const turn = store.createTurn({ user_id: userId, doc_id: docId, message, opts: JSON.stringify(opts) })
     r.turnId = turn.id
     const touched = new Set<string>()
     this.registry.begin(userId, { turnId: turn.id, touched, notify: n => emit(n), mode: opts.suggest ? 'suggest' : 'apply', answering: opts.commentId ?? null })

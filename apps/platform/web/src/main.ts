@@ -5,6 +5,7 @@ import './style.css'
 import * as Y from 'yjs'
 import { initUserMenu, showAuthScreen, signOut, storedToken, type Me } from './account.ts'
 import { DeckView } from './deck.ts'
+import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 
@@ -62,21 +63,15 @@ $('docList').onclick = e => {
   if (li?.dataset.id) void open(li.dataset.id)
 }
 
-$('newDoc').onclick = async () => {
-  const title = prompt('文档标题', '未命名')
-  if (title === null) return
-  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title }) })
+// 新建：直接建一份「未命名」并打开，标题进入编辑状态（不弹窗问标题）
+async function createDoc(kind: 'doc' | 'deck', renameNow = true): Promise<void> {
+  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify(kind === 'deck' ? { title: '未命名汇报', kind } : { title: '未命名文档' }) })
   await loadDocs()
   await open(d.id)
+  if (renameNow) editTitle()
 }
-
-$('newDeck').onclick = async () => {
-  const title = prompt('幻灯片标题', '未命名汇报')
-  if (title === null) return
-  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title, kind: 'deck' }) })
-  await loadDocs()
-  await open(d.id)
-}
+$('newDoc').onclick = () => void createDoc('doc')
+$('newDeck').onclick = () => void createDoc('deck')
 
 $('uploadBtn').onclick = () => $('uploadInput').click()
 $<HTMLInputElement>('uploadInput').onchange = async e => {
@@ -98,8 +93,29 @@ $<HTMLInputElement>('uploadInput').onchange = async e => {
 
 // —— 打开文档：Yjs 同步 + 编辑器 + 文档事件流 ——
 
+/** 没打开文档时的欢迎页：新建 / 上传，加几条示例指令。 */
+function showWelcome(): void {
+  $('page').className = 'page'
+  $('page').replaceChildren(($('welcomeTpl') as HTMLTemplateElement).content.cloneNode(true))
+}
+
+$('page').addEventListener('click', async e => {
+  const t = (e.target as HTMLElement).closest('[data-start], [data-example]') as HTMLElement | null
+  if (!t || session) return
+  if (t.dataset.start === 'upload') { $('uploadInput').click(); return }
+  if (t.dataset.start) { await createDoc(t.dataset.start as 'doc' | 'deck'); return }
+  // 示例：新建对应的文档，把指令填进对话框（由用户确认后发送）
+  await createDoc(t.dataset.example as 'doc' | 'deck', false)
+  switchTab('chatPane')
+  const input = $<HTMLTextAreaElement>('chatInput')
+  input.value = t.dataset.prompt ?? ''
+  input.focus()
+})
+
 async function open(docId: string): Promise<void> {
   close()
+  hideTurnBanner()
+  turnUi = null
   $('chatLog').innerHTML = ''
   $('page').innerHTML = ''
   const meta = await api(`/api/docs/${docId}`)
@@ -142,7 +158,7 @@ async function open(docId: string): Promise<void> {
   $('exportDocxBtn').hidden = meta.kind === 'deck'
   $('exportMdBtn').hidden = meta.kind === 'deck'
   $('exportPptxBtn').hidden = meta.kind !== 'deck'
-  for (const b of ['exportDocxBtn', 'exportMdBtn', 'exportPptxBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
+  for (const b of ['exportBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
   await loadDocs()
   await refresh(true)
 }
@@ -168,6 +184,12 @@ function onStreamEvent(e: any): void {
   if (e.type === 'hello') { setBusy(Boolean(e.busy)); return }
   if (e.type === 'commit') {
     const ids = e.changes.filter((c: any) => c.kind !== 'removed').map((c: any) => c.node_id)
+    if (e.actor === 'ai' && e.turn_id) {
+      const c = turnChanges.get(e.turn_id) ?? { ids: new Set<string>(), count: 0 }
+      for (const id of ids) c.ids.add(id)
+      c.count += e.changes.length
+      turnChanges.set(e.turn_id, c)
+    }
     if (session.deck) void session.deck.load().then(() => { if (e.actor === 'ai') session?.deck?.flash(ids) })
     else if (e.actor === 'ai') session.editor?.flash(ids)
     scheduleRefresh()
@@ -194,7 +216,10 @@ async function refresh(full: boolean): Promise<void> {
       addMsg(m.role, displayMessage(m.text), m.role === 'assistant' && d.revertable.includes(m.turn_id) ? m.turn_id : null)
       // 没正常完成的回合：在该轮用户消息后标出原因（刷新页面后也看得到）
       const f = m.role === 'user' && m.turn_id ? failed.get(m.turn_id) : undefined
-      if (f) addStep(`${TURN_STATUS[f.status] ?? f.status}${f.error ? `：${f.error}` : ''}`, 'err')
+      if (f) {
+        addStep(`${TURN_STATUS[f.status] ?? f.status}${f.error ? `：${f.error}` : ''}`, 'err')
+        addRetry(m.turn_id)
+      }
     }
   }
   renderComments()
@@ -204,14 +229,40 @@ async function refresh(full: boolean): Promise<void> {
   syncRevertButtons()
 }
 
-$('docTitle').onclick = async () => {
-  if (!session || !detail) return
-  const title = prompt('重命名', detail.title)
-  if (!title?.trim()) return
-  await api(`/api/docs/${session.docId}`, { method: 'PATCH', body: JSON.stringify({ title }) })
-  await loadDocs()
-  await refresh(false)
+// 重命名：点标题直接改（回车保存，Esc 取消，失焦保存）
+function editTitle(): void {
+  const el = $('docTitle')
+  if (!session || !detail || el.isContentEditable) return
+  const before = detail.title as string
+  el.contentEditable = 'plaintext-only'
+  el.classList.add('editing')
+  el.focus()
+  getSelection()?.selectAllChildren(el)
+  const finish = async (save: boolean) => {
+    el.removeEventListener('keydown', onKey)
+    el.removeEventListener('blur', onBlur)
+    el.contentEditable = 'false'
+    el.classList.remove('editing')
+    const title = (el.textContent ?? '').trim()
+    if (!save || !title || title === before || !session) { el.textContent = before; return }
+    try {
+      await api(`/api/docs/${session.docId}`, { method: 'PATCH', body: JSON.stringify({ title }) })
+      await loadDocs()
+      await refresh(false)
+    } catch (err) {
+      el.textContent = before
+      showNotice((err as Error).message, true)
+    }
+  }
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); void finish(true) }
+    if (e.key === 'Escape') { e.preventDefault(); void finish(false) }
+  }
+  const onBlur = () => void finish(true)
+  el.addEventListener('keydown', onKey)
+  el.addEventListener('blur', onBlur)
 }
+$('docTitle').onclick = () => editTitle()
 
 // —— 工具栏 ——
 
@@ -227,7 +278,7 @@ $('toolbar').onclick = e => {
 }
 async function addCitation(): Promise<void> {
   if (!session?.editor) return
-  const doi = prompt('输入要引用文献的 DOI（会经 Crossref 核实）')
+  const doi = await askText({ title: '插入引用', label: 'DOI', placeholder: '10.1056/NEJMoa2307563', confirm: '核实并插入', hint: '经 Crossref 核实后登记，在光标处插入引用编号；参考文献表自动生成。' })
   if (!doi?.trim()) return
   try {
     const r = await api(`/api/docs/${session.docId}/citations`, { method: 'POST', body: JSON.stringify({ doi }) })
@@ -321,13 +372,140 @@ function syncRevertButtons(): void {
   document.querySelectorAll<HTMLButtonElement>('button.revert').forEach(b => { if (!ok.has(b.dataset.turn!)) b.remove() })
 }
 
-function addStep(text: string, cls = ''): void {
+function addStep(text: string, cls = '', detail = text): HTMLElement {
   const div = document.createElement('div')
   div.className = `step ${cls}`
   div.textContent = text
-  div.title = text
-  $('chatLog').appendChild(div)
+  div.title = detail
+  // 回合进行中：步骤收进本轮的「工作过程」，结束后折叠
+  ;(turnUi?.steps ?? $('chatLog')).appendChild(div)
   $('chatLog').scrollTop = 1e9
+  return div
+}
+
+/** 工具调用的人话说明（原始参数放在悬停提示里）。 */
+const TOOL_LABELS: Record<string, (a: any) => string> = {
+  doc_outline: () => '查看文档结构',
+  doc_read: () => '阅读文档',
+  doc_search: a => `在文档里查找「${a.query ?? ''}」`,
+  doc_edit: a => `修改文档（${a.ops?.length ?? 1} 处操作）`,
+  doc_history: () => '查看修改历史',
+  doc_diff: () => '对比版本',
+  doc_list: () => '查看文档列表',
+  doc_create: a => `新建文档《${a.title ?? ''}》`,
+  comments_list: () => '读取评论',
+  comment_reply: () => '在评论里回复',
+  comment_resolve: () => '关闭评论',
+  pubmed_search: a => `检索 PubMed：${a.query ?? ''}`,
+  doi_lookup: a => `核实 DOI ${a.doi ?? ''}`,
+  insert_citation: () => '登记引用文献',
+  list_citations: () => '查看已登记的引用',
+  verify_claims: () => '对照文献核对论断',
+  claim_report: () => '提交核对结果',
+  slide_read: () => '阅读幻灯片',
+  deck_edit: a => `修改幻灯片（${a.ops?.length ?? 1} 处操作）`,
+  layout_check: () => '检查版面（溢出、重叠）',
+  slide_render: () => '渲染幻灯片预览自查',
+  asset_upload: () => '上传图片',
+  bash: () => '运行计算',
+}
+
+function toolLabel(name: string, args: string): string {
+  const short = name.replace(/^mcp__heurion__/, '')
+  let parsed: any = {}
+  try { parsed = JSON.parse(args) } catch { /* 参数不是 JSON */ }
+  const f = TOOL_LABELS[short]
+  return f ? f(parsed) : short
+}
+
+// —— 回合的界面状态：工作过程（折叠）、本轮改动（摘要条）、重试 ——
+
+let turnUi: { steps: HTMLDetailsElement; count: number; turnId: string | null } | null = null
+/** 每轮 AI 改动的块（提交事件带回合 id）。 */
+const turnChanges = new Map<string, { ids: Set<string>; count: number }>()
+
+function startTurnUi(turnId: string | null): void {
+  const steps = document.createElement('details')
+  steps.className = 'steps'
+  steps.open = true
+  steps.innerHTML = '<summary>工作中…</summary>'
+  $('chatLog').appendChild(steps)
+  turnUi = { steps, count: 0, turnId }
+}
+
+const DONE_LABEL: Record<string, string> = { done: '已完成', error: '出错了', timeout: '超时停止', cancelled: '已停止', interrupted: '被中断' }
+
+function finishTurnUi(status: string): void {
+  if (!turnUi) return
+  turnUi.steps.querySelector('summary')!.textContent = `${DONE_LABEL[status] ?? status} · ${turnUi.count} 步`
+  turnUi.steps.open = false
+  turnUi.steps.classList.toggle('failed', status !== 'done')
+  turnUi = null
+}
+
+function addRetry(turnId: string): void {
+  const step = addStep('', 'retry')
+  step.title = ''
+  const btn = document.createElement('button')
+  btn.textContent = '重试这一轮'
+  btn.onclick = async () => {
+    if (!session) return
+    btn.disabled = true
+    try {
+      await api(`/api/docs/${session.docId}/turns/${turnId}/retry`, { method: 'POST' })
+      step.textContent = '已重新排队'
+      void loadQueue()
+    } catch (err) {
+      btn.disabled = false
+      showNotice((err as Error).message, true)
+    }
+  }
+  step.appendChild(btn)
+}
+
+let banner: { turnId: string; ids: string[]; cursor: number } | null = null
+
+function showTurnBanner(turnId: string): void {
+  const c = turnChanges.get(turnId)
+  if (!c || c.count === 0) return
+  // 修订模式下的改动由修订提示条处理；这里只列出正文里真实存在的块
+  const ids = [...c.ids].filter(id => {
+    const el = document.querySelector(`#page [data-id="${CSS.escape(id)}"]`)
+    return el && !el.closest('[data-suggest]')
+  })
+  if (ids.length === 0) return
+  banner = { turnId, ids, cursor: -1 }
+  $('turnSummary').textContent = `本轮 AI 改了 ${c.count} 处`
+  $('turnBanner').hidden = false
+}
+
+function hideTurnBanner(): void {
+  banner = null
+  $('turnBanner').hidden = true
+}
+
+$('turnBanner').onclick = async e => {
+  const t = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null
+  if (!t || !banner || !session) return
+  if (t.dataset.tnav) {
+    banner.cursor = (banner.cursor + Number(t.dataset.tnav) + banner.ids.length) % banner.ids.length
+    const el = document.querySelector(`#page [data-id="${CSS.escape(banner.ids[banner.cursor]!)}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.classList.add('ai-flash')
+    setTimeout(() => el?.classList.remove('ai-flash'), 1200)
+    return
+  }
+  if (t.dataset.tact === 'close') { hideTurnBanner(); return }
+  if (t.dataset.tact === 'revert') {
+    try {
+      const r = await api(`/api/docs/${session.docId}/turns/${banner.turnId}/revert`, { method: 'POST' })
+      showNotice(`已撤销本轮修改（${r.changes} 处）${r.skipped.length ? `；${r.skipped.length} 处你之后改过，已保留你的版本` : ''}`)
+      hideTurnBanner()
+      await refresh(false)
+    } catch (err) {
+      showNotice((err as Error).message, true)
+    }
+  }
 }
 
 let lastAssistant: HTMLElement | null = null
@@ -339,21 +517,31 @@ function renderTurnEvent(ev: any): void {
       void loadQueue()
       lastAssistant = null
       setBusy(true)
+      hideTurnBanner()
       addMsg('user', displayMessage(ev.message))
+      startTurnUi(ev.turn_id ?? null)
       break
     case 'assistant': lastAssistant = addMsg('assistant', ev.text); break
-    case 'tool_call': addStep(`→ ${String(ev.name).replace(/^mcp__heurion__/, '')} ${String(ev.arguments).slice(0, 160)}`); break
-    case 'tool_result': if (ev.isError) addStep(`  ✗ 工具报错${ev.code ? `：${ev.code}` : ''}`, 'err'); break
-    case 'doc_updated': addStep(`  ✓ 文档已更新（${ev.changes} 处）`, 'ok'); break
+    case 'tool_call':
+      if (turnUi) turnUi.count++
+      addStep(toolLabel(String(ev.name), String(ev.arguments ?? '')), '', `${String(ev.name).replace(/^mcp__heurion__/, '')} ${String(ev.arguments ?? '')}`)
+      break
+    case 'tool_result': if (ev.isError) addStep(`  需要调整：${ev.code ?? '工具报错'}`, 'err'); break
+    case 'doc_updated': addStep(`  已写入文档（${ev.changes} 处）`, 'ok'); break
     case 'comment_reply': scheduleRefresh(); break
     case 'version': addStep(`  ✓ 已保存为 v${ev.seq}`, 'ok'); break
     case 'error': addStep(ev.message, 'err'); break
     case 'turn_done':
       setBusy(false)
       void loadQueue()
+      finishTurnUi(ev.status)
+      if (ev.status !== 'done') addRetry(ev.turn_id)
       if (ev.docs.includes(session?.docId) && ev.status !== 'error') {
         void refresh(false).then(() => {
-          if (detail?.revertable.includes(ev.turn_id)) attachRevert(lastAssistant ?? addMsg('assistant', '（本轮已完成）'), ev.turn_id)
+          if (detail?.revertable.includes(ev.turn_id)) {
+            attachRevert(lastAssistant ?? addMsg('assistant', '（本轮已完成）'), ev.turn_id)
+            showTurnBanner(ev.turn_id)
+          }
         })
       }
       break
@@ -527,7 +715,7 @@ $('comments').onclick = async e => {
       await api(`/api/docs/${session.docId}/comments/${cid}/ask?async=1`, { method: 'POST', body: JSON.stringify({ text, suggest: $<HTMLInputElement>('suggestMode').checked }) })
       switchTab('chatPane')
     } else if (btn.dataset.act === 'delete') {
-      if (!confirm('删除这条评论？')) return
+      if (!await askConfirm({ title: '删除评论', message: '删除这条评论及其全部回复？正文里的评论标记也会去掉。', confirm: '删除', danger: true })) return
       await api(`/api/docs/${session.docId}/comments/${cid}`, { method: 'DELETE' })
     } else {
       await api(`/api/docs/${session.docId}/comments/${cid}/${btn.dataset.act}`, { method: 'POST' })
@@ -594,7 +782,7 @@ function renderVersions(): void {
 $('versions').onclick = async e => {
   const d = (e.target as HTMLElement).dataset
   if (!session) return
-  if (d.restore && confirm(`回滚到 v${d.restore}？（会生成新版本，历史保留）`)) {
+  if (d.restore && await askConfirm({ title: `回滚到 v${d.restore}`, message: '文档会恢复成这个版本的内容。回滚本身会生成一个新版本，之前的历史都保留，随时可以再回到现在。', confirm: '回滚' })) {
     try {
       await api(`/api/docs/${session.docId}/versions/${d.restore}/restore`, { method: 'POST' })
       await refresh(false)
@@ -647,6 +835,11 @@ document.querySelector<HTMLElement>('.tabs')!.onclick = e => {
   if (tab) switchTab(tab)
 }
 
+$('exportBtn').onclick = e => {
+  e.stopPropagation()
+  $('exportMenu').hidden = !$('exportMenu').hidden
+}
+document.addEventListener('click', () => { $('exportMenu').hidden = true })
 $('exportDocxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.docx?token=${encodeURIComponent(TOKEN)}` }
 $('exportPptxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.pptx?token=${encodeURIComponent(TOKEN)}` }
 $('exportMdBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.md?token=${encodeURIComponent(TOKEN)}` }
@@ -663,6 +856,7 @@ async function boot(): Promise<void> {
   if (!TOKEN) { $('app').hidden = true; await showAuthScreen(); return }
   const me = await api<Me>('/api/me')
   initUserMenu(me, api, showNotice)
+  showWelcome()
   await loadDocs()
 }
 boot().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Error).message)}</div>` })

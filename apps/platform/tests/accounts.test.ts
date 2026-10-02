@@ -330,3 +330,19 @@ describe('邮箱：绑定与找回密码', () => {
     expect(await ask('a@example.com')).toBe('mail_unavailable')
   })
 })
+
+describe('重试回合', () => {
+  it('失败的回合按原要求、原选项重新排队；别人的回合、进行中的回合不能重试', async () => {
+    const t = env()
+    const a = await t.register('amy')
+    const b = await t.register('ben')
+    const doc = (await t.call('POST', '/api/docs', a.token, { title: '文档', markdown: '第一段。' })).data
+    const turn = t.store.createTurn({ user_id: a.user.id, doc_id: doc.id, message: '把第一段改成英文', opts: JSON.stringify({ suggest: true }) })
+    expect((await t.call('POST', `/api/docs/${doc.id}/turns/${turn.id}/retry`, a.token)).status).toBe(409)
+    t.store.endTurn(turn.id, 'timeout', '模型服务 5 分钟无响应，已自动停止')
+    expect((await t.call('POST', `/api/docs/${doc.id}/turns/${turn.id}/retry`, b.token)).status).toBe(404)
+    expect((await t.call('POST', `/api/docs/${doc.id}/turns/${turn.id}/retry`, a.token)).status).toBe(202)
+    await new Promise(r => setTimeout(r, 10))
+    expect((await t.call('GET', '/api/queue', a.token)).data.running).toMatchObject({ label: '把第一段改成英文', suggest: true })
+  })
+})

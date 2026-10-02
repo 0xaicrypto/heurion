@@ -355,6 +355,18 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
 
   /** 撤销某个 AI 回合对本文档的改动（用户在此期间的编辑保留）。 */
+  // 重试一轮（失败 / 超时 / 被停止的回合）：同样的要求、同样的选项重新排队
+  app.post('/api/docs/:id/turns/:turnId/retry', c => {
+    const row = owned(c)
+    const turn = row ? store.getTurn(c.req.param('turnId')) : undefined
+    if (!row || !turn || turn.doc_id !== row.id || turn.user_id !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    if (turn.status === 'running') return c.json({ error: '这一轮还在执行' }, 409)
+    let opts: TurnOptions = {}
+    try { opts = JSON.parse(turn.opts || '{}') as TurnOptions } catch { /* 默认选项 */ }
+    void turns.submit(c.get('user'), row.id, turn.message, undefined, opts)
+    return c.json({ queued: true }, 202)
+  })
+
   app.post('/api/docs/:id/turns/:turnId/revert', c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)

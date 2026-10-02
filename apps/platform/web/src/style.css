@@ -45,7 +45,10 @@ select { padding-right: 8px; }
 textarea, input[type=text], input[type=password] { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel); color: var(--text); resize: vertical; }
 textarea:focus, input[type=text]:focus, input[type=password]:focus { border-color: var(--sky); outline: none; box-shadow: 0 0 0 3px var(--sky-soft); }
 
-.app { display: grid; grid-template-columns: 240px minmax(0, 1fr) 392px; height: 100vh; }
+/* 三栏都限定在视口高度内、各自滚动：长文档不能把整页撑高（否则对话输入框被推到页面最底下） */
+html, body { height: 100%; overflow: hidden; }
+.app { display: grid; grid-template-columns: 240px minmax(0, 1fr) 392px; grid-template-rows: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
+.app > * { min-height: 0; }
 
 /* —— 左栏：墨色底 + 品牌 —— */
 .nav { background: var(--nav-bg); color: var(--nav-text); border-right: 1px solid var(--nav-border); display: flex; flex-direction: column; overflow: hidden; }
@@ -102,7 +105,7 @@ button.ghost-dark:hover:not(:disabled) { background: var(--nav-hover); border-co
 .suggest-banner .sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 2px; }
 .notice { margin: 10px 24px 0; padding: 8px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); cursor: pointer; font-size: 13px; }
 .notice.error { background: var(--danger-soft); color: var(--danger); }
-.scroller { flex: 1; overflow: auto; padding: 0 24px; }
+.scroller { flex: 1; min-height: 0; overflow: auto; padding: 0 24px; }
 .page { max-width: 840px; margin: 18px auto 120px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 56px 72px; min-height: 60vh; }
 .empty { color: var(--muted); text-align: center; padding: 96px 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .empty .mark { width: 56px; height: 52px; opacity: .9; }
@@ -312,3 +315,50 @@ button.block { width: 100%; padding: 8px 12px; }
 .nudge { display: flex; align-items: center; gap: 8px; margin: 10px 24px 0; padding: 6px 8px 6px 14px; border-radius: 999px; background: var(--sky-soft); border: 1px solid var(--sky-line); font-size: 13px; }
 .nudge button { font-size: 12px; padding: 2px 12px; }
 .nudge button:first-of-type { margin-left: auto; }
+
+.dialog-card.small { width: min(440px, 100%); }
+.dialog-message { margin: 0; font-size: 14px; line-height: 1.7; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+button.danger:hover:not(:disabled) { filter: brightness(.92); }
+.topbar .title.editing { background: var(--panel); outline: 2px solid var(--sky); cursor: text; }
+
+/* 下拉菜单（导出） */
+.menu-wrap { position: relative; }
+.dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 180px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 4px; z-index: 20; display: flex; flex-direction: column; }
+.dropdown button { border: 0; border-radius: 8px; background: transparent; display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; text-align: left; }
+.dropdown button:hover:not(:disabled) { background: var(--raised); }
+
+/* 对话：本轮的工作过程（结束后折叠） */
+.steps { margin: 4px 0 8px; border-left: 2px solid var(--line); padding-left: 8px; }
+.steps > summary { cursor: pointer; font-size: 12px; color: var(--muted); list-style: none; padding: 2px 0; user-select: none; }
+.steps > summary::-webkit-details-marker { display: none; }
+.steps > summary::before { content: '▸ '; }
+.steps[open] > summary::before { content: '▾ '; }
+.steps:not([open]) > summary:hover { color: var(--text); }
+.steps.failed > summary { color: var(--danger); }
+.steps .step { font-family: inherit; font-size: 12px; margin-left: 0; }
+.step.retry { white-space: normal; }
+.step.retry button { font-size: 12px; padding: 1px 12px; margin: 2px 0 6px; }
+
+/* 正文上方：本轮 AI 改动摘要 */
+.turn-banner { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 24px 0; padding: 6px 8px 6px 14px; border-radius: 999px; background: var(--sky-soft); border: 1px solid var(--sky-line); font-size: 13px; }
+.turn-banner .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sky); flex: none; }
+.turn-banner button { font-size: 12px; padding: 2px 12px; }
+.turn-banner .sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 2px; }
+
+/* 欢迎页 */
+.welcome { max-width: 640px; margin: 0 auto; padding: 24px 0 8px; }
+.welcome .mark { width: 44px; height: 40px; }
+.welcome h1 { font-size: 24px; margin: 14px 0 6px; }
+.welcome h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 28px 0 10px; }
+.welcome-sub { color: var(--muted); margin: 0 0 20px; }
+.welcome-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.welcome-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 14px; border-radius: var(--radius); background: var(--raised); }
+.welcome-card b { font-size: 14px; }
+.welcome-card span { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.welcome-card:hover:not(:disabled) { border-color: var(--sky); background: var(--sky-soft); }
+.welcome-examples { display: flex; flex-direction: column; gap: 6px; }
+.welcome-examples button { text-align: left; border-radius: 10px; padding: 9px 12px; background: var(--panel); }
+.welcome-examples button::before { content: '→ '; color: var(--sky-ink); }
+.welcome-examples button:hover:not(:disabled) { border-color: var(--sky); }
+@media (max-width: 1100px) { .welcome-cards { grid-template-columns: 1fr; } }

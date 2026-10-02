@@ -115,6 +115,8 @@ export interface TurnRow {
   ended_at: string | null
   /** 未正常完成时的原因（报错文字 / 超时 / 取消说明）。 */
   error: string | null
+  /** 回合选项（TurnOptions 的 JSON：修订模式、回答的评论），重试时沿用。 */
+  opts: string
 }
 
 export interface QueuedJobRow {
@@ -213,7 +215,7 @@ export class Store {
       );
       CREATE TABLE IF NOT EXISTS turns (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc_id TEXT, message TEXT NOT NULL, status TEXT NOT NULL,
-        started_at TEXT NOT NULL, ended_at TEXT, error TEXT
+        started_at TEXT NOT NULL, ended_at TEXT, error TEXT, opts TEXT NOT NULL DEFAULT '{}'
       );
       CREATE TABLE IF NOT EXISTS turn_queue (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
@@ -227,6 +229,7 @@ export class Store {
     // 旧库补列：回合失败 / 超时 / 取消的原因
     const turnCols = (this.db.prepare('PRAGMA table_info(turns)').all() as Array<{ name: string }>).map(c => c.name)
     if (!turnCols.includes('error')) this.db.exec('ALTER TABLE turns ADD COLUMN error TEXT')
+    if (!turnCols.includes('opts')) this.db.exec("ALTER TABLE turns ADD COLUMN opts TEXT NOT NULL DEFAULT '{}'")
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users (email) WHERE email IS NOT NULL')
@@ -570,11 +573,15 @@ export class Store {
 
   // —— 回合与对话 ——
 
-  createTurn(input: { user_id: string; doc_id: string | null; message: string }): TurnRow {
+  createTurn(input: { user_id: string; doc_id: string | null; message: string; opts?: string }): TurnRow {
     const id = 'r' + randomUUID().replace(/-/g, '').slice(0, 11)
-    this.db.prepare('INSERT INTO turns (id, user_id, doc_id, message, status, started_at) VALUES (?, ?, ?, ?, \'running\', ?)')
-      .run(id, input.user_id, input.doc_id, input.message, now())
-    return this.db.prepare('SELECT * FROM turns WHERE id = ?').get(id) as unknown as TurnRow
+    this.db.prepare('INSERT INTO turns (id, user_id, doc_id, message, status, started_at, opts) VALUES (?, ?, ?, ?, \'running\', ?, ?)')
+      .run(id, input.user_id, input.doc_id, input.message, now(), input.opts ?? '{}')
+    return this.getTurn(id)!
+  }
+
+  getTurn(id: string): TurnRow | undefined {
+    return this.db.prepare('SELECT * FROM turns WHERE id = ?').get(id) as unknown as TurnRow | undefined
   }
 
   endTurn(id: string, status: TurnRow['status'], error: string | null = null): void {

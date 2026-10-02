@@ -8,6 +8,7 @@ import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirr
 import { EditorState, Plugin, PluginKey, TextSelection, type Command } from 'prosemirror-state'
 import { goToNextCell, tableEditing } from 'prosemirror-tables'
 import { Decoration, DecorationSet, EditorView, type NodeView } from 'prosemirror-view'
+import { askText } from './dialogs.ts'
 import { redo, undo, ySyncPlugin, ySyncPluginKey, yUndoPlugin } from 'y-prosemirror'
 import type * as Y from 'yjs'
 import { ADDRESSABLE, schema } from '../../src/model/schema.ts'
@@ -266,13 +267,14 @@ export class Editor {
           if (!node.attrs.caption) cap.className = 'placeholder'
           dom.appendChild(cap)
           dom.title = '双击编辑图注'
-          dom.addEventListener('dblclick', () => {
+          dom.addEventListener('dblclick', async () => {
             const pos = getPos()
             if (pos === undefined) return
-            const current = view.state.doc.nodeAt(pos)
-            const caption = prompt('图注', (current?.attrs.caption as string) ?? '')
-            if (caption === null || !current) return
-            view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, caption: caption.trim() }))
+            const caption = await askText({ title: '图注', label: '图注文字', value: (view.state.doc.nodeAt(pos)?.attrs.caption as string) ?? '', placeholder: '例如：图 1 主要终点的 Kaplan-Meier 曲线' })
+            const at = getPos()
+            const current = at === undefined ? null : view.state.doc.nodeAt(at)
+            if (caption === null || at === undefined || !current) return
+            view.dispatch(view.state.tr.setNodeMarkup(at, undefined, { ...current.attrs, caption: caption.trim() }))
           })
           return { dom, ignoreMutation: () => true } satisfies NodeView
         },
