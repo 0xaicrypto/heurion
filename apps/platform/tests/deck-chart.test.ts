@@ -12,6 +12,7 @@ import { OpService } from '../src/ops/service.ts'
 import { OpError } from '../src/ops/types.ts'
 import { Store } from '../src/store/db.ts'
 import { slideRead } from '../src/views/deck.ts'
+import { chartSvg } from '../web/src/deck.ts'
 
 const wellFormed = (xml: string) => {
   const errors: string[] = []
@@ -130,5 +131,76 @@ describe('图表：新建、导入、改数据（人与 AI 同一套操作）', 
     expectCode(() => t.edit([{ op: 'chart_set_data', shape_id: title, series: [{ name: 's', values: [1] }] }]), 'invalid_structure')
     expect(DeckOp.safeParse({ op: 'add_chart', slide_id: 's', type: 'pie', x: 0, y: 0, w: 1, h: 1, categories: ['a'], series: [{ name: 's', values: [1] }] }).success).toBe(true)
     expect(DeckOp.safeParse({ op: 'chart_set_data', shape_id: 'x', series: [{ name: 's', values: [1, null] }] }).success).toBe(true)
+  })
+})
+
+describe('图表：缩减数据、各类型、人工编辑', () => {
+  it('导入的图表删系列、删类别、去掉标题 → 缓存与工作簿同步缩减，单独设色的点裁掉', () => {
+    const t0 = newDeck()
+    const sid = t0.docs.get(t0.docId).child(0).attrs.id as string
+    t0.edit([{ op: 'add_chart', slide_id: sid, type: 'column', x: 60, y: 120, w: 600, h: 320, title: '结局', categories: ['a', 'b', 'c'], series: [{ name: 'A', values: [1, 2, 3] }, { name: 'B', values: [4, 5, 6] }] }])
+    const bytes = t0.exportNow().bytes
+    const imported = importPptx(bytes)
+    const t = deckOf(imported.doc, bytes, imported.src)
+    const id = t.chartShape().attrs.id as string
+    const part = t.chartShape().attrs.chart_part as string
+    t.edit([{ op: 'chart_set_data', shape_id: id, categories: ['a', 'b'], series: [{ name: 'A', values: [7, null] }], title: '' }])
+    const files = unzipSync(t.exportNow(1).bytes)
+    const xml = strFromU8(files[part]!)
+    expect(wellFormed(xml)).toEqual([])
+    expect(xml).not.toContain('<c:title>')
+    expect(xml).toContain('<c:autoTitleDeleted val="1"/>')
+    expect(readChart(xml)).toMatchObject({ categories: ['a', 'b'], series: [{ name: 'A', values: [7, null] }] })
+    const book = /Target="\.\.\/embeddings\/([^"]+)"/.exec(strFromU8(files[part.replace(/([^/]+)$/, '_rels/$1.rels')]!))![1]!
+    const sheet = strFromU8(unzipSync(files[`ppt/embeddings/${book}`]!)['xl/worksheets/sheet1.xml']!)
+    expect(sheet).toContain('<c r="B2"><v>7</v></c>')
+    expect(sheet).not.toContain('C1')
+    expect(sheet).not.toContain('r="4"')
+  })
+
+  it('折线 / 条形 / 面积 / 饼 / 圆环：导出的部件合法，导入读回同样的类型与数据', () => {
+    for (const type of ['line', 'bar', 'area', 'pie', 'doughnut'] as const) {
+      const t = newDeck()
+      const sid = t.docs.get(t.docId).child(0).attrs.id as string
+      t.edit([{ op: 'add_chart', slide_id: sid, type, x: 60, y: 120, w: 600, h: 320, title: 'T & <x>', categories: ['甲', '乙', '丙'], series: [{ name: 'S', values: [3, null, 1.25] }] }])
+      const out = t.exportNow()
+      const files = unzipSync(out.bytes)
+      const part = Object.keys(files).find(f => /^ppt\/charts\/chart\d+\.xml$/.test(f))!
+      expect(wellFormed(strFromU8(files[part]!))).toEqual([])
+      let chart: any = null
+      importPptx(out.bytes).doc.descendants(n => { if (!chart && n.attrs.kind === 'chart') chart = n; return !chart })
+      expect(chart.attrs.chart).toMatchObject({ type, title: 'T & <x>', categories: ['甲', '乙', '丙'], series: [{ name: 'S', values: [3, null, 1.25] }] })
+    }
+  })
+
+  it('画布（actor=user）与 AI 走同一个 chart_set_data：提交记为用户，slide_read 读到新数据', () => {
+    const t = newDeck()
+    const sid = t.docs.get(t.docId).child(0).attrs.id as string
+    t.edit([{ op: 'add_chart', slide_id: sid, type: 'column', x: 60, y: 120, w: 600, h: 320, categories: ['a'], series: [{ name: 'A', values: [1] }] }])
+    const id = t.chartShape().attrs.id as string
+    const ops = new OpService(t.docs)
+    const commits: string[] = []
+    t.docs.on('commit', e => commits.push(e.actor))
+    ops.edit({ doc_id: t.docId, base_rev: t.docs.rev(t.docId), mode: 'apply', ops: [{ op: 'chart_set_data', shape_id: id, categories: ['a', 'b'], series: [{ name: 'A', values: [1, 2] }], title: '人改的' }] }, { actor: 'user', turnId: null })
+    expect(commits).toEqual(['user'])
+    expect(t.chartShape().attrs.chart).toMatchObject({ title: '人改的', categories: ['a', 'b'], series: [{ name: 'A', values: [1, 2] }] })
+    expect(slideRead(t.docs.get(t.docId).child(0), 0, 1)).toContain('柱状图「人改的」')
+  })
+})
+
+describe('图表：画布预览（SVG）', () => {
+  const data = { type: 'column', title: 'A<b>', categories: ['x', 'y', 'z'], series: [{ name: 's1', values: [1, null, 3] }, { name: 's2', values: [-2, 2, 0] }] }
+  it('柱状：每个非空数值一根柱子，负值向下；标题转义', () => {
+    const svg = chartSvg(data, 400, 240)
+    expect(wellFormed(svg)).toEqual([])
+    // 5 根柱子 + 2 个图例方块
+    expect((svg.match(/<rect /g) ?? []).length).toBe(7)
+    expect(svg).toContain('A&lt;b&gt;')
+  })
+  it('折线 / 饼 / 圆环：路径与扇区数正确', () => {
+    expect((chartSvg({ ...data, type: 'line' }, 400, 240).match(/<path /g) ?? []).length).toBe(2)
+    const pie = chartSvg({ type: 'pie', categories: ['a', 'b', 'c'], series: [{ name: 's', values: [1, 2, 3] }] }, 300, 300)
+    expect((pie.match(/<path /g) ?? []).length).toBe(3)
+    expect(chartSvg({ type: 'doughnut', categories: ['a'], series: [{ name: 's', values: [5] }] }, 300, 300)).toMatch(/<circle [^>]*\/><circle /)
   })
 })

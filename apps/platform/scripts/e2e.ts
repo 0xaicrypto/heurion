@@ -3,7 +3,7 @@
  *   pnpm --filter @heurion2/platform e2e [baseUrl]
  * 需要 server 在跑且配置了 DEEPSEEK_API_KEY。会在平台里新建测试文档。
  */
-import { strToU8, zipSync } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:8787'
 // 独立的测试用户：e2e 的回合不进手工测试用户的队列
@@ -88,7 +88,6 @@ const imported = await api('/api/docs', { method: 'POST', body: form })
 const t4 = await turn(`/api/docs/${imported.id}/chat`, { message: '把第一段正文改得更简洁（不超过 40 字），其他内容不要动。' })
 const res = await fetch(`${BASE}/api/docs/${imported.id}/export.docx`, { headers: H })
 const exported = new Uint8Array(await res.arrayBuffer())
-const { unzipSync, strFromU8 } = await import('fflate')
 const xml = strFromU8(unzipSync(exported)['word/document.xml']!)
 check('导入：AI 只改了第一段', t4.calls.includes('doc_edit') && !xml.includes('相关研究近年来数量很多'), summary(t4))
 check('导出：未改动的块原样写回', xml.includes(para('研究背景', 'Heading1')) && xml.includes(para('早期 RCT 提示强化血糖控制可降低微血管并发症风险。')))
@@ -227,6 +226,23 @@ let deckId = ''
   const centered = table14 && Math.abs(table14.attrs.x + table14.attrs.w / 2 - d14.size.cx / 2) < 12700 * 2
   check('幻灯片：AI 增加表格行并居中对齐（与画布同一套操作）', (table14?.content?.[0]?.content?.length ?? 0) === rowsBefore + 1 && JSON.stringify(table14).includes('低血糖') && centered,
     `${summary(t14)} · 工具 ${[...new Set(t14.calls)].join(' ')}`)
+  // C1 图表：AI 建原生图表、再改数据（画布的「＋图表」与数据表是同一个 add_chart / chart_set_data）
+  const charts = async () => ((await api(`/api/docs/${deck.id}/deck`)).doc.content as any[]).flatMap(s => (s.content ?? []).filter((c: any) => c.attrs?.kind === 'chart'))
+  const t15 = await turn(`/api/docs/${deck.id}/chat`, { message: '在「主要结果」那一页加一张柱状图：类别为「主要终点」「心血管死亡」，系列「司美格鲁肽」数值 6.5、2.5，系列「安慰剂」数值 8.0、3.0，图表标题「事件发生率（%）」。不要用图片，用原生图表。' })
+  const c15 = (await charts())[0]
+  check('幻灯片：AI 新建原生图表（与画布同一个 add_chart）', !!c15 && c15.attrs.chart.series.length === 2 && JSON.stringify(c15.attrs.chart).includes('6.5') && t15.calls.includes('deck_edit') && !shell(t15),
+    `${summary(t15)} · 工具 ${[...new Set(t15.calls)].join(' ')}`)
+  const t16 = await turn(`/api/docs/${deck.id}/chat`, { message: '把「主要结果」页图表里安慰剂的心血管死亡改成 3.2，并加一个类别「心衰住院」：司美格鲁肽 1.4、安慰剂 1.7。' })
+  const c16 = (await charts())[0]
+  const placebo = c16?.attrs.chart.series.find((s: any) => s.name.includes('安慰剂'))
+  check('幻灯片：AI 改图表数据（与画布数据表同一个 chart_set_data）', !!placebo && placebo.values.includes(3.2) && placebo.values.includes(1.7) && c16.attrs.chart.categories.length === 3,
+    `${summary(t16)} · ${JSON.stringify(c16?.attrs.chart)}`)
+  // 导出的 pptx：图表缓存与内嵌工作簿都是新数据
+  const files = unzipSync(new Uint8Array(await (await fetch(`${BASE}/api/docs/${deck.id}/export.pptx`, { headers: H })).arrayBuffer()))
+  const chartXml = Object.keys(files).filter(f => /^ppt\/charts\/chart\d+\.xml$/.test(f)).map(f => strFromU8(files[f]!)).join('')
+  const book = Object.keys(files).find(f => f.startsWith('ppt/embeddings/') && f.endsWith('.xlsx'))
+  const sheet = book ? strFromU8(unzipSync(files[book]!)['xl/worksheets/sheet1.xml']!) : ''
+  check('导出：图表缓存与内嵌工作簿是改后的数据', chartXml.includes('<c:v>3.2</c:v>') && chartXml.includes('心衰住院') && sheet.includes('<v>3.2</v>') && sheet.includes('心衰住院'))
 }
 
 // —— 10. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
