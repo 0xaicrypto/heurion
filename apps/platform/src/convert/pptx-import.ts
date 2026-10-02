@@ -3,6 +3,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import type { Mark, Node as PMNode } from 'prosemirror-model'
 import { assignIds } from '../model/ids.ts'
 import { deckSchema, type ShapeKind } from '../model/deck-schema.ts'
+import { readChart } from './pptx-chart.ts'
 import type { ImportedAsset } from './docx-import.ts'
 
 /**
@@ -238,7 +239,16 @@ export function importPptx(bytes: Uint8Array): PptxImport {
         const tbl = deep(el, A, 'tbl')
         if (tbl) return make('table', [tableOf(tbl)])
         const uri = deep(el, A, 'graphicData')?.getAttribute('uri') ?? ''
-        if (uri.endsWith('/chart')) return make('chart', [], { description: `图表：${base.name}` })
+        if (uri.endsWith('/chart')) {
+          // 图表：经关系找到 chartN.xml，读出类型、类别、系列与数值（读不出来就只读显示）
+          const ref = deep(el, 'http://schemas.openxmlformats.org/drawingml/2006/chart', 'chart')
+          const rid = ref?.getAttributeNS(R, 'id') ?? ref?.getAttribute('r:id')
+          const rel = rid ? slideRels.get(rid) : undefined
+          const chartPart = rel ? resolvePart(part, rel.target) : null
+          const xml = chartPart && files[chartPart] ? strFromU8(files[chartPart]!) : null
+          const chart = xml ? readChart(xml) : null
+          return make('chart', [], { description: `图表：${chart?.title || base.name}`, chart, chart_part: chart ? chartPart : null })
+        }
         if (uri.includes('diagram')) return make('opaque', [], { description: `SmartArt：${(el.textContent ?? '').trim().slice(0, 60)}` })
         return make('opaque', [], { description: `对象：${base.name}` })
       }

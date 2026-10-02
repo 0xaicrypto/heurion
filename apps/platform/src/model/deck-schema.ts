@@ -59,6 +59,10 @@ export const deckSchema = new Schema({
         fill: { default: null },
         /** 新建形状的几何：rect / roundRect / ellipse（导入的形状以原文为准，为 null）。 */
         geom: { default: null },
+        /** 图表数据（kind=chart；convert/pptx-chart.ts 的 ChartData）：类型、类别、系列与数值。读不出数据的图表为 null（只读）。 */
+        chart: { default: null },
+        /** 导入的图表部件路径（ppt/charts/chartN.xml）；新建的图表为 null，导出时生成。 */
+        chart_part: { default: null },
         ...suggestAttrs,
       },
       toDOM: (node): DOMOutputSpec => ['div', { class: `shape shape-${node.attrs.kind}`, ...domId(node) }, 0],

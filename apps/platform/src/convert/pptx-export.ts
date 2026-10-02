@@ -1,6 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { Mark, Node as PMNode } from 'prosemirror-model'
 import { DECK_THEMES } from '../model/deck-themes.ts'
+import { chartWorkbook, newChartXml, patchChart, readChart, type ChartData } from './pptx-chart.ts'
 import type { CitationRow } from '../store/db.ts'
 import { citationOrder } from '../views/read.ts'
 import { childrenRaw } from './pptx-import.ts'
@@ -24,7 +25,11 @@ export interface PptxExportInput {
 }
 
 /** 一页幻灯片的关系表：新图片要在这里登记，返回 rId。 */
-interface SlideRels { image(assetId: string): string | null }
+interface SlideRels {
+  image(assetId: string): string | null
+  /** 新建图表：生成图表部件（含内嵌工作簿），在本页登记关系，返回 rId。 */
+  chart(data: ChartData): string | null
+}
 
 const FILL_ELEMENTS = /<a:(solidFill|gradFill|pattFill|blipFill|grpFill)\b[^>]*>[\s\S]*?<\/a:\1>|<a:(noFill|grpFill)\s*\/>/
 
@@ -202,6 +207,11 @@ function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, 
     if (!rid) return ''
     return `<p:pic><p:nvPicPr><p:cNvPr id="${nvId}" name="${name}" descr="${esc(String(a.description ?? ''))}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
   }
+  if (a.kind === 'chart') {
+    const rid = a.chart ? rels.chart(a.chart as ChartData) : null
+    if (!rid) return ''
+    return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="${rid}"/></a:graphicData></a:graphic></p:graphicFrame>`
+  }
   if (a.kind === 'table') {
     // 新建的表格：p:graphicFrame + a:tbl（列宽平分，行高平分）
     return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">${tableXml(shape, numbers)}</a:graphicData></a:graphic></p:graphicFrame>`
@@ -272,6 +282,19 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
     media.set(assetId, name)
     return name
   }
+  // 新建图表：ppt/charts/chartN.xml + 关系（内嵌工作簿）+ 内容类型
+  let nextChart = Math.max(0, ...Object.keys(files).map(f => Number(/^ppt\/charts\/chart(\d+)\.xml$/.exec(f)?.[1] ?? 0))) + 1
+  const createChart = (data: ChartData): string => {
+    const n = nextChart++
+    const name = `chart${n}.xml`
+    const book = `Microsoft_Excel_Worksheet_heurion${n}.xlsx`
+    put(`ppt/charts/${name}`, newChartXml(data))
+    files[`ppt/embeddings/${book}`] = new Uint8Array(chartWorkbook(data))
+    put(`ppt/charts/_rels/${name}.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/package" Target="../embeddings/${book}"/></Relationships>`)
+    contentTypes = contentTypes.replace('</Types>', `<Override PartName="/ppt/charts/${name}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>`)
+    if (!/<Default Extension="xlsx"/i.test(contentTypes)) contentTypes = contentTypes.replace('</Types>', '<Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/></Types>')
+    return name
+  }
   const slideRels = (part: string, initial: string) => {
     const relsPart = part.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels')
     let xml = initial
@@ -287,6 +310,12 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
           const rid = `rId${next++}`
           xml = xml.replace('</Relationships>', `<Relationship Id="${rid}" Type="${REL}/image" Target="../media/${name}"/></Relationships>`)
           added.set(assetId, rid)
+          dirty = true
+          return rid
+        },
+        chart(data: ChartData): string {
+          const rid = `rId${next++}`
+          xml = xml.replace('</Relationships>', `<Relationship Id="${rid}" Type="${REL}/chart" Target="../charts/${createChart(data)}"/></Relationships>`)
           dirty = true
           return rid
         },
@@ -343,6 +372,24 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
     ? presXml.replace(/<p:sldIdLst\b[^>]*>[\s\S]*?<\/p:sldIdLst>|<p:sldIdLst\s*\/>/, `<p:sldIdLst>${sldIds.join('')}</p:sldIdLst>`)
     : presXml.replace(/(<p:sldMasterIdLst\b[\s\S]*?<\/p:sldMasterIdLst>)/, `$1<p:sldIdLst>${sldIds.join('')}</p:sldIdLst>`)
   if (!unchangedOrder) put('ppt/presentation.xml', presXml)
+  // 导入的图表改了数据：修补图表部件的缓存，重写内嵌工作簿（PowerPoint「编辑数据」看到的就是它）
+  input.doc.descendants(n => {
+    if (n.type.name !== 'shape') return n.type.name !== 'slide' ? false : true
+    const part = n.attrs.chart_part as string | null
+    const data = n.attrs.chart as ChartData | null
+    if (n.attrs.kind !== 'chart' || !part || !data || !files[part]) return false
+    const xml = text(part)
+    const before = baseline.get(n.attrs.id as string)?.attrs.chart ?? readChart(xml)
+    if (JSON.stringify(before) === JSON.stringify(data)) return false
+    put(part, patchChart(xml, data))
+    const relsPart = part.replace(/([^/]+)$/, '_rels/$1.rels')
+    const pkgRel = /<Relationship\b[^>]*Type="[^"]*\/package"[^>]*Target="([^"]+)"|<Relationship\b[^>]*Target="([^"]+)"[^>]*Type="[^"]*\/package"/.exec(text(relsPart))
+    const target = pkgRel ? (pkgRel[1] ?? pkgRel[2])! : null
+    const book = target ? `ppt/${target.replace(/^\.\.\//, '')}` : null
+    if (book && /\.xlsx$/i.test(book) && files[book]) files[book] = new Uint8Array(chartWorkbook(data))
+    else warnings.push(`图表 ${n.attrs.name || n.attrs.id} 的内嵌数据不是 xlsx，PowerPoint 里「编辑数据」会显示旧数据（图上显示的是新数据）`)
+    return false
+  })
   // 套用过主题：强调色与字体写进 pptx 主题（PowerPoint 里新建的页、图表也匹配）
   const themed = (() => { let k: string | null = null; input.doc.forEach(sl => { k ??= (sl.attrs.theme as string | null) ?? null }); return k })()
   const theme = themed ? DECK_THEMES[themed] : undefined

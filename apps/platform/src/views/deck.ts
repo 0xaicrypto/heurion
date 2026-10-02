@@ -78,6 +78,15 @@ function textLook(shape: PMNode): string {
   return [color ? `文字 #${color.toUpperCase()}` : '', sz ? `${Number(sz) / 100}pt` : ''].filter(Boolean).join(' ')
 }
 
+const CHART_TYPE: Record<string, string> = { column: '柱状图', bar: '条形图', line: '折线图', pie: '饼图', area: '面积图', doughnut: '圆环图', scatter: '散点图', other: '图表' }
+
+/** 图表数据（slide_read 给 AI 看；chart_set_data 用同样的结构改）。 */
+function chartText(chart: { type: string; title?: string; categories: string[]; series: Array<{ name: string; values: Array<number | null> }> }): string {
+  const lines = [`${CHART_TYPE[chart.type] ?? chart.type}${chart.title ? `「${chart.title}」` : ''}`, `类别：${chart.categories.join(' | ')}`]
+  for (const s of chart.series) lines.push(`系列「${s.name}」：${s.values.map(v => (v === null ? '—' : v)).join(' | ')}`)
+  return lines.join('\n')
+}
+
 export function slideRead(slide: PMNode, index: number, rev: number): string {
   const look = [slide.attrs.theme ? `主题 ${slide.attrs.theme}` : '', slide.attrs.bg ? `背景 #${slide.attrs.bg}` : ''].filter(Boolean).join(' · ')
   const lines = [`第 ${index + 1} 页 {#${slide.attrs.id}} [${slide.attrs.layout_name || '无版式'}]${look ? ` · ${look}` : ''} · rev=${rev}`, '形状（x, y, 宽 × 高，单位 pt；* 表示位置继承自版式；从下到上的叠放顺序）：']
@@ -87,8 +96,8 @@ export function slideRead(slide: PMNode, index: number, rev: number): string {
     const role = a.ph ? `${PH[a.ph as string] ?? a.ph}占位符` : (KIND[a.kind as string] ?? a.kind)
     const geo = `(${pt(a.x as number)}, ${pt(a.y as number)}, ${pt(a.w as number)}×${pt(a.h as number)})${a.xfrm_inherited ? '*' : ''}`
     const pending = a.suggest ? ` ⟨待采纳·${a.suggest === 'insert' ? '新增' : '删除'}⟩` : ''
-    const body = a.kind === 'text' || a.kind === 'table' ? shapeText(shape) : (a.description as string) || (a.kind === 'shape' ? '（无文字）' : '')
-    const editable = a.kind === 'text' || a.kind === 'table' || a.kind === 'shape' || a.kind === 'image' ? '' : ' [内容不可编辑]'
+    const body = a.kind === 'text' || a.kind === 'table' ? shapeText(shape) : a.kind === 'chart' && a.chart ? chartText(a.chart as Parameters<typeof chartText>[0]) : (a.description as string) || (a.kind === 'shape' ? '（无文字）' : '')
+    const editable = a.kind === 'text' || a.kind === 'table' || a.kind === 'shape' || a.kind === 'image' || (a.kind === 'chart' && a.chart) ? '' : ' [内容不可编辑]'
     const style = [a.geom && a.geom !== 'rect' ? String(a.geom) : '', a.fill ? (a.fill === 'none' ? '无填充' : `填充 #${a.fill}`) : '', textLook(shape)].filter(Boolean).join(' ')
     lines.push(`- {#${a.id}}${pending} ${role} ${geo}${style ? ` [${style}]` : ''}${editable}${body ? `\n  ${body.replace(/\n/g, '\n  ')}` : ''}`)
   })

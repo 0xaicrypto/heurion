@@ -63,7 +63,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 评论是用户锚定在具体文字上的修改要求：comments_list 读取 → 修改 → comment_reply 说明改了什么。
 - 回复用户时用平常的话说明改了什么、改在哪（如「第 2 节第一段」），不要提块 id、rev、cite_id、工具名等内部信息。
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
-- 插图：数据图（曲线、森林图、柱状图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
+- 插图：幻灯片里的柱状 / 条形 / 折线 / 饼图优先用 deck_edit 的 add_chart（原生图表，用户能在 PowerPoint 里改数据）；其他数据图（生存曲线、森林图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
 - 参考资料库：写作需要依据时用 kb_search 检索用户上传的资料（论文、指南、内部材料），kb_read 读原文；资料是文献时仍用 insert_citation 规范引用。
 - 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；用户说「忘掉…」「别再…」时用 memory_forget；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
@@ -290,6 +290,8 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       'add_image {slide_id, asset_id, x, y, w, h?}（图片先用 asset_upload 上传；h 缺省按原图比例）；' +
       'add_table {slide_id, x, y, w, rows:[[...]], header?, font_size?}（表头用主题强调色；之后用 table_set_cells 改单元格）；' +
       'table_insert_rows {shape_id, at, rows?} / table_delete_rows {shape_id, at, count?} / table_insert_cols {shape_id, at, cells?} / table_delete_cols {shape_id, at, count?}（新行列沿用相邻格式）；' +
+      'chart_set_data {shape_id, categories?, series:[{name, values}], title?}（改图表数据，slide_read 里能读到原数据；导出同时更新内嵌工作簿）；' +
+      'add_chart {slide_id, type: column|bar|line|pie|area|doughnut, x, y, w, h, title?, categories, series}（原生图表，颜色取主题）；' +
       'align_shapes {shape_ids, align: left|center|right|top|middle|bottom, to?: selection|slide}；distribute_shapes {shape_ids（≥3）, direction: horizontal|vertical}（对齐与等距，不必自己算坐标）；' +
       'apply_theme {theme, slide_ids?}（整套配色：背景、标题与正文颜色、强调色；之后新加的页沿用）；' +
       'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。' +

@@ -2,12 +2,18 @@ import { Fragment, type Mark, type Node as PMNode } from 'prosemirror-model'
 import { Transform } from 'prosemirror-transform'
 import { z } from 'zod'
 import { imageSize } from '../convert/image-size.ts'
+import { checkChartData, EDITABLE_CHART_TYPES, type ChartData } from '../convert/pptx-chart.ts'
 import { deckSchema, emu, pt } from '../model/deck-schema.ts'
 import { DECK_THEMES, DEFAULT_THEME, resolveColor } from '../model/deck-themes.ts'
 import { assignIds, indexById } from '../model/ids.ts'
 import { MarkdownError, parseBlocks, parseInline } from '../model/markdown.ts'
 import { replaceError, replaceInTextblock } from './apply.ts'
 import { OpError } from './types.ts'
+
+const CHART_SERIES = z.array(z.object({
+  name: z.string().describe('系列名称（图例）'),
+  values: z.array(z.number().nullable()).describe('每个类别一个数值；缺的写 null'),
+})).min(1).max(20)
 
 const COLOR = z.string().describe('颜色：6 位十六进制（如 0EA5E9），或主题记号 accent / accent2 / title / body / muted / bg / surface')
 
@@ -80,6 +86,22 @@ export const DeckOp = z.discriminatedUnion('op', [
     shape_ids: z.array(z.string()).min(3).describe('同一页上的形状（至少 3 个）'),
     direction: z.enum(['horizontal', 'vertical']).describe('首尾不动，中间等间距'),
   }),
+  z.object({
+    op: z.literal('chart_set_data'),
+    shape_id: z.string(),
+    categories: z.array(z.string()).min(1).max(200).optional().describe('类别（横轴 / 扇区）；缺省沿用原类别'),
+    series: CHART_SERIES,
+    title: z.string().optional().describe('图表标题；空串去掉标题；缺省不变'),
+  }).describe('改图表数据（导出时同时更新图表缓存与内嵌工作簿，PowerPoint「编辑数据」看到的就是新数据）'),
+  z.object({
+    op: z.literal('add_chart'),
+    slide_id: z.string(),
+    type: z.enum(['column', 'bar', 'line', 'pie', 'area', 'doughnut']).describe('柱状 / 条形 / 折线 / 饼 / 面积 / 圆环'),
+    x: z.number(), y: z.number(), w: z.number().positive(), h: z.number().positive(),
+    title: z.string().optional(),
+    categories: z.array(z.string()).min(1).max(200),
+    series: CHART_SERIES,
+  }).describe('新建原生图表（系列颜色取当页主题）'),
   z.object({ op: z.literal('set_fill'), shape_id: z.string(), color: COLOR.describe('填充色；none 为无填充') }),
   z.object({ op: z.literal('set_background'), slide_id: z.string(), color: COLOR }),
   z.object({
@@ -149,7 +171,7 @@ export interface DeckContext {
 
 export function deckTargetIds(op: DeckOp): string[] {
   switch (op.op) {
-    case 'add_slide': case 'add_shape': case 'add_image': case 'add_table': return []
+    case 'add_slide': case 'add_shape': case 'add_image': case 'add_table': case 'add_chart': return []
     case 'delete_slide': case 'move_slide': case 'set_notes': case 'set_background': return [op.slide_id]
     case 'apply_theme': return op.slide_ids ?? []
     case 'align_shapes': case 'distribute_shapes': return op.shape_ids
@@ -164,6 +186,7 @@ export function deckOpTexts(op: DeckOp): string[] {
     case 'set_paragraphs': return op.paragraphs.map(p => p.text)
     case 'add_table': return op.rows.flat()
     case 'table_insert_rows': return op.rows?.flat() ?? []
+    case 'chart_set_data': case 'add_chart': return [op.title ?? '', ...(op.categories ?? []), ...op.series.map(s => s.name)]
     case 'table_insert_cols': return op.cells ?? []
     case 'replace_text': return [op.replace]
     case 'table_set_cells': return op.cells.map(c => c.markdown)
@@ -484,6 +507,43 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
         tr.setNodeMarkup(h.pos, undefined, { ...h.node.attrs, ...m, xfrm_inherited: false })
       }
       return op.shape_ids
+    }
+    case 'chart_set_data': {
+      const hit = find(tr, op.shape_id, 'shape')
+      const old = hit.node.attrs.chart as ChartData | null
+      if (hit.node.attrs.kind !== 'chart') throw new OpError('invalid_structure', `${op.shape_id} 不是图表`)
+      if (!old) throw new OpError('node_not_editable', `图表 ${op.shape_id} 的数据读不出来，不能改`, { hint: '可以删掉它，用 add_chart 重建。' })
+      if (!EDITABLE_CHART_TYPES.includes(old.type)) throw new OpError('node_not_editable', `${old.type} 类型的图表暂不支持改数据`)
+      const data: ChartData = {
+        ...old,
+        categories: op.categories ?? old.categories,
+        series: op.series.map(s => ({ name: s.name, values: s.values })),
+        ...(op.title !== undefined ? { title: op.title } : {}),
+      }
+      const bad = checkChartData(data)
+      if (bad) throw new OpError('invalid_chart', bad)
+      tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, chart: data, description: `图表：${data.title || hit.node.attrs.name}` })
+      return [op.shape_id]
+    }
+    case 'add_chart': {
+      const hit = find(tr, op.slide_id, 'slide')
+      const theme = DECK_THEMES[(hit.node.attrs.theme as string | null) ?? DEFAULT_THEME] ?? DECK_THEMES[DEFAULT_THEME]!
+      const data: ChartData = {
+        type: op.type, categories: op.categories, series: op.series.map(s => ({ name: s.name, values: s.values })),
+        ...(op.title ? { title: op.title } : {}),
+        // 系列（饼图是扇区）颜色：主题强调色在前
+        colors: [theme.accent, theme.accent2, '10B981', '8B5CF6', 'EF4444', theme.muted],
+      }
+      const bad = checkChartData(data)
+      if (bad) throw new OpError('invalid_chart', bad)
+      const shape = assignIds(deckSchema.node('shape', {
+        kind: 'chart', name: 'Chart', chart: data, description: `图表：${op.title || '新图表'}`,
+        x: emu(op.x), y: emu(op.y), w: emu(op.w), h: emu(op.h),
+      }), ctx.taken)
+      const last = hit.node.lastChild
+      const at = last?.type.name === 'notes' ? hit.pos + hit.node.nodeSize - 1 - last.nodeSize : hit.pos + hit.node.nodeSize - 1
+      tr.insert(at, shape)
+      return [shape.attrs.id as string]
     }
     case 'set_fill': {
       const hit = find(tr, op.shape_id, 'shape')

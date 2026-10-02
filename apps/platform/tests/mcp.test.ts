@@ -309,3 +309,27 @@ describe('文档仓库（AI 一侧）', () => {
     expect(JSON.parse((await t.call('memory_forget', { target: '统计软件用 R' })).text).code).toBe('not_found')
   })
 })
+
+describe('图表（AI 与画布同一套操作）', () => {
+  it('AI 经 deck_edit 新建图表、slide_read 读到数据、chart_set_data 改数据', async () => {
+    const t = await connect('占位。')
+    const created = await t.call('doc_create', { title: '结果汇报', kind: 'deck' })
+    const deckId = created.body.doc_id as string
+    const slideId = /\{#([a-z0-9]+)\}/.exec((await t.call('doc_outline', { doc_id: deckId })).text)![1]!
+    const add = await t.call('deck_edit', { doc_id: deckId, base_rev: created.body.rev, ops: [
+      { op: 'add_chart', slide_id: slideId, type: 'column', x: 60, y: 120, w: 600, h: 320, title: '主要终点', categories: ['MACE', '心衰住院'], series: [{ name: '司美格鲁肽', values: [6.5, 3.1] }] },
+    ] })
+    expect(add.isError).toBe(false)
+    const chartId = add.body.results[0].ids[0]
+    const read = await t.call('slide_read', { doc_id: deckId, slide_id: slideId })
+    expect(read.text).toContain('柱状图「主要终点」')
+    expect(read.text).toContain('系列「司美格鲁肽」：6.5 | 3.1')
+    const edit = await t.call('deck_edit', { doc_id: deckId, base_rev: add.body.rev, ops: [
+      { op: 'chart_set_data', shape_id: chartId, series: [{ name: '司美格鲁肽', values: [6.5, 3.1] }, { name: '安慰剂', values: [8.0, 3.7] }] },
+    ] })
+    expect(edit.isError).toBe(false)
+    expect((await t.call('slide_read', { doc_id: deckId, slide_id: slideId })).text).toContain('系列「安慰剂」：8 | 3.7')
+    const bad = await t.call('deck_edit', { doc_id: deckId, base_rev: edit.body.rev, ops: [{ op: 'chart_set_data', shape_id: chartId, series: [{ name: 'x', values: [1] }] }] })
+    expect([bad.isError, bad.body.code]).toEqual([true, 'invalid_chart'])
+  })
+})
