@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { Documents, CommitEvent } from '../model/runtime.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
+import type { MemoryService } from '../memory/service.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import type { TurnRegistry } from '../mcp/turns.ts'
 
@@ -29,6 +30,8 @@ export interface TurnOptions {
   suggest?: boolean
   /** 评论触发的回合：正在回答的评论线程。 */
   commentId?: string
+  /** false = 本轮不用记忆（不注入、memory_* 工具不可用、不产生提议）。 */
+  memory?: boolean
 }
 
 interface Job {
@@ -79,6 +82,7 @@ export class TurnService {
   private readonly cancelling = new Set<string>()
   private readonly timedOut = new Set<string>()
   private readonly idleTimeoutMs: number
+  private readonly memory: MemoryService | null
   private readonly queues = new Map<string, Job[]>()
   private readonly running = new Map<string, Running>()
 
@@ -86,9 +90,10 @@ export class TurnService {
     private readonly docs: Documents,
     private readonly pool: HarnessPool,
     private readonly registry: TurnRegistry,
-    opts: { idleTimeoutMs?: number } = {},
+    opts: { idleTimeoutMs?: number; memory?: MemoryService } = {},
   ) {
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60_000
+    this.memory = opts.memory ?? null
   }
 
   /** 服务启动时恢复：上次没跑完的回合标为中断，排队中的任务重新入队。 */
@@ -202,7 +207,8 @@ export class TurnService {
     const turn = store.createTurn({ user_id: userId, doc_id: docId, message, opts: JSON.stringify(opts) })
     r.turnId = turn.id
     const touched = new Set<string>()
-    this.registry.begin(userId, { turnId: turn.id, touched, notify: n => emit(n), mode: opts.suggest ? 'suggest' : 'apply', answering: opts.commentId ?? null })
+    const memoryOn = opts.memory !== false && !!this.memory?.active(userId)
+    this.registry.begin(userId, { turnId: turn.id, docId, touched, notify: n => emit(n), mode: opts.suggest ? 'suggest' : 'apply', answering: opts.commentId ?? null, memory: memoryOn })
     // 无响应超时：dsh 的任何通知（模型输出、工具调用 / 结果）或本回合的提交都算动静
     let lastActivity = Date.now()
     const watchdog = setInterval(() => {
@@ -223,7 +229,9 @@ export class TurnService {
     const history = this.pool.liveSession(userId) === null ? this.recentHistory(docId) : ''
     store.addMessage(docId, 'user', message, turn.id)
     const suggestNote = opts.suggest ? '本轮的修改会作为待用户采纳的修订提交。' : ''
-    const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}\n\n${message}`
+    const memoryBlock = memoryOn ? await this.memory!.forPrompt(userId, docId, message) : ''
+    const memoryNote = memoryOn ? '' : opts.memory === false ? '（用户本轮关闭了记忆：不要使用 memory_* 工具，也不要沿用之前回合提到的记忆。）' : ''
+    const prompt = `${history}${memoryBlock}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}${memoryNote}\n\n${message}`
 
     let status: 'done' | 'error' | 'cancelled' | 'timeout' = 'done'
     let failure: string | null = null

@@ -40,7 +40,7 @@ function check(name: string, ok: boolean, detail = '') {
   console.log(`${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
 const summary = (t: Turn) => `${(t.ms / 1000).toFixed(1)}s · 工具 ${t.calls.length}（${[...new Set(t.calls)].join(', ')}）· 工具报错 ${t.errors.length}${t.errors.length ? `：${t.errors.join(', ')}` : ''}`
-const shell = (t: Turn) => t.calls.some(c => !['doc_outline', 'doc_read', 'doc_search', 'doc_edit', 'doc_history', 'doc_diff', 'doc_list', 'doc_create', 'comments_list', 'comment_reply', 'comment_resolve', 'pubmed_search', 'doi_lookup', 'insert_citation', 'list_citations', 'asset_upload', 'verify_claims', 'claim_report', 'slide_read', 'deck_edit', 'layout_check', 'slide_render'].includes(c))
+const shell = (t: Turn) => t.calls.some(c => !['doc_outline', 'doc_read', 'doc_search', 'doc_edit', 'doc_history', 'doc_diff', 'doc_list', 'doc_create', 'comments_list', 'comment_reply', 'comment_resolve', 'pubmed_search', 'doi_lookup', 'insert_citation', 'list_citations', 'asset_upload', 'verify_claims', 'claim_report', 'slide_read', 'deck_edit', 'layout_check', 'slide_render', 'diagram_render', 'docs_search', 'kb_search', 'kb_read', 'memory_propose', 'memory_search', 'memory_forget'].includes(c))
 
 // —— 1. 起草：带引用的证据段 ——
 const doc = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 司美格鲁肽', markdown: '# 引言\n\n司美格鲁肽是 GLP-1 受体激动剂。\n\n# 证据\n\n待补充。' }) })
@@ -144,6 +144,24 @@ check('导出：未改动的块原样写回', xml.includes(para('研究背景', 
   const md = await api<string>(`/api/docs/${kbDoc.id}/export.md`)
   check('资料库：AI 检索选中资料并据此写作', t.calls.some(c => c === 'kb_search' || c === 'kb_read') && md.includes('61.3') && md.includes(`1${marker}`), `${summary(t)} · 调用 ${t.calls.filter(c => c.startsWith('kb_')).join('、') || '无'}`)
   await api(`/api/kb/${file.id}`, { method: 'DELETE' })
+}
+
+// —— 7c. 记忆：用户说「记住」→ 直接生效；新文档的回合遵守；本轮不用记忆时不提议 ——
+{
+  await api('/api/memory', { method: 'DELETE' })
+  const a = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 记忆甲', markdown: '# 结果\n\n待补充。' }) })
+  const t1 = await turn(`/api/docs/${a.id}/chat`, { message: '请记住：以后我的文档里百分比一律保留两位小数（例如 6.50%）。这一轮不用改文档。' })
+  const mem = (await api<any>('/api/memory')).items as any[]
+  check('记忆：用户要求记住后直接生效', t1.calls.includes('memory_propose') && mem.some(m => m.status === 'active' && /两位小数/.test(m.content)), `${summary(t1)} · ${mem.map(m => `${m.status}:${m.content}`).join('；')}`)
+  const b = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 记忆乙', markdown: '# 结果\n\n待补充。' }) })
+  await turn(`/api/docs/${b.id}/chat`, { message: '把「待补充」改写成一句话：SELECT 试验中主要终点事件发生率为 6.5% 对 8.0%。' })
+  const md = await api<string>(`/api/docs/${b.id}/export.md`)
+  check('记忆：新文档的回合遵守已记住的偏好', md.includes('6.50%') && md.includes('8.00%'), md.split('\n').find(l => l.includes('%'))?.slice(0, 80) ?? '')
+  const c = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 记忆丙', markdown: '# 结果\n\n待补充。' }) })
+  const t3 = await turn(`/api/docs/${c.id}/chat`, { message: '请记住：表格标题放在表格上方。把「待补充」改成「见下表」。', memory: false })
+  const after = (await api<any>('/api/memory')).items as any[]
+  check('记忆：本轮不用记忆时不新增', !after.some(m => /表格标题/.test(m.content)), `${summary(t3)}`)
+  await api('/api/memory', { method: 'DELETE' })
 }
 
 // —— 8. 论断核对：故意写错的论断被标出 ——

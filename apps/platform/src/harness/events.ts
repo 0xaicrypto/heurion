@@ -18,6 +18,7 @@ export type UiEvent =
   /** 回合结束时落的版本。 */
   | { type: 'version'; doc_id: string; seq: number }
   | { type: 'comment_reply'; doc_id: string; comment_id: string }
+  | { type: 'memory'; result: 'proposed' | 'active'; memory: import('../store/db.ts').MemoryRow }
   | { type: 'error'; message: string }
   | { type: 'done' }
 

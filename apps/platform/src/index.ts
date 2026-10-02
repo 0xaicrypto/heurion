@@ -8,6 +8,7 @@ import { createMailer } from './auth/mailer.ts'
 import { SearchIndex } from './model/search-index.ts'
 import { HttpEmbedder } from './kb/embedder.ts'
 import { KbService } from './kb/service.ts'
+import { MemoryService } from './memory/service.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -29,7 +30,6 @@ const docs = new Documents(store)
 const ops = new OpService(docs)
 const registry = new TurnRegistry()
 const pool = new HarnessPool(config)
-const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs })
 const postcheck = new PostCheck(docs)
 
 const pubmed = new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail)
@@ -37,14 +37,19 @@ const crossref = new CrossrefClient(fetch, config.contactEmail)
 const claims = new ClaimService(docs, pubmed)
 const renderer = new SlideRenderer(config.renderDir)
 // 参考资料库：本地嵌入服务（apps/embedder）可选，不在时只用关键词检索
-const kb = new KbService(store, config.embeddingUrl ? new HttpEmbedder(config.embeddingUrl) : null)
+const embedder = config.embeddingUrl ? new HttpEmbedder(config.embeddingUrl) : null
+const kb = new KbService(store, embedder)
 kb.resume()
+// 记忆（R3）：相似去重与按相关度注入用同一个嵌入服务，不在时按文本
+const memory = new MemoryService(store, embedder)
+const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
   pubmed,
   crossref,
   workspaceDir: (userId: string) => pool.workspaceDir(userId),
   kb,
+  memory,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
@@ -57,7 +62,7 @@ if (indexed) console.log(`全文索引：补齐 ${indexed} 份文档`)
 const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } }
 purge()
 setInterval(purge, 12 * 3600_000).unref()
-const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

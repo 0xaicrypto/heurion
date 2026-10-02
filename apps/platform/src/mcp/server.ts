@@ -22,6 +22,7 @@ import type { OpService } from '../ops/service.ts'
 import { DocOp, OpError } from '../ops/types.ts'
 import { citationOrder, diff, outline, read, ReadError, search } from '../views/read.ts'
 import type { KbService } from '../kb/service.ts'
+import { MemoryError, type MemoryService } from '../memory/service.ts'
 import { DiagramError, renderSvg } from '../render/diagram.ts'
 import type { TurnRegistry } from './turns.ts'
 
@@ -40,6 +41,8 @@ export interface McpDeps {
   isLiveSession: (userId: string, generation: string) => boolean
   /** 参考资料库（可选）。 */
   kb?: KbService
+  /** 记忆（可选）。 */
+  memory?: MemoryService
 }
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
@@ -62,6 +65,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
 - 插图：数据图（曲线、森林图、柱状图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
 - 参考资料库：写作需要依据时用 kb_search 检索用户上传的资料（论文、指南、内部材料），kb_read 读原文；资料是文献时仍用 insert_citation 规范引用。
+- 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -510,6 +514,43 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (project) ids = store.listKbFiles(claims.u, project).map(f => f.id).filter(id => !file_ids || file_ids.includes(id))
     const hits = await deps.kb.search(claims.u, query, { limit: top_k ?? 8, fileIds: ids })
     return json(hits.map(h => ({ file_id: h.file_id, file: h.file_name, page: h.page, doi: h.doi, pmid: h.pmid, text: h.text })))
+  })
+
+  server.registerTool('memory_propose', {
+    description:
+      '记住用户的写作偏好、常用写法 / 术语、反复用到的事实（如「数值保留两位小数」「本院伦理批号 …」）。' +
+      '用户明确要求记住时 explicit=true，直接生效；否则作为提议，等用户在对话里确认。不能记患者可识别信息、病例细节、账号。',
+    inputSchema: {
+      content: z.string().min(1).max(500).describe('一条记忆，写成以后可直接照做的规则或事实'),
+      kind: z.enum(['preference', 'fact', 'style', 'term']).describe('preference 偏好 / fact 事实 / style 写法 / term 术语'),
+      scope: z.enum(['global', 'project']).optional().describe('global 所有文档（默认）/ project 只用于当前文档所在项目'),
+      reason: z.string().max(200).optional().describe('为什么值得记（给用户看）'),
+      explicit: z.boolean().optional().describe('用户在本轮明确要求记住'),
+    },
+  }, async ({ content, kind, scope, reason, explicit }) => {
+    if (!deps.memory) return fail('memory_unavailable', '记忆未启用')
+    const turn = deps.turns.active(claims.u)
+    if (turn && turn.memory === false) return fail('memory_off', '本轮不使用记忆（用户关闭或已暂停）', { hint: '不要提议记忆，正常完成任务即可。' })
+    try {
+      const r = await deps.memory.propose(claims.u, { content, kind, scope: scope ?? 'global', reason, explicit }, { docId: turn?.docId ?? null, turnId: turn?.turnId ?? null, source: 'turn', actor: 'ai' })
+      if (r.result === 'proposed' || r.result === 'active') deps.turns.notify(claims.u, { type: 'memory', result: r.result, memory: r.memory })
+      const said = { proposed: '已提议，等用户确认', active: '已记住（用户明确要求，直接生效）', merged: '已有相同的记忆，未重复添加', previously_rejected: '用户之前拒绝过这条，不再提议' }[r.result]
+      return json({ result: r.result, message: said })
+    } catch (err) {
+      if (err instanceof MemoryError) return fail(err.code, err.message, err.hint ? { hint: err.hint } : {})
+      throw err
+    }
+  })
+
+  server.registerTool('memory_search', {
+    description: '按需检索用户已确认的记忆（回合开头注入的［记忆］之外，想确认有没有相关偏好或事实时用）。',
+    inputSchema: { query: z.string().min(1) },
+  }, async ({ query }) => {
+    if (!deps.memory) return fail('memory_unavailable', '记忆未启用')
+    const turn = deps.turns.active(claims.u)
+    if ((turn && turn.memory === false) || !deps.memory.active(claims.u)) return fail('memory_off', '本轮不使用记忆', { hint: '不要依赖记忆，按本轮要求完成。' })
+    const hits = await deps.memory.search(claims.u, query, turn?.docId ?? null)
+    return json(hits.map(m => ({ kind: m.kind, scope: m.scope, content: m.content })))
   })
 
   server.registerTool('kb_read', {

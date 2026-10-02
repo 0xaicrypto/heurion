@@ -9,6 +9,7 @@ import type { CrossrefClient } from '../src/literature/crossref.ts'
 import type { PubMedClient } from '../src/literature/pubmed.ts'
 import { ClaimService } from '../src/claims/service.ts'
 import { KbService } from '../src/kb/service.ts'
+import { MemoryService } from '../src/memory/service.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
 import { buildMcpServer } from '../src/mcp/server.ts'
 import { TurnRegistry } from '../src/mcp/turns.ts'
@@ -19,6 +20,7 @@ const SECRET = 'test-secret'
 async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<'read' | 'write'> } = {}) {
   const env = setup(markdown)
   const kb = new KbService(env.store, null)
+  const memory = new MemoryService(env.store, null)
   const workspace = mkdtempSync(join(tmpdir(), 'heurion-ws-'))
   const registry = new TurnRegistry()
   const crossref = {
@@ -36,6 +38,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     workspaceDir: () => workspace,
     isLiveSession: () => true,
     kb,
+    memory,
   }, claims)
   const [a, b] = InMemoryTransport.createLinkedPair()
   await server.connect(a)
@@ -48,7 +51,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     try { parsed = JSON.parse(body) } catch { /* 纯文本视图 */ }
     return { isError: Boolean(r.isError), body: parsed as any, text: body }
   }
-  return { ...env, client, call, registry, workspace, kb }
+  return { ...env, client, call, registry, workspace, kb, memory }
 }
 
 describe('MCP 工具', () => {
@@ -275,5 +278,26 @@ describe('文档仓库（AI 一侧）', () => {
     const denied = await t.call('kb_read', { file_id: other.file.id })
     expect(denied.isError).toBe(true)
     expect(denied.text).toContain('file_not_found')
+  })
+
+  it('记忆：memory_propose 提议并通知对话；明确要求直接生效；本轮关闭时不可用；敏感内容被拦；memory_search 只找已生效的', async () => {
+    const t = await connect('# 引言\n\n待补充。')
+    const notices: any[] = []
+    t.registry.begin('u1', { turnId: 't1', docId: t.docId, touched: new Set(), notify: n => notices.push(n), mode: 'apply', memory: true })
+    const p = await t.call('memory_propose', { content: '数值保留两位小数', kind: 'preference', reason: '用户两次改成两位小数' })
+    expect(p.body.result).toBe('proposed')
+    expect(notices[0]).toMatchObject({ type: 'memory', result: 'proposed', memory: { content: '数值保留两位小数', source_turn_id: 't1' } })
+    const e = await t.call('memory_propose', { content: '统计软件用 R', kind: 'fact', explicit: true })
+    expect(e.body.result).toBe('active')
+    const blocked = await t.call('memory_propose', { content: '患者王某某，男，65岁', kind: 'fact', explicit: true })
+    expect([blocked.isError, JSON.parse(blocked.text).code]).toEqual([true, 'sensitive_content'])
+    const found = await t.call('memory_search', { query: '统计软件' })
+    expect(found.body.map((m: any) => m.content)).toEqual(['统计软件用 R'])
+    t.registry.end('u1', 't1')
+
+    t.registry.begin('u1', { turnId: 't2', docId: t.docId, touched: new Set(), notify: () => {}, mode: 'apply', memory: false })
+    const off = await t.call('memory_propose', { content: '别的偏好', kind: 'preference' })
+    expect(JSON.parse(off.text).code).toBe('memory_off')
+    expect(JSON.parse((await t.call('memory_search', { query: '统计' })).text).code).toBe('memory_off')
   })
 })

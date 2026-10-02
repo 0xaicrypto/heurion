@@ -3,10 +3,19 @@
  * 每个用户同一时间只有一个 dsh 回合（一个用户一个 dsh 进程）。
  */
 
-export type TurnNotice = { type: 'comment_reply'; doc_id: string; comment_id: string }
+import type { MemoryRow } from '../store/db.ts'
+
+export type TurnNotice =
+  | { type: 'comment_reply'; doc_id: string; comment_id: string }
+  /** AI 提议了一条记忆（待确认）或按用户明确要求记下了一条：对话里显示卡片。 */
+  | { type: 'memory'; result: 'proposed' | 'active'; memory: MemoryRow }
 
 export interface ActiveTurn {
   turnId: string
+  /** 回合所在文档（项目记忆按它找项目）。 */
+  docId?: string
+  /** 本回合能不能用记忆（实例开启、用户没暂停、本轮没关）。 */
+  memory?: boolean
   /** 本回合写过的文档。 */
   touched: Set<string>
   notify: (n: TurnNotice) => void

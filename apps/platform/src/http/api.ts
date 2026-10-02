@@ -7,6 +7,7 @@ import { duplicateDoc } from '../model/duplicate.ts'
 import type { SearchIndex } from '../model/search-index.ts'
 import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
+import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
@@ -47,6 +48,7 @@ export interface ApiDeps {
   search?: SearchIndex
   /** 参考资料库。 */
   kb?: KbService
+  memory?: MemoryService
   devUser: string
 }
 
@@ -158,6 +160,75 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       accounts.adminLogout(c.req.param('uid'))
       return c.json({ ok: true })
     } catch (err) { return authFailure(c, err) }
+  })
+
+  // 管理员：本实例停用记忆（同时删除所有用户的记忆）
+  app.get('/api/admin/settings', c => c.json({ memory_enabled: deps.memory?.instanceEnabled() ?? false }))
+  app.put('/api/admin/settings', async c => {
+    const body = await c.req.json<{ memory_enabled?: boolean }>()
+    let deleted = 0
+    if (deps.memory && typeof body.memory_enabled === 'boolean') deleted = deps.memory.setInstanceEnabled(body.memory_enabled)
+    return c.json({ memory_enabled: deps.memory?.instanceEnabled() ?? false, deleted })
+  })
+
+  // —— 记忆（R3） ——
+  const memoryFailure = (c: Context, err: unknown) => {
+    if (err instanceof MemoryError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : 400)
+    throw err
+  }
+  app.get('/api/memory', c => {
+    const m = deps.memory
+    if (!m) return c.json({ enabled: false, instance: false, paused: false, items: [] })
+    const user = c.get('user')
+    const items = store.listMemories(user, ['proposed', 'active']).map(x => ({ ...x, source_doc_title: x.source_doc_id ? store.getDoc(x.source_doc_id)?.title ?? null : null }))
+    return c.json({ enabled: m.active(user), instance: m.instanceEnabled(), paused: m.paused(user), items })
+  })
+  app.put('/api/memory/settings', async c => {
+    if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
+    const { paused } = await c.req.json<{ paused?: boolean }>()
+    if (typeof paused === 'boolean') deps.memory.setPaused(c.get('user'), paused)
+    return c.json({ paused: deps.memory.paused(c.get('user')) })
+  })
+  app.post('/api/memory', async c => {
+    if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
+    const body = await c.req.json<{ content?: string; kind?: string; scope?: 'global' | 'project'; project_id?: string | null }>()
+    try {
+      const r = await deps.memory.propose(c.get('user'), { content: body.content ?? '', kind: (body.kind ?? 'preference') as never, scope: 'global' }, { source: 'manual', actor: 'user' })
+      // 手动添加的项目记忆：直接指定项目
+      if (body.scope === 'project' && body.project_id) await deps.memory.edit(c.get('user'), r.memory.id, { scope: 'project', project_id: projectOf(c, body.project_id) || null })
+      return c.json({ ...r, memory: store.getMemory(r.memory.id) }, 201)
+    } catch (err) { return memoryFailure(c, err) }
+  })
+  app.patch('/api/memory/:mid', async c => {
+    if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
+    try {
+      return c.json(await deps.memory.edit(c.get('user'), c.req.param('mid'), await c.req.json()))
+    } catch (err) { return memoryFailure(c, err) }
+  })
+  app.delete('/api/memory/:mid', c => {
+    if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
+    return deps.memory.remove(c.get('user'), c.req.param('mid')) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404)
+  })
+  app.get('/api/memory/:mid/events', c => {
+    const m = store.getMemory(c.req.param('mid'))
+    if (!m || m.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    return c.json(store.memoryEvents(m.id))
+  })
+  /** 清空自己的全部记忆（不可恢复）。 */
+  app.delete('/api/memory', c => c.json({ deleted: store.clearMemories(c.get('user')) }))
+  app.get('/api/memory-export', c => {
+    if (!deps.memory) return c.json([])
+    return new Response(JSON.stringify({ format: 'heurion-memory', version: 1, exported_at: new Date().toISOString(), items: deps.memory.exportAll(c.get('user')) }, null, 2), {
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="heurion-memory.json"' },
+    })
+  })
+  app.post('/api/memory-import', async c => {
+    if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
+    const body = await c.req.json<{ items?: unknown[] } | unknown[]>()
+    const items = (Array.isArray(body) ? body : body.items ?? []) as Array<{ content?: unknown; kind?: unknown }>
+    try {
+      return c.json(await deps.memory.importItems(c.get('user'), items))
+    } catch (err) { return memoryFailure(c, err) }
   })
 
   /** 自己的、不在回收站里的文档（回收站里的只能恢复或彻底删除）。 */
@@ -645,12 +716,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { message, suggest, kb_files } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[] }>()
+    const { message, suggest, kb_files, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; memory?: boolean }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
     // 对话里选中的参考资料：告诉 AI 用哪几份（只认自己的资料）
     const picked = (kb_files ?? []).slice(0, 20).map(id => store.getKbFile(id)).filter(f => f && f.owner === c.get('user'))
     const note = picked.length === 0 ? '' : `\n\n［参考资料］请依据这些资料（kb_search 用 file_ids 限定检索，kb_read 读原文）：${picked.map(f => `《${f!.name}》(file_id=${f!.id})`).join('、')}`
-    return streamTurn(c, deps, row.id, message.trim() + note, { suggest })
+    return streamTurn(c, deps, row.id, message.trim() + note, { suggest, ...(memory === false ? { memory: false } : {}) })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消

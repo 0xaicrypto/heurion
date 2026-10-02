@@ -324,7 +324,29 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
 }
 
 async function openAdmin(me: Me, api: <T = any>(path: string, opts?: RequestInit) => Promise<T>, notify: (msg: string, error?: boolean) => void): Promise<void> {
-  const dlg = openDialog('用户管理', '<div id="adminUsers" class="muted">加载中…</div>')
+  const dlg = openDialog('用户管理', '<div id="adminSettings" class="admin-settings"></div><div id="adminUsers" class="muted">加载中…</div>')
+  // 实例设置：记忆总开关（停用会删除所有用户的记忆，页内二次确认）
+  const renderSettings = async () => {
+    const st = await api<{ memory_enabled: boolean }>('/api/admin/settings')
+    const box = dlg.querySelector('#adminSettings')!
+    box.innerHTML = `<label class="toggle"><input type="checkbox" id="adminMemory" ${st.memory_enabled ? 'checked' : ''}> 本实例启用记忆</label>
+      <span class="muted small">AI 记住用户确认过的偏好与事实；停用会删除所有用户的记忆。</span>`
+    const cb = box.querySelector<HTMLInputElement>('#adminMemory')!
+    cb.onchange = async e => {
+      e.stopPropagation()
+      if (cb.checked) { await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ memory_enabled: true }) }); notify('已启用记忆'); return }
+      cb.checked = true
+      box.insertAdjacentHTML('beforeend', `<div class="danger-confirm" id="memOffConfirm">停用后所有用户的记忆会被<b>彻底删除</b>，重新启用后从头开始。
+        <button class="danger" id="memOffYes">停用并删除</button><button id="memOffNo">取消</button></div>`)
+      box.querySelector<HTMLButtonElement>('#memOffNo')!.onclick = () => box.querySelector('#memOffConfirm')?.remove()
+      box.querySelector<HTMLButtonElement>('#memOffYes')!.onclick = async () => {
+        const r = await api<{ deleted: number }>('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ memory_enabled: false }) })
+        notify(`已停用记忆，删除 ${r.deleted} 条`)
+        await renderSettings()
+      }
+    }
+  }
+  void renderSettings().catch(err => notify((err as Error).message, true))
   const render = async () => {
     const users: any[] = await api('/api/admin/users')
     dlg.querySelector('#adminUsers')!.outerHTML = `<table class="users" id="adminUsers">

@@ -69,6 +69,31 @@ export interface KbFileRow {
   created_at: string
 }
 
+export type MemoryKind = 'preference' | 'fact' | 'style' | 'term'
+export type MemoryStatus = 'proposed' | 'active' | 'rejected' | 'archived'
+
+/** R3 记忆：一条用户偏好 / 事实 / 写法 / 术语。 */
+export interface MemoryRow {
+  id: string
+  owner: string
+  scope: 'global' | 'project'
+  project_id: string | null
+  kind: MemoryKind
+  content: string
+  /** AI 提议时给的理由。 */
+  reason: string | null
+  source: 'turn' | 'comment' | 'manual' | 'import'
+  source_doc_id: string | null
+  source_turn_id: string | null
+  status: MemoryStatus
+  /** 用户在对话里明确要求记住（直接生效）。 */
+  explicit: number
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoryEventRow { id: string; memory_id: string; owner: string; action: string; actor: 'user' | 'ai' | 'system'; before: string | null; after: string | null; at: string }
+
 export interface KbChunkHit {
   chunk_id: string
   file_id: string
@@ -293,6 +318,19 @@ export class Store {
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
         message TEXT NOT NULL, opts TEXT NOT NULL, enqueued_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, scope TEXT NOT NULL, project_id TEXT, kind TEXT NOT NULL, content TEXT NOT NULL,
+        norm TEXT NOT NULL, reason TEXT, source TEXT NOT NULL, source_doc_id TEXT, source_turn_id TEXT, status TEXT NOT NULL,
+        explicit INTEGER NOT NULL DEFAULT 0, embedding BLOB, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS memories_owner ON memories (owner, status);
+      CREATE TABLE IF NOT EXISTS memory_events (
+        id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, owner TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL,
+        before TEXT, after TEXT, at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS memory_events_memory ON memory_events (memory_id, at);
+      CREATE TABLE IF NOT EXISTS user_settings (user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
+      CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, role TEXT NOT NULL,
         text TEXT NOT NULL, turn_id TEXT, created_at TEXT NOT NULL
@@ -543,6 +581,92 @@ export class Store {
       return { ...hit, score: dot }
     })
     return scored.sort((a, b) => b.score - a.score).slice(0, limit)
+  }
+
+  // —— 设置 ——
+
+  getUserSetting(userId: string, key: string): string | null {
+    return (this.db.prepare('SELECT value FROM user_settings WHERE user_id = ? AND key = ?').get(userId, key) as { value: string } | undefined)?.value ?? null
+  }
+
+  setUserSetting(userId: string, key: string, value: string | null): void {
+    if (value === null) this.db.prepare('DELETE FROM user_settings WHERE user_id = ? AND key = ?').run(userId, key)
+    else this.db.prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value').run(userId, key, value)
+  }
+
+  getAppSetting(key: string): string | null {
+    return (this.db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key) as { value: string } | undefined)?.value ?? null
+  }
+
+  setAppSetting(key: string, value: string): void {
+    this.db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value)
+  }
+
+  // —— 记忆（R3） ——
+
+  private static readonly MEM_COLS = 'id, owner, scope, project_id, kind, content, reason, source, source_doc_id, source_turn_id, status, explicit, created_at, updated_at'
+
+  addMemory(input: Omit<MemoryRow, 'id' | 'created_at' | 'updated_at'> & { norm: string }): MemoryRow {
+    const id = 'm' + randomUUID().replace(/-/g, '').slice(0, 11)
+    const t = now()
+    this.db.prepare(`INSERT INTO memories (id, owner, scope, project_id, kind, content, norm, reason, source, source_doc_id, source_turn_id, status, explicit, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.owner, input.scope, input.project_id, input.kind, input.content, input.norm, input.reason,
+      input.source, input.source_doc_id, input.source_turn_id, input.status, input.explicit, t, t)
+    return this.getMemory(id)!
+  }
+
+  getMemory(id: string): MemoryRow | undefined {
+    return this.db.prepare(`SELECT ${Store.MEM_COLS} FROM memories WHERE id = ?`).get(id) as MemoryRow | undefined
+  }
+
+  listMemories(owner: string, statuses?: MemoryStatus[]): MemoryRow[] {
+    const where = statuses ? ` AND status IN (${statuses.map(() => '?').join(',')})` : ''
+    return this.db.prepare(`SELECT ${Store.MEM_COLS} FROM memories WHERE owner = ?${where} ORDER BY updated_at DESC`).all(owner, ...(statuses ?? [])) as unknown as MemoryRow[]
+  }
+
+  /** 同一用户里规范化文本相同的记忆（去重、拒绝过的不再提议）。 */
+  findMemoryByNorm(owner: string, norm: string): MemoryRow | undefined {
+    return this.db.prepare(`SELECT ${Store.MEM_COLS} FROM memories WHERE owner = ? AND norm = ? ORDER BY updated_at DESC`).get(owner, norm) as MemoryRow | undefined
+  }
+
+  updateMemory(id: string, patch: Partial<Pick<MemoryRow, 'scope' | 'project_id' | 'kind' | 'content' | 'status' | 'explicit' | 'reason'>> & { norm?: string }): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    if (keys.length === 0) return
+    this.db.prepare(`UPDATE memories SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map(k => patch[k] as never), now(), id)
+  }
+
+  setMemoryEmbedding(id: string, v: Float32Array | null): void {
+    this.db.prepare('UPDATE memories SET embedding = ? WHERE id = ?').run(v ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : null, id)
+  }
+
+  /** 有向量的记忆（相似去重、按相关度挑选注入）。 */
+  memoryVectors(owner: string, statuses: MemoryStatus[]): Array<{ id: string; v: Float32Array }> {
+    const rows = this.db.prepare(`SELECT id, embedding FROM memories WHERE owner = ? AND embedding IS NOT NULL AND status IN (${statuses.map(() => '?').join(',')})`).all(owner, ...statuses) as Array<{ id: string; embedding: Uint8Array }>
+    return rows.map(r => ({ id: r.id, v: new Float32Array(new Uint8Array(r.embedding).buffer) }))
+  }
+
+  deleteMemory(id: string): void {
+    this.db.prepare('DELETE FROM memories WHERE id = ?').run(id)
+    this.db.prepare('DELETE FROM memory_events WHERE memory_id = ?').run(id)
+  }
+
+  /** 清空：owner 给定时只清这个用户，否则清全部（管理员停用记忆）。 */
+  clearMemories(owner?: string): number {
+    if (owner) {
+      this.db.prepare('DELETE FROM memory_events WHERE owner = ?').run(owner)
+      return Number(this.db.prepare('DELETE FROM memories WHERE owner = ?').run(owner).changes)
+    }
+    this.db.exec('DELETE FROM memory_events')
+    return Number(this.db.prepare('DELETE FROM memories').run().changes)
+  }
+
+  addMemoryEvent(e: Omit<MemoryEventRow, 'id' | 'at'>): void {
+    this.db.prepare('INSERT INTO memory_events (id, memory_id, owner, action, actor, before, after, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(randomUUID(), e.memory_id, e.owner, e.action, e.actor, e.before, e.after, now())
+  }
+
+  memoryEvents(memoryId: string): MemoryEventRow[] {
+    return this.db.prepare('SELECT id, memory_id, owner, action, actor, before, after, at FROM memory_events WHERE memory_id = ? ORDER BY at').all(memoryId) as unknown as MemoryEventRow[]
   }
 
   // —— 项目（文件夹） ——

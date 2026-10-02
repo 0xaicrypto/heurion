@@ -8,6 +8,7 @@ import { DeckView } from './deck.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { initLibrary } from './library.ts'
+import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 
 const TOKEN = storedToken()
@@ -182,6 +183,7 @@ $('newProject').onclick = async () => {
 
 $('trashBtn').onclick = () => void openTrash()
 const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e))
+const memory = initMemory(api, (m, e) => showNotice(m, e), id => void open(id))
 
 async function openTrash(): Promise<void> {
   const rows = await api<any[]>('/api/trash')
@@ -250,7 +252,7 @@ $<HTMLInputElement>('uploadInput').onchange = async e => {
 
 /** 没打开文档时的欢迎页：新建 / 上传，加几条示例指令。 */
 function showWelcome(): void {
-  $('page').className = 'page'
+  $('page').className = 'page welcome-page'
   $('page').replaceChildren(($('welcomeTpl') as HTMLTemplateElement).content.cloneNode(true))
 }
 
@@ -273,6 +275,7 @@ async function open(docId: string): Promise<void> {
   turnUi = null
   $('chatLog').innerHTML = ''
   $('page').innerHTML = ''
+  $('page').classList.remove('welcome-page')
   const meta = await api(`/api/docs/${docId}`)
   const stream = new EventSource(`/api/docs/${docId}/stream?token=${encodeURIComponent(TOKEN)}`)
   stream.onmessage = e => onStreamEvent(JSON.parse(e.data))
@@ -861,6 +864,7 @@ function renderTurnEvent(ev: any): void {
       break
     case 'doc_updated': addStep(`  已写入文档（${ev.changes} 处）`, 'ok'); break
     case 'comment_reply': scheduleRefresh(); break
+    case 'memory': $('chatLog').appendChild(memory.memoryCard(ev)); $('chatLog').scrollTop = 1e9; break
     case 'version': addStep(`  ✓ 已保存为 v${ev.seq}`, 'ok'); break
     case 'error': addStep(ev.message, 'err'); break
     case 'turn_done':
@@ -890,7 +894,7 @@ async function send(): Promise<void> {
   if (!text || !session) return
   $<HTMLTextAreaElement>('chatInput').value = ''
   try {
-    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked() }) })
+    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), memory: memory.takeMemoryFlag() }) })
   } catch (err) {
     showNotice((err as Error).message, true)
   }

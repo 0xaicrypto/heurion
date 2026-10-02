@@ -52,6 +52,7 @@ apps/platform（Node + Hono）
  ├─ turns/      回合：登记 → dsh 执行 → 每份改过的文档打版本
  ├─ harness/    dsh 进程池、profile patch、事件映射
  ├─ http/       REST + SSE（前端、文档变更推送）
+ ├─ memory/     记忆：提议 / 确认、敏感内容守卫、三层开关、回合开头按预算注入
  ├─ kb/         参考资料库：抽取（pdftotext / docx / pptx）→ 切块（保留页码）→ 向量化 → 混合检索（FTS5 + 余弦，RRF）
  ├─ web/        P0 单页（预览、选区评论、对话、版本、引用、资料库）
  └─ store/      node:sqlite
@@ -224,6 +225,8 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | `asset_upload` | 工作区内相对路径 | `asset_id`（png/jpg/svg/gif/webp ≤ 10MB；路径限制在工作区内） |
 | `kb_search` | `query, file_ids?, project?, top_k?` | 参考资料库片段与出处（文件、页码、DOI / PMID）；关键词 + 向量（本地 bge-m3）RRF 合并 |
 | `kb_read` | `file_id, from_page?, to_page?` | 资料原文（按页） |
+| `memory_propose` | `content, kind, scope?, reason?, explicit?` | 提议一条记忆（待用户确认）；`explicit` = 用户明确要求，直接生效。敏感内容被拦（`sensitive_content`）；本轮关闭记忆时 `memory_off` |
+| `memory_search` | `query` | 已生效的相关记忆（全局 + 当前项目） |
 
 ### 8.2 doc_edit 操作
 

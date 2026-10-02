@@ -57,6 +57,8 @@ html, body { height: 100%; overflow: hidden; }
 .mark .mark-ink { fill: var(--ink); }
 .mark .mark-sky { fill: var(--sky); }
 .nav .mark .mark-ink { fill: #f8fafc; }
+/* 深色模式：品牌墨色在深底上看不见，改用正文色 */
+@media (prefers-color-scheme: dark) { .mark .mark-ink { fill: var(--text); } }
 .wordmark { display: flex; flex-direction: column; line-height: 1.1; }
 .wordmark .name { font-weight: 650; letter-spacing: .14em; font-size: 15px; color: #f8fafc; }
 .wordmark .tagline { font-size: 8.5px; letter-spacing: .16em; color: var(--nav-muted); margin-top: 3px; font-weight: 600; }
@@ -353,6 +355,14 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 
 /* 欢迎页 */
 .welcome { max-width: 640px; margin: 0 auto; padding: 24px 0 8px; }
+/* 欢迎页：卡片撑满编辑区（上下各留一点边），内容垂直居中 */
+.page.welcome-page { box-sizing: border-box; min-height: calc(100% - 36px); margin-bottom: 18px; display: flex; flex-direction: column; justify-content: center; }
+.page.welcome-page .welcome { width: 100%; }
+@media (max-width: 1100px) { .page.welcome-page { padding: 40px 28px; } }
+.composer .row { flex-wrap: nowrap; }
+.composer-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; flex: 1; min-width: 0; }
+.composer-opts .toggle { padding: 0 2px; }
+.composer .row > button { flex-shrink: 0; }
 .welcome .mark { width: 44px; height: 40px; }
 .welcome h1 { font-size: 24px; margin: 14px 0 6px; }
 .welcome h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 28px 0 10px; }
@@ -463,3 +473,19 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .kb-picker label:hover { background: var(--raised); border-radius: 6px; }
 .kb-picker hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .kb-picker-empty { padding: 6px 10px; }
+
+/* —— 记忆 —— */
+.mem-h { font-size: 13px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+.mem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mem { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.mem .actions-row, .mem-card .actions-row { display: flex; gap: 4px; }
+.mem .actions-row button, .mem-card .actions-row button { font-size: 12px; padding: 2px 10px; }
+.mem-text { font-size: 13px; line-height: 1.5; }
+.mem-kind { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-right: 6px; }
+.mem-banner { margin: 10px 0; padding: 8px 10px; border-radius: 8px; background: var(--raised); font-size: 13px; }
+.mem-foot { margin-top: 16px; }
+.mem-card { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--sky); border-radius: 10px; background: var(--sky-soft); display: flex; flex-direction: column; gap: 6px; }
+.mem-card-head { font-size: 12px; font-weight: 600; }
+.admin-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.danger-confirm { width: 100%; font-size: 13px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--danger); }
+
