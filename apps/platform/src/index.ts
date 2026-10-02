@@ -6,6 +6,8 @@ import { getRequestListener } from '@hono/node-server'
 import { Accounts } from './auth/accounts.ts'
 import { createMailer } from './auth/mailer.ts'
 import { SearchIndex } from './model/search-index.ts'
+import { HttpEmbedder } from './kb/embedder.ts'
+import { KbService } from './kb/service.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -34,11 +36,15 @@ const pubmed = new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail)
 const crossref = new CrossrefClient(fetch, config.contactEmail)
 const claims = new ClaimService(docs, pubmed)
 const renderer = new SlideRenderer(config.renderDir)
+// 参考资料库：本地嵌入服务（apps/embedder）可选，不在时只用关键词检索
+const kb = new KbService(store, config.embeddingUrl ? new HttpEmbedder(config.embeddingUrl) : null)
+kb.resume()
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
   pubmed,
   crossref,
   workspaceDir: (userId: string) => pool.workspaceDir(userId),
+  kb,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
@@ -51,7 +57,7 @@ if (indexed) console.log(`全文索引：补齐 ${indexed} 份文档`)
 const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } }
 purge()
 setInterval(purge, 12 * 3600_000).unref()
-const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

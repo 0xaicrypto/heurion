@@ -39,6 +39,8 @@ export const config = {
   /** 验证码邮件（找回密码、绑定邮箱），同 1.0：Resend。未配置时开发环境把验证码打到日志。 */
   resendApiKey: process.env.RESEND_API_KEY ?? '',
   emailFrom: process.env.EMAIL_FROM ?? '',
+  /** 本地嵌入服务（apps/embedder，bge-m3）；为空时资料库只用关键词检索。 */
+  embeddingUrl: env('EMBEDDING_URL', 'http://127.0.0.1:8003'),
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),
   /** 回合无响应超时：模型 / 工具连续这么久没有任何动静，自动停止该回合，放行队列。 */
   turnIdleTimeoutMs: Number(env('TURN_IDLE_TIMEOUT_MS', String(5 * 60_000))),

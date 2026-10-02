@@ -5,6 +5,8 @@ import { getConnInfo } from '@hono/node-server/conninfo'
 import { AuthError, type Accounts } from '../auth/accounts.ts'
 import { duplicateDoc } from '../model/duplicate.ts'
 import type { SearchIndex } from '../model/search-index.ts'
+import { ExtractError } from '../kb/extract.ts'
+import type { KbService } from '../kb/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
@@ -43,6 +45,8 @@ export interface ApiDeps {
   devMode: boolean
   /** 全文索引（改名、复制后立即更新）。 */
   search?: SearchIndex
+  /** 参考资料库。 */
+  kb?: KbService
   devUser: string
 }
 
@@ -277,6 +281,69 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     store.deleteProject(p.id) // 文档回到未分组，不删除
     return c.json({ ok: true })
   })
+  // —— 参考资料库（R2b） ——
+  const ownedFile = (c: Context<{ Variables: { user: string } }>) => {
+    const f = store.getKbFile(c.req.param('fid')!)
+    return f && f.owner === c.get('user') ? f : null
+  }
+  app.get('/api/kb', c => {
+    const project = c.req.query('project')
+    return c.json(store.listKbFiles(c.get('user'), project === undefined ? undefined : project || null))
+  })
+  app.post('/api/kb', async c => {
+    if (!deps.kb) return c.json({ error: '资料库未启用' }, 503)
+    const form = await c.req.parseBody({ all: true })
+    const files = ([] as unknown[]).concat(form.file ?? []).filter((f): f is File => f instanceof File)
+    if (files.length === 0) return c.json({ error: '请选择文件' }, 400)
+    const project = projectOf(c, form.project_id)
+    if (project === false) return c.json({ error: '项目不存在' }, 404)
+    const out: unknown[] = []
+    for (const f of files) {
+      try {
+        const r = await deps.kb.upload(c.get('user'), { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()), project_id: project })
+        out.push({ ...r.file, duplicate: r.duplicate })
+      } catch (err) {
+        if (err instanceof ExtractError) out.push({ name: f.name, error: err.message })
+        else throw err
+      }
+    }
+    return c.json(out, 201)
+  })
+  app.patch('/api/kb/:fid', async c => {
+    const f = ownedFile(c)
+    if (!f) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json<{ project_id?: string | null; name?: string }>()
+    if ('project_id' in body) {
+      const project = projectOf(c, body.project_id)
+      if (project === false) return c.json({ error: '项目不存在' }, 404)
+      store.updateKbFile(f.id, { project_id: project })
+    }
+    if (body.name?.trim()) store.updateKbFile(f.id, { name: body.name.trim().slice(0, 200) })
+    return c.json(store.getKbFile(f.id))
+  })
+  app.delete('/api/kb/:fid', c => {
+    const f = ownedFile(c)
+    if (!f) return c.json({ error: 'not found' }, 404)
+    store.deleteKbFile(f.id)
+    return c.json({ ok: true })
+  })
+  app.get('/api/kb/:fid/text', c => {
+    const f = ownedFile(c)
+    if (!f) return c.json({ error: 'not found' }, 404)
+    return c.json({ file: f, pages: store.kbText(f.id, Number(c.req.query('from') ?? 1), Number(c.req.query('to') ?? Number.MAX_SAFE_INTEGER)) })
+  })
+  app.get('/api/kb/:fid/file', c => {
+    const f = ownedFile(c)
+    if (!f) return c.json({ error: 'not found' }, 404)
+    return new Response(Buffer.from(store.getKbBytes(f.id) ?? new Uint8Array()), { headers: { 'Content-Type': f.mime, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}` } })
+  })
+  app.get('/api/kb-status', async c => c.json(deps.kb ? await deps.kb.status() : { enabled: false, vector: false }))
+  app.get('/api/kb-search', async c => {
+    if (!deps.kb) return c.json([])
+    const files = c.req.query('files')?.split(',').filter(Boolean)
+    return c.json(await deps.kb.search(c.get('user'), c.req.query('q') ?? '', { limit: 10, fileIds: files }))
+  })
+
   app.get('/api/search', c => c.json(store.searchDocs(c.get('user'), c.req.query('q') ?? '', 30)))
   app.get('/api/trash', c => c.json(store.listTrash(c.get('user'))))
   app.post('/api/docs/:id/restore', c => {
@@ -578,9 +645,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { message, suggest } = await c.req.json<{ message?: string; suggest?: boolean }>()
+    const { message, suggest, kb_files } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[] }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
-    return streamTurn(c, deps, row.id, message.trim(), { suggest })
+    // 对话里选中的参考资料：告诉 AI 用哪几份（只认自己的资料）
+    const picked = (kb_files ?? []).slice(0, 20).map(id => store.getKbFile(id)).filter(f => f && f.owner === c.get('user'))
+    const note = picked.length === 0 ? '' : `\n\n［参考资料］请依据这些资料（kb_search 用 file_ids 限定检索，kb_read 读原文）：${picked.map(f => `《${f!.name}》(file_id=${f!.id})`).join('、')}`
+    return streamTurn(c, deps, row.id, message.trim() + note, { suggest })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消

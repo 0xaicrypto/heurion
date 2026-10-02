@@ -1,0 +1,226 @@
+[
+ {
+  "lang": "en",
+  "file": "PMC11161924",
+  "q": "Does dapagliflozin lower IL-6 or TNF-alpha in diabetics without heart failure?",
+  "expect": [
+   "IL-6|TNF",
+   "dapagliflozin"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC11161924",
+  "q": "cardiac MRI T1 mapping extracellular volume after 12 months of SGLT2 inhibitor",
+  "expect": [
+   "ECV|extracellular volume",
+   "T1"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12142847",
+  "q": "oral non-peptide GLP-1 agonist effect on blood pressure and lipids"
+ },
+ {
+  "lang": "en",
+  "file": "PMC12142847",
+  "q": "orforglipron hsCRP change compared with dulaglutide",
+  "expect": [
+   "hsCRP",
+   "orforglipron"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12155999",
+  "q": "how much weight is regained after stopping semaglutide",
+  "expect": [
+   "regain",
+   "semaglutide"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12155999",
+  "q": "SURMOUNT-4 tirzepatide withdrawal weight curve",
+  "expect": [
+   "SURMOUNT-4"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12165344",
+  "q": "community health workers telemedicine blood pressure control in rural Uganda",
+  "expect": [
+   "telehealth",
+   "CHW|community health worker"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12165344",
+  "q": "home-based titration of antihypertensives for BP above 160/100"
+ },
+ {
+  "lang": "en",
+  "file": "PMC11898530",
+  "q": "LAG-3 and TIGIT inhibitors in lung cancer trials",
+  "expect": [
+   "LAG-3|TIGIT"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12427405",
+  "q": "durvalumab plus gemcitabine cisplatin TOPAZ-1 cholangiocarcinoma",
+  "expect": [
+   "TOPAZ-1",
+   "durvalumab"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12427405",
+  "q": "gallbladder carcinoma tumor heterogeneity and response to immunotherapy"
+ },
+ {
+  "lang": "en",
+  "file": "PMC12608667",
+  "q": "when to start SGLT2 inhibitors during hospitalization for acute heart failure"
+ },
+ {
+  "lang": "en",
+  "file": "PMC12608667",
+  "q": "EMPULSE clinical benefit at 90 days",
+  "expect": [
+   "EMPULSE",
+   "benefit"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12677982",
+  "q": "RSV prefusion F vaccine efficacy against lower respiratory tract disease in adults over 60"
+ },
+ {
+  "lang": "en",
+  "file": "PMC12677982",
+  "q": "local and systemic adverse reactions after RSV vaccination in older adults, pooled risk ratio",
+  "expect": [
+   "adverse",
+   "RR|risk ratio"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12679812",
+  "q": "nirsevimab binding site and viral escape mutations",
+  "expect": [
+   "nirsevimab",
+   "mutation|escape"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12679812",
+  "q": "palivizumab monthly injections restricted to high-risk infants",
+  "expect": [
+   "palivizumab",
+   "monthly"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12681115",
+  "q": "finerenone cardio-ankle vascular index",
+  "expect": [
+   "CAVI",
+   "finerenone"
+  ]
+ },
+ {
+  "lang": "en",
+  "file": "PMC12681115",
+  "q": "mineralocorticoid receptor antagonist albuminuria reduction in Japanese patients with CKD"
+ },
+ {
+  "lang": "zh",
+  "file": "PMC11161924",
+  "q": "达格列净能否降低2型糖尿病患者的全身炎症？",
+  "expect": [
+   "IL-6|TNF|inflammat",
+   "dapagliflozin"
+  ]
+ },
+ {
+  "lang": "zh",
+  "file": "PMC11161924",
+  "q": "SGLT2抑制剂对心肌纤维化和心肌应变的影响（心脏磁共振）",
+  "expect": [
+   "ECV|fibrosis",
+   "strain"
+  ]
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12142847",
+  "q": "口服小分子GLP-1受体激动剂对心血管风险标志物的影响"
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12155999",
+  "q": "停用司美格鲁肽或替尔泊肽后体重反弹多少",
+  "expect": [
+   "regain",
+   "semaglutide|tirzepatide"
+  ]
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12165344",
+  "q": "社区卫生工作者协助的远程医疗管理重度高血压"
+ },
+ {
+  "lang": "zh",
+  "file": "PMC11898530",
+  "q": "非小细胞肺癌中PD-1/PD-L1之外的新免疫检查点"
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12427405",
+  "q": "胆道癌免疫检查点抑制剂联合化疗的获益人群"
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12608667",
+  "q": "急性心衰住院期间何时开始使用SGLT2抑制剂",
+  "expect": [
+   "hospitali[sz]|discharge",
+   "SGLT2"
+  ]
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12677982",
+  "q": "老年人呼吸道合胞病毒疫苗的安全性和有效性荟萃分析"
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12679812",
+  "q": "婴儿RSV预防用长效单克隆抗体的作用机制",
+  "expect": [
+   "nirsevimab|clesrovimab",
+   "pre.?F|prefusion|fusion"
+  ]
+ },
+ {
+  "lang": "zh",
+  "file": "PMC12681115",
+  "q": "非奈利酮对动脉僵硬度和尿白蛋白肌酐比的影响",
+  "expect": [
+   "CAVI|stiffness",
+   "UACR|albumin"
+  ]
+ }
+]

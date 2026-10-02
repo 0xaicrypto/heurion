@@ -8,6 +8,7 @@ import { issueToken, verifyToken } from '../src/auth/token.ts'
 import type { CrossrefClient } from '../src/literature/crossref.ts'
 import type { PubMedClient } from '../src/literature/pubmed.ts'
 import { ClaimService } from '../src/claims/service.ts'
+import { KbService } from '../src/kb/service.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
 import { buildMcpServer } from '../src/mcp/server.ts'
 import { TurnRegistry } from '../src/mcp/turns.ts'
@@ -17,6 +18,7 @@ const SECRET = 'test-secret'
 
 async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<'read' | 'write'> } = {}) {
   const env = setup(markdown)
+  const kb = new KbService(env.store, null)
   const workspace = mkdtempSync(join(tmpdir(), 'heurion-ws-'))
   const registry = new TurnRegistry()
   const crossref = {
@@ -33,6 +35,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     pubmed, crossref,
     workspaceDir: () => workspace,
     isLiveSession: () => true,
+    kb,
   }, claims)
   const [a, b] = InMemoryTransport.createLinkedPair()
   await server.connect(a)
@@ -45,7 +48,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     try { parsed = JSON.parse(body) } catch { /* 纯文本视图 */ }
     return { isError: Boolean(r.isError), body: parsed as any, text: body }
   }
-  return { ...env, client, call, registry, workspace }
+  return { ...env, client, call, registry, workspace, kb }
 }
 
 describe('MCP 工具', () => {
@@ -255,5 +258,22 @@ describe('文档仓库（AI 一侧）', () => {
     expect((await t.call('docs_search', { query: '沙库巴曲' })).body).toEqual([])
     const read = await t.call('doc_outline', { doc_id: t.docId })
     expect([read.isError, read.body.code]).toEqual([true, 'doc_not_found'])
+  })
+
+  it('参考资料库：kb_search 找到片段与出处，kb_read 按页读原文；读不到别人的资料', async () => {
+    const t = await connect('# 引言\n\n待补充。')
+    const enc = (x: string) => new TextEncoder().encode(x)
+    const mine = await t.kb.upload('u1', { name: '指南.md', bytes: enc('# 心衰指南\n\n射血分数降低的心衰推荐使用 SGLT2 抑制剂以降低住院风险。') })
+    const other = await t.kb.upload('u2', { name: 'secret.txt', bytes: enc('SGLT2 confidential notes from another user.') })
+    await t.kb.idle()
+    const hits = await t.call('kb_search', { query: 'SGLT2' })
+    expect(hits.body.map((h: any) => h.file_id)).toEqual([mine.file.id])
+    expect(hits.body[0]).toMatchObject({ file: '指南.md', page: 1 })
+    const read = await t.call('kb_read', { file_id: mine.file.id })
+    expect(read.text).toContain('《指南.md》')
+    expect(read.text).toContain('［第 1 页］')
+    const denied = await t.call('kb_read', { file_id: other.file.id })
+    expect(denied.isError).toBe(true)
+    expect(denied.text).toContain('file_not_found')
   })
 })

@@ -52,8 +52,12 @@ apps/platform（Node + Hono）
  ├─ turns/      回合：登记 → dsh 执行 → 每份改过的文档打版本
  ├─ harness/    dsh 进程池、profile patch、事件映射
  ├─ http/       REST + SSE（前端、文档变更推送）
- ├─ web/        P0 单页（预览、选区评论、对话、版本、引用）
+ ├─ kb/         参考资料库：抽取（pdftotext / docx / pptx）→ 切块（保留页码）→ 向量化 → 混合检索（FTS5 + 余弦，RRF）
+ ├─ web/        P0 单页（预览、选区评论、对话、版本、引用、资料库）
  └─ store/      node:sqlite
+
+apps/embedder（127.0.0.1:8003，本地 bge-m3 q8，Transformers.js + ONNX；/health、/embed）
+   资料不出本机；没起来时资料库只用关键词检索，起来后自动补向量（EMBEDDING_URL 配地址）
 ```
 
 | 组件 | S 系列（已停用） | 平台 | 变化 |
@@ -218,6 +222,8 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | `pubmed_search` / `doi_lookup` | 检索式 / DOI | 文献元数据 |
 | `insert_citation` / `list_citations` | `doc_id, doi` / `doc_id` | `cite_id` 与 `[@c:id]` 标记 / 登记表与文中编号 |
 | `asset_upload` | 工作区内相对路径 | `asset_id`（png/jpg/svg/gif/webp ≤ 10MB；路径限制在工作区内） |
+| `kb_search` | `query, file_ids?, project?, top_k?` | 参考资料库片段与出处（文件、页码、DOI / PMID）；关键词 + 向量（本地 bge-m3）RRF 合并 |
+| `kb_read` | `file_id, from_page?, to_page?` | 资料原文（按页） |
 
 ### 8.2 doc_edit 操作
 

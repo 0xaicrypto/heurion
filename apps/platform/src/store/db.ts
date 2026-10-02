@@ -46,6 +46,40 @@ export interface DocRow {
   deleted_at: string | null
 }
 
+export type KbStatus = 'pending' | 'extracting' | 'embedding' | 'ready' | 'failed'
+
+/** 参考资料库里的一份资料（R2）。 */
+export interface KbFileRow {
+  id: string
+  owner: string
+  project_id: string | null
+  name: string
+  mime: string
+  size: number
+  sha256: string
+  status: KbStatus
+  /** 失败原因 / 提示（扫描件没有文字层等）。 */
+  note: string | null
+  pages: number
+  chunks: number
+  /** 已向量化的块数（嵌入服务不可用时为 0，仍可关键词检索）。 */
+  embedded: number
+  doi: string | null
+  pmid: string | null
+  created_at: string
+}
+
+export interface KbChunkHit {
+  chunk_id: string
+  file_id: string
+  file_name: string
+  page: number
+  text: string
+  doi: string | null
+  pmid: string | null
+  score: number
+}
+
 export interface ProjectRow {
   id: string
   owner: string
@@ -188,6 +222,19 @@ export class Store {
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(doc_id UNINDEXED, owner UNINDEXED, title, body, tokenize = 'trigram');
+      CREATE TABLE IF NOT EXISTS kb_files (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, project_id TEXT, name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL, status TEXT NOT NULL, note TEXT, pages INTEGER NOT NULL DEFAULT 0, chunks INTEGER NOT NULL DEFAULT 0,
+        embedded INTEGER NOT NULL DEFAULT 0, doi TEXT, pmid TEXT, bytes BLOB NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE (owner, sha256)
+      );
+      CREATE TABLE IF NOT EXISTS kb_chunks (
+        id TEXT PRIMARY KEY, file_id TEXT NOT NULL REFERENCES kb_files(id) ON DELETE CASCADE, owner TEXT NOT NULL,
+        seq INTEGER NOT NULL, page INTEGER NOT NULL, text TEXT NOT NULL, embedding BLOB
+      );
+      CREATE INDEX IF NOT EXISTS kb_chunks_file ON kb_chunks (file_id, seq);
+      CREATE INDEX IF NOT EXISTS kb_chunks_owner ON kb_chunks (owner);
+      CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts USING fts5(chunk_id UNINDEXED, owner UNINDEXED, text, tokenize = 'trigram');
       CREATE TABLE IF NOT EXISTS op_log (
         doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, rev INTEGER NOT NULL,
         actor TEXT NOT NULL, turn_id TEXT, ops TEXT NOT NULL, affected TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -384,6 +431,118 @@ export class Store {
 
   setDocProject(id: string, projectId: string | null): void {
     this.db.prepare('UPDATE docs SET project_id = ? WHERE id = ?').run(projectId, id)
+  }
+
+  // —— 参考资料库（R2） ——
+
+  /** 新资料；同一用户上传同样的文件（按内容哈希）返回已有的那份。 */
+  addKbFile(input: { owner: string; project_id: string | null; name: string; mime: string; bytes: Uint8Array; sha256: string }): { row: KbFileRow; duplicate: boolean } {
+    const existing = this.db.prepare('SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE owner = ? AND sha256 = ?').get(input.owner, input.sha256) as unknown as KbFileRow | undefined
+    if (existing) return { row: existing, duplicate: true }
+    const id = 'f' + randomUUID().replace(/-/g, '').slice(0, 11)
+    this.db.prepare(`INSERT INTO kb_files (id, owner, project_id, name, mime, size, sha256, status, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+      .run(id, input.owner, input.project_id, input.name, input.mime, input.bytes.length, input.sha256, input.bytes, now())
+    return { row: this.getKbFile(id)!, duplicate: false }
+  }
+
+  getKbFile(id: string): KbFileRow | undefined {
+    return this.db.prepare('SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE id = ?').get(id) as unknown as KbFileRow | undefined
+  }
+
+  getKbBytes(id: string): Uint8Array | null {
+    const r = this.db.prepare('SELECT bytes FROM kb_files WHERE id = ?').get(id) as { bytes: Uint8Array } | undefined
+    return r ? new Uint8Array(r.bytes) : null
+  }
+
+  listKbFiles(owner: string, projectId?: string | null): KbFileRow[] {
+    if (projectId === undefined) return this.db.prepare('SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE owner = ? ORDER BY created_at DESC').all(owner) as unknown as KbFileRow[]
+    return this.db.prepare('SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE owner = ? AND project_id IS ? ORDER BY created_at DESC').all(owner, projectId) as unknown as KbFileRow[]
+  }
+
+  /** 未处理完的资料（启动时继续处理）。 */
+  listKbUnfinished(): KbFileRow[] {
+    return this.db.prepare(`SELECT id, owner, project_id, name, mime, size, sha256, status, note, pages, chunks, embedded, doi, pmid, created_at FROM kb_files WHERE status IN ('pending', 'extracting', 'embedding') OR (status = 'ready' AND embedded < chunks) ORDER BY created_at`).all() as unknown as KbFileRow[]
+  }
+
+  updateKbFile(id: string, patch: Partial<Pick<KbFileRow, 'status' | 'note' | 'pages' | 'chunks' | 'embedded' | 'doi' | 'pmid' | 'project_id' | 'name'>>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    if (keys.length === 0) return
+    this.db.prepare(`UPDATE kb_files SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string | number | null), id)
+  }
+
+  deleteKbFile(id: string): void {
+    this.db.prepare('DELETE FROM kb_fts WHERE chunk_id IN (SELECT id FROM kb_chunks WHERE file_id = ?)').run(id)
+    this.db.prepare('DELETE FROM kb_files WHERE id = ?').run(id)
+  }
+
+  /** 写入一份资料的全部文字块（替换旧的）。 */
+  putKbChunks(file: { id: string; owner: string }, chunks: Array<{ page: number; text: string }>): void {
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM kb_fts WHERE chunk_id IN (SELECT id FROM kb_chunks WHERE file_id = ?)').run(file.id)
+      this.db.prepare('DELETE FROM kb_chunks WHERE file_id = ?').run(file.id)
+      const ins = this.db.prepare('INSERT INTO kb_chunks (id, file_id, owner, seq, page, text) VALUES (?, ?, ?, ?, ?, ?)')
+      const fts = this.db.prepare('INSERT INTO kb_fts (chunk_id, owner, text) VALUES (?, ?, ?)')
+      chunks.forEach((c, i) => {
+        const id = `${file.id}-${i}`
+        ins.run(id, file.id, file.owner, i, c.page, c.text)
+        fts.run(id, file.owner, c.text)
+      })
+      this.db.exec('COMMIT')
+    } catch (err) { this.db.exec('ROLLBACK'); throw err }
+  }
+
+  /** 还没向量化的块。 */
+  kbChunksToEmbed(fileId: string, limit: number): Array<{ id: string; text: string }> {
+    return this.db.prepare('SELECT id, text FROM kb_chunks WHERE file_id = ? AND embedding IS NULL ORDER BY seq LIMIT ?').all(fileId, limit) as Array<{ id: string; text: string }>
+  }
+
+  setKbEmbedding(chunkId: string, vector: Float32Array): void {
+    this.db.prepare('UPDATE kb_chunks SET embedding = ? WHERE id = ?').run(new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength), chunkId)
+  }
+
+  countKbEmbedded(fileId: string): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM kb_chunks WHERE file_id = ? AND embedding IS NOT NULL').get(fileId) as { n: number }).n)
+  }
+
+  /** 读一份资料的文字（按页范围），kb_read 用。 */
+  kbText(fileId: string, fromPage = 1, toPage = Number.MAX_SAFE_INTEGER): Array<{ page: number; text: string }> {
+    return this.db.prepare('SELECT page, text FROM kb_chunks WHERE file_id = ? AND page BETWEEN ? AND ? ORDER BY seq').all(fileId, fromPage, toPage) as Array<{ page: number; text: string }>
+  }
+
+  /** 关键词检索（trigram；1–2 个字退回 LIKE），按 bm25 排序。 */
+  kbKeywordSearch(owner: string, query: string, limit: number, fileIds?: string[]): KbChunkHit[] {
+    const q = query.trim()
+    if (!q) return []
+    const scope = fileIds ? ` AND c.file_id IN (${fileIds.map(() => '?').join(',') || "''"})` : ''
+    const select = `SELECT c.id AS chunk_id, c.file_id, f.name AS file_name, c.page, c.text, f.doi, f.pmid`
+    let rows: KbChunkHit[]
+    const terms = kbQueryTerms(q)
+    if (terms.length > 0) {
+      const match = terms.map(t => `"${t.replace(/"/g, '""')}"`).join(' OR ')
+      rows = this.db.prepare(`${select}, -bm25(kb_fts) AS score FROM kb_fts JOIN kb_chunks c ON c.id = kb_fts.chunk_id JOIN kb_files f ON f.id = c.file_id
+        WHERE kb_fts.owner = ? AND kb_fts MATCH ?${scope} ORDER BY bm25(kb_fts) LIMIT ?`).all(owner, match, ...(fileIds ?? []), limit) as never
+    } else {
+      const like = `%${q.replace(/[%_\\]/g, m => '\\' + m)}%`
+      rows = this.db.prepare(`${select}, 1.0 AS score FROM kb_chunks c JOIN kb_files f ON f.id = c.file_id
+        WHERE c.owner = ? AND c.text LIKE ? ESCAPE '\\'${scope} ORDER BY c.file_id, c.seq LIMIT ?`).all(owner, like, ...(fileIds ?? []), limit) as never
+    }
+    return rows
+  }
+
+  /** 向量检索：按用户（和资料范围）取出所有向量算余弦（个人资料库规模够用；大了再上 sqlite-vec）。 */
+  kbVectorSearch(owner: string, query: Float32Array, limit: number, fileIds?: string[]): KbChunkHit[] {
+    const scope = fileIds ? ` AND c.file_id IN (${fileIds.map(() => '?').join(',') || "''"})` : ''
+    const rows = this.db.prepare(`SELECT c.id AS chunk_id, c.file_id, f.name AS file_name, c.page, c.text, f.doi, f.pmid, c.embedding
+      FROM kb_chunks c JOIN kb_files f ON f.id = c.file_id WHERE c.owner = ? AND c.embedding IS NOT NULL${scope}`).all(owner, ...(fileIds ?? [])) as unknown as Array<KbChunkHit & { embedding: Uint8Array }>
+    const scored = rows.map(r => {
+      const v = new Float32Array(new Uint8Array(r.embedding).buffer)
+      let dot = 0
+      for (let i = 0; i < v.length && i < query.length; i++) dot += v[i]! * query[i]!
+      const { embedding: _e, ...hit } = r
+      return { ...hit, score: dot }
+    })
+    return scored.sort((a, b) => b.score - a.score).slice(0, limit)
   }
 
   // —— 项目（文件夹） ——
@@ -761,4 +920,22 @@ function snippetOf(title: string, body: string, q: string): string {
   const start = Math.max(0, at - 30)
   const end = Math.min(body.length, at + q.length + 30)
   return `${start > 0 ? '…' : ''}${body.slice(start, at)}[${body.slice(at, at + q.length)}]${body.slice(at + q.length, end)}${end < body.length ? '…' : ''}`.replace(/\s+/g, ' ')
+}
+
+const KB_STOPWORDS = new Set(('the and for with how does did what which who whom when where why are was were has have had not but from into than that this these those there their they them then also can could would should may might will about after before over under between during within without among per its our your you any all more most much many other such only very just been being is of to in on at by or as an a vs versus').split(' '))
+
+/**
+ * 资料库关键词检索的查询词：自然语言问题拆成英文词（≥3 字符，去停用词）与中文三字片段，用 OR 连接交给 FTS5（trigram）按 bm25 排序。
+ * 整句当短语匹配几乎永远命中不了。
+ */
+export function kbQueryTerms(query: string): string[] {
+  const out = new Set<string>()
+  for (const m of query.matchAll(/[A-Za-z0-9\u00C0-\u024F][A-Za-z0-9\u00C0-\u024F\-/.]*[A-Za-z0-9\u00C0-\u024F]|[\u3400-\u9fff]+/g)) {
+    const t = m[0]
+    if (/[\u3400-\u9fff]/.test(t)) {
+      if (t.length <= 3) { if (t.length === 3) out.add(t); continue }
+      for (let i = 0; i + 3 <= t.length; i++) out.add(t.slice(i, i + 3))
+    } else if (t.length >= 3 && !KB_STOPWORDS.has(t.toLowerCase())) out.add(t)
+  }
+  return [...out].slice(0, 48)
 }

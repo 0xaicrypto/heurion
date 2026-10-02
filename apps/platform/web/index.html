@@ -24,7 +24,7 @@
     <div class="nav-search"><input type="search" id="docSearch" placeholder="搜索文档（标题与正文）" autocomplete="off"></div>
     <div class="nav-label"><span>文档</span><button class="nav-add" id="newProject" title="新建项目（文件夹）">＋项目</button></div>
     <ul class="doclist" id="docList"></ul>
-    <button class="nav-trash" id="trashBtn" title="回收站：删除的文档保留 30 天">回收站</button>
+    <div class="nav-foot"><button class="nav-trash" id="libraryBtn" title="参考资料库：上传论文、指南，AI 写作时检索">参考资料库</button><button class="nav-trash" id="trashBtn" title="回收站：删除的文档保留 30 天">回收站</button></div>
     <div class="user">
       <button id="userButton" class="user-button" aria-haspopup="menu" title="账户">
         <span class="avatar" id="userAvatar"></span>
@@ -153,9 +153,11 @@
       </div>
       <div class="log" id="chatLog"></div>
       <div class="composer">
+        <div class="kb-picked" id="kbPicked" hidden></div>
         <textarea id="chatInput" rows="3" placeholder="让 Heurion 修改文档，例如：在方法部分补充纳入标准，并引用相关 RCT（⌘↩ 发送）"></textarea>
         <div class="row">
           <label class="toggle" title="AI 的修改作为待采纳修订，由你逐条采纳"><input type="checkbox" id="suggestMode"> 修订模式</label>
+          <button class="quiet small-btn" id="kbPickBtn" title="选资料库里的资料，让 AI 依据它们写">＋ 引用资料</button>
           <span class="grow"></span>
           <button id="cancelBtn" disabled>停止</button>
           <button id="sendBtn" class="ai" disabled>发送</button>

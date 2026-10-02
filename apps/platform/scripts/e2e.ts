@@ -132,6 +132,20 @@ check('导出：未改动的块原样写回', xml.includes(para('研究背景', 
   check('撤销本轮：恢复到该回合之前', changed !== before && reverted === before, `${summary(t7)} · 撤销 ${r.changes} 处`)
 }
 
+// —— 7b. 参考资料库：对话里选中资料，AI 检索并依据它写、标明出处 ——
+{
+  const marker = `${(Date.now() % 900) + 100}`
+  const form = new FormData()
+  form.append('file', new Blob([`# 本院心衰门诊年报（2025）\n\n2025 年本院心衰门诊随访 1${marker} 例，射血分数降低的心衰患者 SGLT2 抑制剂使用率为 61.3%，较 2024 年提高 18 个百分点。\n\n主要障碍是生殖器感染顾虑与医保报销限制。`], { type: 'text/markdown' }), `e2e-门诊年报-${marker}.md`)
+  const [file] = await api<any[]>('/api/kb', { method: 'POST', body: form })
+  for (let i = 0; i < 20 && (await api<any[]>('/api/kb')).find(f => f.id === file.id)?.status !== 'ready'; i++) await new Promise(r => setTimeout(r, 500))
+  const kbDoc = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 资料库', markdown: '# 本院现状\n\n待补充。' }) })
+  const t = await turn(`/api/docs/${kbDoc.id}/chat`, { message: '依据我选的资料，把「本院现状」下的「待补充」改写成一段话，写出门诊例数和 SGLT2 抑制剂使用率，并注明数据来源。', kb_files: [file.id] })
+  const md = await api<string>(`/api/docs/${kbDoc.id}/export.md`)
+  check('资料库：AI 检索选中资料并据此写作', t.calls.some(c => c === 'kb_search' || c === 'kb_read') && md.includes('61.3') && md.includes(`1${marker}`), `${summary(t)} · 调用 ${t.calls.filter(c => c.startsWith('kb_')).join('、') || '无'}`)
+  await api(`/api/kb/${file.id}`, { method: 'DELETE' })
+}
+
 // —— 8. 论断核对：故意写错的论断被标出 ——
 {
   const wrong = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'e2e 论断核对', markdown: '# 证据\n\n占位。' }) })

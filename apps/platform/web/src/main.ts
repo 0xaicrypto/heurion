@@ -7,6 +7,7 @@ import { initUserMenu, showAuthScreen, signOut, storedToken, type Me } from './a
 import { DeckView } from './deck.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
+import { initLibrary } from './library.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 
 const TOKEN = storedToken()
@@ -180,6 +181,7 @@ $('newProject').onclick = async () => {
 }
 
 $('trashBtn').onclick = () => void openTrash()
+const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e))
 
 async function openTrash(): Promise<void> {
   const rows = await api<any[]>('/api/trash')
@@ -888,7 +890,7 @@ async function send(): Promise<void> {
   if (!text || !session) return
   $<HTMLTextAreaElement>('chatInput').value = ''
   try {
-    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked }) })
+    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked() }) })
   } catch (err) {
     showNotice((err as Error).message, true)
   }
