@@ -159,6 +159,41 @@ function patchShape(src: string, shape: PMNode, before: PMNode | undefined, numb
   return xml
 }
 
+/**
+ * 表格的 a:tbl。tblPr / 列宽 / 行高可沿用原文件（导入的表格增删行列后重建时），否则平分形状的宽高。
+ */
+function tableXml(shape: PMNode, numbers: Map<string, number>, from?: { tblPr?: string; grid?: string[]; rowHeights?: number[] }): string {
+  const a = shape.attrs
+  const rows: PMNode[] = []
+  shape.firstChild?.forEach(r => rows.push(r))
+  const cols = rows[0]?.childCount ?? 1
+  const grid = from?.grid && from.grid.length === cols ? from.grid : Array.from({ length: cols }, () => String(Math.round((a.w as number) / cols)))
+  const avgH = Math.round((a.h as number) / Math.max(1, rows.length))
+  const tr = rows.map((r, ri) => {
+    let cells = ''
+    r.forEach(cell => {
+      let paras = ''
+      cell.forEach(p => { paras += paragraphXml(p, numbers) })
+      const tcpr = cell.attrs.tcpr ? stripNs(cell.attrs.tcpr as string) : '<a:tcPr/>'
+      cells += `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>${paras || '<a:p/>'}</a:txBody>${tcpr}</a:tc>`
+    })
+    return `<a:tr h="${from?.rowHeights?.[ri] ?? from?.rowHeights?.at(-1) ?? avgH}">${cells}</a:tr>`
+  }).join('')
+  return `<a:tbl>${from?.tblPr ?? '<a:tblPr firstRow="1" bandRow="1"/>'}<a:tblGrid>${grid.map(w => `<a:gridCol w="${w}"/>`).join('')}</a:tblGrid>${tr}</a:tbl>`
+}
+
+/** 导入的表格增删了行列：保留原 graphicFrame（位置、名字、样式 tblPr、行高、列宽），重建 a:tbl。 */
+function rebuildTable(src: string, shape: PMNode, numbers: Map<string, number>): string {
+  const tbl = /<a:tbl>[\s\S]*<\/a:tbl>/.exec(src)
+  if (!tbl) return src
+  const tblPr = element(tbl[0], 'a:tblPr') ?? undefined
+  const grid = [...tbl[0].matchAll(/<a:gridCol\b[^>]*\bw="(\d+)"/g)].map(m => m[1]!)
+  const rowHeights = [...tbl[0].matchAll(/<a:tr\b[^>]*\bh="(\d+)"/g)].map(m => Number(m[1]))
+  return src.replace(tbl[0], tableXml(shape, numbers, { tblPr, grid, rowHeights }))
+}
+
+const tableShape = (n: PMNode) => { const t = n.firstChild; return t ? [t.childCount, t.firstChild?.childCount ?? 0].join('×') : '' }
+
 function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, rels: SlideRels): string {
   const a = shape.attrs
   const name = esc(String(a.name || (a.ph ? 'Placeholder' : 'TextBox')))
@@ -169,23 +204,7 @@ function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, 
   }
   if (a.kind === 'table') {
     // 新建的表格：p:graphicFrame + a:tbl（列宽平分，行高平分）
-    const table = shape.firstChild
-    const rows: PMNode[] = []
-    table?.forEach(r => rows.push(r))
-    const cols = rows[0]?.childCount ?? 1
-    const colW = Math.round((a.w as number) / cols)
-    const rowH = Math.round((a.h as number) / Math.max(1, rows.length))
-    const tr = rows.map(r => {
-      let cells = ''
-      r.forEach(cell => {
-        let paras = ''
-        cell.forEach(p => { paras += paragraphXml(p, numbers) })
-        const tcpr = cell.attrs.tcpr ? stripNs(cell.attrs.tcpr as string) : '<a:tcPr/>'
-        cells += `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>${paras || '<a:p/>'}</a:txBody>${tcpr}</a:tc>`
-      })
-      return `<a:tr h="${rowH}">${cells}</a:tr>`
-    }).join('')
-    return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"/><a:tblGrid>${Array.from({ length: cols }, () => `<a:gridCol w="${colW}"/>`).join('')}</a:tblGrid>${tr}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`
+    return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">${tableXml(shape, numbers)}</a:graphicData></a:graphic></p:graphicFrame>`
   }
   if (!a.ph && (a.geom || (a.fill && a.fill !== 'none'))) {
     // 色块 / 标题条 / 卡片：几何 + 填充，文字居中
@@ -387,6 +406,7 @@ function shapesXml(slide: PMNode, head: string[], nextId: number, input: PptxExp
     const src = input.src(shape.attrs.id as string)
     const old = prev.get(shape.attrs.id as string)
     if (src && old && old.eq(shape)) out += src
+    else if (src && old && shape.attrs.kind === 'table' && tableShape(old) !== tableShape(shape)) out += rebuildTable(patchShape(src, shape, old, numbers), shape, numbers)
     else if (src) out += patchShape(src, shape, old, numbers)
     else out += newShapeXml(shape, id++, numbers, rels)
   })

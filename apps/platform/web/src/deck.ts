@@ -19,7 +19,11 @@ export interface DeckViewOptions {
   onEdit: (ops: Array<Record<string, unknown>>, baseRev: number) => Promise<boolean>
   /** 选中的形状变化（工具条据此更新）。 */
   onSelectShape?: (shapeId: string | null) => void
+  /** 给用户的提示（并发修改等）。 */
+  onNotice?: (message: string) => void
 }
+
+type Box = { l: number; t: number; w: number; h: number }
 
 type DragKind = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
@@ -39,9 +43,16 @@ export class DeckView {
   private pIndex = 0
   /** 段落模型（形状 id#段落序号）：选区换算引用文字用。 */
   private paras = new Map<string, PMJson>()
-  private selected: string | null = null
-  private drag: { kind: DragKind; id: string; x: number; y: number; box: { l: number; t: number; w: number; h: number }; ratio: number | null; moved: boolean } | null = null
-  private nudge: { id: string; dx: number; dy: number; timer: number } | null = null
+  /** 选中的形状（同一页；第一个是主选中，工具条按它显示）。 */
+  private selected: string[] = []
+  /** 最近点过的表格单元格（增删行列用）。 */
+  private cell: { shapeId: string; r: number; c: number } | null = null
+  private drag: {
+    kind: DragKind; ids: string[]; x: number; y: number; boxes: Map<string, Box>; union: Box; ratio: number | null; moved: boolean
+    /** 吸附线（页面坐标 px）与开始时的形状快照（提交时判断并发修改）。 */
+    lines: { xs: number[]; ys: number[] }; slideEl: HTMLElement; snapshot: Map<string, string>; last: Map<string, Box>
+  } | null = null
+  private nudge: { ids: string[]; dx: number; dy: number; timer: number } | null = null
   private width = 760
   /** 正在画布上直接改字（形状 / 表格单元格 / 备注）。 */
   private editing: { el: HTMLElement; commit: () => Promise<void>; cancel: () => void } | null = null
@@ -94,7 +105,7 @@ export class DeckView {
   private render(): void {
     if (!this.data) return
     // 正在改字时不重绘（会冲掉输入）；改完再按最新数据重绘
-    if (this.editing) { this.renderPending = true; return }
+    if (this.editing || this.drag?.moved) { this.renderPending = true; return }
     const slides = this.data.doc.content ?? []
     // 引用编号：全文首次出现顺序
     this.numbers.clear()
@@ -118,21 +129,30 @@ export class DeckView {
         <div class="slide-notes"><span class="notes-label">备注</span><div class="notes-text${notes && this.text(notes) ? '' : ' empty'}" data-notes="${esc(slide.attrs?.id)}" title="双击编辑演讲者备注">${notes && this.text(notes) ? esc(this.text(notes)) : '双击添加演讲者备注'}</div></div>
       </div>`
     }).join('')
-    // 选中的形状被删了（别人或 AI 删的）：取消选中
-    if (this.selected && !this.selection()) { this.selected = null; this.opts.onSelectShape?.(null) }
+    // 选中的形状被删了（别人或 AI 删的）：从选中里去掉
+    const alive = this.selected.filter(id => this.findShape(id))
+    if (alive.length !== this.selected.length) { this.selected = alive; this.opts.onSelectShape?.(alive[0] ?? null) }
     this.drawSelection()
   }
 
-  // —— 画布：选中、移动、缩放、微调、删除 ——
+  // —— 画布：选中（Shift 多选）、移动（吸附对齐）、缩放、微调、删除 ——
 
-  /** 当前选中的形状与所在页（工具条用）。 */
+  /** 主选中的形状与所在页（工具条用）。 */
   selection(): { shape: PMJson; slide: PMJson } | null {
-    if (!this.selected || !this.data) return null
+    if (!this.selected[0] || !this.data) return null
     for (const slide of this.data.doc.content ?? []) {
-      const shape = slide.content?.find(c => c.attrs?.id === this.selected)
+      const shape = slide.content?.find(c => c.attrs?.id === this.selected[0])
       if (shape) return { shape, slide }
     }
     return null
+  }
+
+  /** 全部选中的形状 id。 */
+  selectionIds(): string[] { return [...this.selected] }
+
+  /** 最近点过的表格单元格（选中的是表格时）。 */
+  tableCell(): { shapeId: string; r: number; c: number } | null {
+    return this.cell && this.cell.shapeId === this.selected[0] ? this.cell : null
   }
 
   /** 视口里当前的页（没选中形状时，插入 / 背景作用在这一页）。 */
@@ -153,63 +173,136 @@ export class DeckView {
     return this.opts.onEdit(ops, this.rev)
   }
 
-  /** 选中框：顶部移动手柄 + 8 个缩放控制点；框本身不挡鼠标（形状里的文字仍可选中评论）。 */
+  private shapeEl(id: string): HTMLElement | null {
+    return this.mount.querySelector<HTMLElement>(`.slide .shape[data-id="${CSS.escape(id)}"]`)
+  }
+
+  private static boxOf(el: HTMLElement): Box {
+    return { l: parseFloat(el.style.left), t: parseFloat(el.style.top), w: parseFloat(el.style.width), h: parseFloat(el.style.height) }
+  }
+
+  /** 选中框：每个选中的形状一个框（框不挡鼠标，形状里的文字仍可选中评论）；单选时才有缩放控制点。 */
   private drawSelection(): void {
-    this.mount.querySelectorAll('.sel-box').forEach(el => el.remove())
-    if (!this.selected) return
-    const el = this.mount.querySelector<HTMLElement>(`.slide .shape[data-id="${CSS.escape(this.selected)}"]`)
-    if (!el) return
-    // 选中框画在页面外层（页面会裁掉超出部分）：形状超出页面时控制点仍可见、可拖
-    const slideEl = el.parentElement!
-    const ox = slideEl.offsetLeft
-    const oy = slideEl.offsetTop
-    const box = document.createElement('div')
-    box.className = 'sel-box'
-    box.dataset.ox = String(ox)
-    box.dataset.oy = String(oy)
-    box.style.cssText = `left:${ox + parseFloat(el.style.left)}px;top:${oy + parseFloat(el.style.top)}px;width:${el.style.width};height:${el.style.height};${el.style.transform ? `transform:${el.style.transform};` : ''}`
-    box.innerHTML = '<div class="sel-grip" data-drag="move" title="拖动移动；方向键微调（Shift 每次 10pt）；Delete 删除；双击形状改字">⠿</div>'
-      + (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map(h => `<div class="sel-handle h-${h}" data-drag="${h}"></div>`).join('')
-    // 手柄放在形状上方；贴着页面上沿时放下方，都放不下时放在框内（页面会裁掉超出部分）
-    box.querySelector<HTMLElement>('.sel-grip')!.classList.add(oy + parseFloat(el.style.top) >= 26 ? 'above' : 'inside')
-    slideEl.parentElement!.appendChild(box)
+    this.mount.querySelectorAll('.sel-box, .guide').forEach(el => el.remove())
+    const single = this.selected.length === 1
+    for (const id of this.selected) {
+      const el = this.shapeEl(id)
+      if (!el) continue
+      // 选中框画在页面外层（页面会裁掉超出部分）：形状超出页面时控制点仍可见、可拖
+      const slideEl = el.parentElement!
+      const ox = slideEl.offsetLeft
+      const oy = slideEl.offsetTop
+      const box = document.createElement('div')
+      box.className = `sel-box${single ? '' : ' multi'}`
+      box.dataset.for = id
+      box.dataset.ox = String(ox)
+      box.dataset.oy = String(oy)
+      box.style.cssText = `left:${ox + parseFloat(el.style.left)}px;top:${oy + parseFloat(el.style.top)}px;width:${el.style.width};height:${el.style.height};${el.style.transform ? `transform:${el.style.transform};` : ''}`
+      box.innerHTML = `<div class="sel-grip" data-drag="move" title="拖动移动${single ? '' : '（全部选中的形状）'}；方向键微调（Shift 每次 10pt）；按住 Alt 拖动不吸附；Delete 删除；Shift+单击多选；双击形状改字">⠿</div>`
+        + (single ? (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map(h => `<div class="sel-handle h-${h}" data-drag="${h}"></div>`).join('') : '')
+      box.querySelector<HTMLElement>('.sel-grip')!.classList.add(oy + parseFloat(el.style.top) >= 26 ? 'above' : 'inside')
+      slideEl.parentElement!.appendChild(box)
+    }
+  }
+
+  /** 吸附线：页面的边与中线、同页其他形状的边与中线（px，页面坐标）。 */
+  private snapLines(slideEl: HTMLElement, exclude: Set<string>): { xs: number[]; ys: number[] } {
+    const W = slideEl.clientWidth
+    const H = slideEl.clientHeight
+    const xs = [0, W / 2, W]
+    const ys = [0, H / 2, H]
+    for (const el of slideEl.querySelectorAll<HTMLElement>(':scope > .shape[data-id]')) {
+      if (exclude.has(el.dataset.id!)) continue
+      const b = DeckView.boxOf(el)
+      xs.push(b.l, b.l + b.w / 2, b.l + b.w)
+      ys.push(b.t, b.t + b.h / 2, b.t + b.h)
+    }
+    return { xs, ys }
+  }
+
+  /** 一组边里离吸附线最近的（6px 内）：返回要挪的距离与吸到的线。 */
+  private static snap(edges: number[], lines: number[]): { delta: number; line: number } | null {
+    let best: { delta: number; line: number } | null = null
+    for (const e of edges) for (const l of lines) {
+      const d = l - e
+      if (Math.abs(d) <= 6 && (!best || Math.abs(d) < Math.abs(best.delta))) best = { delta: d, line: l }
+    }
+    return best
+  }
+
+  private showGuides(slideEl: HTMLElement, x: number | null, y: number | null): void {
+    this.mount.querySelectorAll('.guide').forEach(el => el.remove())
+    const wrap = slideEl.parentElement!
+    const add = (cls: string, style: string) => { const g = document.createElement('div'); g.className = `guide ${cls}`; g.style.cssText = style; wrap.appendChild(g) }
+    if (x !== null) add('v', `left:${slideEl.offsetLeft + x}px;top:${slideEl.offsetTop}px;height:${slideEl.clientHeight}px`)
+    if (y !== null) add('h', `top:${slideEl.offsetTop + y}px;left:${slideEl.offsetLeft}px;width:${slideEl.clientWidth}px`)
   }
 
   private startDrag(e: PointerEvent): void {
     const handle = (e.target as HTMLElement).closest('[data-drag]') as HTMLElement | null
-    if (!handle || !this.selected || e.button !== 0) return
-    const el = this.mount.querySelector<HTMLElement>(`.slide .shape[data-id="${CSS.escape(this.selected)}"]`)
-    if (!el) return
+    if (!handle || this.selected.length === 0 || e.button !== 0) return
+    const els = this.selected.map(id => [id, this.shapeEl(id)] as const).filter((x): x is readonly [string, HTMLElement] => !!x[1])
+    if (els.length === 0) return
     e.preventDefault()
     handle.setPointerCapture(e.pointerId)
-    const box = { l: parseFloat(el.style.left), t: parseFloat(el.style.top), w: parseFloat(el.style.width), h: parseFloat(el.style.height) }
+    const kind = handle.dataset.drag as DragKind
+    const boxes = new Map(els.map(([id, el]) => [id, DeckView.boxOf(el)]))
+    const all = [...boxes.values()]
+    const union = { l: Math.min(...all.map(b => b.l)), t: Math.min(...all.map(b => b.t)), w: 0, h: 0 }
+    union.w = Math.max(...all.map(b => b.l + b.w)) - union.l
+    union.h = Math.max(...all.map(b => b.t + b.h)) - union.t
+    const first = els[0]![1]
     // 图片拖角时保持比例
-    const ratio = el.classList.contains('shape-image') && handle.dataset.drag!.length === 2 ? box.w / box.h : null
-    this.drag = { kind: handle.dataset.drag as DragKind, id: this.selected, x: e.clientX, y: e.clientY, box, ratio, moved: false }
+    const ratio = kind !== 'move' && first.classList.contains('shape-image') && kind.length === 2 ? union.w / union.h : null
+    const slideEl = first.parentElement!
+    const snapshot = new Map(els.map(([id]) => [id, JSON.stringify(this.findShape(id)?.attrs ?? {})]))
+    this.drag = { kind, ids: els.map(([id]) => id), x: e.clientX, y: e.clientY, boxes, union, ratio, moved: false, lines: this.snapLines(slideEl, new Set(this.selected)), slideEl, snapshot, last: boxes }
   }
 
   private moveDrag(e: PointerEvent): void {
     const d = this.drag
     if (!d) return
-    const dx = e.clientX - d.x
-    const dy = e.clientY - d.y
+    let dx = e.clientX - d.x
+    let dy = e.clientY - d.y
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 2) return
     d.moved = true
-    this.placeLive(d.id, this.dragRect(d, dx, dy))
+    let gx: number | null = null
+    let gy: number | null = null
+    if (d.kind === 'move') {
+      if (!e.altKey) {
+        const u = d.union
+        const sx = DeckView.snap([u.l + dx, u.l + dx + u.w / 2, u.l + dx + u.w], d.lines.xs)
+        const sy = DeckView.snap([u.t + dy, u.t + dy + u.h / 2, u.t + dy + u.h], d.lines.ys)
+        if (sx) { dx += sx.delta; gx = sx.line }
+        if (sy) { dy += sy.delta; gy = sy.line }
+      }
+      d.last = new Map([...d.boxes].map(([id, b]) => [id, { ...b, l: b.l + dx, t: b.t + dy }]))
+    } else {
+      const r = this.dragRect(d, dx, dy)
+      if (!e.altKey && !d.ratio) {
+        // 缩放时只吸附正在拖的那条边
+        const sx = d.kind.includes('e') ? DeckView.snap([r.l + r.w], d.lines.xs) : d.kind.includes('w') ? DeckView.snap([r.l], d.lines.xs) : null
+        const sy = d.kind.includes('s') ? DeckView.snap([r.t + r.h], d.lines.ys) : d.kind.includes('n') ? DeckView.snap([r.t], d.lines.ys) : null
+        if (sx) { if (d.kind.includes('e')) r.w += sx.delta; else { r.l += sx.delta; r.w -= sx.delta } gx = sx.line }
+        if (sy) { if (d.kind.includes('s')) r.h += sy.delta; else { r.t += sy.delta; r.h -= sy.delta } gy = sy.line }
+      }
+      d.last = new Map([[d.ids[0]!, r]])
+    }
+    for (const [id, b] of d.last) this.placeLive(id, b)
+    this.showGuides(d.slideEl, gx, gy)
   }
 
-  /** 拖动 / 微调过程中就地移动形状与选中框（框在页面外层，要加页面偏移）。 */
-  private placeLive(id: string, r: { l: number; t: number; w: number; h: number }): void {
-    const el = this.mount.querySelector<HTMLElement>(`.slide .shape[data-id="${CSS.escape(id)}"]`)
+  /** 拖动 / 微调过程中就地移动形状与它的选中框（框在页面外层，要加页面偏移）。 */
+  private placeLive(id: string, r: Box): void {
+    const el = this.shapeEl(id)
     if (el) Object.assign(el.style, { left: `${r.l}px`, top: `${r.t}px`, width: `${r.w}px`, height: `${r.h}px` })
-    const box = this.mount.querySelector<HTMLElement>('.sel-box')
+    const box = this.mount.querySelector<HTMLElement>(`.sel-box[data-for="${CSS.escape(id)}"]`)
     if (box) Object.assign(box.style, { left: `${r.l + Number(box.dataset.ox)}px`, top: `${r.t + Number(box.dataset.oy)}px`, width: `${r.w}px`, height: `${r.h}px` })
   }
 
-  private dragRect(d: NonNullable<DeckView['drag']>, dx: number, dy: number): { l: number; t: number; w: number; h: number } {
+  private dragRect(d: NonNullable<DeckView['drag']>, dx: number, dy: number): Box {
     const min = 10 * this.scale()
-    let { l, t, w, h } = d.box
-    if (d.kind === 'move') return { l: l + dx, t: t + dy, w, h }
+    let { l, t, w, h } = d.boxes.get(d.ids[0]!)!
     if (d.kind.includes('e')) w = Math.max(min, w + dx)
     if (d.kind.includes('s')) h = Math.max(min, h + dy)
     if (d.kind.includes('w')) { const nw = Math.max(min, w - dx); l += w - nw; w = nw }
@@ -222,48 +315,64 @@ export class DeckView {
     return { l, t, w, h }
   }
 
-  private async endDrag(e: PointerEvent): Promise<void> {
+  private async endDrag(_e: PointerEvent): Promise<void> {
     const d = this.drag
     if (!d) return
     this.drag = null
+    this.mount.querySelectorAll('.guide').forEach(el => el.remove())
     if (!d.moved) return
-    const r = this.dragRect(d, e.clientX - d.x, e.clientY - d.y)
     const k = this.scale()
-    const ok = await this.edit([{ op: 'set_xfrm', shape_id: d.id, x: Math.round(r.l / k), y: Math.round(r.t / k), w: Math.max(10, Math.round(r.w / k)), h: Math.max(10, Math.round(r.h / k)) }])
-    if (!ok) this.render() // 被拒（冲突等）：回到服务端的状态
+    // 拖动期间形状被删 / 被别人挪过：删了的跳过，挪过的以你的位置为准（都告诉用户）
+    const ops: Array<Record<string, unknown>> = []
+    let gone = 0
+    let moved = 0
+    for (const [id, r] of d.last) {
+      const now = this.findShape(id)
+      if (!now) { gone++; continue }
+      const before = JSON.parse(d.snapshot.get(id) ?? '{}')
+      if (['x', 'y', 'w', 'h'].some(key => before[key] !== now.attrs?.[key])) moved++
+      ops.push({ op: 'set_xfrm', shape_id: id, x: Math.round(r.l / k), y: Math.round(r.t / k), w: Math.max(10, Math.round(r.w / k)), h: Math.max(10, Math.round(r.h / k)) })
+    }
+    if (gone) this.opts.onNotice?.(`你拖动的形状里有 ${gone} 个刚被删除了，已跳过`)
+    if (moved) this.opts.onNotice?.('你拖动时 AI 也移动了这个形状，已以你的位置为准')
+    const ok = ops.length > 0 ? await this.edit(ops) : true
+    if (!ok || this.renderPending || ops.length === 0) { this.renderPending = false; this.render() } // 被拒或期间有更新：按服务端的状态重绘
   }
 
   private readonly onKey = (e: KeyboardEvent): void => {
-    if (!this.selected || !this.mount.isConnected) return
+    if (this.selected.length === 0 || !this.mount.isConnected) return
     const target = e.target as HTMLElement
     if (target.closest('input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"], .ProseMirror, .dialog')) return
-    if (e.key === 'Escape') { this.select(null); this.opts.onSelectShape?.(null); return }
+    if (e.key === 'Escape') { this.select([]); return }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault()
-      const id = this.selected
-      this.select(null)
-      this.opts.onSelectShape?.(null)
-      void this.edit([{ op: 'delete_shape', shape_id: id }])
+      const ids = [...this.selected]
+      this.select([])
+      void this.edit(ids.map(id => ({ op: 'delete_shape', shape_id: id })))
       return
     }
     const step = e.shiftKey ? 10 : 1
     const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key]
     if (!delta) return
     e.preventDefault()
-    // 连续按键先就地移动，停下 400ms 后合并成一个 set_xfrm
-    const n = this.nudge?.id === this.selected ? this.nudge : { id: this.selected, dx: 0, dy: 0, timer: 0 }
+    // 连续按键先就地移动，停下 400ms 后合并成一次提交（每个选中形状一个 set_xfrm）
+    const key = this.selected.join(',')
+    const n = this.nudge && this.nudge.ids.join(',') === key ? this.nudge : { ids: [...this.selected], dx: 0, dy: 0, timer: 0 }
     n.dx += delta[0]!
     n.dy += delta[1]!
     const k = this.scale()
-    const el = this.mount.querySelector<HTMLElement>(`.slide .shape[data-id="${CSS.escape(n.id)}"]`)
-    if (el) this.placeLive(n.id, { l: parseFloat(el.style.left) + delta[0]! * k, t: parseFloat(el.style.top) + delta[1]! * k, w: parseFloat(el.style.width), h: parseFloat(el.style.height) })
+    for (const id of n.ids) {
+      const el = this.shapeEl(id)
+      if (el) { const b = DeckView.boxOf(el); this.placeLive(id, { ...b, l: b.l + delta[0]! * k, t: b.t + delta[1]! * k }) }
+    }
     clearTimeout(n.timer)
     n.timer = window.setTimeout(() => {
       this.nudge = null
-      const sel = this.selection()
-      if (!sel) return
-      const a = sel.shape.attrs!
-      void this.edit([{ op: 'set_xfrm', shape_id: n.id, x: Math.round(a.x / EMU_PER_PT + n.dx), y: Math.round(a.y / EMU_PER_PT + n.dy) }])
+      const ops = n.ids.flatMap(id => {
+        const a = this.findShape(id)?.attrs
+        return a ? [{ op: 'set_xfrm', shape_id: id, x: Math.round(a.x / EMU_PER_PT + n.dx), y: Math.round(a.y / EMU_PER_PT + n.dy) }] : []
+      })
+      if (ops.length) void this.edit(ops)
     }, 400)
     this.nudge = n
   }
@@ -333,11 +442,17 @@ export class DeckView {
   private editShape(id: string, shapeEl: HTMLElement, shape: PMJson, at: MouseEvent): void {
     const container = (shapeEl.querySelector('.shape-text') as HTMLElement | null) ?? shapeEl
     const original = (shape.content ?? []).filter(p => p.type === 'paragraph').map(p => ({ text: modelText(p), lvl: p.attrs?.lvl ?? 0 }))
+    const snapshot = JSON.stringify(shape.content ?? [])
     this.beginEdit(container, 'true', async () => {
+      // 编辑期间这个形状被删了 / 被 AI 改了（数据已更新，只是没重绘）
+      const latest = this.findShape(id)
+      if (!latest) { this.opts.onNotice?.('你编辑的形状刚被删除了，修改没有保存'); return }
+      const changedMeanwhile = JSON.stringify(latest.content ?? []) !== snapshot
       const paragraphs = domParagraphs(container)
       const same = paragraphs.length === original.length && paragraphs.every((p, i) => p.text === original[i]!.text && p.lvl === original[i]!.lvl)
       if (same) return
-      await this.edit([{ op: 'set_paragraphs', shape_id: id, paragraphs }])
+      const ok = await this.edit([{ op: 'set_paragraphs', shape_id: id, paragraphs }])
+      if (ok && changedMeanwhile) this.opts.onNotice?.('你编辑时 AI 也改了这个形状，已以你的修改为准；AI 的版本可在「版本」里找回')
     }, at)
   }
 
@@ -376,7 +491,7 @@ export class DeckView {
     const fill = a.fill === 'none' ? 'background:transparent;border:0;' : a.fill ? `background:#${a.fill};border:0;` : ''
     const radius = a.geom === 'ellipse' ? 'border-radius:50%;' : a.geom === 'roundRect' ? `border-radius:${Math.min(a.w, a.h) / EMU_PER_PT * k * 0.16}px;` : ''
     this.pIndex = 0
-    const sel = this.selected === a.id ? ' selected' : ''
+    const sel = this.selected.includes(a.id) ? ' selected' : ''
     // 带几何 / 实心填充的文本框按色块显示（文字垂直居中，与导出的 anchor="ctr" 一致）
     const block = a.kind === 'text' && !a.ph && (a.geom || (a.fill && a.fill !== 'none'))
     const common = `class="shape shape-${block ? 'shape' : a.kind}${sel}" data-id="${esc(a.id)}"${suggest} style="${box}${fill}${radius}"`
@@ -431,6 +546,15 @@ export class DeckView {
 
   private reportSelection(e?: MouseEvent): void {
     if (this.editing) return // 改字时的选区不是评论选区
+    // Shift+单击形状是多选（浏览器会顺带把文字选区扩展过去，清掉）
+    const shiftTarget = e?.shiftKey ? (e.target as HTMLElement).closest('.slide .shape[data-id]') as HTMLElement | null : null
+    if (shiftTarget && this.selected[0] && this.shapeEl(this.selected[0])?.parentElement === shiftTarget.parentElement) {
+      getSelection()?.removeAllRanges()
+      const id = shiftTarget.dataset.id!
+      this.select(this.selected.includes(id) ? this.selected.filter(x => x !== id) : [...this.selected, id])
+      this.opts.onSelection(null)
+      return
+    }
     // 在选中框（手柄、控制点）上松开鼠标是拖动的结束，不是点空白处
     if ((e?.target as HTMLElement | undefined)?.closest?.('.sel-box')) return
     const sel = getSelection()
@@ -441,17 +565,20 @@ export class DeckView {
       // 单击形状：选中整个形状
       const target = e ? (e.target as HTMLElement).closest('.slide .shape[data-id]') as HTMLElement | null : null
       if (target && !(e!.target as HTMLElement).closest('mark.comment')) {
-        this.select(target.dataset.id!)
+        const id = target.dataset.id!
+        const td = (e!.target as HTMLElement).closest('td[data-r]') as HTMLElement | null
+        this.cell = td ? { shapeId: id, r: Number(td.dataset.r), c: Number(td.dataset.c) } : null
+        this.select([id])
         const r = target.getBoundingClientRect()
         // 评论按钮放在形状右上角（正上方留给移动手柄）
-        this.opts.onSelection({ node_id: target.dataset.id!, snippet: '', rect: { top: r.top, left: r.right - 100, width: 100 } })
+        this.opts.onSelection({ node_id: id, snippet: '', rect: { top: r.top, left: r.right - 100, width: 100 } })
       } else {
-        this.select(null)
+        this.select([])
         this.opts.onSelection(null)
       }
       return
     }
-    this.select(null)
+    this.select([])
     const rect = sel.getRangeAt(0).getBoundingClientRect()
     const at = { top: rect.top, left: rect.left, width: rect.width }
     const a = shapeOf(sel.anchorNode)
@@ -472,13 +599,13 @@ export class DeckView {
     this.opts.onSelection({ node_id: a.dataset.id!, snippet, paragraph: Number(p.dataset.p), range: { from, to }, rect: at })
   }
 
-  private select(id: string | null): void {
-    const changed = id !== this.selected
-    this.selected = id
+  private select(ids: string[]): void {
+    const changed = ids.join(',') !== this.selected.join(',')
+    this.selected = ids
     this.mount.querySelectorAll('.shape.selected').forEach(el => el.classList.remove('selected'))
-    if (id) this.mount.querySelector(`.slide .shape[data-id="${CSS.escape(id)}"]`)?.classList.add('selected')
+    for (const id of ids) this.shapeEl(id)?.classList.add('selected')
     this.drawSelection()
-    if (changed) this.opts.onSelectShape?.(id)
+    if (changed) this.opts.onSelectShape?.(ids[0] ?? null)
   }
 
   flash(ids: string[]): void {

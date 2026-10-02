@@ -283,3 +283,65 @@ describe('add_table：新建表格（人与 AI 同一套操作）', () => {
     try { t.edit([{ op: 'add_table', slide_id: sid, x: 0, y: 0, w: 300, rows: [['a', 'b'], ['c']] }]); throw new Error('应当拒绝') } catch (err) { expect((err as OpError).code).toBe('invalid_table') }
   })
 })
+
+describe('表格增删行列（人与 AI 同一套操作）', () => {
+  it('新建表格：插行沿用正文行格式、插列沿用相邻列；删行删列；不能删光', () => {
+    const t = deck()
+    const sid = t.slide(0).attrs.id as string
+    const id = t.edit([{ op: 'add_table', slide_id: sid, x: 60, y: 120, w: 600, rows: [['指标', 'A', 'B'], ['终点', '1', '2']] }]).results[0]!.ids[0]!
+    const grid = () => { const g: string[][] = []; t.shape(0, a => a.id === id).firstChild!.forEach(r => { const row: string[] = []; r.forEach(c => row.push(c.textContent)); g.push(row) }); return g }
+    t.edit([{ op: 'table_insert_rows', shape_id: id, at: 2, rows: [['安全性', '3', '4']] }])
+    t.edit([{ op: 'table_insert_cols', shape_id: id, at: 3, cells: ['P 值', '0.01', '0.2'] }])
+    expect(grid()).toEqual([['指标', 'A', 'B', 'P 值'], ['终点', '1', '2', '0.01'], ['安全性', '3', '4', '0.2']])
+    // 新行沿用正文行（不是表头）的格式：不加粗；新列表头格沿用表头：加粗
+    const table = t.shape(0, a => a.id === id).firstChild!
+    expect(table.child(2).child(0).firstChild!.firstChild!.marks.some(m => m.type.name === 'bold')).toBe(false)
+    expect(table.child(0).child(3).firstChild!.firstChild!.marks.some(m => m.type.name === 'bold')).toBe(true)
+    t.edit([{ op: 'table_delete_rows', shape_id: id, at: 1, count: 1 }, { op: 'table_delete_cols', shape_id: id, at: 1, count: 2 }])
+    expect(grid()).toEqual([['指标', 'P 值'], ['安全性', '0.2']])
+    try { t.edit([{ op: 'table_delete_rows', shape_id: id, at: 0, count: 2 }]); throw new Error('应当拒绝') } catch (err) { expect((err as OpError).code).toBe('invalid_table') }
+    expect((t.exported().text('ppt/slides/slide1.xml').match(/<a:gridCol /g) ?? []).length).toBe(2)
+  })
+
+  it('导入的表格增删行后导出：沿用原表格的 tblPr、列宽与行高，行数正确', async () => {
+    const { importPptx } = await import('../src/convert/pptx-import.ts')
+    const t = deck()
+    const sid = t.slide(0).attrs.id as string
+    t.edit([{ op: 'add_table', slide_id: sid, x: 60, y: 120, w: 600, rows: [['指标', 'A'], ['终点', '1']] }])
+    const bytes = exportPptx({ doc: t.doc(), baseline: null, pkg: t.store.getPackage(t.docId)!, src: () => null, citations: [] }).bytes
+    // 当作一份导入的 pptx：形状带原文
+    const imported = importPptx(bytes)
+    const docs = new Documents(new Store(':memory:'))
+    const ops = new OpService(docs)
+    const row = docs.create({ owner: 'u', title: 'x', kind: 'deck', content: imported.doc, source: 'import' })
+    docs.store.putNodeSrc(row.id, imported.src)
+    let tableId = ''
+    docs.get(row.id).child(0).forEach(s => { if (s.attrs.kind === 'table') tableId = s.attrs.id as string })
+    ops.edit({ doc_id: row.id, base_rev: 0, mode: 'apply', ops: [{ op: 'table_insert_rows', shape_id: tableId, at: 2, rows: [['安全性', '3']] }] }, { actor: 'user', turnId: null })
+    const out = unzipSync(exportPptx({ doc: docs.get(row.id), baseline: docs.versionDoc(row.id, 1), pkg: bytes, src: id => docs.store.getNodeSrc(row.id, id), citations: [] }).bytes)
+    const xml = strFromU8(out['ppt/slides/slide1.xml']!)
+    expect((xml.match(/<a:tr /g) ?? []).length).toBe(3)
+    expect(xml).toContain('安全性')
+    expect(xml).toContain('<a:tblPr firstRow="1" bandRow="1"/>')
+    expect(wellFormed(xml)).toEqual([])
+  })
+})
+
+describe('对齐与分布（人与 AI 同一套操作）', () => {
+  it('align_shapes：多个形状对齐选区、单个形状对齐页面；distribute_shapes 首尾不动中间等距', () => {
+    const t = deck()
+    const sid = t.slide(0).attrs.id as string
+    const add = (x: number, y: number, w: number) => t.edit([{ op: 'add_shape', slide_id: sid, markdown: '', x, y, w, h: 40, fill: 'accent' }]).results[0]!.ids[0]!
+    const a = add(100, 300, 50), b = add(220, 320, 100), c = add(600, 340, 80)
+    const at = (id: string) => t.shape(0, s => s.id === id).attrs
+    t.edit([{ op: 'align_shapes', shape_ids: [a, b, c], align: 'top' }])
+    expect([at(a).y, at(b).y, at(c).y]).toEqual([300 * 12700, 300 * 12700, 300 * 12700])
+    t.edit([{ op: 'distribute_shapes', shape_ids: [c, a, b], direction: 'horizontal' }])
+    const gap1 = at(b).x - (at(a).x + at(a).w)
+    const gap2 = at(c).x - (at(b).x + at(b).w)
+    expect(Math.abs(gap1 - gap2)).toBeLessThanOrEqual(1)
+    expect([at(a).x, at(c).x]).toEqual([100 * 12700, 600 * 12700]) // 首尾不动
+    t.edit([{ op: 'align_shapes', shape_ids: [b], align: 'center' }])
+    expect(at(b).x).toBe(Math.round((12192000 - at(b).w) / 2))
+  })
+})

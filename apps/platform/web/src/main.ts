@@ -130,6 +130,7 @@ async function open(docId: string): Promise<void> {
       docId, token: TOKEN, onCommentClick, onSelection: a => { anchor = a; placeFab() },
       onEdit: (ops, baseRev) => deckEdit(docId, ops, baseRev),
       onSelectShape: () => syncDeckToolbar(),
+      onNotice: msg => showNotice(msg),
     })
     session = { docId, kind: 'deck', stream, deck }
     $('page').classList.add('deck')
@@ -294,6 +295,10 @@ async function initDeckToolbar(): Promise<void> {
 function syncDeckToolbar(): void {
   const sel = session?.deck?.selection()
   for (const b of document.querySelectorAll<HTMLButtonElement>('#deckToolbar [data-needs-shape]')) b.disabled = !sel
+  const isTable = sel?.shape.attrs?.kind === 'table'
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#deckToolbar [data-needs-table]')) b.hidden = !isTable
+  const n = session?.deck?.selectionIds().length ?? 0
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#arrangeMenu [data-distribute]')) b.disabled = n < 3
 }
 
 /** 颜色板：当前页主题的颜色（以主题记号提交，换主题时跟着变）+ 自定义颜色。 */
@@ -341,6 +346,20 @@ $('deckTheme').onchange = async () => {
   if (theme && session?.deck) await session.deck.edit([{ op: 'apply_theme', theme }])
 }
 
+const tableRows = (shape: any): number => shape.content?.[0]?.content?.length ?? 0
+const tableCols = (shape: any): number => shape.content?.[0]?.content?.[0]?.content?.length ?? 0
+
+$('arrangeMenu').onclick = async e => {
+  const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null
+  const deck = session?.deck
+  if (!b || !deck || b.disabled) return
+  $('arrangeMenu').hidden = true
+  const shape_ids = deck.selectionIds()
+  if (b.dataset.arrange) await deck.edit([{ op: 'align_shapes', shape_ids, align: b.dataset.arrange }])
+  if (b.dataset.distribute) await deck.edit([{ op: 'distribute_shapes', shape_ids, direction: b.dataset.distribute }])
+}
+document.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('.menu-wrap')) $('arrangeMenu').hidden = true })
+
 $('deckImageInput').onchange = async () => {
   const input = $<HTMLInputElement>('deckImageInput')
   const file = input.files?.[0]
@@ -368,27 +387,44 @@ $('deckToolbar').onclick = async e => {
   const W = deck.slideSize.cx / 12700
   const H = deck.slideSize.cy / 12700
   const id = sel?.shape.attrs?.id as string | undefined
+  // 样式操作作用于全部选中的形状（Shift+单击多选），一次提交
+  const ids = deck.selectionIds()
+  const each = (op: Record<string, unknown>) => ids.map(shape_id => ({ ...op, shape_id }))
+  const cell = deck.tableCell()
   switch (btn.dataset.dk) {
     case 'bg': { const c = await pickColor(btn, theme, false); if (c) await deck.edit([{ op: 'set_background', slide_id: slide.attrs!.id, color: c }]); break }
     case 'textbox': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '新文本框', x: Math.round(W / 2 - 200), y: Math.round(H / 2 - 30), w: 400, h: 60, color: 'body' }]); break
     case 'block': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '', x: Math.round(W / 2 - 150), y: Math.round(H / 2 - 60), w: 300, h: 120, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF' }]); break
     case 'image': $('deckImageInput').click(); break
     case 'table': await deck.edit([{ op: 'add_table', slide_id: slide.attrs!.id, x: Math.round(W / 2 - 300), y: Math.round(H / 2 - 64), w: 600, rows: [['项目', '组 A', '组 B'], ['', '', ''], ['', '', '']] }]); break
-    case 'fill': { const c = await pickColor(btn, theme, true); if (c && id) await deck.edit([{ op: 'set_fill', shape_id: id, color: c }]); break }
-    case 'color': { const c = await pickColor(btn, theme, false); if (c && id) await deck.edit([{ op: 'set_text_style', shape_id: id, color: c }]); break }
+    case 'fill': { const c = await pickColor(btn, theme, true); if (c && id) await deck.edit(each({ op: 'set_fill', color: c })); break }
+    case 'color': { const c = await pickColor(btn, theme, false); if (c && id) await deck.edit(each({ op: 'set_text_style', color: c })); break }
     case 'bigger': case 'smaller': {
       if (!id) break
       const now = shapeFontSize(sel!.shape)
       const step = now >= 28 ? 4 : 2
-      await deck.edit([{ op: 'set_text_style', shape_id: id, size: Math.max(8, Math.min(120, btn.dataset.dk === 'bigger' ? now + step : now - step)) }])
+      await deck.edit(each({ op: 'set_text_style', size: Math.max(8, Math.min(120, btn.dataset.dk === 'bigger' ? now + step : now - step)) }))
       break
     }
-    case 'bold': if (id) await deck.edit([{ op: 'set_text_style', shape_id: id, bold: !hasBold(sel!.shape) }]); break
-    case 'align-left': if (id) await deck.edit([{ op: 'set_text_style', shape_id: id, align: 'left' }]); break
-    case 'align-center': if (id) await deck.edit([{ op: 'set_text_style', shape_id: id, align: 'center' }]); break
-    case 'front': if (id) await deck.edit([{ op: 'set_z', shape_id: id, to: 'front' }]); break
-    case 'back': if (id) await deck.edit([{ op: 'set_z', shape_id: id, to: 'back' }]); break
-    case 'delete': if (id) await deck.edit([{ op: 'delete_shape', shape_id: id }]); break
+    case 'bold': if (id) await deck.edit(each({ op: 'set_text_style', bold: !hasBold(sel!.shape) })); break
+    case 'align-left': if (id) await deck.edit(each({ op: 'set_text_style', align: 'left' })); break
+    case 'align-center': if (id) await deck.edit(each({ op: 'set_text_style', align: 'center' })); break
+    case 'arrange': {
+      // 工具条横向可滚动（会裁掉里面的下拉），菜单按按钮位置固定定位
+      const menu = $('arrangeMenu')
+      const r = btn.getBoundingClientRect()
+      Object.assign(menu.style, { position: 'fixed', left: `${r.left}px`, top: `${r.bottom + 6}px`, right: 'auto' })
+      menu.hidden = !menu.hidden
+      syncDeckToolbar()
+      break
+    }
+    case 'row-add': if (id) await deck.edit([{ op: 'table_insert_rows', shape_id: id, at: (cell?.r ?? tableRows(sel!.shape) - 1) + 1 }]); break
+    case 'col-add': if (id) await deck.edit([{ op: 'table_insert_cols', shape_id: id, at: (cell?.c ?? tableCols(sel!.shape) - 1) + 1 }]); break
+    case 'row-del': if (id) await deck.edit([{ op: 'table_delete_rows', shape_id: id, at: cell?.r ?? tableRows(sel!.shape) - 1, count: 1 }]); break
+    case 'col-del': if (id) await deck.edit([{ op: 'table_delete_cols', shape_id: id, at: cell?.c ?? tableCols(sel!.shape) - 1, count: 1 }]); break
+    case 'front': if (id) await deck.edit(each({ op: 'set_z', to: 'front' })); break
+    case 'back': if (id) await deck.edit(each({ op: 'set_z', to: 'back' })); break
+    case 'delete': if (id) await deck.edit(each({ op: 'delete_shape' })); break
   }
 }
 

@@ -101,9 +101,21 @@
       <button data-dk="smaller" data-needs-shape title="缩小字号">A−</button>
       <button data-dk="bigger" data-needs-shape title="放大字号">A＋</button>
       <button data-dk="bold" data-needs-shape title="粗体"><b>B</b></button>
-      <button data-dk="align-left" data-needs-shape title="左对齐">≡</button>
-      <button data-dk="align-center" data-needs-shape title="居中">☰</button>
+      <button data-dk="align-left" data-needs-shape title="文字左对齐">≡</button>
+      <button data-dk="align-center" data-needs-shape title="文字居中">☰</button>
       <span class="sep"></span>
+      <span class="menu-wrap">
+        <button data-dk="arrange" data-needs-shape title="对齐与等距（Shift+单击多选）">排列 ▾</button>
+        <div class="dropdown" id="arrangeMenu" hidden>
+          <button data-arrange="left">左对齐</button><button data-arrange="center">水平居中</button><button data-arrange="right">右对齐</button>
+          <button data-arrange="top">顶端对齐</button><button data-arrange="middle">垂直居中</button><button data-arrange="bottom">底端对齐</button>
+          <button data-distribute="horizontal" title="至少选 3 个">横向等距</button><button data-distribute="vertical" title="至少选 3 个">纵向等距</button>
+        </div>
+      </span>
+      <button data-dk="row-add" data-needs-table hidden title="在所点单元格下方插一行">＋行</button>
+      <button data-dk="col-add" data-needs-table hidden title="在所点单元格右侧插一列">＋列</button>
+      <button data-dk="row-del" data-needs-table hidden title="删除所点单元格所在行">−行</button>
+      <button data-dk="col-del" data-needs-table hidden title="删除所点单元格所在列">−列</button>
       <button data-dk="front" data-needs-shape title="置于顶层">置顶</button>
       <button data-dk="back" data-needs-shape title="置于底层">置底</button>
       <button data-dk="delete" data-needs-shape title="删除形状（Delete）">删除</button>

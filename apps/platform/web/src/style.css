@@ -398,3 +398,12 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .slide .shape:has(.editing), .slide .shape.editing { overflow: visible; z-index: 4; }
 .slide td.editing { background: rgba(14, 165, 233, .08); }
 .slide .shape-text.editing { min-height: 1em; }
+
+/* 画布：多选与吸附参考线 */
+.sel-box.multi { outline-style: dashed; }
+.guide { position: absolute; z-index: 5; pointer-events: none; background: #f43f5e; }
+.guide.v { width: 1px; }
+.guide.h { height: 1px; }
+.deck-toolbar .menu-wrap { display: inline-flex; }
+.deck-toolbar .dropdown { left: 0; right: auto; display: grid; grid-template-columns: repeat(3, auto); }
+.deck-toolbar .dropdown[hidden] { display: none; }

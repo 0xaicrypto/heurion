@@ -57,6 +57,29 @@ export const DeckOp = z.discriminatedUnion('op', [
     header: z.boolean().optional().describe('第一行作表头（强调色底、白色粗体），缺省 true'),
     font_size: z.number().min(8).max(40).optional().describe('字号（pt），缺省 14'),
   }),
+  z.object({
+    op: z.literal('table_insert_rows'), shape_id: z.string(),
+    at: z.number().int().min(0).describe('插入位置（行下标；等于行数时追加到末尾）'),
+    rows: z.array(z.array(z.string())).optional().describe('新行的单元格文字；缺省插一行空行'),
+  }),
+  z.object({ op: z.literal('table_delete_rows'), shape_id: z.string(), at: z.number().int().min(0), count: z.number().int().min(1).default(1) }),
+  z.object({
+    op: z.literal('table_insert_cols'), shape_id: z.string(),
+    at: z.number().int().min(0).describe('插入位置（列下标；等于列数时追加到最右）'),
+    cells: z.array(z.string()).optional().describe('新列每行的文字（从表头起）；缺省空列'),
+  }),
+  z.object({ op: z.literal('table_delete_cols'), shape_id: z.string(), at: z.number().int().min(0), count: z.number().int().min(1).default(1) }),
+  z.object({
+    op: z.literal('align_shapes'),
+    shape_ids: z.array(z.string()).min(1).describe('同一页上的形状'),
+    align: z.enum(['left', 'center', 'right', 'top', 'middle', 'bottom']),
+    to: z.enum(['selection', 'slide']).optional().describe('对齐到所选形状的范围或整页；缺省：多个形状对齐选区，单个形状对齐页面'),
+  }),
+  z.object({
+    op: z.literal('distribute_shapes'),
+    shape_ids: z.array(z.string()).min(3).describe('同一页上的形状（至少 3 个）'),
+    direction: z.enum(['horizontal', 'vertical']).describe('首尾不动，中间等间距'),
+  }),
   z.object({ op: z.literal('set_fill'), shape_id: z.string(), color: COLOR.describe('填充色；none 为无填充') }),
   z.object({ op: z.literal('set_background'), slide_id: z.string(), color: COLOR }),
   z.object({
@@ -126,6 +149,7 @@ export function deckTargetIds(op: DeckOp): string[] {
     case 'add_slide': case 'add_shape': case 'add_image': case 'add_table': return []
     case 'delete_slide': case 'move_slide': case 'set_notes': case 'set_background': return [op.slide_id]
     case 'apply_theme': return op.slide_ids ?? []
+    case 'align_shapes': case 'distribute_shapes': return op.shape_ids
     default: return [op.shape_id]
   }
 }
@@ -136,6 +160,8 @@ export function deckOpTexts(op: DeckOp): string[] {
     case 'set_text': case 'add_shape': case 'set_notes': return [op.markdown ?? '']
     case 'set_paragraphs': return op.paragraphs.map(p => p.text)
     case 'add_table': return op.rows.flat()
+    case 'table_insert_rows': return op.rows?.flat() ?? []
+    case 'table_insert_cols': return op.cells ?? []
     case 'replace_text': return [op.replace]
     case 'table_set_cells': return op.cells.map(c => c.markdown)
     default: return []
@@ -383,6 +409,78 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
       const at = last?.type.name === 'notes' ? hit.pos + hit.node.nodeSize - 1 - last.nodeSize : hit.pos + hit.node.nodeSize - 1
       tr.insert(at, shape)
       return [shape.attrs.id as string]
+    }
+    case 'table_insert_rows': case 'table_delete_rows': case 'table_insert_cols': case 'table_delete_cols': {
+      const hit = find(tr, op.shape_id, 'shape')
+      const table = hit.node.firstChild
+      if (hit.node.attrs.kind !== 'table' || table?.type.name !== 'table') throw new OpError('invalid_structure', `${op.shape_id} 不是表格`)
+      const grid: PMNode[][] = []
+      table.forEach(r => { const cells: PMNode[] = []; r.forEach(c => cells.push(c)); grid.push(cells) })
+      const cols = grid[0]?.length ?? 0
+      const count = 'count' in op ? op.count ?? 1 : 1
+      let next: PMNode[][]
+      if (op.op === 'table_insert_rows') {
+        if (op.at > grid.length) throw new OpError('cell_not_found', `插入位置 ${op.at} 超出行数 ${grid.length}`)
+        // 沿用相邻正文行的格式（避开表头）
+        const tmpl = grid[Math.min(Math.max(op.at, grid.length > 1 ? 1 : 0), grid.length - 1)]!
+        const rows = op.rows ?? [Array.from({ length: cols }, () => '')]
+        if (rows.some(r => r.length !== cols)) throw new OpError('invalid_table', `每行要有 ${cols} 格`)
+        next = [...grid.slice(0, op.at), ...rows.map(r => r.map((text, ci) => cellLike(tmpl[ci]!, text))), ...grid.slice(op.at)]
+      } else if (op.op === 'table_delete_rows') {
+        if (op.at + count > grid.length) throw new OpError('cell_not_found', `第 ${op.at}–${op.at + count - 1} 行超出行数 ${grid.length}`)
+        if (count >= grid.length) throw new OpError('invalid_table', '不能删掉全部行；要删除整个表格用 delete_shape')
+        next = [...grid.slice(0, op.at), ...grid.slice(op.at + count)]
+      } else if (op.op === 'table_insert_cols') {
+        if (op.at > cols) throw new OpError('cell_not_found', `插入位置 ${op.at} 超出列数 ${cols}`)
+        if (op.cells && op.cells.length !== grid.length) throw new OpError('invalid_table', `新列要有 ${grid.length} 格（每行一格）`)
+        const tc = Math.min(op.at, cols - 1)
+        next = grid.map((r, ri) => [...r.slice(0, op.at), cellLike(r[tc]!, op.cells?.[ri] ?? ''), ...r.slice(op.at)])
+      } else {
+        if (op.at + count > cols) throw new OpError('cell_not_found', `第 ${op.at}–${op.at + count - 1} 列超出列数 ${cols}`)
+        if (count >= cols) throw new OpError('invalid_table', '不能删掉全部列；要删除整个表格用 delete_shape')
+        next = grid.map(r => [...r.slice(0, op.at), ...r.slice(op.at + count)])
+      }
+      const rowsNodes = next.map(cells => deckSchema.nodes.table_row!.create(null, cells))
+      tr.replaceWith(hit.pos, hit.pos + hit.node.nodeSize, hit.node.type.create(hit.node.attrs, [table.type.create(table.attrs, rowsNodes)]))
+      return [op.shape_id]
+    }
+    case 'align_shapes': case 'distribute_shapes': {
+      const hits = op.shape_ids.map(id => find(tr, id, 'shape'))
+      const slides = new Set(hits.map(h => slideAt(tr, h.pos)?.attrs.id))
+      if (slides.size > 1) throw new OpError('invalid_structure', '只能对齐同一页上的形状')
+      const box = (n: PMNode) => ({ x: n.attrs.x as number, y: n.attrs.y as number, w: n.attrs.w as number, h: n.attrs.h as number })
+      const moves = new Map<string, { x?: number; y?: number }>()
+      if (op.op === 'align_shapes') {
+        const toSlide = (op.to ?? (hits.length > 1 ? 'selection' : 'slide')) === 'slide'
+        const boxes = hits.map(h => box(h.node))
+        const L = toSlide ? 0 : Math.min(...boxes.map(b => b.x))
+        const T = toSlide ? 0 : Math.min(...boxes.map(b => b.y))
+        const R = toSlide ? ctx.size.cx : Math.max(...boxes.map(b => b.x + b.w))
+        const B = toSlide ? ctx.size.cy : Math.max(...boxes.map(b => b.y + b.h))
+        hits.forEach((h, i) => {
+          const b = boxes[i]!
+          const m = { left: { x: L }, center: { x: Math.round((L + R - b.w) / 2) }, right: { x: R - b.w }, top: { y: T }, middle: { y: Math.round((T + B - b.h) / 2) }, bottom: { y: B - b.h } }[op.align]
+          moves.set(h.node.attrs.id as string, m)
+        })
+      } else {
+        const horizontal = op.direction === 'horizontal'
+        const sorted = [...hits].sort((a, b) => horizontal ? (a.node.attrs.x as number) - (b.node.attrs.x as number) : (a.node.attrs.y as number) - (b.node.attrs.y as number))
+        const start = horizontal ? box(sorted[0]!.node).x : box(sorted[0]!.node).y
+        const lastBox = box(sorted.at(-1)!.node)
+        const end = horizontal ? lastBox.x + lastBox.w : lastBox.y + lastBox.h
+        const total = sorted.reduce((n, h) => n + (horizontal ? box(h.node).w : box(h.node).h), 0)
+        const gap = (end - start - total) / (sorted.length - 1)
+        let at = start
+        for (const h of sorted) {
+          moves.set(h.node.attrs.id as string, horizontal ? { x: Math.round(at) } : { y: Math.round(at) })
+          at += (horizontal ? box(h.node).w : box(h.node).h) + gap
+        }
+      }
+      for (const [id, m] of moves) {
+        const h = find(tr, id, 'shape')
+        tr.setNodeMarkup(h.pos, undefined, { ...h.node.attrs, ...m, xfrm_inherited: false })
+      }
+      return op.shape_ids
     }
     case 'set_fill': {
       const hit = find(tr, op.shape_id, 'shape')
@@ -677,4 +775,15 @@ function themedTable(table: PMNode, theme: (typeof DECK_THEMES)[string], old: (t
     rows.push(row.type.create(row.attrs, cells))
   })
   return table.type.create(table.attrs, rows)
+}
+
+/** 新单元格：沿用参照单元格的底色（tcPr）与文字格式（a:rPr），填入新文字。 */
+function cellLike(ref: PMNode, text: string): PMNode {
+  const rpr = templateOf(deckSchema.node('shape', null, [deckSchema.node('table', null, [deckSchema.node('table_row', null, [ref])])])).rpr
+  let bold = false
+  ref.descendants(n => { if (n.isText && n.marks.some(m => m.type.name === 'bold')) bold = true; return !bold })
+  let inline = toDeckInline(parseInline(text), rpr)
+  if (bold) inline = inline.map(n => n.isText ? n.mark(deckSchema.marks.bold!.create().addToSet(n.marks)) : n)
+  const ppr = ref.firstChild?.attrs.ppr ?? null
+  return ref.type.create({ ...ref.attrs, colspan: 1, rowspan: 1 }, [deckSchema.node('paragraph', { ppr }, inline)])
 }

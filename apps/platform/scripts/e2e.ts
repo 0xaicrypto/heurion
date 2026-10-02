@@ -184,6 +184,14 @@ let deckId = ''
   const t13 = await turn(`/api/docs/${deck.id}/chat`, { message: '在「安全性」那一页加一个表格，列出两组（司美格鲁肽 vs 安慰剂）因不良事件停药的比例和严重不良事件比例，数值可以写「待核实」。' })
   const tables = ((await api(`/api/docs/${deck.id}/deck`)).doc.content as any[]).flatMap(s => (s.content ?? []).filter((c: any) => c.attrs?.kind === 'table'))
   check('幻灯片：AI 新建表格（与画布同一套操作）', tables.length > 0 && JSON.stringify(tables).includes('安慰剂'), `${summary(t13)} · 工具 ${[...new Set(t13.calls)].join(' ')}`)
+  // C1 第 3 周：AI 增删表格行、对齐形状（画布的「＋行」「排列」是同一套操作）
+  const rowsBefore = tables[0]?.content?.[0]?.content?.length ?? 0
+  const t14 = await turn(`/api/docs/${deck.id}/chat`, { message: '在「安全性」那页的表格最后加一行「低血糖」（两组都写「待核实」），然后把该页的表格水平居中对齐到页面。' })
+  const d14 = await api(`/api/docs/${deck.id}/deck`)
+  const table14 = (d14.doc.content as any[]).flatMap(s => (s.content ?? []).filter((c: any) => c.attrs?.kind === 'table'))[0]
+  const centered = table14 && Math.abs(table14.attrs.x + table14.attrs.w / 2 - d14.size.cx / 2) < 12700 * 2
+  check('幻灯片：AI 增加表格行并居中对齐（与画布同一套操作）', (table14?.content?.[0]?.content?.length ?? 0) === rowsBefore + 1 && JSON.stringify(table14).includes('低血糖') && centered,
+    `${summary(t14)} · 工具 ${[...new Set(t14.calls)].join(' ')}`)
 }
 
 // —— 10. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——
