@@ -28,4 +28,6 @@ const server = createServer(async (req, res) => {
   }
   send(404, { error: 'not found' })
 })
-server.listen(PORT, '127.0.0.1', () => console.log(`嵌入服务 http://127.0.0.1:${PORT}`))
+// 容器里设 EMBED_HOST=0.0.0.0（只在内部网络可达，不映射端口）；本机默认只听回环
+const HOST = process.env.EMBED_HOST || '127.0.0.1'
+server.listen(PORT, HOST, () => console.log(`嵌入服务 http://${HOST}:${PORT}`))

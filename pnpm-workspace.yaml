@@ -8,3 +8,6 @@ allowBuilds:
   koffi: true
   node-pty: true
   protobufjs: false
+  # onnxruntime-node 的安装脚本只下载 CUDA 扩展（CPU 版二进制已在包里）；tesseract.js 的只是打印赞助信息
+  onnxruntime-node: false
+  tesseract.js: false

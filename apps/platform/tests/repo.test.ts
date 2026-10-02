@@ -45,6 +45,14 @@ function env() {
   return { store, docs, call, register, settle, search }
 }
 
+describe('健康检查', () => {
+  it('/healthz 不需要登录', async () => {
+    const t = env()
+    const r = await t.call('GET', '/healthz', '')
+    expect([r.status, r.data.ok]).toEqual([200, true])
+  })
+})
+
 describe('项目（文件夹）', () => {
   it('新建 / 改名 / 在项目里新建文档 / 移动 / 删除项目后文档回到未分组；别人的项目 id 不能用', async () => {
     const t = env()

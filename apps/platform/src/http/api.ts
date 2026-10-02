@@ -60,6 +60,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const { docs, ops, turns } = deps
   const store = docs.store
   const app = new Hono<{ Variables: { user: string } }>()
+  // 健康检查（部署脚本、容器 healthcheck、反向代理用）：数据库可读即健康；嵌入服务状态只报告不影响结果
+  app.get('/healthz', async c => {
+    store.db.prepare('SELECT 1').get()
+    return c.json({ ok: true, vector: deps.kb ? (await deps.kb.status()).vector : false })
+  })
 
   const { accounts } = deps
   const requestToken = (c: Context) => {
