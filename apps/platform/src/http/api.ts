@@ -75,6 +75,17 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.json(accounts.register(await c.req.json(), clientIp(c)), 201)
     } catch (err) { return authFailure(c, err) }
   })
+  // 找回密码：发验证码（不暴露邮箱是否注册）→ 验证码 + 新密码
+  app.post('/api/auth/password-code', async c => {
+    try {
+      return c.json(await accounts.sendResetCode(await c.req.json(), clientIp(c)))
+    } catch (err) { return authFailure(c, err) }
+  })
+  app.post('/api/auth/reset-password', async c => {
+    try {
+      return c.json(accounts.resetPassword(await c.req.json()))
+    } catch (err) { return authFailure(c, err) }
+  })
   app.post('/api/auth/login', async c => {
     try {
       return c.json(accounts.login(await c.req.json(), clientIp(c)))
@@ -93,6 +104,17 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.patch('/api/me', async c => {
     try {
       return c.json(accounts.updateProfile(c.get('user'), await c.req.json()))
+    } catch (err) { return authFailure(c, err) }
+  })
+  // 绑定邮箱（找回密码用）：发码 → 核对
+  app.post('/api/me/email-code', async c => {
+    try {
+      return c.json(await accounts.sendBindCode(c.get('user'), (await c.req.json<{ email?: string }>()).email, clientIp(c)))
+    } catch (err) { return authFailure(c, err) }
+  })
+  app.post('/api/me/email', async c => {
+    try {
+      return c.json(accounts.bindEmail(c.get('user'), await c.req.json()))
     } catch (err) { return authFailure(c, err) }
   })
   app.post('/api/auth/logout-everywhere', c => {

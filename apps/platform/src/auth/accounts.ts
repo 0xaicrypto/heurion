@@ -1,7 +1,9 @@
+import { createHash, randomInt, randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import type { Store, UserRow } from '../store/db.ts'
 import { BotError, BotGuard, type Solution } from './bot-guard.ts'
 import { devUserFor } from './dev.ts'
+import { MailerError, type Mailer } from './mailer.ts'
 import { issueToken, verifyToken } from './token.ts'
 
 /**
@@ -21,6 +23,7 @@ export interface PublicUser {
   id: string
   username: string
   display_name: string
+  email: string | null
   role: UserRow['role']
   status: UserRow['status']
   created_at: string
@@ -28,7 +31,7 @@ export interface PublicUser {
 }
 
 export const publicUser = (u: UserRow): PublicUser => ({
-  id: u.id, username: u.username, display_name: u.display_name, role: u.role, status: u.status, created_at: u.created_at, last_login_at: u.last_login_at,
+  id: u.id, username: u.username, display_name: u.display_name, email: u.email ?? null, role: u.role, status: u.status, created_at: u.created_at, last_login_at: u.last_login_at,
 })
 
 const USERNAME = /^[\p{L}\p{N}_.-]{2,32}$/u
@@ -72,7 +75,17 @@ export interface AccountOptions {
   tokenTtlSeconds?: number
   /** 防机器人（默认按 secret 新建；测试传低难度）。 */
   botGuard?: BotGuard
+  /** 发验证码邮件（找回密码、绑定邮箱）。 */
+  mailer?: Mailer
 }
+
+const CODE_TTL_MS = 10 * 60_000
+const RESEND_MS = 60_000
+const CODE_ATTEMPTS = 5
+const IP_CODES_PER_10MIN = 5
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const normalizeEmail = (email: unknown) => String(email ?? '').trim().toLowerCase()
+const hashCode = (code: string) => createHash('sha256').update(code).digest('hex')
 
 /** 注册 / 登录请求里的防机器人字段：工作量证明的解，以及陷阱字段 website（人看不到）。 */
 export interface BotFields { pow?: Solution; website?: unknown }
@@ -145,10 +158,10 @@ export class Accounts {
   }
 
   /** 当前用户信息；开发用户没有账户记录。 */
-  me(userId: string): PublicUser | { id: string; username: string; display_name: string; role: 'user'; dev: true } {
+  me(userId: string): PublicUser | { id: string; username: string; display_name: string; email: null; role: 'user'; dev: true } {
     const user = this.store.getUser(userId)
     if (user) return publicUser(user)
-    return { id: userId, username: userId, display_name: userId, role: 'user', dev: true }
+    return { id: userId, username: userId, display_name: userId, email: null, role: 'user', dev: true }
   }
 
   updateProfile(userId: string, input: { display_name?: string; current_password?: string; new_password?: string }): { user: PublicUser; token?: string } {
@@ -169,6 +182,88 @@ export class Accounts {
       this.store.updateUser(userId, { display_name: name })
     }
     return { user: publicUser(this.store.getUser(userId)!), ...(token ? { token } : {}) }
+  }
+
+  // —— 邮箱：绑定与找回密码（验证码 6 位、10 分钟有效、60 秒内不重发、错 5 次作废、一次有效；只存哈希） ——
+
+  /**
+   * 找回密码发码：不论邮箱是否绑定了账户都返回成功（不暴露邮箱是否注册），只有绑定了才真的发。
+   * 需要人机校验（防止拿来批量发垃圾邮件）。
+   */
+  async sendResetCode(input: { email?: string } & BotFields, ip: string): Promise<{ ok: true; expires_in: number }> {
+    this.checkBot(ip, input)
+    // 发不了信时在查邮箱之前就报错：否则「有账户报错、没账户成功」会暴露邮箱是否注册
+    if (!this.opts.mailer?.available) throw new AuthError('mail_unavailable', '邮件服务未配置，请联系管理员重置密码', 400)
+    const email = normalizeEmail(input.email)
+    if (!EMAIL.test(email)) throw new AuthError('invalid_email', '邮箱格式不对')
+    const user = this.store.getUserByEmail(email)
+    await this.issueCode(email, 'reset', ip, !!user && user.status === 'active')
+    return { ok: true, expires_in: CODE_TTL_MS / 1000 }
+  }
+
+  /** 用验证码重置密码：所有旧登录失效，返回新登录令牌。 */
+  resetPassword(input: { email?: string; code?: string; new_password?: string }): { user: PublicUser; token: string } {
+    const email = normalizeEmail(input.email)
+    const weak = checkPassword(input.new_password ?? '')
+    if (weak) throw new AuthError('weak_password', weak)
+    if (!this.useCode(email, 'reset', input.code)) throw new AuthError('bad_code', '验证码不对或已过期', 400)
+    const user = this.store.getUserByEmail(email)
+    if (!user || user.status !== 'active') throw new AuthError('bad_code', '验证码不对或已过期', 400)
+    const updated = this.store.updateUser(user.id, { password_hash: bcrypt.hashSync(input.new_password!, BCRYPT_COST), bumpTokenVersion: true, touchLogin: true })!
+    return { user: publicUser(updated), token: this.tokenFor(updated) }
+  }
+
+  /** 绑定邮箱第一步：给新邮箱发码（已登录，无需人机校验，按来源限流）。 */
+  async sendBindCode(userId: string, emailInput: unknown, ip: string): Promise<{ ok: true; expires_in: number }> {
+    if (!this.store.getUser(userId)) throw new AuthError('no_account', '开发用户没有账户资料')
+    const email = normalizeEmail(emailInput)
+    if (!EMAIL.test(email)) throw new AuthError('invalid_email', '邮箱格式不对')
+    const owner = this.store.getUserByEmail(email)
+    if (owner && owner.id !== userId) throw new AuthError('email_taken', '这个邮箱已绑定其他账户', 409)
+    await this.issueCode(email, `bind:${userId}`, ip, true)
+    return { ok: true, expires_in: CODE_TTL_MS / 1000 }
+  }
+
+  /** 绑定邮箱第二步：核对验证码后写入。 */
+  bindEmail(userId: string, input: { email?: string; code?: string }): PublicUser {
+    const email = normalizeEmail(input.email)
+    if (!this.useCode(email, `bind:${userId}`, input.code)) throw new AuthError('bad_code', '验证码不对或已过期', 400)
+    const owner = this.store.getUserByEmail(email)
+    if (owner && owner.id !== userId) throw new AuthError('email_taken', '这个邮箱已绑定其他账户', 409)
+    this.store.setUserEmail(userId, email)
+    return publicUser(this.store.getUser(userId)!)
+  }
+
+  private async issueCode(target: string, purpose: string, ip: string, deliver: boolean): Promise<void> {
+    const now = Date.now()
+    const recent = this.store.latestVerificationCode(target, purpose)
+    if (recent && !recent.used_at && now - recent.created_at < RESEND_MS) throw new AuthError('code_throttled', '60 秒内只能发送一次，请稍后再试', 429)
+    if (this.store.countVerificationCodesByIp(ip, now - 10 * 60_000) >= IP_CODES_PER_10MIN) throw new AuthError('rate_limited', '发送太频繁，请稍后再试', 429)
+    const code = String(randomInt(100000, 1000000))
+    // 不发信也记一条（同样计入限流与重发间隔），响应时间和行为与真发一致
+    this.store.addVerificationCode({ id: randomUUID(), target, purpose, code_hash: hashCode(code), ip, created_at: now, expires_at: now + CODE_TTL_MS })
+    if (!deliver) return
+    const mailer = this.opts.mailer
+    if (!mailer) throw new AuthError('mail_unavailable', '邮件服务未配置，请联系管理员重置密码', 400)
+    const subject = purpose === 'reset' ? 'Heurion 重置密码验证码' : 'Heurion 绑定邮箱验证码'
+    try {
+      await mailer.send(target, subject, `你的验证码是：${code}（10 分钟内有效）。如果不是你本人操作，请忽略这封邮件。`)
+    } catch (err) {
+      if (err instanceof MailerError) throw new AuthError('mail_unavailable', `${err.message}，请联系管理员重置密码`, 400)
+      throw err
+    }
+  }
+
+  /** 核对并作废验证码（最新一条、未过期、未用过、错误次数未满）。 */
+  private useCode(target: string, purpose: string, code: unknown): boolean {
+    const row = this.store.latestVerificationCode(target, purpose)
+    if (!row || row.used_at || Date.now() > row.expires_at || row.attempts >= CODE_ATTEMPTS) return false
+    if (hashCode(String(code ?? '').trim()) !== row.code_hash) {
+      this.store.markVerificationCode(row.id, { attempt: true })
+      return false
+    }
+    this.store.markVerificationCode(row.id, { used: true })
+    return true
   }
 
   /** 退出所有设备：令牌版本加一。 */

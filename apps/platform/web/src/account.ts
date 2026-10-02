@@ -11,6 +11,7 @@ export interface Me {
   id: string
   username: string
   display_name: string
+  email: string | null
   role: 'user' | 'admin'
   dev?: boolean
   dev_mode: boolean
@@ -71,17 +72,22 @@ export async function showAuthScreen(): Promise<void> {
   const cfg = await fetch('/api/auth/config').then(r => r.json()).catch(() => ({ has_users: true, dev_mode: false })) as { has_users: boolean; dev_mode: boolean }
   const screen = $('authScreen')
   screen.hidden = false
-  let mode: 'login' | 'register' = cfg.has_users ? 'login' : 'register'
+  let mode: 'login' | 'register' | 'reset' = cfg.has_users ? 'login' : 'register'
   const render = () => {
-    screen.querySelector('.auth-title')!.textContent = !cfg.has_users ? '创建管理员账户' : mode === 'login' ? '登录' : '注册'
+    screen.querySelector('.auth-title')!.textContent = !cfg.has_users ? '创建管理员账户' : mode === 'login' ? '登录' : mode === 'reset' ? '找回密码' : '注册'
     screen.querySelector('.auth-sub')!.textContent = !cfg.has_users
       ? '这是第一个账户，将成为管理员，可以管理其他用户。'
-      : mode === 'login' ? '登录后继续你的文档与幻灯片。' : '注册后即可开始写作；文档、资料只有你自己能看到。'
+      : mode === 'login' ? '登录后继续你的文档与幻灯片。'
+        : mode === 'reset' ? '向你绑定的邮箱发送验证码。没有绑定邮箱的账户请联系管理员重置。'
+          : '注册后即可开始写作；文档、资料只有你自己能看到。'
+    $('authForm').hidden = mode === 'reset'
+    $('resetForm').hidden = mode !== 'reset'
     $('authDisplayRow').hidden = mode === 'login'
     $('authSubmit').textContent = mode === 'login' ? '登录' : '创建账户'
     $('authSwitch').innerHTML = !cfg.has_users ? '' : mode === 'login'
-      ? '还没有账户？<a href="#" data-mode="register">注册</a>'
-      : '已有账户？<a href="#" data-mode="login">登录</a>'
+      ? '<a href="#" data-mode="reset">忘记密码？</a> · 还没有账户？<a href="#" data-mode="register">注册</a>'
+      : mode === 'reset' ? '想起来了？<a href="#" data-mode="login">登录</a>'
+        : '已有账户？<a href="#" data-mode="login">登录</a>'
     $('authHint').hidden = mode === 'login'
     $('authError').textContent = ''
     $<HTMLInputElement>('authPassword').autocomplete = mode === 'login' ? 'current-password' : 'new-password'
@@ -133,10 +139,60 @@ export async function showAuthScreen(): Promise<void> {
       pow.catch(() => {})
     }
   }
+  // 找回密码：发码（需人机校验）→ 验证码 + 新密码
+  let resetPow = solvePow()
+  resetPow.catch(() => {})
+  let cooldown = 0
+  $('resetSend').onclick = async () => {
+    const btn = $<HTMLButtonElement>('resetSend')
+    if (cooldown > Date.now()) return
+    $('resetError').textContent = ''
+    btn.disabled = true
+    btn.textContent = '发送中…'
+    try {
+      const { solution, fetchedAt } = await resetPow
+      const wait = fetchedAt + 1700 - Date.now()
+      if (wait > 0) await new Promise(r => setTimeout(r, wait))
+      await post('/api/auth/password-code', { email: $<HTMLInputElement>('resetEmail').value, pow: solution, website: $<HTMLInputElement>('authWebsite').value })
+      $('resetNote').textContent = '如果这个邮箱绑定了账户，验证码已发出（10 分钟内有效）。没收到请检查垃圾邮件。'
+      $<HTMLInputElement>('resetCode').focus()
+      cooldown = Date.now() + 60_000
+      const tick = () => {
+        const left = Math.ceil((cooldown - Date.now()) / 1000)
+        if (left > 0) { btn.textContent = `${left} 秒后可重发`; setTimeout(tick, 1000) } else { btn.textContent = '重新发送'; btn.disabled = false }
+      }
+      tick()
+    } catch (err) {
+      $('resetError').textContent = (err as Error).message
+      btn.textContent = '发送验证码'
+      btn.disabled = false
+    }
+    resetPow = solvePow()
+    resetPow.catch(() => {})
+  }
+  $<HTMLFormElement>('resetForm').onsubmit = async e => {
+    e.preventDefault()
+    $('resetError').textContent = ''
+    try {
+      const r = await post('/api/auth/reset-password', {
+        email: $<HTMLInputElement>('resetEmail').value,
+        code: $<HTMLInputElement>('resetCode').value,
+        new_password: $<HTMLInputElement>('resetPassword').value,
+      })
+      saveToken(r.token)
+      location.reload()
+    } catch (err) {
+      $('resetError').textContent = (err as Error).message
+    }
+  }
   $<HTMLInputElement>('authUsername').focus()
 }
 
 // —— 用户菜单 ——
+
+const nudgeKey = (id: string) => `heurion.emailNudge.${id}`
+const dismissed = (id: string) => { try { return localStorage.getItem(nudgeKey(id)) === '1' } catch { return false } }
+const dismiss = (id: string) => { try { localStorage.setItem(nudgeKey(id), '1') } catch { /* 忽略 */ } }
 
 export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: RequestInit) => Promise<T>, notify: (msg: string, error?: boolean) => void): void {
   const initial = (me.display_name || me.username).trim().slice(0, 1).toUpperCase()
@@ -155,6 +211,18 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
     menu.hidden = !menu.hidden
   }
   document.addEventListener('click', e => { if (!menu.contains(e.target as Node)) menu.hidden = true })
+  // 没绑邮箱：提醒一次（可关掉），忘记密码时才能自助找回
+  if (!me.dev && !me.email && !dismissed(me.id)) {
+    const bar = $('emailNudge')
+    bar.hidden = false
+    bar.onclick = e => {
+      const t = (e.target as HTMLElement).closest('[data-nudge]') as HTMLElement | null
+      if (!t) return
+      bar.hidden = true
+      if (t.dataset.nudge === 'bind') openSettings(me, api, notify)
+      else dismiss(me.id)
+    }
+  }
   menu.onclick = async e => {
     const item = (e.target as HTMLElement).closest('[data-action]') as HTMLElement | null
     if (!item) return
@@ -197,6 +265,14 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
       <label>显示名<input type="text" name="display_name" value="${esc(me.display_name)}" maxlength="40" required></label>
       <div class="row end"><button class="primary">保存</button></div>
     </form>
+    <form id="emailForm" class="form">
+      <h3>找回密码邮箱</h3>
+      <div class="muted">${me.email ? `已绑定 <b>${esc(me.email)}</b>。忘记密码时可以用它自助找回；要换绑，在下面填新邮箱。` : '还没有绑定邮箱：绑定后忘记密码可以自助找回，否则只能找管理员重置。'}</div>
+      <label>${me.email ? '新邮箱' : '邮箱'}<span class="field-row"><input type="text" name="email" inputmode="email" autocomplete="email" required><button type="button" id="emailSend">发送验证码</button></span></label>
+      <label>验证码<input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+      <div class="form-error" id="emailError"></div>
+      <div class="row end"><button class="primary">绑定</button></div>
+    </form>
     <form id="passwordForm" class="form">
       <h3>修改密码</h3>
       <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
@@ -213,6 +289,27 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
       $('userName').textContent = name
       notify('已保存')
     } catch (err) { notify((err as Error).message, true) }
+  }
+  const emailForm = dlg.querySelector<HTMLFormElement>('#emailForm')!
+  dlg.querySelector<HTMLButtonElement>('#emailSend')!.onclick = async () => {
+    const btn = dlg.querySelector<HTMLButtonElement>('#emailSend')!
+    try {
+      await api('/api/me/email-code', { method: 'POST', body: JSON.stringify({ email: (emailForm.elements.namedItem('email') as HTMLInputElement).value }) })
+      btn.disabled = true
+      btn.textContent = '已发送'
+      notify('验证码已发送，10 分钟内有效')
+      setTimeout(() => { btn.disabled = false; btn.textContent = '重新发送' }, 60_000)
+    } catch (err) { dlg.querySelector('#emailError')!.textContent = (err as Error).message }
+  }
+  emailForm.onsubmit = async e => {
+    e.preventDefault()
+    const f = new FormData(emailForm)
+    try {
+      const u = await api('/api/me/email', { method: 'POST', body: JSON.stringify({ email: f.get('email'), code: f.get('code') }) })
+      me.email = u.email
+      notify('邮箱已绑定')
+      openSettings(me, api, notify)
+    } catch (err) { dlg.querySelector('#emailError')!.textContent = (err as Error).message }
   }
   dlg.querySelector<HTMLFormElement>('#passwordForm')!.onsubmit = async e => {
     e.preventDefault()

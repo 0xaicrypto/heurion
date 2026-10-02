@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
 import { Accounts } from './auth/accounts.ts'
+import { createMailer } from './auth/mailer.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -40,7 +41,8 @@ const mcpDeps = {
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
-const accounts = new Accounts(store, { secret: config.secret, devMode: config.devMode, devToken: config.devToken, devUser: config.devUser })
+const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
+const accounts = new Accounts(store, { secret: config.secret, devMode: config.devMode, devToken: config.devToken, devUser: config.devUser, mailer })
 const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）

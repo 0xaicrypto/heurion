@@ -24,6 +24,8 @@ interface H1User {
   is_admin: number | null
   disabled_at: string | null
   deleted_at: string | null
+  email: string | null
+  email_verified: number | null
 }
 
 /**
@@ -34,7 +36,7 @@ const USERNAME = /^(?!\s)[\p{L}\p{N}\p{P}\p{S} ]{1,64}(?<!\s)$/u
 
 export function importH1Users(h1Path: string, store: Store, apply: boolean): ImportReport {
   const h1 = new DatabaseSync(h1Path, { readOnly: true })
-  const rows = h1.prepare(`SELECT id, username, display_name, password_hash, role, status, is_admin, disabled_at, deleted_at FROM users ORDER BY created_at`).all() as unknown as H1User[]
+  const rows = h1.prepare(`SELECT id, username, display_name, password_hash, role, status, is_admin, disabled_at, deleted_at, email, email_verified FROM users ORDER BY created_at`).all() as unknown as H1User[]
   h1.close()
   const report: ImportReport = { imported: [], already: [], skipped: [], conflicts: [] }
   const importedIds = new Set(store.listUsers().map(u => u.imported_from).filter(Boolean))
@@ -48,7 +50,10 @@ export function importH1Users(h1Path: string, store: Store, apply: boolean): Imp
     if (store.getUserByName(username)) { report.conflicts.push(username); continue }
     const role: UserRow['role'] = r.role === 'admin' || r.is_admin === 1 ? 'admin' : 'user'
     const status: UserRow['status'] = r.disabled_at || (r.status && !['approved', 'active'].includes(r.status)) ? 'disabled' : 'active'
-    if (apply) store.createUser({ username, display_name: r.display_name || username, password_hash: r.password_hash, role, status, imported_from: r.id })
+    // 已验证的邮箱一起导入（找回密码用）；平台里已被别的账户用了就不导
+    const email = r.email && r.email_verified ? r.email.trim().toLowerCase() : null
+    const usableEmail = email && !store.getUserByEmail(email) ? email : null
+    if (apply) store.createUser({ username, display_name: r.display_name || username, password_hash: r.password_hash, role, status, imported_from: r.id, email: usableEmail })
     report.imported.push({ username, role, status })
   }
   return report

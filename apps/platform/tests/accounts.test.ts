@@ -17,12 +17,19 @@ import { TurnService } from '../src/turns/service.ts'
 
 const SECRET = 'test-secret'
 
+/** 测试用发信器：记下每封邮件（取验证码）。 */
+function fakeMailer() {
+  const sent: Array<{ to: string; subject: string; text: string }> = []
+  return { configured: true, available: true, sent, async send(to: string, subject: string, text: string) { sent.push({ to, subject, text }) }, code: () => /(\d{6})/.exec(sent.at(-1)?.text ?? '')?.[1] }
+}
+
 function env(devMode = true) {
+  const mailer = fakeMailer()
   const store = new Store(':memory:')
   const docs = new Documents(store)
   const pool = { liveSession: () => null, run: () => new Promise(() => {}), cancel: async () => {} } as unknown as HarnessPool
   // 测试用低难度、不限最短填写时间
-  const accounts = new Accounts(store, { secret: SECRET, devMode, devToken: 'dev', devUser: 'dev', botGuard: new BotGuard({ secret: SECRET, baseMax: 300, minDelayMs: 0 }) })
+  const accounts = new Accounts(store, { secret: SECRET, devMode, devToken: 'dev', devUser: 'dev', botGuard: new BotGuard({ secret: SECRET, baseMax: 300, minDelayMs: 0 }), mailer })
   const app = buildApi({
     docs, ops: new OpService(docs), turns: new TurnService(docs, pool, new TurnRegistry()), postcheck: new PostCheck(docs),
     crossref: {} as CrossrefClient, renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'hr-'))),
@@ -31,7 +38,7 @@ function env(devMode = true) {
   const pow = async () => solveChallenge((await (await app.request('/api/auth/challenge')).json()) as Challenge)
   const call = async (method: string, path: string, token?: string, body?: unknown) => {
     // 注册 / 登录自动带上人机校验的解（专门测防机器人的用例自己传 pow）
-    if (/^\/api\/auth\/(register|login)$/.test(path) && body && typeof body === 'object' && !('pow' in body)) body = { ...body, pow: await pow() }
+    if (/^\/api\/auth\/(register|login|password-code)$/.test(path) && body && typeof body === 'object' && !('pow' in body)) body = { ...body, pow: await pow() }
     const res = await app.request(path, {
       method,
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
@@ -47,7 +54,7 @@ function env(devMode = true) {
     expect(r.status).toBe(201)
     return r.data as { token: string; user: { id: string; role: string } }
   }
-  return { store, docs, accounts, call, register, pow }
+  return { store, docs, accounts, call, register, pow, mailer }
 }
 
 describe('账户：注册与登录', () => {
@@ -201,9 +208,9 @@ describe('1.0 账户导入', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'h1-')), 'h1.db')
     const h1 = new DatabaseSync(path)
     h1.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, display_name TEXT NOT NULL, password_hash TEXT, role TEXT, status TEXT,
-      is_admin INTEGER, disabled_at TEXT, deleted_at TEXT, created_at TEXT NOT NULL)`)
+      is_admin INTEGER, disabled_at TEXT, deleted_at TEXT, created_at TEXT NOT NULL, email TEXT, email_verified INTEGER)`)
     const hash = (pw: string) => bcrypt.hashSync(pw, 4).replace(/^\$2b\$/, '$2a$') // 1.0 用 bcryptjs，前缀可能是 $2a$
-    const add = h1.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    const add = h1.prepare('INSERT INTO users (id, username, display_name, password_hash, role, status, is_admin, disabled_at, deleted_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     add.run('h1', 'drwang', '王医生', hash('oldpass123'), 'user', 'approved', 1, null, null, '2025-01-01')
     add.run('h2', null, '李研究员', hash('another123'), 'user', 'approved', 0, null, null, '2025-01-02')
     add.run('h3', 'gone', '离职', hash('x1234567'), 'user', 'approved', 0, null, '2025-06-01', '2025-01-03')
@@ -211,6 +218,8 @@ describe('1.0 账户导入', () => {
     add.run('h5', 'paused', '停用', hash('paused123'), 'user', 'approved', 0, '2025-05-01', null, '2025-01-05')
     add.run('h6', 'taken', '同名', hash('taken1234'), 'user', 'approved', 0, null, null, '2025-01-06')
     add.run('h7', null, 'Dr Jane Doe', hash('spaced1234'), 'user', 'approved', 0, null, null, '2025-01-07')
+    h1.prepare("UPDATE users SET email = 'Wang@Hosp.cn', email_verified = 1 WHERE id = 'h1'").run()
+    h1.prepare("UPDATE users SET email = 'li@hosp.cn', email_verified = 0 WHERE id = 'h2'").run()
     h1.close()
 
     const t = env()
@@ -231,6 +240,9 @@ describe('1.0 账户导入', () => {
     expect((await t.call('POST', '/api/auth/login', undefined, { username: 'drwang', password: 'oldpass123' })).data.user).toMatchObject({ role: 'admin', display_name: '王医生' })
     expect((await t.call('POST', '/api/auth/login', undefined, { username: 'paused', password: 'paused123' })).status).toBe(403)
 
+    // 已验证的邮箱一起导入（小写），未验证的不导
+    expect(t.store.getUserByName('drwang')!.email).toBe('wang@hosp.cn')
+    expect(t.store.getUserByName('李研究员')!.email).toBeNull()
     const again = importH1Users(path, t.store, true)
     expect((await t.call('POST', '/api/auth/login', undefined, { username: 'dr jane doe', password: 'spaced1234' })).status).toBe(200)
     expect([again.imported.length, again.already.length]).toEqual([0, 4])
@@ -261,5 +273,60 @@ describe('防机器人', () => {
     guard.verify('ip1', s, '', t0 + 2000)
     expect(guard.issue('ip1', t0 + 3000).maxnumber).toBe(800) // 3 次失败 → 8 倍
     expect(guard.issue('ip2', t0 + 3000).maxnumber).toBe(100)
+  })
+})
+
+describe('邮箱：绑定与找回密码', () => {
+  it('绑定邮箱：发码 → 核对；错码累计 5 次作废；邮箱被别人占用不能绑', async () => {
+    const t = env()
+    const a = await t.register('amy')
+    const b = await t.register('ben')
+    expect((await t.call('POST', '/api/me/email-code', a.token, { email: 'Amy@Example.com' })).status).toBe(200)
+    expect(t.mailer.sent.at(-1)!.to).toBe('amy@example.com')
+    expect((await t.call('POST', '/api/me/email', a.token, { email: 'amy@example.com', code: '000000' })).data.code).toBe('bad_code')
+    const r = await t.call('POST', '/api/me/email', a.token, { email: 'amy@example.com', code: t.mailer.code() })
+    expect(r.data.email).toBe('amy@example.com')
+    expect((await t.call('POST', '/api/me/email-code', b.token, { email: 'amy@example.com' })).data.code).toBe('email_taken')
+    // 60 秒内不能重发
+    expect((await t.call('POST', '/api/me/email-code', b.token, { email: 'ben@example.com' })).status).toBe(200)
+    expect((await t.call('POST', '/api/me/email-code', b.token, { email: 'ben@example.com' })).data.code).toBe('code_throttled')
+    for (let i = 0; i < 5; i++) await t.call('POST', '/api/me/email', b.token, { email: 'ben@example.com', code: '111111' })
+    expect((await t.call('POST', '/api/me/email', b.token, { email: 'ben@example.com', code: t.mailer.code() })).data.code).toBe('bad_code')
+  })
+
+  it('找回密码：未绑定的邮箱同样返回成功但不发信；验证码重置后旧登录全部失效、原密码不能再用', async () => {
+    const t = env()
+    const a = await t.register('cara')
+    await t.call('POST', '/api/me/email-code', a.token, { email: 'cara@example.com' })
+    await t.call('POST', '/api/me/email', a.token, { email: 'cara@example.com', code: t.mailer.code() })
+    const before = t.mailer.sent.length
+    expect((await t.call('POST', '/api/auth/password-code', undefined, { email: 'nobody@example.com' })).status).toBe(200)
+    expect(t.mailer.sent.length).toBe(before)
+    expect((await t.call('POST', '/api/auth/password-code', undefined, { email: 'cara@example.com' })).status).toBe(200)
+    expect(t.mailer.sent.length).toBe(before + 1)
+    expect((await t.call('POST', '/api/auth/reset-password', undefined, { email: 'cara@example.com', code: t.mailer.code(), new_password: 'weak' })).data.code).toBe('weak_password')
+    const reset = await t.call('POST', '/api/auth/reset-password', undefined, { email: 'cara@example.com', code: t.mailer.code(), new_password: 'fresh12345' })
+    expect(reset.status).toBe(200)
+    expect((await t.call('GET', '/api/docs', a.token)).status).toBe(401)
+    expect((await t.call('GET', '/api/docs', reset.data.token)).status).toBe(200)
+    expect((await t.call('POST', '/api/auth/login', undefined, { username: 'cara', password: 'secret123' })).status).toBe(401)
+    // 验证码一次有效
+    expect((await t.call('POST', '/api/auth/reset-password', undefined, { email: 'cara@example.com', code: t.mailer.code(), new_password: 'again12345' })).data.code).toBe('bad_code')
+  })
+
+  it('找回密码发码需要人机校验', async () => {
+    const t = env()
+    expect((await t.call('POST', '/api/auth/password-code', undefined, { email: 'x@example.com', pow: undefined })).data.code).toBe('bot_check')
+  })
+
+  it('生产环境没配邮件服务：找回密码一律提示联系管理员（不论邮箱是否注册）', async () => {
+    const { createMailer } = await import('../src/auth/mailer.ts')
+    const store = new Store(':memory:')
+    const accounts = new Accounts(store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev', botGuard: new BotGuard({ secret: SECRET, baseMax: 50, minDelayMs: 0 }), mailer: createMailer({ production: true }) })
+    const ask = async (email: string) => {
+      const c = accounts.bots.issue('ip')
+      return accounts.sendResetCode({ email, pow: solveChallenge(c) }, 'ip').catch(err => err.code)
+    }
+    expect(await ask('a@example.com')).toBe('mail_unavailable')
   })
 })

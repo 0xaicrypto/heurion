@@ -28,6 +28,8 @@ export interface UserRow {
   last_login_at: string | null
   /** 从 1.0 导入时的原用户 id。 */
   imported_from: string | null
+  /** 已验证的邮箱（找回密码用）；未绑定为 null。 */
+  email: string | null
 }
 
 export interface DocRow {
@@ -148,8 +150,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY, username TEXT NOT NULL, username_key TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
         password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', status TEXT NOT NULL DEFAULT 'active',
-        token_version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_login_at TEXT, imported_from TEXT
+        token_version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_login_at TEXT, imported_from TEXT, email TEXT
       );
+      CREATE TABLE IF NOT EXISTS verification_codes (
+        id TEXT PRIMARY KEY, target TEXT NOT NULL, purpose TEXT NOT NULL, code_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0, ip TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS verification_codes_target ON verification_codes (target, purpose, created_at);
       CREATE TABLE IF NOT EXISTS docs (
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL,
         rev INTEGER NOT NULL DEFAULT 0, state BLOB, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -220,6 +227,9 @@ export class Store {
     // 旧库补列：回合失败 / 超时 / 取消的原因
     const turnCols = (this.db.prepare('PRAGMA table_info(turns)').all() as Array<{ name: string }>).map(c => c.name)
     if (!turnCols.includes('error')) this.db.exec('ALTER TABLE turns ADD COLUMN error TEXT')
+    const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users (email) WHERE email IS NOT NULL')
   }
 
   // —— 文档 ——
@@ -239,12 +249,12 @@ export class Store {
   // —— 用户 ——
 
   /** 用户名比较不区分大小写（username_key）。第一个用户自动成为管理员。 */
-  createUser(input: { username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null }): UserRow {
+  createUser(input: { username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null; email?: string | null }): UserRow {
     const id = 'u' + randomUUID().replace(/-/g, '').slice(0, 15)
     const role = input.role ?? (this.countUsers() === 0 ? 'admin' : 'user')
-    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null)
+    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from, email)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null, input.email ?? null)
     return this.getUser(id)!
   }
 
@@ -254,6 +264,35 @@ export class Store {
 
   getUserByName(username: string): UserRow | undefined {
     return this.db.prepare('SELECT * FROM users WHERE username_key = ?').get(userKey(username)) as unknown as UserRow | undefined
+  }
+
+  getUserByEmail(email: string): UserRow | undefined {
+    return this.db.prepare('SELECT * FROM users WHERE email = ?').get(email) as unknown as UserRow | undefined
+  }
+
+  setUserEmail(id: string, email: string | null): void {
+    this.db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, id)
+  }
+
+  // —— 邮箱验证码（只存哈希） ——
+
+  addVerificationCode(row: { id: string; target: string; purpose: string; code_hash: string; ip: string | null; created_at: number; expires_at: number }): void {
+    this.db.prepare('INSERT INTO verification_codes (id, target, purpose, code_hash, ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(row.id, row.target, row.purpose, row.code_hash, row.ip, row.created_at, row.expires_at)
+  }
+
+  latestVerificationCode(target: string, purpose: string): { id: string; code_hash: string; attempts: number; created_at: number; expires_at: number; used_at: number | null } | undefined {
+    return this.db.prepare('SELECT * FROM verification_codes WHERE target = ? AND purpose = ? ORDER BY created_at DESC LIMIT 1')
+      .get(target, purpose) as unknown as ReturnType<Store['latestVerificationCode']>
+  }
+
+  countVerificationCodesByIp(ip: string, since: number): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM verification_codes WHERE ip = ? AND created_at >= ?').get(ip, since) as { n: number }).n)
+  }
+
+  markVerificationCode(id: string, patch: { used?: boolean; attempt?: boolean }): void {
+    if (patch.used) this.db.prepare('UPDATE verification_codes SET used_at = ? WHERE id = ?').run(Date.now(), id)
+    if (patch.attempt) this.db.prepare('UPDATE verification_codes SET attempts = attempts + 1 WHERE id = ?').run(id)
   }
 
   countUsers(): number {

@@ -3,12 +3,16 @@
  * 用户菜单与个人设置、管理员停用用户后其登录立即失效、改密码。
  * 需要一个**全新**实例（会注册第一个用户成为管理员）：
  *   HEURION_DATA_DIR=$(mktemp -d) PORT=8788 HEURION_MCP_URL=http://127.0.0.1:8788/mcp pnpm start &
- *   pnpm --filter @heurion2/platform ui:accounts http://127.0.0.1:8788 [截图目录]
+ *   pnpm --filter @heurion2/platform ui:accounts http://127.0.0.1:8788 [截图目录] [服务日志路径]
+ * 给了服务日志路径时再测邮箱找回密码（开发模式下验证码打在日志里）。
  */
+import { readFileSync } from 'node:fs'
 import { chromium, type Page } from 'playwright'
 
 const B = process.argv[2] ?? 'http://127.0.0.1:8788'
 const SHOTS = process.argv[3]
+const SERVER_LOG = process.argv[4]
+const lastCode = () => [...readFileSync(SERVER_LOG!, 'utf8').matchAll(/验证码是：(\d{6})/g)].at(-1)?.[1] ?? ''
 let failed = 0
 const ok = (name: string, cond: boolean, extra = '') => { if (!cond) failed++; console.log(`${cond ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`) }
 const shot = async (page: Page, name: string) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }) }
@@ -97,6 +101,39 @@ await user.click('#authSubmit')
 await user.waitForFunction(() => document.getElementById('authError')!.textContent !== '')
 ok('被停用的账户不能登录', (await user.locator('#authError').innerText()).includes('停用'))
 await shot(user, 'login-disabled')
+
+// 5. 邮箱：管理员绑定邮箱 → 另一个浏览器里忘记密码 → 验证码重置并登录 → 原登录失效
+if (SERVER_LOG) {
+  ok('没绑邮箱时提醒绑定', await admin.locator('#emailNudge').isVisible())
+  await admin.keyboard.press('Escape')
+  await admin.click('#emailNudge [data-nudge="bind"]')
+  await admin.waitForSelector('#emailForm')
+  await admin.fill('#emailForm input[name="email"]', 'wang@hosp.example')
+  await admin.click('#emailSend')
+  await admin.waitForTimeout(800)
+  await admin.fill('#emailForm input[name="code"]', lastCode())
+  await admin.click('#emailForm button.primary')
+  await admin.waitForFunction(() => document.querySelector('#emailForm')?.textContent?.includes('已绑定'))
+  ok('个人设置里绑定邮箱', true)
+  await shot(admin, 'settings-email')
+
+  const other = await newPage()
+  await other.goto(B + '/')
+  await other.waitForSelector('#authScreen:not([hidden])')
+  await other.click('#authSwitch a[data-mode="reset"]')
+  await other.fill('#resetEmail', 'WANG@hosp.example')
+  await other.click('#resetSend')
+  await other.waitForFunction(() => document.getElementById('resetNote')!.textContent !== '')
+  await other.fill('#resetCode', lastCode())
+  await other.fill('#resetPassword', 'reset98765')
+  await shot(other, 'reset-password')
+  await other.click('#resetSubmit')
+  await other.waitForSelector('#userButton', { state: 'visible' })
+  ok('忘记密码：邮箱验证码重置后直接登录', (await other.locator('#userName').innerText()) === '王医生')
+  await admin.reload()
+  await admin.waitForSelector('#authScreen:not([hidden])')
+  ok('重置密码后其他设备上的登录失效', true)
+}
 
 ok('页面无脚本错误', errors.length === 0, errors.slice(0, 3).join(' | '))
 await browser.close()

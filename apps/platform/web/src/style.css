@@ -303,3 +303,12 @@ button.block { width: 100%; padding: 8px 12px; }
 
 /* 陷阱字段：移出视口而不是 display:none（部分脚本会跳过 display:none 的输入框） */
 .hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+
+.field-row { display: flex; gap: 8px; }
+.field-row input { flex: 1; min-width: 0; }
+.field-row button { flex: none; white-space: nowrap; }
+.form-note { font-size: 13px; color: var(--ok); }
+.form-note:empty { display: none; }
+.nudge { display: flex; align-items: center; gap: 8px; margin: 10px 24px 0; padding: 6px 8px 6px 14px; border-radius: 999px; background: var(--sky-soft); border: 1px solid var(--sky-line); font-size: 13px; }
+.nudge button { font-size: 12px; padding: 2px 12px; }
+.nudge button:first-of-type { margin-left: auto; }
