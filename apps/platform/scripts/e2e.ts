@@ -180,6 +180,10 @@ let deckId = ''
   check('幻灯片：AI 套主题、生成示意图插入、加色块（与画布同一套操作）',
     (d12.doc.content as any[]).every(s => s.attrs.theme === 'midnight') && allShapes.some(s => s.attrs.kind === 'image' && s.attrs.asset_id) && allShapes.some(s => s.attrs.fill && s.attrs.fill !== 'none'),
     `${summary(t12)} · 工具 ${[...new Set(t12.calls)].join(' ')}`)
+  // C1 第 2 周：AI 建表格（画布上人也是同一个 add_table）
+  const t13 = await turn(`/api/docs/${deck.id}/chat`, { message: '在「安全性」那一页加一个表格，列出两组（司美格鲁肽 vs 安慰剂）因不良事件停药的比例和严重不良事件比例，数值可以写「待核实」。' })
+  const tables = ((await api(`/api/docs/${deck.id}/deck`)).doc.content as any[]).flatMap(s => (s.content ?? []).filter((c: any) => c.attrs?.kind === 'table'))
+  check('幻灯片：AI 新建表格（与画布同一套操作）', tables.length > 0 && JSON.stringify(tables).includes('安慰剂'), `${summary(t13)} · 工具 ${[...new Set(t13.calls)].join(' ')}`)
 }
 
 // —— 10. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——

@@ -40,6 +40,23 @@ export const DeckOp = z.discriminatedUnion('op', [
     fill: COLOR.optional().describe('填充色（色块、标题条、强调卡片）'),
     color: COLOR.optional().describe('文字颜色'),
   }),
+  z.object({
+    op: z.literal('set_paragraphs'),
+    shape_id: z.string(),
+    paragraphs: z.array(z.object({
+      text: z.string().describe('该段文字（行内 markdown：**粗体**、[@c:id] 引用、<br> 换行）'),
+      lvl: z.number().int().min(0).max(8).optional().describe('列表级别；缺省沿用原段'),
+    })).describe('形状的全部段落，按顺序'),
+  }).describe('逐段改写形状文字：每段只替换变化的字，原有格式、引用、评论标记保留（画布上直接改字用的就是它）'),
+  z.object({
+    op: z.literal('add_table'),
+    slide_id: z.string(),
+    rows: z.array(z.array(z.string()).min(1).max(12)).min(1).max(30).describe('单元格文字（行内 markdown），第一行默认是表头'),
+    x: z.number(), y: z.number(), w: z.number().positive(),
+    h: z.number().positive().optional().describe('缺省按行数（每行约 32pt）'),
+    header: z.boolean().optional().describe('第一行作表头（强调色底、白色粗体），缺省 true'),
+    font_size: z.number().min(8).max(40).optional().describe('字号（pt），缺省 14'),
+  }),
   z.object({ op: z.literal('set_fill'), shape_id: z.string(), color: COLOR.describe('填充色；none 为无填充') }),
   z.object({ op: z.literal('set_background'), slide_id: z.string(), color: COLOR }),
   z.object({
@@ -106,7 +123,7 @@ export interface DeckContext {
 
 export function deckTargetIds(op: DeckOp): string[] {
   switch (op.op) {
-    case 'add_slide': case 'add_shape': case 'add_image': return []
+    case 'add_slide': case 'add_shape': case 'add_image': case 'add_table': return []
     case 'delete_slide': case 'move_slide': case 'set_notes': case 'set_background': return [op.slide_id]
     case 'apply_theme': return op.slide_ids ?? []
     default: return [op.shape_id]
@@ -116,7 +133,9 @@ export function deckTargetIds(op: DeckOp): string[] {
 export function deckOpTexts(op: DeckOp): string[] {
   switch (op.op) {
     case 'add_slide': return [op.title ?? '', op.body ?? '']
-    case 'set_text': case 'add_shape': case 'set_notes': return [op.markdown]
+    case 'set_text': case 'add_shape': case 'set_notes': return [op.markdown ?? '']
+    case 'set_paragraphs': return op.paragraphs.map(p => p.text)
+    case 'add_table': return op.rows.flat()
     case 'replace_text': return [op.replace]
     case 'table_set_cells': return op.cells.map(c => c.markdown)
     default: return []
@@ -320,6 +339,50 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
         xfrm_inherited: false,
       })
       return [op.shape_id]
+    }
+    case 'set_paragraphs': {
+      const hit = find(tr, op.shape_id, 'shape')
+      if (!EDITABLE_TEXT.has(hit.node.attrs.kind as string)) throw notEditable(hit.node)
+      const template = templateOf(hit.node)
+      const parse = deckInlineParser(template)
+      const old: PMNode[] = []
+      hit.node.forEach(c => { if (c.type.name === 'paragraph') old.push(c) })
+      const next = op.paragraphs.map((p, i) => {
+        const before = old[i]
+        const lvl = p.lvl ?? (before?.attrs.lvl as number | undefined) ?? 0
+        if (!before) return deckSchema.node('paragraph', { lvl, ppr: template.ppr(lvl) }, parse(p.text))
+        const attrs = lvl !== before.attrs.lvl ? { ...before.attrs, lvl, ppr: template.ppr(lvl) } : before.attrs
+        return rewriteParagraph(before.type.create(attrs, before.content), p.text, parse)
+      })
+      const content = next.length > 0 ? next : [deckSchema.node('paragraph')]
+      tr.replaceWith(hit.pos, hit.pos + hit.node.nodeSize, hit.node.type.create(hit.node.attrs, content))
+      return [op.shape_id]
+    }
+    case 'add_table': {
+      const hit = find(tr, op.slide_id, 'slide')
+      const cols = Math.max(...op.rows.map(r => r.length))
+      if (op.rows.some(r => r.length !== cols)) throw new OpError('invalid_table', '每行的单元格数要一样', { hint: `最多的一行有 ${cols} 格；空格写 ""。` })
+      const theme = DECK_THEMES[(hit.node.attrs.theme as string | null) ?? DEFAULT_THEME] ?? DECK_THEMES[DEFAULT_THEME]!
+      const header = op.header ?? true
+      const size = op.font_size ?? 14
+      const rows = op.rows.map((row, ri) => deckSchema.node('table_row', null, row.map(text => {
+        const isHead = header && ri === 0
+        let xml = `<a:rPr ${A_NS} lang="zh-CN" sz="${Math.round(size * 100)}"${isHead ? ' b="1"' : ''} dirty="0"/>`
+        xml = rprWithColor(xml, isHead ? 'FFFFFF' : theme.body)
+        const inline = toDeckInline(parseInline(text), deckSchema.marks.rpr!.create({ xml }))
+        const marked = isHead ? inline.map(n => n.isText ? n.mark(deckSchema.marks.bold!.create().addToSet(n.marks)) : n) : inline
+        const fill = isHead ? theme.accent : ri % 2 === 0 ? theme.surface : null
+        const tcpr = fill ? `<a:tcPr ${A_NS}><a:solidFill><a:srgbClr val="${fill}"/></a:solidFill></a:tcPr>` : `<a:tcPr ${A_NS}/>`
+        return deckSchema.node('table_cell', { tcpr }, [deckSchema.node('paragraph', null, marked)])
+      })))
+      const h = op.h ?? Math.max(32, Math.round(size * 2.2)) * op.rows.length
+      const shape = assignIds(deckSchema.node('shape', {
+        kind: 'table', name: 'Table', x: emu(op.x), y: emu(op.y), w: emu(op.w), h: emu(h),
+      }, [deckSchema.node('table', null, rows)]), ctx.taken)
+      const last = hit.node.lastChild
+      const at = last?.type.name === 'notes' ? hit.pos + hit.node.nodeSize - 1 - last.nodeSize : hit.pos + hit.node.nodeSize - 1
+      tr.insert(at, shape)
+      return [shape.attrs.id as string]
     }
     case 'set_fill': {
       const hit = find(tr, op.shape_id, 'shape')
@@ -545,7 +608,8 @@ function mapParagraphs(node: PMNode, fn: (p: PMNode) => PMNode): PMNode {
 /** 套用主题：背景、标题 / 正文颜色；原来用上一个主题强调色、卡片色的填充换成新主题的。 */
 export function themedSlide(slide: PMNode, themeKey: string): PMNode {
   const theme = DECK_THEMES[themeKey] ?? DECK_THEMES[DEFAULT_THEME]!
-  const old = DECK_THEMES[(slide.attrs.theme as string | null) ?? ''] ?? null
+  // 没套过主题的页按默认主题算（主题记号一直按默认主题取色）
+  const old = DECK_THEMES[(slide.attrs.theme as string | null) ?? DEFAULT_THEME] ?? null
   const shapes: PMNode[] = []
   slide.forEach(shape => {
     if (shape.type.name !== 'shape') { shapes.push(shape); return }
@@ -555,12 +619,62 @@ export function themedSlide(slide: PMNode, themeKey: string): PMNode {
     if (old && attrs.fill === old.accent) attrs = { ...attrs, fill: theme.accent }
     else if (old && attrs.fill === old.accent2) attrs = { ...attrs, fill: theme.accent2 }
     else if (old && attrs.fill === old.surface) attrs = { ...attrs, fill: theme.surface }
+    if (attrs.kind === 'table') { shapes.push(shape.type.create(attrs, [themedTable(shape.firstChild!, theme, old)], shape.marks)); return }
     // 实心色块上的文字保持原色（多为反白），其余按标题 / 正文着色
     const onFill = attrs.fill && attrs.fill !== 'none'
-    const restyled = onFill || !['text', 'shape', 'table'].includes(attrs.kind as string)
+    const restyled = onFill || !['text', 'shape'].includes(attrs.kind as string)
       ? shape
       : mapParagraphs(shape, p => styledParagraph(p, { color: isTitle ? theme.title : ph === 'subTitle' ? theme.muted : theme.body }))
     shapes.push(restyled.type.create(attrs, restyled.content, restyled.marks))
   })
   return slide.type.create({ ...slide.attrs, theme: themeKey, bg: theme.bg }, shapes)
+}
+
+/**
+ * 把一段改写成新文字：在单独的小文档里对这一段做最小差异替换（同 replace_text），没变的字保留原格式、引用、评论标记。
+ */
+function rewriteParagraph(paragraph: PMNode, text: string, parse: (md: string) => PMNode[]): PMNode {
+  const doc = deckSchema.node('doc', null, [deckSchema.node('slide', null, [deckSchema.node('shape', null, [paragraph])])])
+  const tr = new Transform(doc)
+  const pos = 2 // doc → slide（内容起点 1）→ shape（内容起点 2）→ 段落
+  const current = paragraphMarkdownText(paragraph)
+  if (current === text) return paragraph
+  if (current === '') {
+    tr.replaceWith(pos + 1, pos + 1 + paragraph.content.size, parse(text))
+  } else {
+    const outcome = replaceInTextblock(tr, paragraph, pos, { find: current, replace: text }, parse)
+    if (!outcome.ok) throw replaceError(outcome, '段落', paragraph.textContent)
+  }
+  return tr.doc.child(0).child(0).child(0)
+}
+
+/** 段落的文字（引用写成 [@c:id]、硬换行写成换行；与 replace_text 匹配用的文字一致）。 */
+function paragraphMarkdownText(p: PMNode): string {
+  let out = ''
+  p.forEach(c => {
+    if (c.isText) out += c.text
+    else if (c.type.name === 'citation') out += `[@c:${c.attrs.cite_id}]`
+    else if (c.type.name === 'hard_break') out += '\n'
+  })
+  return out
+}
+
+/** 套主题时的表格：表头 / 交替行底色换成新主题的强调色 / 卡片色；有强调色底的单元格保持白字，其余用正文色。 */
+function themedTable(table: PMNode, theme: (typeof DECK_THEMES)[string], old: (typeof DECK_THEMES)[string] | null): PMNode {
+  const rows: PMNode[] = []
+  table.forEach(row => {
+    const cells: PMNode[] = []
+    row.forEach(cell => {
+      const tcpr = (cell.attrs.tcpr as string | null) ?? ''
+      const fill = /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(tcpr)?.[1]?.toUpperCase()
+      let next = tcpr
+      if (fill && old && fill === old.accent) next = tcpr.replace(fill, theme.accent)
+      else if (fill && old && fill === old.surface) next = tcpr.replace(fill, theme.surface)
+      const head = !!fill && (fill === theme.accent || fill === old?.accent)
+      const styled = mapParagraphs(cell, p => styledParagraph(p, { color: head ? 'FFFFFF' : theme.body }))
+      cells.push(cell.type.create({ ...cell.attrs, tcpr: next || cell.attrs.tcpr }, styled.content))
+    })
+    rows.push(row.type.create(row.attrs, cells))
+  })
+  return table.type.create(table.attrs, rows)
 }

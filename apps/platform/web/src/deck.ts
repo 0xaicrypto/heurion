@@ -43,6 +43,9 @@ export class DeckView {
   private drag: { kind: DragKind; id: string; x: number; y: number; box: { l: number; t: number; w: number; h: number }; ratio: number | null; moved: boolean } | null = null
   private nudge: { id: string; dx: number; dy: number; timer: number } | null = null
   private width = 760
+  /** 正在画布上直接改字（形状 / 表格单元格 / 备注）。 */
+  private editing: { el: HTMLElement; commit: () => Promise<void>; cancel: () => void } | null = null
+  private renderPending = false
   private readonly resize = new ResizeObserver(() => {
     if (Math.abs(this.fitWidth() - this.width) > 8 && !this.drag) this.render()
   })
@@ -50,6 +53,7 @@ export class DeckView {
   constructor(private readonly mount: HTMLElement, private readonly opts: DeckViewOptions) {
     const scroller = mount.closest('.scroller')
     if (scroller) this.resize.observe(scroller)
+    mount.addEventListener('dblclick', e => this.startEditing(e))
     mount.addEventListener('pointerdown', e => this.startDrag(e))
     mount.addEventListener('pointermove', e => this.moveDrag(e))
     mount.addEventListener('pointerup', e => void this.endDrag(e))
@@ -89,6 +93,8 @@ export class DeckView {
 
   private render(): void {
     if (!this.data) return
+    // 正在改字时不重绘（会冲掉输入）；改完再按最新数据重绘
+    if (this.editing) { this.renderPending = true; return }
     const slides = this.data.doc.content ?? []
     // 引用编号：全文首次出现顺序
     this.numbers.clear()
@@ -109,7 +115,7 @@ export class DeckView {
       return `<div class="slide-wrap" data-id="${esc(slide.attrs?.id)}" data-index="${i}"${suggest}>
         <div class="slide-head"><span>第 ${i + 1} 页 · ${esc(slide.attrs?.layout_name || '无版式')}</span><button data-precise="${i}">${this.precise.has(i) ? '近似预览' : '精确预览'}</button></div>
         <div class="slide" style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg}` : ''}">${body}</div>
-        ${notes ? `<div class="slide-notes">备注：${esc(this.text(notes))}</div>` : ''}
+        <div class="slide-notes"><span class="notes-label">备注</span><div class="notes-text${notes && this.text(notes) ? '' : ' empty'}" data-notes="${esc(slide.attrs?.id)}" title="双击编辑演讲者备注">${notes && this.text(notes) ? esc(this.text(notes)) : '双击添加演讲者备注'}</div></div>
       </div>`
     }).join('')
     // 选中的形状被删了（别人或 AI 删的）：取消选中
@@ -162,7 +168,7 @@ export class DeckView {
     box.dataset.ox = String(ox)
     box.dataset.oy = String(oy)
     box.style.cssText = `left:${ox + parseFloat(el.style.left)}px;top:${oy + parseFloat(el.style.top)}px;width:${el.style.width};height:${el.style.height};${el.style.transform ? `transform:${el.style.transform};` : ''}`
-    box.innerHTML = '<div class="sel-grip" data-drag="move" title="拖动移动；方向键微调（Shift 每次 10pt）；Delete 删除">⠿</div>'
+    box.innerHTML = '<div class="sel-grip" data-drag="move" title="拖动移动；方向键微调（Shift 每次 10pt）；Delete 删除；双击形状改字">⠿</div>'
       + (['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map(h => `<div class="sel-handle h-${h}" data-drag="${h}"></div>`).join('')
     // 手柄放在形状上方；贴着页面上沿时放下方，都放不下时放在框内（页面会裁掉超出部分）
     box.querySelector<HTMLElement>('.sel-grip')!.classList.add(oy + parseFloat(el.style.top) >= 26 ? 'above' : 'inside')
@@ -262,6 +268,101 @@ export class DeckView {
     this.nudge = n
   }
 
+  // —— 画布上直接改字：双击文本框 / 色块 / 占位符、表格单元格、备注 ——
+
+  private startEditing(e: MouseEvent): void {
+    if (this.editing) return
+    const t = e.target as HTMLElement
+    const notes = t.closest('.notes-text') as HTMLElement | null
+    if (notes) { this.editNotes(notes, e); return }
+    const shapeEl = t.closest('.slide .shape[data-id]') as HTMLElement | null
+    if (!shapeEl) return
+    const id = shapeEl.dataset.id!
+    const sel = this.findShape(id)
+    if (!sel) return
+    const kind = sel.attrs?.kind as string
+    const td = t.closest('td[data-r]') as HTMLElement | null
+    if (kind === 'table' && td) { this.editCell(id, td, e); return }
+    if (kind === 'text' || kind === 'shape') this.editShape(id, shapeEl, sel, e)
+  }
+
+  private findShape(id: string): PMJson | null {
+    for (const slide of this.data?.doc.content ?? []) {
+      const shape = slide.content?.find(c => c.attrs?.id === id)
+      if (shape) return shape
+    }
+    return null
+  }
+
+  /** 进入编辑：contenteditable + 完成（点别处 / ⌘↩）与取消（Esc）。 */
+  private beginEdit(el: HTMLElement, mode: 'true' | 'plaintext-only', commit: () => Promise<void>, at?: MouseEvent): void {
+    this.mount.querySelectorAll('.sel-box').forEach(b => b.remove())
+    this.opts.onSelection(null)
+    el.contentEditable = mode
+    el.classList.add('editing')
+    document.execCommand('defaultParagraphSeparator', false, 'p')
+    el.focus()
+    // 光标放在双击的位置：双击时浏览器选中的一片可能带着分段，接着打字会把两段并成一段
+    const caret = at ? document.caretRangeFromPoint?.(at.clientX, at.clientY) : null
+    if (caret && el.contains(caret.startContainer)) {
+      caret.collapse(true)
+      getSelection()?.removeAllRanges()
+      getSelection()?.addRange(caret)
+    }
+    const finish = async (save: boolean) => {
+      if (!this.editing || this.editing.el !== el) return
+      el.removeEventListener('keydown', onKey)
+      el.removeEventListener('focusout', onOut)
+      this.editing = null
+      el.contentEditable = 'false'
+      el.classList.remove('editing')
+      if (save) await commit()
+      // 提交后服务端会回推新数据；没提交（取消 / 没改）就按现有数据重绘
+      if (!save || this.renderPending) { this.renderPending = false; this.render() }
+    }
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); void finish(false) }
+      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); void finish(true) }
+    }
+    const onOut = (ev: FocusEvent) => { if (!el.contains(ev.relatedTarget as Node | null)) void finish(true) }
+    el.addEventListener('keydown', onKey)
+    el.addEventListener('focusout', onOut)
+    this.editing = { el, commit: () => finish(true), cancel: () => void finish(false) }
+  }
+
+  private editShape(id: string, shapeEl: HTMLElement, shape: PMJson, at: MouseEvent): void {
+    const container = (shapeEl.querySelector('.shape-text') as HTMLElement | null) ?? shapeEl
+    const original = (shape.content ?? []).filter(p => p.type === 'paragraph').map(p => ({ text: modelText(p), lvl: p.attrs?.lvl ?? 0 }))
+    this.beginEdit(container, 'true', async () => {
+      const paragraphs = domParagraphs(container)
+      const same = paragraphs.length === original.length && paragraphs.every((p, i) => p.text === original[i]!.text && p.lvl === original[i]!.lvl)
+      if (same) return
+      await this.edit([{ op: 'set_paragraphs', shape_id: id, paragraphs }])
+    }, at)
+  }
+
+  private editCell(id: string, td: HTMLElement, at: MouseEvent): void {
+    const before = domParagraphs(td).map(p => p.text).join('\n\n')
+    this.beginEdit(td, 'true', async () => {
+      const markdown = domParagraphs(td).map(p => p.text).join('\n\n')
+      if (markdown === before) return
+      await this.edit([{ op: 'table_set_cells', shape_id: id, cells: [{ row: Number(td.dataset.r), col: Number(td.dataset.c), markdown }] }])
+    }, at)
+  }
+
+  private editNotes(el: HTMLElement, at: MouseEvent): void {
+    const slideId = el.dataset.notes!
+    const wasEmpty = el.classList.contains('empty')
+    if (wasEmpty) { el.textContent = ''; el.classList.remove('empty') }
+    const before = wasEmpty ? '' : (el.textContent ?? '')
+    this.beginEdit(el, 'plaintext-only', async () => {
+      const text = (el.innerText ?? '').replace(/\u00a0/g, ' ').trim()
+      if (text === before.trim()) return
+      const markdown = text.split(/\n+/).map(l => escapeMd(l.trim())).filter(Boolean).join('\n\n')
+      await this.edit([{ op: 'set_notes', slide_id: slideId, markdown }])
+    }, wasEmpty ? undefined : at)
+  }
+
   private text(n: PMJson): string {
     if (n.type === 'text') return n.text ?? ''
     return (n.content ?? []).map(c => this.text(c)).join(n.type === 'notes' ? '\n' : '')
@@ -284,7 +385,9 @@ export class DeckView {
     if (block) return `<div ${common}><div class="shape-text">${(s.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</div></div>`
     if (a.kind === 'table') {
       const table = s.content?.[0]
-      const rows = (table?.content ?? []).map(r => `<tr>${(r.content ?? []).map(c => `<td>${(c.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</td>`).join('')}</tr>`).join('')
+      // 单元格底色取自 a:tcPr 的纯色填充
+      const cellBg = (c: PMJson) => { const m = /<a:solidFill>\s*<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(String(c.attrs?.tcpr ?? '')); return m ? ` style="background:#${m[1]}"` : '' }
+      const rows = (table?.content ?? []).map((r, ri) => `<tr>${(r.content ?? []).map((c, ci) => `<td data-r="${ri}" data-c="${ci}"${cellBg(c)}>${(c.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</td>`).join('')}</tr>`).join('')
       return `<div ${common}><table>${rows}</table></div>`
     }
     // 色块 / 卡片：文字垂直居中（与导出的 anchor="ctr" 一致）
@@ -302,7 +405,7 @@ export class DeckView {
       const o = offset
       offset += c.type === 'text' ? (c.text ?? '').length : 1
       if (c.type === 'hard_break') return `<br data-o="${o}">`
-      if (c.type === 'citation') return `<sup class="cite" data-o="${o}" data-atom>[${this.numbers.get(c.attrs!.cite_id) ?? '?'}]</sup>`
+      if (c.type === 'citation') return `<sup class="cite" data-o="${o}" data-atom data-cite="${esc(c.attrs!.cite_id)}" contenteditable="false">[${this.numbers.get(c.attrs!.cite_id) ?? '?'}]</sup>`
       const rpr = c.marks?.find(m => m.type === 'rpr')?.attrs?.xml as string | undefined
       const sz = rpr ? /\ssz="(\d+)"/.exec(rpr)?.[1] : undefined
       const color = rpr ? /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(rpr)?.[1] : undefined
@@ -323,10 +426,11 @@ export class DeckView {
     const bullet = (ph === 'body' || ph === 'obj') && runs ? ' class="bullet"' : ''
     const align = p.attrs?.align ? `text-align:${p.attrs.align};` : ''
     this.paras.set(`${shape.attrs!.id}#${this.pIndex}`, p)
-    return `<p data-p="${this.pIndex++}" data-len="${offset}"${bullet} style="font-size:${size * k}px;margin-left:${lvl * 18 * k}px;${align}">${runs || '&nbsp;'}</p>`
+    return `<p data-p="${this.pIndex++}" data-len="${offset}" data-lvl="${lvl}"${bullet} style="font-size:${size * k}px;margin-left:${lvl * 18 * k}px;${align}">${runs || '&nbsp;'}</p>`
   }
 
   private reportSelection(e?: MouseEvent): void {
+    if (this.editing) return // 改字时的选区不是评论选区
     // 在选中框（手柄、控制点）上松开鼠标是拖动的结束，不是点空白处
     if ((e?.target as HTMLElement | undefined)?.closest?.('.sel-box')) return
     const sel = getSelection()
@@ -418,5 +522,35 @@ function paragraphSlice(p: PMJson, from: number, to: number): string {
     if (a < b) out += c.type === 'text' ? c.text!.slice(a - pos, b - pos) : c.type === 'hard_break' ? '\n' : ''
     pos += len
   }
+  return out
+}
+
+/** 纯文字转成行内 markdown（转义会被当成格式的字符）。 */
+const escapeMd = (text: string) => text.replace(/([\\*_`[\]<>])/g, '\\$1')
+
+/** 模型段落 → 编辑提交用的文字（与 domParagraphs 同一写法，用来判断改没改）。 */
+function modelText(p: PMJson): string {
+  return (p.content ?? []).map(c => c.type === 'text' ? escapeMd(c.text ?? '') : c.type === 'citation' ? `[@c:${c.attrs!.cite_id}]` : c.type === 'hard_break' ? '<br>' : '').join('')
+}
+
+/** 编辑后的 DOM → 段落（文字转义；引用角标还原成 [@c:id]；换行写 <br>）。浏览器可能把输入包成 div 或裸文字，一并算段落。 */
+function domParagraphs(container: HTMLElement): Array<{ text: string; lvl: number }> {
+  const out: Array<{ text: string; lvl: number }> = []
+  const inline = (node: Node): string => {
+    let s = ''
+    node.childNodes.forEach((c, i) => {
+      if (c.nodeType === 3) s += escapeMd((c.textContent ?? '').replace(/\u00a0/g, ' '))
+      else if (c instanceof HTMLElement) {
+        if (c.tagName === 'BR') { if (i < node.childNodes.length - 1) s += '<br>' }
+        else if (c.dataset.cite) s += `[@c:${c.dataset.cite}]`
+        else s += inline(c)
+      }
+    })
+    return s
+  }
+  container.childNodes.forEach(c => {
+    if (c instanceof HTMLElement && (c.tagName === 'P' || c.tagName === 'DIV')) out.push({ text: inline(c).replace(/^ $/, ''), lvl: Number(c.dataset.lvl ?? 0) })
+    else if (c.nodeType === 3 && (c.textContent ?? '').trim()) out.push({ text: escapeMd(c.textContent!.trim()), lvl: 0 })
+  })
   return out
 }

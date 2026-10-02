@@ -373,6 +373,7 @@ $('deckToolbar').onclick = async e => {
     case 'textbox': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '新文本框', x: Math.round(W / 2 - 200), y: Math.round(H / 2 - 30), w: 400, h: 60, color: 'body' }]); break
     case 'block': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '', x: Math.round(W / 2 - 150), y: Math.round(H / 2 - 60), w: 300, h: 120, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF' }]); break
     case 'image': $('deckImageInput').click(); break
+    case 'table': await deck.edit([{ op: 'add_table', slide_id: slide.attrs!.id, x: Math.round(W / 2 - 300), y: Math.round(H / 2 - 64), w: 600, rows: [['项目', '组 A', '组 B'], ['', '', ''], ['', '', '']] }]); break
     case 'fill': { const c = await pickColor(btn, theme, true); if (c && id) await deck.edit([{ op: 'set_fill', shape_id: id, color: c }]); break }
     case 'color': { const c = await pickColor(btn, theme, false); if (c && id) await deck.edit([{ op: 'set_text_style', shape_id: id, color: c }]); break }
     case 'bigger': case 'smaller': {
@@ -532,7 +533,7 @@ const TOOL_LABELS: Record<string, (a: any) => string> = {
   slide_read: () => '阅读幻灯片',
   deck_edit: a => `修改幻灯片（${a.ops?.length ?? 1} 处操作）`,
   layout_check: () => '检查版面（溢出、重叠）',
-  slide_render: () => '渲染幻灯片预览自查',
+  slide_render: () => '渲染幻灯片预览',
   asset_upload: () => '上传图片',
   bash: () => '运行计算',
 }
@@ -547,7 +548,9 @@ function toolLabel(name: string, args: string): string {
 
 // —— 回合的界面状态：工作过程（折叠）、本轮改动（摘要条）、重试 ——
 
-let turnUi: { steps: HTMLDetailsElement; count: number; turnId: string | null } | null = null
+let turnUi: { steps: HTMLDetailsElement; count: number; retries: number; turnId: string | null } | null = null
+/** 工具调用 id → 人话名称（工具失败时说清是哪一步）。 */
+const callLabels = new Map<string, string>()
 /** 每轮 AI 改动的块（提交事件带回合 id）。 */
 const turnChanges = new Map<string, { ids: Set<string>; count: number }>()
 
@@ -557,14 +560,14 @@ function startTurnUi(turnId: string | null): void {
   steps.open = true
   steps.innerHTML = '<summary>工作中…</summary>'
   $('chatLog').appendChild(steps)
-  turnUi = { steps, count: 0, turnId }
+  turnUi = { steps, count: 0, retries: 0, turnId }
 }
 
 const DONE_LABEL: Record<string, string> = { done: '已完成', error: '出错了', timeout: '超时停止', cancelled: '已停止', interrupted: '被中断' }
 
 function finishTurnUi(status: string): void {
   if (!turnUi) return
-  turnUi.steps.querySelector('summary')!.textContent = `${DONE_LABEL[status] ?? status} · ${turnUi.count} 步`
+  turnUi.steps.querySelector('summary')!.textContent = `${DONE_LABEL[status] ?? status} · ${turnUi.count} 步${turnUi.retries ? `（${turnUi.retries} 步调整后重试）` : ''}`
   turnUi.steps.open = false
   turnUi.steps.classList.toggle('failed', status !== 'done')
   turnUi = null
@@ -649,11 +652,22 @@ function renderTurnEvent(ev: any): void {
       startTurnUi(ev.turn_id ?? null)
       break
     case 'assistant': lastAssistant = addMsg('assistant', ev.text); break
-    case 'tool_call':
+    case 'tool_call': {
       if (turnUi) turnUi.count++
-      addStep(toolLabel(String(ev.name), String(ev.arguments ?? '')), '', `${String(ev.name).replace(/^mcp__heurion__/, '')} ${String(ev.arguments ?? '')}`)
+      const label = toolLabel(String(ev.name), String(ev.arguments ?? ''))
+      callLabels.set(String(ev.callId ?? ''), label)
+      addStep(label, '', `${String(ev.name).replace(/^mcp__heurion__/, '')} ${String(ev.arguments ?? '')}`)
       break
-    case 'tool_result': if (ev.isError) addStep(`  需要调整：${ev.code ?? '工具报错'}`, 'err'); break
+    }
+    case 'tool_result':
+      if (ev.isError) {
+        // 工具没成功通常 AI 会按提示调整后重试：说清哪一步、为什么，不当成致命错误
+        if (turnUi) turnUi.retries++
+        const what = callLabels.get(String(ev.callId ?? '')) ?? '上一步'
+        const why = ev.message ? `：${ev.message}` : ''
+        addStep(`  ${what}没成功${why}`, 'warn', [ev.message, ev.hint ? `建议：${ev.hint}` : '', ev.code ? `（${ev.code}）` : ''].filter(Boolean).join('\n'))
+      }
+      break
     case 'doc_updated': addStep(`  已写入文档（${ev.changes} 处）`, 'ok'); break
     case 'comment_reply': scheduleRefresh(); break
     case 'version': addStep(`  ✓ 已保存为 v${ev.seq}`, 'ok'); break

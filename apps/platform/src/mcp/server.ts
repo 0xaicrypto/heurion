@@ -264,11 +264,13 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description:
       '编辑幻灯片：一批操作原子提交，base_rev 用最近读到的 rev。几何单位 pt。操作：' +
       'add_slide {after, layout?, title?, body?}（按版式填占位符，不需要算坐标）；delete_slide {slide_id}；move_slide {slide_id, after}；' +
-      'set_text {shape_id, markdown}（沿用原字号颜色；列表项 - 对应项目符号）；replace_text {shape_id, find, replace}（小改动首选）；' +
+      'set_text {shape_id, markdown}（整体重写，按模板格式；列表项 - 对应项目符号）；replace_text {shape_id, find, replace}（小改动首选）；' +
+      'set_paragraphs {shape_id, paragraphs:[{text, lvl?}]}（逐段改写多段文字，未改的字保留原有颜色、加粗、引用与评论标记）；' +
       'add_shape {slide_id, markdown?, x, y, w, h, font_size?, geometry?: rect|roundRect|ellipse, fill?, color?}（文本框；带 geometry / fill 即色块、标题条、卡片）；' +
       'set_xfrm {shape_id, x?, y?, w?, h?}；delete_shape {shape_id}；set_z {shape_id, to: front|back|forward|backward}；' +
       'set_fill {shape_id, color}；set_background {slide_id, color}；set_text_style {shape_id, paragraph?, color?, size?, bold?, italic?, align?}；' +
       'add_image {slide_id, asset_id, x, y, w, h?}（图片先用 asset_upload 上传；h 缺省按原图比例）；' +
+      'add_table {slide_id, x, y, w, rows:[[...]], header?, font_size?}（表头用主题强调色；之后用 table_set_cells 改单元格）；' +
       'apply_theme {theme, slide_ids?}（整套配色：背景、标题与正文颜色、强调色；之后新加的页沿用）；' +
       'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。' +
       '颜色写 6 位十六进制或主题记号（accent / accent2 / title / body / muted / bg / surface，按该页主题取色）。改完用 layout_check 检查溢出与重叠，必要时 slide_render 看效果。',

@@ -10,7 +10,8 @@ export type UiEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; callId: string; name: string; arguments: string }
-  | { type: 'tool_result'; callId: string; isError: boolean; code?: string }
+  /** 工具结果；失败时带原因（message）与建议（hint），前端显示给用户。 */
+  | { type: 'tool_result'; callId: string; isError: boolean; code?: string; message?: string; hint?: string }
   | { type: 'turn_end'; reason: string }
   /** 文档被本回合修改（实时，每次 doc_edit 提交一次）。 */
   | { type: 'doc_updated'; doc_id: string; rev: number; changes: number }
@@ -47,7 +48,7 @@ export function mapNotification(n: HarnessNotification, sessionId: string): UiEv
       return out
     }
     case 'tool/result': {
-      const message = data.message as { toolCallId?: string; isError?: boolean; code?: string; source?: { toolCallId?: string } } | undefined
+      const message = data.message as { toolCallId?: string; isError?: boolean; code?: string; source?: { toolCallId?: string }; content?: unknown } | undefined
       const event: Extract<UiEvent, { type: 'tool_result' }> = {
         type: 'tool_result',
         callId: message?.toolCallId ?? message?.source?.toolCallId ?? '',
@@ -55,6 +56,7 @@ export function mapNotification(n: HarnessNotification, sessionId: string): UiEv
       }
       // MCP 工具的显式失败码（validation_error / unit_not_found …）——前端据此展示具体原因。
       if (typeof message?.code === 'string' && message.code) event.code = message.code
+      if (event.isError) Object.assign(event, describeToolError(message?.content))
       return [event]
     }
     case 'turn/end': {
@@ -77,4 +79,28 @@ const ERROR_HINTS: Record<string, string> = {
 
 function describeError(e: { message?: string; code?: string }): string {
   return (e.code && ERROR_HINTS[e.code]) ?? e.message ?? e.code ?? 'AI 回合失败'
+}
+
+/**
+ * 工具失败的原因：平台 MCP 工具返回 `{code, message, hint}`（dsh 包成 "Error: {...}"）；
+ * 参数校验失败等其他错误取第一行。给用户看的是 message，code / hint 放在悬停提示里。
+ */
+export function describeToolError(content: unknown): { code?: string; message?: string; hint?: string } {
+  const text = Array.isArray(content)
+    ? content.map(c => (c && typeof c === 'object' && 'text' in c ? String((c as { text: unknown }).text) : '')).join('\n')
+    : typeof content === 'string' ? content : ''
+  if (!text) return {}
+  const body = text.replace(/^\s*Error:\s*/, '')
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown; message?: unknown; hint?: unknown }
+    if (parsed && typeof parsed === 'object' && typeof parsed.message === 'string') {
+      return {
+        ...(typeof parsed.code === 'string' ? { code: parsed.code } : {}),
+        message: parsed.message.slice(0, 300),
+        ...(typeof parsed.hint === 'string' ? { hint: parsed.hint.slice(0, 300) } : {}),
+      }
+    }
+  } catch { /* 不是平台工具的 JSON 错误 */ }
+  if (/invalid arguments|input validation/i.test(body)) return { code: 'validation_error', message: '参数格式不符合要求' }
+  return { message: body.split('\n')[0]!.slice(0, 200) }
 }

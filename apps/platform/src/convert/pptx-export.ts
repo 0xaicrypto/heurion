@@ -167,6 +167,26 @@ function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, 
     if (!rid) return ''
     return `<p:pic><p:nvPicPr><p:cNvPr id="${nvId}" name="${name}" descr="${esc(String(a.description ?? ''))}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
   }
+  if (a.kind === 'table') {
+    // 新建的表格：p:graphicFrame + a:tbl（列宽平分，行高平分）
+    const table = shape.firstChild
+    const rows: PMNode[] = []
+    table?.forEach(r => rows.push(r))
+    const cols = rows[0]?.childCount ?? 1
+    const colW = Math.round((a.w as number) / cols)
+    const rowH = Math.round((a.h as number) / Math.max(1, rows.length))
+    const tr = rows.map(r => {
+      let cells = ''
+      r.forEach(cell => {
+        let paras = ''
+        cell.forEach(p => { paras += paragraphXml(p, numbers) })
+        const tcpr = cell.attrs.tcpr ? stripNs(cell.attrs.tcpr as string) : '<a:tcPr/>'
+        cells += `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>${paras || '<a:p/>'}</a:txBody>${tcpr}</a:tc>`
+      })
+      return `<a:tr h="${rowH}">${cells}</a:tr>`
+    }).join('')
+    return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"/><a:tblGrid>${Array.from({ length: cols }, () => `<a:gridCol w="${colW}"/>`).join('')}</a:tblGrid>${tr}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`
+  }
   if (!a.ph && (a.geom || (a.fill && a.fill !== 'none'))) {
     // 色块 / 标题条 / 卡片：几何 + 填充，文字居中
     const geom = PRST[(a.geom as keyof typeof PRST) ?? 'rect'] ?? 'rect'

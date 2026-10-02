@@ -28,12 +28,7 @@ function deck() {
   const pkg = pptxTemplate()
   const row = docs.create({ owner: 'u', title: '汇报', kind: 'deck', content: newDeckContent(readLayouts(pkg).layouts, 'SELECT 试验') })
   store.putPackage(row.id, 'pptx', pkg)
-  let rev = 0
-  const edit = (ops_: DeckOp[]) => {
-    const r = ops.edit({ doc_id: row.id, base_rev: rev, mode: 'apply', ops: ops_ }, { actor: 'ai', turnId: null })
-    rev = r.rev
-    return r
-  }
+  const edit = (ops_: DeckOp[]) => ops.edit({ doc_id: row.id, base_rev: docs.rev(row.id), mode: 'apply', ops: ops_ }, { actor: 'ai', turnId: null })
   const exported = () => {
     const bytes = exportPptx({
       doc: docs.get(row.id), baseline: null, pkg: store.getPackage(row.id)!, src: id => store.getNodeSrc(row.id, id), citations: [],
@@ -208,5 +203,83 @@ describe('色块写文字', () => {
     t.edit([{ op: 'set_text', shape_id: id, markdown: '**结论**：阻断 PD-1 恢复抗肿瘤免疫' }])
     expect(t.shape(0, a => a.id === id).attrs).toMatchObject({ kind: 'shape', geom: 'roundRect' })
     expect(t.exported().text('ppt/slides/slide1.xml')).toContain('阻断 PD-1 恢复抗肿瘤免疫')
+  })
+})
+
+describe('set_paragraphs：画布直接改字（逐段最小差异）', () => {
+  it('改一个字：其余文字的颜色、加粗、引用、评论标记都保留；新增 / 删除段落；改列表级别', async () => {
+    const { attachComment } = await import('../src/model/anchors.ts')
+    const t = deck()
+    const c = t.store.upsertCitation({ doc_id: t.docId, doi: '10.1056/x', pmid: null, formatted: 'x', url: null })
+    const first = t.slide(0).attrs.id as string
+    const r = t.edit([{ op: 'add_slide', after: first, title: '结果', body: `- 主要终点 HR **0.80**[@c:${c.id}]\n- 次要终点一致\n- 安全性可接受` }])
+    const body = t.shape(1, a => a.ph !== 'title').attrs.id as string
+    t.edit([{ op: 'set_text_style', shape_id: body, paragraph: 0, color: 'DC2626' }])
+    const cm = t.store.addComment({ doc_id: t.docId, node_id: body, snippet: '主要终点' })
+    t.docs.commit(t.docId, attachComment(t.doc(), body, '主要终点', cm.id, 0).doc, { actor: 'user', turnId: null, ops: [] })
+    // 第 1 段只把「主要」改成「首要」，第 2 段不动，删第 3 段，加一段二级要点
+    t.edit([{ op: 'set_paragraphs', shape_id: body, paragraphs: [
+      { text: `首要终点 HR **0.80**[@c:${c.id}]` },
+      { text: '次要终点一致' },
+      { text: '心血管死亡亦下降', lvl: 1 },
+    ] }])
+    const shape = t.shape(1, a => a.id === body)
+    expect(shape.childCount).toBe(3)
+    const p0 = shape.child(0)
+    expect(p0.textContent).toBe('首要终点 HR 0.80')
+    let cites = 0, bold = '', red = true, commented = ''
+    p0.forEach(n => {
+      if (n.type.name === 'citation') cites++
+      if (n.isText) {
+        if (n.marks.some(m => m.type.name === 'bold')) bold += n.text
+        if (!(n.marks.find(m => m.type.name === 'rpr')?.attrs.xml as string ?? '').includes('DC2626')) red = false
+        if (n.marks.some(m => m.type.name === 'comment')) commented += n.text
+      }
+    })
+    expect([cites, bold, red]).toEqual([1, '0.80', true])
+    expect(commented).toBe('要终点') // 锚点收缩到保留下来的字
+    expect([shape.child(1).textContent, shape.child(2).textContent, shape.child(2).attrs.lvl]).toEqual(['次要终点一致', '心血管死亡亦下降', 1])
+    expect(r.results[0]!.ids.length).toBeGreaterThan(0)
+    const out = t.exported()
+    const texts = Object.keys(out.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f)).map(f => [...out.text(f).matchAll(/<a:t>([^<]*)<\/a:t>/g)].map(m => m[1]).join(''))
+    expect(texts.some(x => x.includes('首要终点 HR 0.80[1]') && x.includes('心血管死亡亦下降'))).toBe(true)
+  })
+
+  it('段落都没变：不产生改动；不可编辑的形状拒绝', () => {
+    const t = deck()
+    const title = t.shape(0, a => a.ph === 'ctrTitle' || a.ph === 'title').attrs.id as string
+    const before = t.shape(0, a => a.id === title)
+    t.edit([{ op: 'set_paragraphs', shape_id: title, paragraphs: [{ text: before.textContent }] }])
+    expect(t.shape(0, a => a.id === title).eq(before)).toBe(true)
+  })
+})
+
+describe('add_table：新建表格（人与 AI 同一套操作）', () => {
+  it('表头强调色白字、交替行底色；导出 a:tbl；单元格可改；换主题时表头跟着换色且保持白字', () => {
+    const t = deck()
+    const sid = t.slide(0).attrs.id as string
+    const id = t.edit([{ op: 'add_table', slide_id: sid, x: 60, y: 120, w: 600, rows: [['指标', '司美格鲁肽', '安慰剂'], ['主要终点', '6.5%', '8.0%'], ['HR (95% CI)', '0.80 (0.72–0.90)', '—']] }]).results[0]!.ids[0]!
+    const shape = t.shape(0, a => a.id === id)
+    expect(shape.attrs.kind).toBe('table')
+    const head = shape.firstChild!.firstChild!.firstChild!
+    expect(head.attrs.tcpr).toContain(DECK_THEMES.clinical!.accent)
+    const headRpr = head.firstChild!.firstChild!.marks.find(m => m.type.name === 'rpr')!.attrs.xml as string
+    expect(headRpr).toContain('FFFFFF')
+    t.edit([{ op: 'table_set_cells', shape_id: id, cells: [{ row: 1, col: 1, markdown: '6.5%（n=8803）' }] }])
+    const xml = t.exported().text('ppt/slides/slide1.xml')
+    expect(xml).toContain('<a:tbl>')
+    expect(xml).toContain('6.5%（n=8803）')
+    expect((xml.match(/<a:gridCol /g) ?? []).length).toBe(3)
+    expect(wellFormed(xml)).toEqual([])
+    t.edit([{ op: 'apply_theme', theme: 'teal' }])
+    const head2 = t.shape(0, a => a.id === id).firstChild!.firstChild!.firstChild!
+    expect(head2.attrs.tcpr).toContain(DECK_THEMES.teal!.accent)
+    expect(head2.firstChild!.firstChild!.marks.find(m => m.type.name === 'rpr')!.attrs.xml).toContain('FFFFFF')
+  })
+
+  it('每行格数不一致时拒绝', () => {
+    const t = deck()
+    const sid = t.slide(0).attrs.id as string
+    try { t.edit([{ op: 'add_table', slide_id: sid, x: 0, y: 0, w: 300, rows: [['a', 'b'], ['c']] }]); throw new Error('应当拒绝') } catch (err) { expect((err as OpError).code).toBe('invalid_table') }
   })
 })
