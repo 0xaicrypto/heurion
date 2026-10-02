@@ -16,8 +16,11 @@ export class SlideRenderer {
 
   constructor(private readonly cacheDir: string, private readonly image = 'heurion2:dev') {}
 
+  /** 上次探测到「不可用」的时间：渲染环境可能晚于服务就绪（如之后才启动 podman），过一会儿重新探测。 */
+  private noneAt = 0
+
   private async detect(): Promise<'local' | 'container' | 'none'> {
-    if (this.mode) return this.mode
+    if (this.mode && (this.mode !== 'none' || Date.now() - this.noneAt < 30_000)) return this.mode
     try {
       await run('soffice', ['--version'], { timeout: 20_000 })
       await run('pdftoppm', ['-v'], { timeout: 5_000 })
@@ -32,6 +35,7 @@ export class SlideRenderer {
           break
         } catch { /* 下一个 */ }
       }
+      if (this.mode === 'none') this.noneAt = Date.now()
     }
     return this.mode
   }
