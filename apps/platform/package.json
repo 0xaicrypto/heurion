@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "e2e": "tsx --env-file-if-exists=../../.env scripts/e2e.ts",
+    "eval:fetch": "tsx scripts/eval-fetch.ts",
+    "eval:build": "tsx scripts/eval-build.ts",
+    "eval:claims": "tsx --env-file-if-exists=../../.env scripts/eval-claims.ts",
     "ui": "tsx scripts/ui.ts",
     "ui:accounts": "tsx scripts/ui-accounts.ts",
     "import-h1-users": "tsx --env-file-if-exists=../../.env scripts/import-h1-users.ts"

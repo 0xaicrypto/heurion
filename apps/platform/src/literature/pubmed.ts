@@ -2,6 +2,20 @@ import type { Article, FetchLike } from './types.ts'
 
 const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 
+const NAMED: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' }
+
+/**
+ * XML 文本解码：五个预定义实体 + 数字字符引用（PubMed 摘要里大量出现 &#x2009; 窄空格、&#xb7; 小数点、&#x2265; ≥、&#xb1; ± 等，
+ * 不解码的话论断核对的模型看到的是「0&#xb7;74」）。一次替换，避免 &amp;#… 被二次解码。
+ */
+export function decodeXmlText(s: string): string {
+  return s.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);/g, (whole, ent: string) => {
+    if (ent[0] !== '#') return NAMED[ent]!
+    const code = ent[1] === 'x' ? parseInt(ent.slice(2), 16) : parseInt(ent.slice(1), 10)
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+  })
+}
+
 interface SummaryDoc {
   uid: string
   title?: string
@@ -64,7 +78,7 @@ export class PubMedClient {
     const xml = await res.text()
     const parts = [...xml.matchAll(/<AbstractText\b([^>]*)>([\s\S]*?)<\/AbstractText>/g)].map(m => {
       const label = /Label="([^"]+)"/.exec(m[1]!)?.[1]
-      const text = m[2]!.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').trim()
+      const text = decodeXmlText(m[2]!.replace(/<[^>]+>/g, '')).trim()
       return label ? `${label}: ${text}` : text
     })
     return parts.length > 0 ? parts.join('\n') : null
