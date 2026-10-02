@@ -20,6 +20,8 @@ export interface TokenClaims {
   exp: number
   /** dsh 进程代号：进程被停止后它的令牌立即失效（停止的回合不能再写入）。 */
   s?: string
+  /** 登录令牌（aud=web）的账户令牌版本：与账户当前版本不一致即失效（停用、改密码、强制下线）。 */
+  v?: number
 }
 
 const b64 = (s: string) => Buffer.from(s).toString('base64url')

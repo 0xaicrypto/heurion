@@ -3,11 +3,12 @@ import 'prosemirror-tables/style/tables.css'
 import 'prosemirror-gapcursor/style/gapcursor.css'
 import './style.css'
 import * as Y from 'yjs'
+import { initUserMenu, showAuthScreen, signOut, storedToken, type Me } from './account.ts'
 import { DeckView } from './deck.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 
-const TOKEN = localStorage.getItem('heurion.token') || 'dev'
+const TOKEN = storedToken()
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 
@@ -15,6 +16,11 @@ async function api<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { Authorization: `Bearer ${TOKEN}` }
   if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json'
   const res = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers as Record<string, string> | undefined) } })
+  // 令牌失效（过期、被停用、在别处改了密码）：回到登录页
+  if (res.status === 401) {
+    if (TOKEN) signOut()
+    throw new Error('请先登录')
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({})) as { error?: string; message?: string }
     throw new Error(e.error || e.message || res.statusText)
@@ -136,7 +142,7 @@ async function open(docId: string): Promise<void> {
   $('exportDocxBtn').hidden = meta.kind === 'deck'
   $('exportMdBtn').hidden = meta.kind === 'deck'
   $('exportPptxBtn').hidden = meta.kind !== 'deck'
-  for (const b of ['exportDocxBtn', 'exportMdBtn', 'exportPptxBtn', 'readBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
+  for (const b of ['exportDocxBtn', 'exportMdBtn', 'exportPptxBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
   await loadDocs()
   await refresh(true)
 }
@@ -383,6 +389,7 @@ interface QueueItem { id: string; doc_id: string; doc_title: string; label: stri
 let queue: { running: QueueItem | null; queued: QueueItem[] } = { running: null, queued: [] }
 
 async function loadQueue(): Promise<void> {
+  if (!TOKEN) return
   try {
     queue = await api('/api/queue')
   } catch { return }
@@ -643,11 +650,19 @@ document.querySelector<HTMLElement>('.tabs')!.onclick = e => {
 $('exportDocxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.docx?token=${encodeURIComponent(TOKEN)}` }
 $('exportPptxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.pptx?token=${encodeURIComponent(TOKEN)}` }
 $('exportMdBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.md?token=${encodeURIComponent(TOKEN)}` }
-$('readBtn').onclick = async () => {
-  if (!session) return
+// 开发者：读视图（用户菜单里，仅开发模式）
+document.addEventListener('heurion:readview', async () => {
+  if (!session) { showNotice('先打开一份文档'); return }
   const w = window.open('', '_blank')
   const text = await api<string>(`/api/docs/${session.docId}/read`)
   if (w) w.document.body.innerHTML = `<pre style="white-space:pre-wrap;font:13px ui-monospace,monospace">${esc(text)}</pre>`
-}
+})
 
-loadDocs().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Error).message)}（令牌：localStorage heurion.token）</div>` })
+// 启动：没有令牌 → 登录页；有令牌 → 取当前用户，失效时 api() 会回到登录页
+async function boot(): Promise<void> {
+  if (!TOKEN) { $('app').hidden = true; await showAuthScreen(); return }
+  const me = await api<Me>('/api/me')
+  initUserMenu(me, api, showNotice)
+  await loadDocs()
+}
+boot().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Error).message)}</div>` })

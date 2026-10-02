@@ -16,6 +16,10 @@ const browser = await chromium.launch({ channel: 'chromium' }).catch(() => chrom
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
 const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
 await page.goto(B + '/')
+// 没有令牌时是登录页；测试用开发令牌（开发模式）
+ok('未登录时显示登录页', await page.locator('#authScreen').isVisible())
+await page.evaluate(t => localStorage.setItem('heurion.token', t), process.env.HEURION_DEV_TOKEN || 'dev')
+await page.reload()
 await page.click(`li[data-id="${doc.id}"]`)
 await page.waitForSelector('.ProseMirror p')
 await page.waitForFunction(() => document.getElementById('syncStatus')!.textContent === '已同步')

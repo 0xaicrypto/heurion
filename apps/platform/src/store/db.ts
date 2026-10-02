@@ -15,6 +15,21 @@ export type DocKind = 'doc' | 'deck'
 export type Actor = 'ai' | 'user' | 'system'
 export type VersionSource = 'create' | 'import' | 'turn' | 'user' | 'restore'
 
+export interface UserRow {
+  id: string
+  username: string
+  display_name: string
+  password_hash: string
+  role: 'user' | 'admin'
+  status: 'active' | 'disabled'
+  /** 令牌版本：停用、改密码、强制下线时加一，旧令牌立即失效。 */
+  token_version: number
+  created_at: string
+  last_login_at: string | null
+  /** 从 1.0 导入时的原用户 id。 */
+  imported_from: string | null
+}
+
 export interface DocRow {
   id: string
   owner: string
@@ -120,6 +135,7 @@ export interface MessageRow {
 }
 
 const now = () => new Date().toISOString()
+const userKey = (username: string) => username.normalize('NFKC').toLowerCase()
 
 export class Store {
   readonly db: DatabaseSync
@@ -129,6 +145,11 @@ export class Store {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY, username TEXT NOT NULL, username_key TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', status TEXT NOT NULL DEFAULT 'active',
+        token_version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_login_at TEXT, imported_from TEXT
+      );
       CREATE TABLE IF NOT EXISTS docs (
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL,
         rev INTEGER NOT NULL DEFAULT 0, state BLOB, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -213,6 +234,54 @@ export class Store {
 
   getDoc(id: string): DocRow | undefined {
     return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at FROM docs WHERE id = ?').get(id) as DocRow | undefined
+  }
+
+  // —— 用户 ——
+
+  /** 用户名比较不区分大小写（username_key）。第一个用户自动成为管理员。 */
+  createUser(input: { username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null }): UserRow {
+    const id = 'u' + randomUUID().replace(/-/g, '').slice(0, 15)
+    const role = input.role ?? (this.countUsers() === 0 ? 'admin' : 'user')
+    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null)
+    return this.getUser(id)!
+  }
+
+  getUser(id: string): UserRow | undefined {
+    return this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as unknown as UserRow | undefined
+  }
+
+  getUserByName(username: string): UserRow | undefined {
+    return this.db.prepare('SELECT * FROM users WHERE username_key = ?').get(userKey(username)) as unknown as UserRow | undefined
+  }
+
+  countUsers(): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n)
+  }
+
+  listUsers(): Array<UserRow & { doc_count: number }> {
+    return this.db.prepare(`SELECT u.*, (SELECT COUNT(*) FROM docs d WHERE d.owner = u.id) AS doc_count FROM users u ORDER BY u.created_at`)
+      .all() as unknown as Array<UserRow & { doc_count: number }>
+  }
+
+  updateUser(id: string, patch: Partial<Pick<UserRow, 'display_name' | 'password_hash' | 'role' | 'status'>> & { bumpTokenVersion?: boolean; touchLogin?: boolean }): UserRow | undefined {
+    const sets: string[] = []
+    const args: Array<string | number> = []
+    for (const k of ['display_name', 'password_hash', 'role', 'status'] as const) {
+      if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]!) }
+    }
+    if (patch.bumpTokenVersion) sets.push('token_version = token_version + 1')
+    if (patch.touchLogin) { sets.push('last_login_at = ?'); args.push(now()) }
+    if (sets.length > 0) this.db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...args, id)
+    return this.getUser(id)
+  }
+
+  /** 开发期的数据（所有者是开发用户）转给一个正式账户。 */
+  transferOwnership(from: string, to: string): { docs: number; assets: number } {
+    const docs = Number(this.db.prepare('UPDATE docs SET owner = ? WHERE owner = ?').run(to, from).changes)
+    const assets = Number(this.db.prepare('UPDATE assets SET owner = ? WHERE owner = ?').run(to, from).changes)
+    return { docs, assets }
   }
 
   listDocs(owner: string): DocRow[] {

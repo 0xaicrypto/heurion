@@ -22,7 +22,11 @@ export const config = {
   dshHome: resolve(dataDir, 'platform', 'dsh-home'),
   renderDir: resolve(dataDir, 'platform', 'render'),
   secret: env('HEURION_SECRET', 'dev-secret-not-for-production-use!'),
-  /** 开发期：单一 API 令牌 + 单一用户（多用户鉴权在 M2）。 */
+  /**
+   * 开发模式：除账户令牌外还接受开发令牌（`<令牌>` / `<令牌>:<名字>`，e2e 与浏览器测试用）。
+   * 生产环境（NODE_ENV=production）默认关闭，且必须设置 HEURION_SECRET。
+   */
+  devMode: env('HEURION_DEV_MODE', process.env.NODE_ENV === 'production' ? '0' : '1') === '1',
   devToken: env('HEURION_DEV_TOKEN', 'dev'),
   devUser: env('HEURION_DEV_USER', 'dev'),
   provider: env('DSH_PROVIDER', 'deepseek-official'),
@@ -35,6 +39,10 @@ export const config = {
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),
   /** 回合无响应超时：模型 / 工具连续这么久没有任何动静，自动停止该回合，放行队列。 */
   turnIdleTimeoutMs: Number(env('TURN_IDLE_TIMEOUT_MS', String(5 * 60_000))),
+}
+
+if (process.env.NODE_ENV === 'production' && config.secret === 'dev-secret-not-for-production-use!') {
+  throw new Error('生产环境必须设置 HEURION_SECRET')
 }
 
 export type Config = typeof config

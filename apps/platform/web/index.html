@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 2 104 96'%3E%3Crect x='-6' y='2' width='104' height='96' rx='22' fill='%230F172A'/%3E%3Crect x='6' y='18' width='16' height='66' rx='8' fill='%23F8FAFC'/%3E%3Crect x='60' y='35' width='16' height='49' rx='8' fill='%23F8FAFC'/%3E%3Crect x='18' y='45' width='46' height='16' rx='8' fill='%230EA5E9'/%3E%3Ccircle cx='76' cy='24' r='10' fill='%230EA5E9'/%3E%3C/svg%3E">
 </head>
 <body>
-<div class="app">
+<div class="app" id="app">
   <aside class="nav">
     <div class="brand">
       <svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg>
@@ -23,6 +23,22 @@
     </div>
     <div class="nav-label">文档</div>
     <ul class="doclist" id="docList"></ul>
+    <div class="user">
+      <button id="userButton" class="user-button" aria-haspopup="menu" title="账户">
+        <span class="avatar" id="userAvatar"></span>
+        <span class="user-text"><span id="userName" class="user-name"></span><span id="userRole" class="user-role"></span></span>
+        <span class="caret" aria-hidden="true">⌃</span>
+      </button>
+      <div class="user-menu" id="userMenu" role="menu" hidden>
+        <button data-action="settings" id="userMenuSettings" role="menuitem">个人设置</button>
+        <button data-action="admin" id="userMenuAdmin" role="menuitem" hidden>用户管理</button>
+        <button data-action="claim" id="userMenuClaim" role="menuitem" hidden title="把开发期（开发令牌）的文档转到你的账户">认领开发期文档</button>
+        <button data-action="readview" id="userMenuReadView" role="menuitem" hidden title="当前文档在 AI 眼里的样子（块 id、rev、引用标记），排查问题用">开发者：读视图</button>
+        <hr>
+        <button data-action="everywhere" id="userMenuEverywhere" role="menuitem">退出所有设备</button>
+        <button data-action="logout" role="menuitem">退出登录</button>
+      </div>
+    </div>
   </aside>
 
   <main class="center">
@@ -34,7 +50,6 @@
         <button id="exportPptxBtn" disabled hidden>导出 pptx</button>
         <button id="exportMdBtn" disabled>导出 md</button>
       </div>
-      <button id="readBtn" class="quiet" disabled title="模型看到的读视图">读视图</button>
     </header>
     <div class="toolbar" id="toolbar" hidden>
       <select id="blockType" title="段落样式">
@@ -114,6 +129,25 @@
     <div class="tabpane" id="citePane"><div id="cites"></div></div>
   </section>
 </div>
+<div class="auth" id="authScreen" hidden>
+  <div class="auth-card">
+    <div class="auth-brand"><svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg><div class="wordmark"><span class="name">HEURION</span><span class="tagline">CLINICAL AI WORKSTATION</span></div></div>
+    <h1 class="auth-title">登录</h1>
+    <p class="auth-sub"></p>
+    <form id="authForm" class="form">
+      <label>用户名<input type="text" id="authUsername" autocomplete="username" required maxlength="32"></label>
+      <label id="authDisplayRow" hidden>显示名（选填）<input type="text" id="authDisplay" maxlength="40" placeholder="别人看到的名字，默认同用户名"></label>
+      <label>密码<input type="password" id="authPassword" required></label>
+      <div class="hp" aria-hidden="true"><label>网站<input type="text" id="authWebsite" name="website" tabindex="-1" autocomplete="off"></label></div>
+      <div class="muted" id="authHint" hidden>至少 8 位，同时包含字母和数字。</div>
+      <div class="form-error" id="authError" role="alert"></div>
+      <button class="sky block" id="authSubmit">登录</button>
+    </form>
+    <div class="auth-switch" id="authSwitch"></div>
+    <a href="#" class="auth-dev" id="authDev" hidden>开发模式：使用开发令牌进入</a>
+  </div>
+</div>
+<div class="dialog" id="dialog" hidden></div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

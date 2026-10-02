@@ -3,7 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
-import { devUserFor } from './auth/dev.ts'
+import { Accounts } from './auth/accounts.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -40,7 +40,8 @@ const mcpDeps = {
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
-const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, devToken: config.devToken, devUser: config.devUser })
+const accounts = new Accounts(store, { secret: config.secret, devMode: config.devMode, devToken: config.devToken, devUser: config.devUser })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))
@@ -67,7 +68,7 @@ const server = createServer((req, res) => {
   void api(req, res)
 })
 
-attachCollab(server, { docs, authenticate: token => devUserFor(token, config.devToken, config.devUser) })
+attachCollab(server, { docs, authenticate: token => accounts.userFor(token) })
 
 const restored = turns.restore()
 if (restored.interrupted || restored.requeued) console.log(`回合队列：${restored.interrupted} 个中断，${restored.requeued} 个继续排队`)

@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono'
 import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
-import { devUserFor } from '../auth/dev.ts'
+import { getConnInfo } from '@hono/node-server/conninfo'
+import { AuthError, type Accounts } from '../auth/accounts.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
@@ -34,7 +35,9 @@ export interface ApiDeps {
   postcheck: PostCheck
   crossref: CrossrefClient
   renderer: SlideRenderer
-  devToken: string
+  accounts: Accounts
+  /** 开发模式：允许把开发用户的数据转给正式账户。 */
+  devMode: boolean
   devUser: string
 }
 
@@ -47,14 +50,83 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const store = docs.store
   const app = new Hono<{ Variables: { user: string } }>()
 
-  // 开发期鉴权（见 auth.ts）。EventSource / <img> 用 ?token=。
-  app.use('/api/*', async (c, next) => {
+  const { accounts } = deps
+  const requestToken = (c: Context) => {
     const header = c.req.header('authorization')
-    const token = header?.startsWith('Bearer ') ? header.slice(7) : c.req.query('token')
-    const user = devUserFor(token, deps.devToken, deps.devUser)
-    if (!user) return c.json({ error: 'unauthorized' }, 401)
+    return header?.startsWith('Bearer ') ? header.slice(7) : c.req.query('token')
+  }
+  const clientIp = (c: Context) => {
+    try { return getConnInfo(c).remote.address ?? 'unknown' } catch { return 'unknown' }
+  }
+  const authFailure = (c: Context, err: unknown) => {
+    if (err instanceof AuthError) return c.json({ error: err.message, code: err.code }, err.status)
+    throw err
+  }
+
+  // —— 账户（不需要登录） ——
+  app.get('/api/auth/config', c => c.json({ has_users: store.countUsers() > 0, dev_mode: deps.devMode }))
+  // 防机器人：注册 / 登录前领一道工作量证明题（见 auth/bot-guard.ts）
+  app.get('/api/auth/challenge', c => {
+    c.header('Cache-Control', 'no-store')
+    return c.json(accounts.bots.issue(clientIp(c)))
+  })
+  app.post('/api/auth/register', async c => {
+    try {
+      return c.json(accounts.register(await c.req.json(), clientIp(c)), 201)
+    } catch (err) { return authFailure(c, err) }
+  })
+  app.post('/api/auth/login', async c => {
+    try {
+      return c.json(accounts.login(await c.req.json(), clientIp(c)))
+    } catch (err) { return authFailure(c, err) }
+  })
+
+  // 鉴权：账户令牌（开发模式下也接受开发令牌，见 auth/accounts.ts）。EventSource / <img> 用 ?token=。
+  app.use('/api/*', async (c, next) => {
+    const user = accounts.userFor(requestToken(c))
+    if (!user) return c.json({ error: '请先登录', code: 'unauthorized' }, 401)
     c.set('user', user)
     await next()
+  })
+
+  app.get('/api/me', c => c.json({ ...accounts.me(c.get('user')), dev_mode: deps.devMode }))
+  app.patch('/api/me', async c => {
+    try {
+      return c.json(accounts.updateProfile(c.get('user'), await c.req.json()))
+    } catch (err) { return authFailure(c, err) }
+  })
+  app.post('/api/auth/logout-everywhere', c => {
+    accounts.logoutEverywhere(c.get('user'))
+    return c.json({ ok: true })
+  })
+  // 开发模式：管理员把开发期（开发令牌）的文档与资产转到自己的账户
+  app.post('/api/me/claim-dev-data', c => {
+    if (!deps.devMode || !accounts.isAdmin(c.get('user'))) return c.json({ error: '只有开发模式下的管理员可以认领' }, 403)
+    return c.json(store.transferOwnership(deps.devUser, c.get('user')))
+  })
+
+  // —— 管理员 ——
+  app.use('/api/admin/*', async (c, next) => {
+    if (!accounts.isAdmin(c.get('user'))) return c.json({ error: '需要管理员权限' }, 403)
+    await next()
+  })
+  app.get('/api/admin/users', c => c.json(accounts.listUsers()))
+  app.patch('/api/admin/users/:uid', async c => {
+    try {
+      return c.json(accounts.adminUpdate(c.get('user'), c.req.param('uid'), await c.req.json()))
+    } catch (err) { return authFailure(c, err) }
+  })
+  app.post('/api/admin/users/:uid/reset-password', async c => {
+    try {
+      accounts.adminResetPassword(c.req.param('uid'), (await c.req.json<{ password?: string }>()).password ?? '')
+      return c.json({ ok: true })
+    } catch (err) { return authFailure(c, err) }
+  })
+  app.post('/api/admin/users/:uid/logout', c => {
+    try {
+      accounts.adminLogout(c.req.param('uid'))
+      return c.json({ ok: true })
+    } catch (err) { return authFailure(c, err) }
   })
 
   const owned = (c: Context<{ Variables: { user: string } }>) => {
@@ -152,7 +224,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const seq = c.req.query('version')
     const doc = seq ? docs.versionDoc(row.id, Number(seq)) : docs.get(row.id)
     if (!doc) return c.json({ error: 'version not found' }, 404)
-    return c.json({ rev: docs.rev(row.id), html: renderHtml(doc, store.listCitations(row.id), assetUrl(c.req.query('token') ?? deps.devToken)) })
+    return c.json({ rev: docs.rev(row.id), html: renderHtml(doc, store.listCitations(row.id), assetUrl(requestToken(c) ?? '')) })
   })
 
   /** 读视图（与 MCP doc_read 相同），便于调试模型看到的内容。 */

@@ -42,8 +42,8 @@ button.quiet { border-color: transparent; background: transparent; color: var(--
 button.quiet:hover:not(:disabled) { color: var(--text); background: var(--raised); }
 button:disabled { opacity: .45; cursor: default; }
 select { padding-right: 8px; }
-textarea, input[type=text] { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel); color: var(--text); resize: vertical; }
-textarea:focus, input[type=text]:focus { border-color: var(--sky); outline: none; box-shadow: 0 0 0 3px var(--sky-soft); }
+textarea, input[type=text], input[type=password] { font: inherit; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel); color: var(--text); resize: vertical; }
+textarea:focus, input[type=text]:focus, input[type=password]:focus { border-color: var(--sky); outline: none; box-shadow: 0 0 0 3px var(--sky-soft); }
 
 .app { display: grid; grid-template-columns: 240px minmax(0, 1fr) 392px; height: 100vh; }
 
@@ -244,3 +244,62 @@ button.ghost-dark:hover:not(:disabled) { background: var(--nav-hover); border-co
 .queue-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } }
+
+/* —— 账户：左栏底部用户 —— */
+.user { position: relative; padding: 8px; border-top: 1px solid rgba(148, 163, 184, .14); }
+.user-button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--nav-text); text-align: left; }
+.user-button:hover:not(:disabled) { background: var(--nav-hover); border-color: transparent; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--sky); color: #fff; display: grid; place-items: center; font-weight: 650; font-size: 13px; flex: none; }
+.user-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.user-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-role { font-size: 11px; color: var(--nav-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caret { color: var(--nav-muted); font-size: 11px; }
+.user-menu { position: absolute; left: 8px; right: 8px; bottom: calc(100% + 4px); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 4px; z-index: 20; display: flex; flex-direction: column; }
+.user-menu button { border: 0; border-radius: 8px; background: transparent; text-align: left; padding: 7px 10px; font-size: 13px; }
+.user-menu button:hover:not(:disabled) { background: var(--raised); }
+.user-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+
+/* —— 账户：登录 / 注册 —— */
+.auth { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background:
+  radial-gradient(1200px 600px at 10% -10%, rgba(14, 165, 233, .18), transparent 60%),
+  radial-gradient(900px 500px at 110% 110%, rgba(14, 165, 233, .10), transparent 60%), var(--ink); z-index: 50; }
+.auth-card { width: min(400px, 100%); background: var(--panel); border-radius: 18px; padding: 32px 28px 24px; box-shadow: 0 30px 80px -20px rgba(2, 6, 23, .6); }
+.auth-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+.auth-brand .mark { width: 34px; height: 32px; }
+.auth-brand .wordmark .name { color: var(--text); }
+.auth-brand .wordmark .tagline { color: var(--muted); }
+.auth-title { font-size: 22px; margin: 0 0 4px; }
+.auth-sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+.auth-switch { text-align: center; font-size: 13px; color: var(--muted); margin-top: 14px; }
+.auth-switch a, .auth-dev { color: var(--sky-ink); text-decoration: none; }
+.auth-dev { display: block; text-align: center; font-size: 12px; margin-top: 10px; opacity: .8; }
+.form { display: flex; flex-direction: column; gap: 12px; }
+.form label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 500; }
+.form input[type=password], .form input[type=text] { padding: 9px 12px; }
+.form h3 { margin: 6px 0 0; font-size: 14px; }
+.form-error { color: var(--danger); font-size: 13px; min-height: 1em; }
+.form-error:empty { display: none; }
+button.block { width: 100%; padding: 8px 12px; }
+
+/* —— 对话框（个人设置、用户管理） —— */
+.dialog { position: fixed; inset: 0; background: rgba(2, 6, 23, .45); display: grid; place-items: center; padding: 16px; z-index: 40; }
+.dialog-card { width: min(880px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.dialog-head h2 { font-size: 16px; margin: 0; }
+.dialog-body { padding: 18px; display: flex; flex-direction: column; gap: 22px; }
+.users { width: 100%; border-collapse: collapse; font-size: 13px; }
+.users th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.users td { padding: 8px; vertical-align: middle; }
+.users tbody tr { border-bottom: 1px solid var(--line); }
+.users tr.disabled td { opacity: .6; }
+.users td.actions { white-space: nowrap; text-align: right; }
+.users .actions-row { display: inline-flex; gap: 4px; }
+.users .actions button { font-size: 12px; padding: 2px 10px; }
+.users select { font-size: 12px; }
+.inline-form { display: flex; gap: 8px; }
+.pill { display: inline-block; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; }
+.pill.ok { color: var(--ok); background: var(--ok-soft); }
+.pill.off { color: var(--muted); background: var(--bg); }
+
+/* 陷阱字段：移出视口而不是 display:none（部分脚本会跳过 display:none 的输入框） */
+.hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
