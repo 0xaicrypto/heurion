@@ -1,0 +1,139 @@
+name: Deploy Heurion 2.0
+
+# 2.0 代码在 0xaicrypto/heurion 的 v2 分支；部署到 1.0 所在的同一台 VPS（/opt/heurion2），替换 1.0。
+# 第一次部署会自动切换（停 1.0、全量备份、导入账户），失败自动恢复 1.0；清理 1.0 用 cleanup-v1.yml（手动）。
+on:
+  push:
+    branches: [v2]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+# 与 1.0 的 Deploy Server 共用并发组：同一台机器上不能同时部署
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+env:
+  APP_IMAGE: ghcr.io/0xaicrypto/heurion2
+  EMBEDDER_IMAGE: ghcr.io/0xaicrypto/heurion2-embedder
+
+jobs:
+  test:
+    name: 类型检查与测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: '12.5.1' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: 'pnpm' }
+      # 资料库测试用 poppler 的 pdftotext
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @heurion2/platform exec tsc --noEmit
+      - run: pnpm --filter @heurion2/platform exec tsc --noEmit -p web
+      - run: pnpm --filter @heurion2/platform exec vitest run
+
+  images:
+    name: 构建镜像
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    outputs:
+      sha: ${{ steps.vars.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}' }
+      - name: 平台镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ env.APP_IMAGE }}:${{ steps.vars.outputs.sha }},${{ env.APP_IMAGE }}:latest
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+      - name: 嵌入服务镜像（含 bge-m3 模型）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/embedder/Dockerfile
+          push: true
+          tags: ${{ env.EMBEDDER_IMAGE }}:${{ steps.vars.outputs.sha }},${{ env.EMBEDDER_IMAGE }}:latest
+          cache-from: type=gha,scope=embedder
+          cache-to: type=gha,mode=max,scope=embedder
+
+  deploy:
+    name: 部署到生产
+    needs: [images]
+    runs-on: ubuntu-latest
+    environment: { name: production, url: 'https://heurion.org' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with: { ssh-private-key: '${{ secrets.VPS_SSH_KEY }}' }
+      - name: 生成 .env.production
+        env:
+          HEURION_SECRET: ${{ secrets.HEURION2_SECRET || secrets.SERVER_SECRET }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: |
+          # 缺关键 secret 直接失败，不带默认值上线
+          for v in HEURION_SECRET DEEPSEEK_API_KEY; do
+            [ -n "${!v}" ] || { echo "::error::缺少 secret：$v"; exit 1; }
+          done
+          umask 077
+          cat > /tmp/heurion2.env <<EOF
+          HOSTNAME=heurion.org
+          HEURION_SECRET=${HEURION_SECRET}
+          DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+          RESEND_API_KEY=${RESEND_API_KEY}
+          EMAIL_FROM=Heurion <no-reply@heurion.org>
+          NCBI_API_KEY=${NCBI_API_KEY}
+          CONTACT_EMAIL=no-reply@heurion.org
+          S3_ENDPOINT=${S3_ENDPOINT}
+          S3_REGION=${S3_REGION}
+          S3_BUCKET=${S3_BUCKET}
+          S3_ACCESS_KEY=${S3_ACCESS_KEY}
+          S3_SECRET_KEY=${S3_SECRET_KEY}
+          EOF
+          sed -i 's/^ *//' /tmp/heurion2.env
+      - name: 拷贝部署文件并部署
+        env:
+          HOST: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+          SHA: ${{ needs.images.outputs.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15"
+          $SSH "$HOST" "mkdir -p /opt/heurion2/scripts"
+          scp -o StrictHostKeyChecking=no deploy/docker-compose.yml deploy/Caddyfile "$HOST":/opt/heurion2/
+          scp -o StrictHostKeyChecking=no deploy/deploy.sh deploy/cutover-v1.sh deploy/backup-to-s3.sh deploy/cleanup-v1.sh "$HOST":/opt/heurion2/scripts/
+          scp -o StrictHostKeyChecking=no /tmp/heurion2.env "$HOST":/opt/heurion2/.env.production
+          # 镜像是私有包：本次部署用 GITHUB_TOKEN 登录 GHCR 拉取
+          echo "$GHCR_TOKEN" | $SSH "$HOST" "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
+          $SSH "$HOST" "cd /opt/heurion2 && chmod 600 .env.production && chmod +x scripts/*.sh && \
+            HEURION2_IMAGE=${APP_IMAGE}:${SHA} EMBEDDER_IMAGE=${EMBEDDER_IMAGE}:${SHA} bash scripts/deploy.sh"
+      - name: 冒烟检查
+        run: |
+          curl -fsS https://heurion.org/healthz
+          curl -fsS https://heurion.org/ | grep -q 'id="page"'
+          # MCP 不对外
+          [ "$(curl -s -o /dev/null -w '%{http_code}' https://heurion.org/mcp)" = "404" ]
+      - name: 清 Cloudflare 缓存
+        env:
+          CF_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          [ -n "$CF_TOKEN" ] && [ -n "$ZONE_ID" ] || { echo "没有 CF 凭据，跳过"; exit 0; }
+          curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
+            -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" -d '{"purge_everything":true}' | grep -q '"success":true'

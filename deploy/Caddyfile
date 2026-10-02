@@ -1,0 +1,39 @@
+# Heurion 2.0：Caddy 反向代理 + 自动 HTTPS。HOSTNAME 来自 .env.production（heurion.org）。
+{$HOSTNAME} {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	# 上传（资料库 PDF 最大 50MB、docx / pptx 导入）
+	request_body {
+		max_size 60MB
+	}
+
+	# MCP 只给容器里的 dsh 用（走 127.0.0.1），不对外
+	@mcp path /mcp /mcp/*
+	respond @mcp 404
+
+	# 平台：页面、REST、SSE（回合事件、文档变更推送）、协同 WebSocket（/collab）、MCP
+	reverse_proxy heurion2:8787 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		# SSE 与协同长连接：不缓冲、不按默认 10 分钟超时断开
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+
+	log {
+		output stderr
+		format json
+	}
+}
+
+# 直接访问 IP 等其他主机名：跳到正式域名
+:80 {
+	redir https://{$HOSTNAME}{uri} permanent
+}

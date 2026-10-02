@@ -1,0 +1,77 @@
+# Heurion 2.0 生产部署（单机 Docker Compose，替换 1.0 所在的同一台 VPS）。
+#   heurion2  平台（编辑器页面 + REST/SSE + 协同 WebSocket + MCP + 每用户 dsh 子进程 + LibreOffice 渲染）
+#   embedder  本地嵌入服务（bge-m3，模型在镜像里），只在内部网络可达
+#   caddy     反向代理 + 自动 HTTPS（Let's Encrypt），唯一对外暴露 80/443 的容器
+# 由 deploy.sh 用 `docker compose -p heurion2 --env-file .env.production` 调用。
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+    compress: "true"
+    tag: "{{.Name}}"
+
+services:
+  heurion2:
+    image: ${HEURION2_IMAGE:-heurion2:latest}
+    container_name: heurion2
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 4g
+    env_file: [.env.production]
+    environment:
+      - NODE_ENV=production
+      - HEURION_DEV_MODE=0
+      - HEURION_DATA_DIR=/app/data
+      - PORT=8787
+      - EMBEDDING_URL=http://embedder:8003
+    volumes:
+      # 平台数据：SQLite（文档、版本、评论、资料库、记忆、账户）、用户工作区、渲染缓存、OCR 语言模型
+      - data:/app/data
+    depends_on:
+      embedder:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks: [web]
+
+  embedder:
+    image: ${EMBEDDER_IMAGE:-heurion2-embedder:latest}
+    container_name: heurion2-embedder
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 3g
+    networks: [web]
+    # 不映射端口：只给平台用（嵌入服务没起来时平台退回关键词检索）
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: heurion2-caddy
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - HOSTNAME=${HOSTNAME}
+    depends_on: [heurion2]
+    networks: [web]
+
+volumes:
+  data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  web:
+    driver: bridge
