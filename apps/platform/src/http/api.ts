@@ -202,7 +202,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.patch('/api/memory/:mid', async c => {
     if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
     try {
-      return c.json(await deps.memory.edit(c.get('user'), c.req.param('mid'), await c.req.json()))
+      const body = await c.req.json<Parameters<MemoryService['edit']>[2]>()
+      if (body.project_id && projectOf(c, body.project_id) === false) return c.json({ error: '项目不存在' }, 404)
+      return c.json(await deps.memory.edit(c.get('user'), c.req.param('mid'), body))
     } catch (err) { return memoryFailure(c, err) }
   })
   app.delete('/api/memory/:mid', c => {

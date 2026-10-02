@@ -11,6 +11,7 @@ import type { CrossrefClient } from '../src/literature/crossref.ts'
 import { TurnRegistry } from '../src/mcp/turns.ts'
 import { Documents } from '../src/model/runtime.ts'
 import { SearchIndex } from '../src/model/search-index.ts'
+import { MemoryService } from '../src/memory/service.ts'
 import { OpService } from '../src/ops/service.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
 import { Store } from '../src/store/db.ts'
@@ -26,7 +27,7 @@ function env() {
   const search = new SearchIndex(docs, 0)
   const app = buildApi({
     docs, ops: new OpService(docs), turns: new TurnService(docs, pool, new TurnRegistry()), postcheck: new PostCheck(docs),
-    crossref: {} as CrossrefClient, renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'hr-'))), accounts, devMode: true, devUser: 'dev', search,
+    crossref: {} as CrossrefClient, renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'hr-'))), accounts, devMode: true, devUser: 'dev', search, memory: new MemoryService(store, null),
   })
   const call = async (method: string, path: string, token: string, body?: unknown) => {
     const res = await app.request(path, { method, headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body !== undefined ? JSON.stringify(body) : undefined })
@@ -137,3 +138,32 @@ describe('复制文档', () => {
     expect((await t.call('GET', `/api/docs/${dcopy.id}/export.pptx`, a.token)).status).toBe(200)
   })
 })
+
+describe('记忆 API', () => {
+  it('手动添加 → 改种类与范围 → 历史；别人的记忆与项目不能动；暂停与清空；导入进待确认', async () => {
+    const t = env()
+    const a = await t.register('amy')
+    const b = await t.register('ben')
+    const p = (await t.call('POST', '/api/projects', a.token, { name: 'SELECT' })).data
+    const pb = (await t.call('POST', '/api/projects', b.token, { name: '别人的' })).data
+    const m = (await t.call('POST', '/api/memory', a.token, { content: '数值保留两位小数', kind: 'preference' })).data.memory
+    expect(m.status).toBe('active')
+    const edited = (await t.call('PATCH', `/api/memory/${m.id}`, a.token, { kind: 'style', scope: 'project', project_id: p.id })).data
+    expect([edited.kind, edited.scope, edited.project_id]).toEqual(['style', 'project', p.id])
+    expect((await t.call('PATCH', `/api/memory/${m.id}`, a.token, { scope: 'project', project_id: pb.id })).status).toBe(404)
+    expect((await t.call('GET', `/api/memory/${m.id}/events`, a.token)).data.map((e: any) => e.action)).toEqual(['create', 'edit'])
+    expect((await t.call('PATCH', `/api/memory/${m.id}`, b.token, { content: '偷改' })).status).toBe(404)
+    expect((await t.call('DELETE', `/api/memory/${m.id}`, b.token)).status).toBe(404)
+    expect((await t.call('GET', '/api/memory', b.token)).data.items).toEqual([])
+    expect((await t.call('POST', '/api/memory', a.token, { content: '住院号：12345', kind: 'fact' })).data.code).toBe('sensitive_content')
+
+    await t.call('PUT', '/api/memory/settings', a.token, { paused: true })
+    expect((await t.call('GET', '/api/memory', a.token)).data).toMatchObject({ paused: true, enabled: false })
+    await t.call('PUT', '/api/memory/settings', a.token, { paused: false })
+    const imp = (await t.call('POST', '/api/memory-import', a.token, { items: [{ content: '术语统一用「心衰」', kind: 'term' }] })).data
+    expect(imp.added).toBe(1)
+    expect((await t.call('GET', '/api/memory', a.token)).data.items.map((x: any) => x.status).sort()).toEqual(['active', 'proposed'])
+    expect((await t.call('DELETE', '/api/memory', a.token)).data.deleted).toBe(2)
+  })
+})
+

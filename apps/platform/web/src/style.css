@@ -489,3 +489,8 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .admin-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .danger-confirm { width: 100%; font-size: 13px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--danger); }
 .kb-table select { font-size: 12px; max-width: 140px; }
+.mem-edit { display: flex; flex-direction: column; gap: 6px; }
+.mem-edit textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; }
+.mem-edit select { font-size: 12px; }
+.mem-history { margin: 4px 0 0; padding-left: 18px; }
+

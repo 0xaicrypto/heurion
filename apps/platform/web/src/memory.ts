@@ -34,7 +34,7 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
         <div class="muted small">${origin(m)}${m.reason ? ` · ${esc(m.reason)}` : ''}</div>
         <div class="actions-row">${m.status === 'proposed'
           ? '<button class="primary" data-act="accept">采纳</button><button data-act="edit">改写</button><button data-act="reject">拒绝</button>'
-          : '<button data-act="edit">编辑</button><button data-act="delete" class="danger">删除</button>'}</div></li>`
+          : '<button data-act="edit">编辑</button><button data-act="history">历史</button><button data-act="delete" class="danger">删除</button>'}</div></li>`
 
     const d = dlg()
     d.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="记忆">
@@ -102,13 +102,40 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
         reopen()
         return
       }
-      if (act === 'edit') {
-        d.hidden = true
-        const content = await askText({ title: m.status === 'proposed' ? '改写后采纳' : '编辑记忆', label: KINDS[m.kind], value: m.content, confirm: '保存' })
-        if (content?.trim()) await api(`/api/memory/${m.id}`, { method: 'PATCH', body: JSON.stringify({ content, status: 'active' }) }).catch(err => notice((err as Error).message, true))
-        reopen()
+      const li = t.closest<HTMLElement>('li[data-id]')!
+      if (act === 'history') {
+        const events = await api<Array<{ action: string; actor: string; before: string | null; after: string | null; at: string }>>(`/api/memory/${m.id}/events`)
+        const ACTION: Record<string, string> = { create: '创建', edit: '修改', active: '采纳', rejected: '拒绝', archived: '归档', activate: '生效' }
+        const WHO: Record<string, string> = { user: '你', ai: 'AI', system: '系统' }
+        li.querySelector('.mem-history')?.remove()
+        li.insertAdjacentHTML('beforeend', `<ol class="mem-history muted small">${events.map(ev => {
+          const after = ev.after ? (() => { try { return JSON.parse(ev.after!).content as string } catch { return '' } })() : ''
+          return `<li>${new Date(ev.at).toLocaleString('zh-CN', { hour12: false })} · ${WHO[ev.actor] ?? ev.actor}${ACTION[ev.action] ?? ev.action}${after && ev.action !== 'create' ? `：${esc(after)}` : ''}</li>`
+        }).join('')}</ol>`)
         return
       }
+      if (act === 'edit') {
+        // 就地编辑：内容、种类、范围（全局 / 某个项目）
+        li.innerHTML = `<form class="mem-edit">
+          <textarea name="content" rows="2">${esc(m.content)}</textarea>
+          <div class="row"><select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}"${k === m.kind ? ' selected' : ''}>${v}</option>`).join('')}</select>
+            <select name="scope"><option value="">全局</option>${projects.map(p => `<option value="${esc(p.id)}"${m.scope === 'project' && m.project_id === p.id ? ' selected' : ''}>项目：${esc(p.name)}</option>`).join('')}</select>
+            <span class="grow"></span><button type="button" data-act="cancel">取消</button><button class="primary">${m.status === 'proposed' ? '保存并采纳' : '保存'}</button></div></form>`
+        const form = li.querySelector<HTMLFormElement>('form')!
+        form.querySelector<HTMLTextAreaElement>('textarea')!.focus()
+        form.onsubmit = async ev => {
+          ev.preventDefault()
+          const fd = new FormData(form)
+          const scope = String(fd.get('scope') ?? '')
+          try {
+            await api(`/api/memory/${m.id}`, { method: 'PATCH', body: JSON.stringify({ content: String(fd.get('content') ?? ''), kind: fd.get('kind'), scope: scope ? 'project' : 'global', project_id: scope || null, status: 'active' }) })
+            notice('已保存')
+            reopen()
+          } catch (err) { notice((err as Error).message, true) }
+        }
+        return
+      }
+      if (act === 'cancel') { reopen(); return }
       await api(`/api/memory/${m.id}`, { method: 'PATCH', body: JSON.stringify({ status: act === 'accept' ? 'active' : 'rejected' }) })
       notice(act === 'accept' ? '已记住' : '已拒绝，不会再提议这条')
       reopen()
