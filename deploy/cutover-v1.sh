@@ -36,8 +36,14 @@ if grep -q '^S3_ACCESS_KEY=' .env.production && grep -q '^S3_BUCKET=.' .env.prod
 fi
 
 echo "== 3. 导入 1.0 用户账户（同名跳过，可重复执行）"
-"${COMPOSE[@]}" run --rm --no-deps -T -v heurion_nexus-db-data:/v1:ro heurion2 \
+# 1.0 的库是 WAL 模式：只读挂载打不开（SQLite 要在旁边建 -shm），从备份解出一份可写的副本来导入
+mkdir -p "$BACKUP/v1-db"
+tar xzf "$BACKUP/heurion_nexus-db-data.tar.gz" -C "$BACKUP/v1-db"
+[ -s "$BACKUP/v1-db/nexus_server.db" ] || { echo "❌ 备份里没有 nexus_server.db" >&2; exit 1; }
+chmod -R a+rwX "$BACKUP/v1-db"
+"${COMPOSE[@]}" run --rm --no-deps -T -v "$BACKUP/v1-db":/v1 heurion2 \
   pnpm --filter @heurion2/platform import-h1-users /v1/nexus_server.db --apply
+chmod -R go-rwx "$BACKUP/v1-db"
 
 echo "== 4. 停掉 1.0 的 compose 与监控栈（卷保留）"
 if [ -f "$V1/docker-compose.yml" ]; then
