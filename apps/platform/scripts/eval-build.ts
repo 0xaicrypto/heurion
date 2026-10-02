@@ -56,6 +56,8 @@ function references(doc: El): Map<string, { pmid: string | null; doi: string | n
       if (t === 'doi' && !doi && href) doi = href.replace(/^https?:\/\/(dx\.)?doi\.org\//, '').toLowerCase()
     }
     if (!doi) doi = /\bdoi:?\s*(10\.\d{4,9}\/[^\s;,]+?)\.?(?:\s|$)/i.exec(text(ref))?.[1]?.toLowerCase() ?? null
+    // 有的 DOI 写成落地页地址（10.1002/14651858.cd013757.pub3/full）：去掉页面后缀，否则 PubMed 查不到
+    if (doi) doi = doi.replace(/\/(full|abstract|pdf|epdf)$/, '')
     if (pmid || doi) out.set(id, { pmid, doi })
   }
   return out

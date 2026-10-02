@@ -9,6 +9,8 @@
  * 缓存：摘要在 data/eval/eval.db（平台 Store 的摘要缓存），判断在 data/eval/verdicts.json（按论断、模型、提示版本）——
  * 重跑只补没判过的，可随时中断续跑（按文章落盘）。报告写到 eval/report.md；报告里 <!-- notes:start --> … <!-- notes:end -->
  * 之间的手写解读重新生成时保留。
+ * 变体：v1 = 产品现状（verifyPrompt 判定标准 + ClaimService 的摘要截断 1800 字）；v2 = 同一提示、摘要放宽到 4000 字
+ * （评测里在 evidence 之后从同一摘要缓存补全，产品未改）。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -27,7 +29,8 @@ const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const DATA = join(ROOT, 'data', 'eval')
 const VERDICTS = join(DATA, 'verdicts.json')
 const REPORT = fileURLToPath(new URL('../eval/report.md', import.meta.url))
-const ABSTRACT_MAX = 1800 // 同 ClaimService：模型看到的摘要长度
+const ABSTRACT_MAX = 1800 // 同 ClaimService：产品里模型看到的摘要长度
+const FULL_MAX = 4000 // 「摘要覆盖」与 v2 用的摘要长度（实测取到的 202 篇摘要里只有 4 篇超过）
 
 type Verdict = 'supported' | 'unsupported' | 'unclear'
 
@@ -47,19 +50,11 @@ const V1 = `你在核对医学文稿里带引用的论断。逐条对照所引�
 只依据给出的摘要，不要凭记忆补充。reason 用一两句话写明依据（引用摘要里的关键数字或结论）。
 只输出 JSON：{"results":[{"claim_id":"…","verdict":"supported|unsupported|unclear","reason":"…"}]}`
 
-/**
- * v2（评测试验，产品未采用）：先逐项比对再下结论——把句子拆成「数字 / 方向 / 人群 / 干预与对照」逐项对照摘要；
- * 任何一项与摘要明确不符即 unsupported（即使其它部分摘要没提到）；只有摘要完全没涉及该句要点时才 unclear。
- */
-const V2 = `你在核对医学文稿里带引用的论断。逐条对照所引文献的摘要判断。
-先把句子拆成要点，逐项对照摘要：①数字（效应量、百分比、样本量、P 值）②效应方向（降低 / 升高、优于 / 劣于、有 / 无关联）③人群（疾病、分型、年龄、性别）④干预与对照（药物名、剂量、比较对象）。
-- unsupported：任何一项与摘要明确不符（例如摘要写降低、句子写升高；摘要是 HFrEF、句子是 HFpEF；摘要的药物或数字与句子不同）。只要有一项明确矛盾就判 unsupported，即使句子其它部分摘要没有提到。
-- supported：句子的要点在摘要里都有依据，且没有任何一项矛盾。
-- unclear：没有明确矛盾，但摘要没有涉及该句的主要说法（或没有摘要）。
-只依据给出的摘要，不要凭记忆补充。reason 用一两句话写明依据：矛盾时指出是哪一项、摘要原文怎么说。
-只输出 JSON：{"results":[{"claim_id":"…","verdict":"supported|unsupported|unclear","reason":"…"}]}`
-
-const PROMPTS: Record<string, string> = { v1: V1, v2: V2 }
+/** 评测变体：判定提示 + 摘要长度。 */
+const VARIANTS: Record<string, { system: string; abstractMax: number; label: string }> = {
+  v1: { system: V1, abstractMax: ABSTRACT_MAX, label: '产品现状：verifyPrompt 判定标准，摘要截断 1800 字' },
+  v2: { system: V1, abstractMax: FULL_MAX, label: '同一提示，摘要放宽到 4000 字（结构化摘要的结果 / 结论段不再被截掉）' },
+}
 
 async function judge(batch: ClaimEvidence[], system: string): Promise<Map<string, { verdict: Verdict; reason: string }>> {
   const user = batch.map(c => ({
@@ -110,7 +105,8 @@ interface Cached {
   page_size: number
 }
 
-interface Row { claim: EvalClaim; v: Cached; covered: boolean }
+/** covered：完整摘要（≤4000 字）覆盖原句；coveredSeen：产品截断后的前 1800 字就覆盖。 */
+interface Row { claim: EvalClaim; v: Cached; covered: boolean; coveredSeen: boolean }
 
 const SEVERITY: Record<Verdict, number> = { supported: 0, unclear: 1, unsupported: 2 }
 
@@ -118,7 +114,8 @@ const SEVERITY: Record<Verdict, number> = { supported: 0, unclear: 1, unsupporte
 const citeKey = (r: EvalClaim['cited'][number]) => r.doi ?? `pmid:${r.pmid}`
 
 async function main(): Promise<void> {
-  if (!PROMPTS[PROMPT]) throw new Error(`未知提示版本 ${PROMPT}`)
+  const variant = VARIANTS[PROMPT]
+  if (!variant) throw new Error(`未知变体 ${PROMPT}`)
   if (!KEY && !REPORT_ONLY) throw new Error('需要 DEEPSEEK_API_KEY（../../.env）')
   mkdirSync(DATA, { recursive: true })
   const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as CorpusEntry[]
@@ -162,7 +159,17 @@ async function main(): Promise<void> {
       const t0 = performance.now()
       const page = await service.evidence(row.id, cursor)
       const t1 = performance.now()
-      const verdicts = await judge(page.claims, PROMPTS[PROMPT]!)
+      if (variant.abstractMax !== ABSTRACT_MAX) {
+        // 变体：从同一摘要缓存取更长的摘要替换 ClaimService 截断后的
+        const byId = new Map(store.listCitations(row.id).map(x => [x.id, x]))
+        for (const ev of page.claims) {
+          for (const x of ev.citations) {
+            const full = store.getAbstract(byId.get(x.cite_id)?.doi ?? '')?.abstract
+            if (full) x.abstract = full.slice(0, variant.abstractMax)
+          }
+        }
+      }
+      const verdicts = await judge(page.claims, variant.system)
       const t2 = performance.now()
       for (const ev of page.claims) {
         const c = nodeToClaim.get(ev.node_id)
@@ -200,9 +207,9 @@ async function main(): Promise<void> {
     .filter(c => !ONLY || c.pmcid === ONLY)
     .flatMap(c => {
       const v = cache[key(c, version)]
-      return v ? [{ claim: c, v, covered: covered(c, store) }] : []
+      return v ? [{ claim: c, v, covered: covered(c, store, FULL_MAX), coveredSeen: covered(c, store, ABSTRACT_MAX) }] : []
     })
-  const versions = Object.keys(PROMPTS).filter(ver => rowsFor(ver).length > 0)
+  const versions = Object.keys(VARIANTS).filter(ver => rowsFor(ver).length > 0)
   const prev = existsSync(REPORT) ? readFileSync(REPORT, 'utf8') : ''
   const notes = /<!-- notes:start -->[\s\S]*?<!-- notes:end -->/.exec(prev)?.[0] ?? '<!-- notes:start -->\n（手写解读待补）\n<!-- notes:end -->'
   writeFileSync(REPORT, report(rowsFor('v1'), versions.map(ver => [ver, rowsFor(ver)] as const), manifest, notes))
@@ -213,17 +220,17 @@ async function main(): Promise<void> {
 
 const STOP = new Set('about above after again also among and are been before being both but can could did does during each even from further had has have having here into its itself just like many more most much must not only other over same should since some such than that their them then there these they this those through thus under until very was were what when where which while who whom will with within without would study studies patients participants trial trials data showed shown found reported results compared group groups treatment'.split(' '))
 const words = (s: string) => new Set((s.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []).filter(w => !STOP.has(w)).map(w => w.slice(0, 6)))
-const numbers = (s: string) => (s.match(/\d+(?:\.\d+)?/g) ?? []).filter(n => !/^(19|20)\d\d$/.test(n))
+const numbers = (s: string) => (s.replace(/(\d)·(\d)/g, '$1.$2').match(/\d+(?:\.\d+)?/g) ?? []).filter(n => !/^(19|20)\d\d$/.test(n))
 
 /** 反例还原成改动前的原句（判断摘要是否覆盖「原来的说法」）。 */
 const original = (c: EvalClaim) => c.change ? c.sentence.replace(c.change.to, c.change.from) : c.sentence
 
 /**
- * 「摘要覆盖」：原句的数字全部出现在所引摘要里（模型看到的前 1800 字），且原句实词（取前 6 个字母，去停用词）
+ * 「摘要覆盖」：原句的数字全部出现在所引摘要里（前 max 字），且原句实词（取前 6 个字母，去停用词）
  * 至少一半出现在摘要里。不满足即「摘要覆盖不足」——这时连正例也很难被判为支持。
  */
-function covered(c: EvalClaim, store: Store): boolean {
-  const text = c.cited.map(r => store.getAbstract(citeKey(r))?.abstract?.slice(0, ABSTRACT_MAX) ?? '').join('\n')
+function covered(c: EvalClaim, store: Store, max: number): boolean {
+  const text = c.cited.map(r => store.getAbstract(citeKey(r))?.abstract?.slice(0, max) ?? '').join('\n')
   if (!text.trim()) return false
   const s = original(c)
   const absWords = words(text)
@@ -263,8 +270,13 @@ const quantile = (xs: number[], q: number) => {
   return s[Math.min(s.length - 1, Math.floor(q * s.length))]!
 }
 const sec = (ms: number) => Number.isNaN(ms) ? '—' : `${(ms / 1000).toFixed(1)} s`
-/** 报告里的摘录：不超过 n 个词。 */
-const excerpt = (s: string, n = 12) => { const w = s.split(/\s+/); return w.length > n ? `${w.slice(0, n).join(' ')} …` : s }
+/** 报告里的摘录：不超过 n 个词（论断原文 12 词、模型理由 14 词）。 */
+const excerpt = (s: string, n = 12) => {
+  // 中文理由没有空格分词：按字数截（约 n×2.5 字）
+  if (/[\u4e00-\u9fff]/.test(s)) return s.length > n * 2.5 ? `${s.slice(0, Math.round(n * 2.5))}…` : s
+  const w = s.split(/\s+/)
+  return w.length > n ? `${w.slice(0, n).join(' ')} …` : s
+}
 
 const KINDS: Array<[string, string]> = [['number', '数字'], ['direction', '方向反转'], ['population', '人群'], ['drug', '药物 / 对照']]
 
@@ -285,14 +297,15 @@ function report(rows: Row[], versions: ReadonlyArray<readonly [string, Row[]]>, 
   const unc = rows.filter(x => !x.covered)
   const lines: string[] = []
   lines.push('# M1 论断核对评测（C2）', '')
-  lines.push(`模型 ${MODEL}（温度 0，JSON 输出）· 主结果为提示 v1（判定标准同 verifyPrompt）· 证据：平台 ClaimService.evidence（PubMed 摘要，截断 ${ABSTRACT_MAX} 字，一页 8 条）`, '')
+  lines.push(`模型 ${MODEL}（温度 0，JSON 输出）· 主结果为 v1（产品现状：判定标准同 verifyPrompt）· 证据：平台 ClaimService.evidence（PubMed 摘要，截断 ${ABSTRACT_MAX} 字，一页 8 条）`, '')
   lines.push('## 数据', '')
   const cites = rows.reduce((a, x) => a + x.v.n_cites, 0)
   const abs = rows.reduce((a, x) => a + x.v.n_abstracts, 0)
   lines.push(`- 语料 ${manifest.length} 篇（PubMed Central 开放获取，CC-BY / CC0，署名见 eval/corpus.json）；已评论断 ${rows.length} 条：正例（原句 + 原引用，**假定**被支持）${pos.length}、反例（规则改动后与原文矛盾）${neg.length}。`)
   lines.push(`- 所引文献 ${cites} 条次，取到 PubMed 摘要 ${abs} 条次（${pct(abs / (cites || 1))}）；至少一条引用有摘要的论断 ${rows.filter(x => x.v.has_abstract).length} 条。`)
   lines.push(`- 平台把评测句切成多条论断的 ${rows.filter(x => x.v.pieces > 1).length} 条（按最严重的结论合并）。`)
-  lines.push(`- 「摘要覆盖」（启发式，与模型判断无关）：原句（反例取改动前）的数字全部出现在所引摘要里、且实词至少一半出现在摘要里。覆盖 ${cov.length} 条，覆盖不足 ${unc.length} 条（其中正例 ${unc.filter(x => x.claim.label === 'supported').length} 条）。`, '')
+  lines.push(`- 「摘要覆盖」（启发式，与模型判断无关）：原句（反例取改动前）的数字全部出现在所引的完整摘要里、且实词至少一半出现在摘要里。覆盖 ${cov.length} 条，覆盖不足 ${unc.length} 条（其中正例 ${unc.filter(x => x.claim.label === 'supported').length} 条）。`)
+  lines.push(`- 产品把每篇摘要截断到 ${ABSTRACT_MAX} 字：完整摘要覆盖、但截断后的前 ${ABSTRACT_MAX} 字不覆盖（依据在被截掉的结果 / 结论段）的论断 ${cov.filter(x => !x.coveredSeen).length} 条。`, '')
   lines.push('## 「不支持」检测（反例为阳性）', '')
   lines.push('严格口径：只有判为 unsupported 才算检出。宽松口径：unsupported 或 unclear 都算检出——产品对这两种结论都会在句子上挂 AI 评论、请用户复核，所以宽松口径对应「用户会被提醒」。正例误报率 = 正例被判为（严格：不支持；宽松：不支持或无法判断）的比例。', '')
   prfTable(lines, [['全部', rows], ['摘要覆盖', cov], ['摘要覆盖不足', unc]])
@@ -326,8 +339,9 @@ function report(rows: Row[], versions: ReadonlyArray<readonly [string, Row[]]>, 
   }
 
   if (versions.length > 1) {
-    lines.push('', '## 提示 v1 与 v2 对比（同一批论断、同一证据）', '')
-    lines.push('v2 是评测里的试验提示（逐项比对数字 / 方向 / 人群 / 干预后下结论，任一项明确矛盾即判不支持），**产品的 verifyPrompt 没有改**。', '')
+    lines.push('', '## 提示 v2（证据变体）与 v1 对比', '')
+    for (const [ver] of versions) lines.push(`- ${ver}：${VARIANTS[ver]!.label}`)
+    lines.push('', 'v2 只在评测里实现（evidence 之后用同一摘要缓存替换截断后的摘要），**产品的 ClaimService（ABSTRACT_MAX = 1800）与 verifyPrompt 都没有改**。v2 的取证据耗时走摘要缓存，不可与 v1 比。', '')
     const ids = versions.map(([, rs]) => new Set(rs.map(x => x.claim.id))).reduce((a, b) => new Set([...a].filter(i => b.has(i))))
     lines.push(`共同评过的论断 ${ids.size} 条。`, '')
     prfTable(lines, versions.flatMap(([ver, rs]) => {
@@ -356,9 +370,9 @@ function report(rows: Row[], versions: ReadonlyArray<readonly [string, Row[]]>, 
   lines.push('', '## 解读与典型错误', '', notes, '')
   lines.push('## 错误清单（自动节选，v1；原文摘录 ≤12 词）', '')
   lines.push('正例被判「不支持」：')
-  for (const x of pos.filter(x => x.v.verdict === 'unsupported')) lines.push(`- ${x.claim.pmcid} ${x.claim.id}${x.covered ? '' : '（覆盖不足）'}：“${excerpt(x.claim.sentence)}” —— ${excerpt(x.v.reason, 30)}`)
+  for (const x of pos.filter(x => x.v.verdict === 'unsupported')) lines.push(`- ${x.claim.pmcid} ${x.claim.id}${x.covered ? '' : '（覆盖不足）'}：“${excerpt(x.claim.sentence)}” —— ${excerpt(x.v.reason, 14)}`)
   lines.push('', '反例被判「支持」（漏检）：')
-  for (const x of neg.filter(x => x.v.verdict === 'supported')) lines.push(`- ${x.claim.pmcid} ${x.claim.id} [${x.claim.perturbation}：${x.claim.change?.from} → ${x.claim.change?.to}]${x.covered ? '' : '（覆盖不足）'} —— ${excerpt(x.v.reason, 30)}`)
+  for (const x of neg.filter(x => x.v.verdict === 'supported')) lines.push(`- ${x.claim.pmcid} ${x.claim.id} [${x.claim.perturbation}：${x.claim.change?.from} → ${x.claim.change?.to}]${x.covered ? '' : '（覆盖不足）'} —— ${excerpt(x.v.reason, 14)}`)
   lines.push('', '## 局限', '')
   lines.push('- 正例的「支持」是假定（作者原文的引用），没有逐条人工核实；综述句常引用正文细节或多篇文献的综合，摘要里不一定有——正例被判「无法判断」/「不支持」里有相当一部分其实是标签噪声或证据不足，不全是模型错误。')
   lines.push('- 反例由规则改动生成，个别改动可能不构成真正的矛盾（例如改了与所引文献无关的半句、或改后的说法恰好也成立）。')
