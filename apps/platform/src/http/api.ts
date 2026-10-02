@@ -499,7 +499,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const row = owned(c)
     if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
     const info = ops.deckContextInfo(row.id)
-    return c.json({ rev: docs.rev(row.id), size: info.size, layouts: info.layouts.map(l => l.name), doc: docs.get(row.id).toJSON() })
+    // ph_styles：各版式占位符继承的文字样式（画布显示导入的占位符用）
+    const ph_styles = Object.fromEntries(info.layouts.map(l => [l.part, l.placeholders.map(p => ({ type: p.type, idx: p.idx, style: p.style ?? {} }))]))
+    return c.json({ rev: docs.rev(row.id), size: info.size, layouts: info.layouts.map(l => l.name), ph_styles, doc: docs.get(row.id).toJSON() })
   })
 
   /** 幻灯片的精确预览（LibreOffice 渲染，按 rev 缓存）。 */

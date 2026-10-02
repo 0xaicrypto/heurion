@@ -33,10 +33,14 @@ const MIN_WIDTH = 480
 const MAX_WIDTH = 960
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 const PH_SIZE: Record<string, number> = { title: 40, ctrTitle: 44, subTitle: 24 }
+
+interface PhStyle { anchor?: 't' | 'ctr' | 'b'; align?: 'l' | 'ctr' | 'r' | 'just'; size?: number; bold?: boolean }
 const BODY_LEVELS = [28, 24, 20, 18, 18]
 
 export class DeckView {
-  private data: { rev: number; size: { cx: number; cy: number }; doc: PMJson } | null = null
+  private data: { rev: number; size: { cx: number; cy: number }; doc: PMJson; ph_styles?: Record<string, Array<{ type: string; idx: string | null; style: PhStyle }>> } | null = null
+  /** 正在渲染的形状继承的占位符样式（导入的占位符才有）。 */
+  private phStyle: PhStyle | null = null
   private precise = new Set<number>()
   private numbers = new Map<string, number>()
   /** 渲染中当前形状的段落计数（与服务端 attachComment 的段落序号一致：形状内文本块的文档顺序）。 */
@@ -122,7 +126,7 @@ export class DeckView {
       const suggest = slide.attrs?.suggest ? ` data-suggest="${slide.attrs.suggest}" data-suggest-group="${esc(slide.attrs.suggest_group)}"` : ''
       const body = this.precise.has(i)
         ? `<img class="slide-png" src="/api/docs/${this.opts.docId}/slides/${i}/render.png?token=${encodeURIComponent(this.opts.token)}&rev=${this.data!.rev}" alt="渲染中…" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'精确渲染不可用（需要 LibreOffice 或 heurion2:dev 镜像）'}))">`
-        : (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s)).join('')
+        : (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s, slide.attrs?.layout as string | undefined)).join('')
       return `<div class="slide-wrap" data-id="${esc(slide.attrs?.id)}" data-index="${i}"${suggest}>
         <div class="slide-head"><span>第 ${i + 1} 页 · ${esc(slide.attrs?.layout_name || '无版式')}</span><button data-precise="${i}">${this.precise.has(i) ? '近似预览' : '精确预览'}</button></div>
         <div class="slide" style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg}` : ''}">${body}</div>
@@ -483,9 +487,27 @@ export class DeckView {
     return (n.content ?? []).map(c => this.text(c)).join(n.type === 'notes' ? '\n' : '')
   }
 
-  private shape(s: PMJson): string {
+  /**
+   * 导入的占位符（保留原文件 bodyPr，body_pr 不为 null）按版式 / 母版继承的样式显示：锚点、对齐、字号、粗细，
+   * 与 PowerPoint 一致。平台新建的占位符导出时写明顶端左对齐，画布按默认显示。
+   */
+  private inheritedStyle(a: Record<string, any>, layout: string | undefined): PhStyle | null {
+    if (a.kind !== 'text' || !a.ph || a.body_pr === null || a.body_pr === undefined) return null
+    const list = (layout && this.data?.ph_styles?.[layout]) || []
+    const isTitle = (t: string) => t === 'title' || t === 'ctrTitle'
+    const hit = list.find(p => p.type === a.ph && (p.idx ?? null) === (a.ph_idx ?? null))
+      ?? list.find(p => p.type === a.ph)
+      ?? list.find(p => isTitle(p.type) && isTitle(a.ph))
+      ?? (a.ph_idx ? list.find(p => p.idx === a.ph_idx) : undefined)
+    const own = /\banchor="(t|ctr|b)"/.exec(String(a.body_pr))?.[1] as PhStyle['anchor'] | undefined
+    return { ...(hit?.style ?? {}), ...(own ? { anchor: own } : {}) }
+  }
+
+  private shape(s: PMJson, layout?: string): string {
     const a = s.attrs!
     const k = this.scale()
+    this.phStyle = this.inheritedStyle(a, layout)
+    const anchor = this.phStyle?.anchor ? `display:flex;flex-direction:column;justify-content:${{ t: 'flex-start', ctr: 'center', b: 'flex-end' }[this.phStyle.anchor]};` : ''
     const box = `left:${a.x / EMU_PER_PT * k}px;top:${a.y / EMU_PER_PT * k}px;width:${a.w / EMU_PER_PT * k}px;height:${a.h / EMU_PER_PT * k}px;${a.rot ? `transform:rotate(${a.rot / 60000}deg);` : ''}`
     const suggest = a.suggest ? ` data-suggest="${a.suggest}" data-suggest-group="${esc(a.suggest_group)}"` : ''
     const fill = a.fill === 'none' ? 'background:transparent;border:0;' : a.fill ? `background:#${a.fill};border:0;` : ''
@@ -494,7 +516,7 @@ export class DeckView {
     const sel = this.selected.includes(a.id) ? ' selected' : ''
     // 带几何 / 实心填充的文本框按色块显示（文字垂直居中，与导出的 anchor="ctr" 一致）
     const block = a.kind === 'text' && !a.ph && (a.geom || (a.fill && a.fill !== 'none'))
-    const common = `class="shape shape-${block ? 'shape' : a.kind}${sel}" data-id="${esc(a.id)}"${suggest} style="${box}${fill}${radius}"`
+    const common = `class="shape shape-${block ? 'shape' : a.kind}${sel}" data-id="${esc(a.id)}"${suggest} style="${box}${fill}${radius}${anchor}"`
     if (a.kind === 'image' && a.asset_id) return `<div ${common}><img src="/api/assets/${esc(a.asset_id)}?token=${encodeURIComponent(this.opts.token)}" alt=""></div>`
     if (a.kind === 'text' && !block) return `<div ${common}>${(s.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</div>`
     if (block) return `<div ${common}><div class="shape-text">${(s.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</div></div>`
@@ -536,12 +558,14 @@ export class DeckView {
       }
       return `<span data-o="${o}"${color ? ` style="color:#${color}"` : ''}>${html}</span>`
     }).join('')
-    if (!size) size = (ph && PH_SIZE[ph]) || (ph === 'body' || ph === 'obj' ? BODY_LEVELS[lvl] ?? 18 : 18)
+    if (!size) size = (lvl === 0 && this.phStyle?.size) || (ph && PH_SIZE[ph]) || (ph === 'body' || ph === 'obj' ? BODY_LEVELS[lvl] ?? 18 : 18)
     // 项目符号用 CSS 画，不进选区文字
     const bullet = (ph === 'body' || ph === 'obj') && runs ? ' class="bullet"' : ''
-    const align = p.attrs?.align ? `text-align:${p.attrs.align};` : ''
+    const inherited = this.phStyle?.align ? { l: 'left', ctr: 'center', r: 'right', just: 'justify' }[this.phStyle.align] : null
+    const align = p.attrs?.align ? `text-align:${p.attrs.align};` : inherited ? `text-align:${inherited};` : ''
+    const weight = this.phStyle?.bold ? 'font-weight:700;' : ''
     this.paras.set(`${shape.attrs!.id}#${this.pIndex}`, p)
-    return `<p data-p="${this.pIndex++}" data-len="${offset}" data-lvl="${lvl}"${bullet} style="font-size:${size * k}px;margin-left:${lvl * 18 * k}px;${align}">${runs || '&nbsp;'}</p>`
+    return `<p data-p="${this.pIndex++}" data-len="${offset}" data-lvl="${lvl}"${bullet} style="font-size:${size * k}px;margin-left:${lvl * 18 * k}px;${align}${weight}">${runs || '&nbsp;'}</p>`
   }
 
   private reportSelection(e?: MouseEvent): void {

@@ -130,10 +130,13 @@ export const DeckEditBatch = z.object({
 })
 export type DeckEditBatch = z.infer<typeof DeckEditBatch>
 
+/** 占位符从版式 / 母版继承的文字样式（画布据此显示导入的占位符，与 PowerPoint 一致）。 */
+export interface PlaceholderStyle { anchor?: 't' | 'ctr' | 'b'; align?: 'l' | 'ctr' | 'r' | 'just'; size?: number; bold?: boolean }
+
 export interface LayoutInfo {
   name: string
   part: string
-  placeholders: Array<{ type: string; idx: string | null; x: number; y: number; w: number; h: number }>
+  placeholders: Array<{ type: string; idx: string | null; x: number; y: number; w: number; h: number; style?: PlaceholderStyle }>
 }
 
 export interface DeckContext {

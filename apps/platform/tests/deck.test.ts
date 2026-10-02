@@ -111,6 +111,15 @@ describe('deck：模型与编辑', () => {
 })
 
 describe('deck：导出 XML 结构', () => {
+  it('版式占位符的继承样式：版式自己写的优先，没写的取母版（标题页标题底端居中、正文页标题取母版标题样式）', () => {
+    const { layouts } = readLayouts(pptxTemplate())
+    const title = layouts.find(l => l.name === 'Title Slide')!.placeholders
+    expect(title.find(p => p.type === 'ctrTitle')!.style).toEqual({ anchor: 'b', align: 'ctr', size: 44, bold: true })
+    expect(title.find(p => p.type === 'subTitle')!.style).toMatchObject({ anchor: 't', align: 'ctr', size: 24 })
+    const content = layouts.find(l => l.name === 'Title and Content')!.placeholders
+    expect(content.find(p => p.type === 'title')!.style).toMatchObject({ align: 'l', size: 40, bold: true })
+  })
+
   it('新建的占位符写明位置、文字顶端左对齐（与画布一致，不靠版式继承）', () => {
     const t = newDeck()
     t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'add_slide', after: slideIds(t)[0]!, layout: 'Title Slide', title: '免疫疗法', body: '科普汇报' }] }, { actor: 'ai', turnId: null })
