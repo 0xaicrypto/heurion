@@ -8,7 +8,7 @@ type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 
 interface KbFile {
   id: string; name: string; status: 'pending' | 'extracting' | 'embedding' | 'ready' | 'failed'
-  note: string | null; pages: number; chunks: number; embedded: number; doi: string | null; pmid: string | null; size: number; created_at: string
+  project_id: string | null; note: string | null; pages: number; chunks: number; embedded: number; doi: string | null; pmid: string | null; size: number; created_at: string
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
@@ -46,6 +46,7 @@ export function initLibrary(api: Api, token: () => string, notice: (msg: string,
   async function openLibrary(): Promise<void> {
     const dlg = document.getElementById('dialog')!
     let files: KbFile[] = []
+    let projects: Array<{ id: string; name: string }> = []
     let vector = false
     let query = ''
     let hits: any[] | null = null
@@ -54,6 +55,7 @@ export function initLibrary(api: Api, token: () => string, notice: (msg: string,
       const busy = f.status !== 'ready' && f.status !== 'failed'
       const meta = [f.pages ? `${f.pages} 页` : '', size(f.size), f.doi ? `DOI ${f.doi}` : '', f.status === 'ready' && f.chunks > 0 && f.embedded < f.chunks ? '仅关键词' : ''].filter(Boolean).join(' · ')
       return `<tr data-id="${f.id}"><td><div class="kb-name">${esc(f.name)}</div><div class="muted small">${esc(meta)}</div>${f.note ? `<div class="kb-note${f.status === 'failed' ? ' error' : ''}">${esc(f.note)}</div>` : ''}</td>
+        <td><select data-project title="归入项目：项目里的文档对话时可按项目检索">${['<option value="">未归类</option>', ...projects.map(p => `<option value="${esc(p.id)}"${p.id === f.project_id ? ' selected' : ''}>${esc(p.name)}</option>`)].join('')}</select></td>
         <td><span class="kb-status ${f.status}${busy ? ' busy' : ''}">${STATUS[f.status]}</span></td>
         <td class="actions"><div class="actions-row"><button data-view>原文</button><button data-del class="danger">删除</button></div></td></tr>`
     }
@@ -97,10 +99,20 @@ export function initLibrary(api: Api, token: () => string, notice: (msg: string,
       await refresh()
     }
 
-    ;[files, { vector }] = await Promise.all([api<KbFile[]>('/api/kb'), api<{ vector: boolean }>('/api/kb-status')])
+    ;[files, { vector }, projects] = await Promise.all([api<KbFile[]>('/api/kb'), api<{ vector: boolean }>('/api/kb-status'), api<Array<{ id: string; name: string }>>('/api/projects')])
     render()
     dlg.hidden = false
     void refresh()
+    dlg.onchange = async e => {
+      const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('select[data-project]')
+      const id = (sel?.closest('tr[data-id]') as HTMLElement | null)?.dataset.id
+      if (!sel || !id) return
+      try {
+        await api(`/api/kb/${id}`, { method: 'PATCH', body: JSON.stringify({ project_id: sel.value || null }) })
+        files = files.map(f => f.id === id ? { ...f, project_id: sel.value || null } : f)
+        notice(sel.value ? `已归入「${projects.find(p => p.id === sel.value)?.name}」` : '已移出项目')
+      } catch (err) { notice((err as Error).message, true) }
+    }
     dlg.onclick = async e => {
       const t = e.target as HTMLElement
       if (t === dlg || t.closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = ''; if (poll) clearTimeout(poll); return }

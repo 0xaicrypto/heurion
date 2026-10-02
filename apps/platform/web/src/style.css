@@ -488,4 +488,4 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .mem-card-head { font-size: 12px; font-weight: 600; }
 .admin-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .danger-confirm { width: 100%; font-size: 13px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--danger); }
-
+.kb-table select { font-size: 12px; max-width: 140px; }
