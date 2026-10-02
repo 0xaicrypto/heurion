@@ -9,6 +9,8 @@ const B = process.argv[2] ?? 'http://127.0.0.1:8787'
 const H = { Authorization: `Bearer ${process.env.HEURION_DEV_TOKEN || 'dev'}`, 'Content-Type': 'application/json' }
 const api = async (p: string, o: RequestInit = {}): Promise<any> => { const r = await fetch(B + p, { ...o, headers: H }); const t = await r.text(); try { return JSON.parse(t) } catch { return t } }
 let failed = 0
+/** 删除测试文档：移进回收站后立即彻底删除（不留在回收站里）。 */
+const remove = async (id: string) => { await api(`/api/docs/${id}`, { method: 'DELETE' }); await api(`/api/docs/${id}/purge`, { method: 'DELETE' }) }
 const ok = (name: string, cond: boolean, extra = '') => { if (!cond) failed++;  console.log(`${cond ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`) }
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 const doc = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'UI 测试 ' + Date.now(), markdown: '# 标题\n\n第一段。' }) })
@@ -334,7 +336,7 @@ ok('多选后 Delete 一次删掉', !(await shapeAttrs(b1)) && !(await shapeAttr
 await page.click('.slide-wrap:nth-child(2) [data-precise]')
 const rendered = await page.waitForSelector('.slide-png', { timeout: 5000 }).then(() => page.waitForFunction(() => { const i = document.querySelector('.slide-png') as HTMLImageElement | null; return i && i.complete && i.naturalWidth > 0 }, null, { timeout: 120_000 }).then(() => true).catch(() => false)).catch(() => false)
 ok('精确预览（LibreOffice 渲染）', rendered)
-await api(`/api/docs/${deck.id}`, { method: 'DELETE' })
+await remove(deck.id)
 
 // 长文档：三栏各自滚动，对话输入框始终在可视区域内（不被正文撑到页面最底下）
 const long = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'UI 长文档 ' + Date.now(), markdown: '# 长文档\n\n' + Array.from({ length: 80 }, (_, i) => `第 ${i + 1} 段：心力衰竭需要长期管理与随访。`).join('\n\n') }) })
@@ -344,9 +346,39 @@ await page.waitForSelector('.ProseMirror p')
 await wait(600)
 const layout = await page.evaluate(() => ({ pageH: document.documentElement.scrollHeight, winH: innerHeight, composerBottom: document.querySelector('.composer')!.getBoundingClientRect().bottom }))
 ok('长文档时整页不滚动、对话输入框始终可见', layout.pageH <= layout.winH && layout.composerBottom <= layout.winH, JSON.stringify(layout))
-await api(`/api/docs/${long.id}`, { method: 'DELETE' })
+await remove(long.id)
+
+// R2 文档仓库：新建项目、移动文档、搜索（标题与正文）、移到回收站再恢复
+const projName = 'UI 项目 ' + Date.now()
+const repoDoc = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'UI 仓库文档 ' + Date.now(), markdown: '# 仓库\n\n独特的检索词：沙库巴曲缬沙坦脑啡肽酶。' }) })
+const proj = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: projName }) })
+await api(`/api/docs/${repoDoc.id}`, { method: 'PATCH', body: JSON.stringify({ project_id: proj.id }) })
+await page.reload()
+await page.waitForSelector(`li.group[data-project="${proj.id}"]`)
+ok('左栏按项目分组', await page.locator(`li.group[data-project="${proj.id}"] + li[data-id="${repoDoc.id}"]`).count() === 1)
+await wait(2600) // 全文索引防抖
+await page.fill('#docSearch', '脑啡肽酶')
+await page.waitForSelector(`#docList li.hit[data-id="${repoDoc.id}"]`, { timeout: 5000 }).catch(() => {})
+ok('搜索正文命中并高亮', (await page.locator(`#docList li.hit[data-id="${repoDoc.id}"] .snippet mark`).innerText().catch(() => '')) === '脑啡肽酶')
+await page.fill('#docSearch', '')
+await page.dispatchEvent('#docSearch', 'input')
+await wait(500)
+await page.hover(`li[data-id="${repoDoc.id}"]`)
+await page.click(`li[data-id="${repoDoc.id}"] [data-doc-menu]`)
+await page.click('.pop-menu button:has-text("移到回收站")')
+await wait(800)
+ok('移到回收站后从列表消失', await page.locator(`#docList li[data-id="${repoDoc.id}"]`).count() === 0)
+await page.click('#trashBtn')
+await page.waitForSelector(`#dialog tr[data-id="${repoDoc.id}"]`)
+await page.click(`#dialog tr[data-id="${repoDoc.id}"] [data-restore]`)
+await wait(800)
+await page.keyboard.press('Escape')
+await page.click('#dialog', { position: { x: 5, y: 5 } }).catch(() => {})
+ok('回收站里恢复', await page.locator(`#docList li[data-id="${repoDoc.id}"]`).count() === 1)
+await remove(repoDoc.id)
+await api(`/api/projects/${proj.id}`, { method: 'DELETE' })
 
 ok('页面无脚本错误', errors.length === 0, errors.slice(0, 3).join(' | '))
 await browser.close()
-await api(`/api/docs/${doc.id}`, { method: 'DELETE' })
+await remove(doc.id)
 process.exit(failed === 0 ? 0 : 1)

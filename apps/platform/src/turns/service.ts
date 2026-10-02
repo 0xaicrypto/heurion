@@ -133,7 +133,8 @@ export class TurnService {
 
   /** 排队执行一轮；返回的 Promise 在该回合结束时完成。emit 收到本回合的全部事件。 */
   submit(userId: string, docId: string, message: string, emit: (e: UiEvent) => void = () => {}, opts: TurnOptions = {}): Promise<void> {
-    if (!this.docs.store.getDoc(docId)) return Promise.reject(new Error(`doc ${docId} not found`))
+    const target = this.docs.store.getDoc(docId)
+    if (!target || target.deleted_at) return Promise.reject(new Error(`doc ${docId} not found`))
     return new Promise(resolve => {
       const job = { id: 'q' + randomUUID().replace(/-/g, '').slice(0, 11), docId, message, opts, enqueuedAt: new Date().toISOString() }
       this.push(userId, job, emit, resolve, true)
@@ -161,7 +162,9 @@ export class TurnService {
     const job = this.queues.get(userId)?.shift()
     if (!job) return
     this.docs.store.dequeueJob(job.id)
-    if (!this.docs.store.getDoc(job.docId)) { job.done(); void this.drain(userId); return }
+    // 排队期间文档被删了 / 进了回收站：跳过
+    const target = this.docs.store.getDoc(job.docId)
+    if (!target || target.deleted_at) { job.done(); void this.drain(userId); return }
     let abort: (reason: Error) => void = () => {}
     const aborted = new Promise<never>((_, reject) => { abort = reject })
     aborted.catch(() => {})

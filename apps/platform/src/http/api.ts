@@ -3,6 +3,8 @@ import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
 import { getConnInfo } from '@hono/node-server/conninfo'
 import { AuthError, type Accounts } from '../auth/accounts.ts'
+import { duplicateDoc } from '../model/duplicate.ts'
+import type { SearchIndex } from '../model/search-index.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
@@ -39,6 +41,8 @@ export interface ApiDeps {
   accounts: Accounts
   /** 开发模式：允许把开发用户的数据转给正式账户。 */
   devMode: boolean
+  /** 全文索引（改名、复制后立即更新）。 */
+  search?: SearchIndex
   devUser: string
 }
 
@@ -152,9 +156,20 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return authFailure(c, err) }
   })
 
+  /** 自己的、不在回收站里的文档（回收站里的只能恢复或彻底删除）。 */
   const owned = (c: Context<{ Variables: { user: string } }>) => {
     const row = store.getDoc(c.req.param('id')!)
-    return row && row.owner === c.get('user') ? row : null
+    return row && row.owner === c.get('user') && !row.deleted_at ? row : null
+  }
+  const ownedInTrash = (c: Context<{ Variables: { user: string } }>) => {
+    const row = store.getDoc(c.req.param('id')!)
+    return row && row.owner === c.get('user') && row.deleted_at ? row : null
+  }
+  /** 请求里的项目 id 必须是自己的项目（null / 空为未分组）。 */
+  const projectOf = (c: Context<{ Variables: { user: string } }>, id: unknown): string | null | false => {
+    if (id === null || id === undefined || id === '') return null
+    const p = store.getProject(String(id))
+    return p && p.owner === c.get('user') ? p.id : false
   }
   const assetUrl = (token: string) => (id: string) => `/api/assets/${id}?token=${encodeURIComponent(token)}`
 
@@ -163,16 +178,19 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs', async c => {
     const user = c.get('user')
     if (c.req.header('content-type')?.includes('application/json')) {
-      const body = await c.req.json<{ title?: string; markdown?: string; kind?: string }>()
+      const body = await c.req.json<{ title?: string; markdown?: string; kind?: string; project_id?: string | null }>()
       const title = body.title?.trim() || '未命名'
+      const project = projectOf(c, body.project_id)
+      if (project === false) return c.json({ error: '项目不存在' }, 404)
+      const place = (row: { id: string }) => { if (project) store.setDocProject(row.id, project); return store.getDoc(row.id)! }
       if (body.kind === 'deck') {
         const pkg = pptxTemplate()
         const row = docs.create({ owner: user, title, kind: 'deck', content: newDeckContent(readLayouts(pkg).layouts, title) })
         store.putPackage(row.id, 'pptx', pkg)
-        return c.json(row, 201)
+        return c.json(place(row), 201)
       }
       const content = body.markdown?.trim() ? schema.node('doc', null, parseBlocks(body.markdown)) : undefined
-      return c.json(docs.create({ owner: user, title, content }), 201)
+      return c.json(place(docs.create({ owner: user, title, content })), 201)
     }
     const form = await c.req.parseBody()
     const file = form.file instanceof File ? form.file : null
@@ -228,17 +246,67 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.patch('/api/docs/:id', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { title } = await c.req.json<{ title?: string }>()
-    if (title?.trim()) store.renameDoc(row.id, title.trim())
+    const body = await c.req.json<{ title?: string; project_id?: string | null }>()
+    if (body.title?.trim()) { store.renameDoc(row.id, body.title.trim()); deps.search?.reindex(row.id) }
+    if ('project_id' in body) {
+      const project = projectOf(c, body.project_id)
+      if (project === false) return c.json({ error: '项目不存在' }, 404)
+      store.setDocProject(row.id, project)
+    }
     return c.json(store.getDoc(row.id))
   })
 
+  // —— 文档仓库（R2）：项目、搜索、回收站、复制 ——
+  app.get('/api/projects', c => c.json(store.listProjects(c.get('user'))))
+  app.post('/api/projects', async c => {
+    const name = (await c.req.json<{ name?: string }>()).name?.trim().slice(0, 60)
+    if (!name) return c.json({ error: '项目名不能为空' }, 400)
+    return c.json(store.createProject(c.get('user'), name), 201)
+  })
+  app.patch('/api/projects/:pid', async c => {
+    const p = store.getProject(c.req.param('pid'))
+    if (!p || p.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    const name = (await c.req.json<{ name?: string }>()).name?.trim().slice(0, 60)
+    if (!name) return c.json({ error: '项目名不能为空' }, 400)
+    store.renameProject(p.id, name)
+    return c.json(store.getProject(p.id))
+  })
+  app.delete('/api/projects/:pid', c => {
+    const p = store.getProject(c.req.param('pid'))
+    if (!p || p.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    store.deleteProject(p.id) // 文档回到未分组，不删除
+    return c.json({ ok: true })
+  })
+  app.get('/api/search', c => c.json(store.searchDocs(c.get('user'), c.req.query('q') ?? '', 30)))
+  app.get('/api/trash', c => c.json(store.listTrash(c.get('user'))))
+  app.post('/api/docs/:id/restore', c => {
+    const row = ownedInTrash(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    store.trashDoc(row.id, false)
+    return c.json(store.getDoc(row.id))
+  })
+  app.delete('/api/docs/:id/purge', c => {
+    const row = ownedInTrash(c)
+    if (!row) return c.json({ error: '只能彻底删除回收站里的文档' }, 404)
+    docs.unload(row.id)
+    store.deleteDoc(row.id)
+    store.unindexDoc(row.id)
+    return c.json({ ok: true })
+  })
+  app.post('/api/docs/:id/duplicate', c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const copy = duplicateDoc(docs, row, c.get('user'))
+    deps.search?.reindex(copy.id)
+    return c.json(copy, 201)
+  })
+
+  // 删除 = 移进回收站（30 天后自动彻底删除；可恢复）
   app.delete('/api/docs/:id', c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    docs.unload(row.id)
-    store.deleteDoc(row.id)
-    return c.json({ ok: true })
+    store.trashDoc(row.id, true)
+    return c.json({ ok: true, trashed: true })
   })
 
   app.get('/api/docs/:id/html', c => {

@@ -72,7 +72,7 @@ class Ctx {
   /** 文档存在、属于该用户、令牌有权限。 */
   check(docId: string, perm: Permission): ReturnType<typeof fail> | null {
     const row = this.deps.docs.store.getDoc(docId)
-    if (!row || row.owner !== this.claims.u) return fail('doc_not_found', `文档 ${docId} 不存在`, { hint: '用 doc_list 查看可访问的文档。' })
+    if (!row || row.owner !== this.claims.u || row.deleted_at) return fail('doc_not_found', `文档 ${docId} 不存在`, { hint: '用 doc_list 查看可访问的文档（回收站里的文档不可访问）。' })
     if (!canAccess(this.claims, docId, perm)) return fail('forbidden', `没有${perm === 'write' ? '写' : '读'}文档 ${docId} 的权限`)
     return null
   }
@@ -87,9 +87,19 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   server.registerTool('doc_list', {
     description: '列出可访问的文档（id、标题、类型、rev、更新时间）。',
     inputSchema: {},
-  }, async () => json(store.listDocs(claims.u)
-    .filter(d => canAccess(claims, d.id, 'read'))
-    .map(d => ({ doc_id: d.id, title: d.title, kind: d.kind, rev: d.rev, updated_at: d.updated_at }))))
+  }, async () => {
+    const projects = new Map(store.listProjects(claims.u).map(p => [p.id, p.name]))
+    return json(store.listDocs(claims.u)
+      .filter(d => canAccess(claims, d.id, 'read'))
+      .map(d => ({ doc_id: d.id, title: d.title, kind: d.kind, project: d.project_id ? projects.get(d.project_id) ?? null : null, rev: d.rev, updated_at: d.updated_at })))
+  })
+
+  server.registerTool('docs_search', {
+    description: '在用户的全部文档（标题与正文）里搜索，返回命中的文档与上下文片段（命中词用 [ ] 括起）。查找用户以前写过的内容、复用段落时用；在一份文档内部查找用 doc_search。',
+    inputSchema: { query: z.string().min(1).describe('要找的词或短语（中文 1 个字以上即可）'), limit: z.number().int().min(1).max(30).optional() },
+  }, async ({ query, limit }) => json(store.searchDocs(claims.u, query, limit ?? 10)
+    .filter(h => canAccess(claims, h.doc_id, 'read'))
+    .map(h => ({ doc_id: h.doc_id, title: h.title, kind: h.kind, snippet: h.snippet, updated_at: h.updated_at }))))
 
   server.registerTool('doc_create', {
     description: '新建文档：kind=doc（Word 文档，可附初始 markdown，同样受引用规范约束）或 kind=deck（幻灯片，带一页标题页，之后用 deck_edit 添加内容）。返回 doc_id 与 rev。',

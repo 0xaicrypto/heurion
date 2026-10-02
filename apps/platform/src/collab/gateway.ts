@@ -33,7 +33,7 @@ export function attachCollab(server: Server, deps: GatewayDeps): WebSocketServer
     const docId = decodeURIComponent(m[1]!)
     const user = deps.authenticate(url.searchParams.get('token') ?? '')
     const row = deps.docs.store.getDoc(docId)
-    if (!user || !row || row.owner !== user || row.kind !== 'doc') {
+    if (!user || !row || row.owner !== user || row.kind !== 'doc' || row.deleted_at) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return

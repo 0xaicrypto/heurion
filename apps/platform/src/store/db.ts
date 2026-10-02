@@ -40,6 +40,27 @@ export interface DocRow {
   rev: number
   created_at: string
   updated_at: string
+  /** 所在项目（文件夹）；null 为未分组。 */
+  project_id: string | null
+  /** 进了回收站的时间；null 为正常文档。 */
+  deleted_at: string | null
+}
+
+export interface ProjectRow {
+  id: string
+  owner: string
+  name: string
+  created_at: string
+}
+
+export interface SearchHit {
+  doc_id: string
+  title: string
+  kind: DocKind
+  project_id: string | null
+  updated_at: string
+  /** 命中处前后的文字（命中词用 [ ] 括起）。 */
+  snippet: string
 }
 
 export interface VersionRow {
@@ -163,6 +184,10 @@ export class Store {
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL,
         rev INTEGER NOT NULL DEFAULT 0, state BLOB, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(doc_id UNINDEXED, owner UNINDEXED, title, body, tokenize = 'trigram');
       CREATE TABLE IF NOT EXISTS op_log (
         doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, rev INTEGER NOT NULL,
         actor TEXT NOT NULL, turn_id TEXT, ops TEXT NOT NULL, affected TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -230,6 +255,9 @@ export class Store {
     const turnCols = (this.db.prepare('PRAGMA table_info(turns)').all() as Array<{ name: string }>).map(c => c.name)
     if (!turnCols.includes('error')) this.db.exec('ALTER TABLE turns ADD COLUMN error TEXT')
     if (!turnCols.includes('opts')) this.db.exec("ALTER TABLE turns ADD COLUMN opts TEXT NOT NULL DEFAULT '{}'")
+    const docCols = (this.db.prepare('PRAGMA table_info(docs)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!docCols.includes('project_id')) this.db.exec('ALTER TABLE docs ADD COLUMN project_id TEXT')
+    if (!docCols.includes('deleted_at')) this.db.exec('ALTER TABLE docs ADD COLUMN deleted_at TEXT')
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users (email) WHERE email IS NOT NULL')
@@ -246,7 +274,7 @@ export class Store {
   }
 
   getDoc(id: string): DocRow | undefined {
-    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at FROM docs WHERE id = ?').get(id) as DocRow | undefined
+    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at FROM docs WHERE id = ?').get(id) as DocRow | undefined
   }
 
   // —— 用户 ——
@@ -326,9 +354,94 @@ export class Store {
     return { docs, assets }
   }
 
+  /** 正常文档（不含回收站）。 */
   listDocs(owner: string): DocRow[] {
-    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at FROM docs WHERE owner = ? ORDER BY updated_at DESC')
+    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at FROM docs WHERE owner = ? AND deleted_at IS NULL ORDER BY updated_at DESC')
       .all(owner) as unknown as DocRow[]
+  }
+
+  allDocIds(): string[] {
+    return (this.db.prepare('SELECT id FROM docs').all() as Array<{ id: string }>).map(r => r.id)
+  }
+
+  listTrash(owner: string): DocRow[] {
+    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at FROM docs WHERE owner = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC')
+      .all(owner) as unknown as DocRow[]
+  }
+
+  /** 移进回收站 / 恢复（deleted = false）。 */
+  trashDoc(id: string, deleted: boolean): void {
+    this.db.prepare('UPDATE docs SET deleted_at = ? WHERE id = ?').run(deleted ? now() : null, id)
+  }
+
+  /** 回收站里超过 days 天的文档彻底删除，返回删掉的 id。 */
+  purgeTrash(days: number): string[] {
+    const cutoff = new Date(Date.now() - days * 86400_000).toISOString()
+    const rows = this.db.prepare('SELECT id FROM docs WHERE deleted_at IS NOT NULL AND deleted_at < ?').all(cutoff) as Array<{ id: string }>
+    for (const r of rows) this.deleteDoc(r.id)
+    return rows.map(r => r.id)
+  }
+
+  setDocProject(id: string, projectId: string | null): void {
+    this.db.prepare('UPDATE docs SET project_id = ? WHERE id = ?').run(projectId, id)
+  }
+
+  // —— 项目（文件夹） ——
+
+  createProject(owner: string, name: string): ProjectRow {
+    const id = 'p' + randomUUID().replace(/-/g, '').slice(0, 11)
+    this.db.prepare('INSERT INTO projects (id, owner, name, created_at) VALUES (?, ?, ?, ?)').run(id, owner, name, now())
+    return this.getProject(id)!
+  }
+
+  getProject(id: string): ProjectRow | undefined {
+    return this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as unknown as ProjectRow | undefined
+  }
+
+  listProjects(owner: string): ProjectRow[] {
+    return this.db.prepare('SELECT * FROM projects WHERE owner = ? ORDER BY created_at').all(owner) as unknown as ProjectRow[]
+  }
+
+  renameProject(id: string, name: string): void {
+    this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(name, id)
+  }
+
+  /** 删除项目：里面的文档回到「未分组」（不删文档）。 */
+  deleteProject(id: string): void {
+    this.db.prepare('UPDATE docs SET project_id = NULL WHERE project_id = ?').run(id)
+    this.db.prepare('DELETE FROM projects WHERE id = ?').run(id)
+  }
+
+  // —— 全文搜索（FTS5 trigram：3 个字及以上走索引；1–2 个字退回 LIKE） ——
+
+  indexDoc(doc: { id: string; owner: string; title: string }, body: string): void {
+    this.db.prepare('DELETE FROM docs_fts WHERE doc_id = ?').run(doc.id)
+    this.db.prepare('INSERT INTO docs_fts (doc_id, owner, title, body) VALUES (?, ?, ?, ?)').run(doc.id, doc.owner, doc.title, body)
+  }
+
+  unindexDoc(id: string): void {
+    this.db.prepare('DELETE FROM docs_fts WHERE doc_id = ?').run(id)
+  }
+
+  indexedDocIds(): Set<string> {
+    return new Set((this.db.prepare('SELECT doc_id FROM docs_fts').all() as Array<{ doc_id: string }>).map(r => r.doc_id))
+  }
+
+  searchDocs(owner: string, query: string, limit = 20): SearchHit[] {
+    const q = query.trim()
+    if (!q) return []
+    const base = `SELECT d.id AS doc_id, d.title, d.kind, d.project_id, d.updated_at, f.body AS body FROM docs_fts f JOIN docs d ON d.id = f.doc_id
+      WHERE f.owner = ? AND d.deleted_at IS NULL`
+    let rows: Array<{ doc_id: string; title: string; kind: DocKind; project_id: string | null; updated_at: string; body: string }>
+    if ([...q].length >= 3) {
+      // trigram 匹配：整串当作短语
+      const phrase = `"${q.replace(/"/g, '""')}"`
+      rows = this.db.prepare(`${base} AND docs_fts MATCH ? ORDER BY bm25(docs_fts, 0, 0, 5, 1) LIMIT ?`).all(owner, phrase, limit) as never
+    } else {
+      const like = `%${q.replace(/[%_\\]/g, m => '\\' + m)}%`
+      rows = this.db.prepare(`${base} AND (f.title LIKE ? ESCAPE '\\' OR f.body LIKE ? ESCAPE '\\') ORDER BY (f.title LIKE ? ESCAPE '\\') DESC, d.updated_at DESC LIMIT ?`).all(owner, like, like, like, limit) as never
+    }
+    return rows.map(r => ({ doc_id: r.doc_id, title: r.title, kind: r.kind, project_id: r.project_id, updated_at: r.updated_at, snippet: snippetOf(r.title, r.body, q) }))
   }
 
   getState(id: string): Uint8Array | null {
@@ -529,6 +642,16 @@ export class Store {
     return this.db.prepare('SELECT * FROM citations WHERE id = ?').get(id) as unknown as CitationRow
   }
 
+  /** 按给定 id 写入一条引用（复制文档用）。 */
+  insertCitation(c: CitationRow): void {
+    this.db.prepare('INSERT INTO citations (id, doc_id, doi, pmid, formatted, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(c.id, c.doc_id, c.doi, c.pmid, c.formatted, c.url, c.created_at)
+  }
+
+  copyNodeSrc(from: string, to: string): void {
+    this.db.prepare('INSERT INTO node_src (doc_id, node_id, xml) SELECT ?, node_id, xml FROM node_src WHERE doc_id = ?').run(to, from)
+  }
+
   listCitations(docId: string): CitationRow[] {
     return this.db.prepare('SELECT * FROM citations WHERE doc_id = ? ORDER BY created_at').all(docId) as unknown as CitationRow[]
   }
@@ -629,4 +752,13 @@ export class Store {
   listMessages(docId: string): MessageRow[] {
     return this.db.prepare('SELECT * FROM messages WHERE doc_id = ? ORDER BY created_at, rowid').all(docId) as unknown as MessageRow[]
   }
+}
+
+/** 命中处前后各约 30 字，命中词用 [ ] 括起；正文没命中（只命中标题）时取正文开头。 */
+function snippetOf(title: string, body: string, q: string): string {
+  const at = body.toLowerCase().indexOf(q.toLowerCase())
+  if (at < 0) return body.slice(0, 60).replace(/\s+/g, ' ')
+  const start = Math.max(0, at - 30)
+  const end = Math.min(body.length, at + q.length + 30)
+  return `${start > 0 ? '…' : ''}${body.slice(start, at)}[${body.slice(at, at + q.length)}]${body.slice(at + q.length, end)}${end < body.length ? '…' : ''}`.replace(/\s+/g, ' ')
 }

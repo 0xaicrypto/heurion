@@ -172,7 +172,7 @@ interface Loaded {
  *   （rev+1、op log、节点变更索引），并修复编辑器拆段带来的重复 id；
  * - 每个 AI 回合有自己的 Y.UndoManager：撤销本轮只撤掉该回合的改动，用户在此期间的编辑保留（CRDT 语义）。
  */
-export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
+export class Documents extends EventEmitter<{ commit: [CommitEvent]; created: [DocRow] }> {
   private readonly loaded = new Map<string, Loaded>()
 
   constructor(readonly store: Store) {
@@ -188,6 +188,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent] }> {
     const content = assignIds(input.content ?? empty, new Set())
     const row = this.store.createDoc({ id: input.id, owner: input.owner, title: input.title, kind, state: docToState(content) })
     this.store.addVersion({ docId: row.id, rev: 0, source: input.source ?? 'create', note: input.source === 'import' ? '导入' : '新建', state: this.store.getState(row.id)! })
+    this.emit('created', row)
     return row
   }
 

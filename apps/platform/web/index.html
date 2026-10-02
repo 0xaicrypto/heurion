@@ -21,8 +21,10 @@
       </div>
       <input id="uploadInput" type="file" accept=".docx,.pptx" hidden>
     </div>
-    <div class="nav-label">文档</div>
+    <div class="nav-search"><input type="search" id="docSearch" placeholder="搜索文档（标题与正文）" autocomplete="off"></div>
+    <div class="nav-label"><span>文档</span><button class="nav-add" id="newProject" title="新建项目（文件夹）">＋项目</button></div>
     <ul class="doclist" id="docList"></ul>
+    <button class="nav-trash" id="trashBtn" title="回收站：删除的文档保留 30 天">回收站</button>
     <div class="user">
       <button id="userButton" class="user-button" aria-haspopup="menu" title="账户">
         <span class="avatar" id="userAvatar"></span>

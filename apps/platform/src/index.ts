@@ -5,6 +5,7 @@ import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
 import { Accounts } from './auth/accounts.ts'
 import { createMailer } from './auth/mailer.ts'
+import { SearchIndex } from './model/search-index.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -43,7 +44,14 @@ const mcpDeps = {
 
 const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
 const accounts = new Accounts(store, { secret: config.secret, devMode: config.devMode, devToken: config.devToken, devUser: config.devUser, mailer })
-const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser })
+const search = new SearchIndex(docs)
+const indexed = search.backfill()
+if (indexed) console.log(`全文索引：补齐 ${indexed} 份文档`)
+// 回收站：30 天后自动彻底删除（启动时一次，之后每 12 小时）
+const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } }
+purge()
+setInterval(purge, 12 * 3600_000).unref()
+const app = buildApi({ docs, ops, turns, postcheck, crossref, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

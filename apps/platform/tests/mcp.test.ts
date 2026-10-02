@@ -239,3 +239,21 @@ describe('AI 生成图片并插入（与人的插图能力一致）', () => {
     expect(read.text).toMatch(/图片/)
   })
 })
+
+describe('文档仓库（AI 一侧）', () => {
+  it('docs_search 跨文档搜索；回收站里的文档 AI 读不到也搜不到', async () => {
+    const { SearchIndex } = await import('../src/model/search-index.ts')
+    const t = await connect('# 心衰\n\n沙库巴曲缬沙坦可降低心衰住院。')
+    const search = new SearchIndex(t.docs, 0)
+    search.reindex(t.docId)
+    const other = t.docs.create({ owner: 'u1', title: '糖尿病笔记', content: undefined })
+    search.reindex(other.id)
+    const hits = await t.call('docs_search', { query: '沙库巴曲' })
+    expect(hits.body.map((h: any) => h.doc_id)).toEqual([t.docId])
+    expect(hits.body[0].snippet).toContain('[沙库巴曲]')
+    t.store.trashDoc(t.docId, true)
+    expect((await t.call('docs_search', { query: '沙库巴曲' })).body).toEqual([])
+    const read = await t.call('doc_outline', { doc_id: t.docId })
+    expect([read.isError, read.body.code]).toEqual([true, 'doc_not_found'])
+  })
+})

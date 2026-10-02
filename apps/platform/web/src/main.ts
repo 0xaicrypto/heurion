@@ -52,20 +52,173 @@ let refreshTimer: number | undefined
 const ICON_DOC = '<svg class="kind doc" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-label="文档"><path d="M4 1.75h5.5L12.5 4.75v9.5H4z"/><path d="M9.25 1.75v3.25h3.25M6 8h4.5M6 10.75h4.5"/></svg>'
 const ICON_DECK = '<svg class="kind deck" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-label="幻灯片"><rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1.5"/><path d="M8 11.25v2.5M5.5 13.75h5"/></svg>'
 
+// —— 左栏：文档仓库（项目分组、搜索、回收站） ——
+
+let docRows: any[] = []
+let projects: Array<{ id: string; name: string }> = []
+const collapsed = new Set<string>(JSON.parse((() => { try { return localStorage.getItem('heurion.collapsed') ?? '[]' } catch { return '[]' } })()))
+const saveCollapsed = () => { try { localStorage.setItem('heurion.collapsed', JSON.stringify([...collapsed])) } catch { /* 忽略 */ } }
+
+const docItem = (d: any) => `<li data-id="${d.id}" class="${d.id === session?.docId ? 'active' : ''}" title="${esc(d.title)}">${d.kind === 'deck' ? ICON_DECK : ICON_DOC}<span class="label">${esc(d.title)}</span><button class="item-menu" data-doc-menu="${d.id}" title="更多操作" aria-label="更多操作">⋯</button></li>`
+
 async function loadDocs(): Promise<void> {
-  const docs = await api<any[]>('/api/docs')
-  $('docList').innerHTML = docs.map(d =>
-    `<li data-id="${d.id}" class="${d.id === session?.docId ? 'active' : ''}" title="${esc(d.title)}">${d.kind === 'deck' ? ICON_DECK : ICON_DOC}<span class="label">${esc(d.title)}</span></li>`).join('')
+  ;[docRows, projects] = await Promise.all([api<any[]>('/api/docs'), api<any[]>('/api/projects')])
+  if ($<HTMLInputElement>('docSearch').value.trim()) { void runSearch(); return }
+  const loose = docRows.filter(d => !d.project_id)
+  const groups = projects.map(p => {
+    const items = docRows.filter(d => d.project_id === p.id)
+    const open = !collapsed.has(p.id)
+    return `<li class="group${open ? ' open' : ''}" data-project="${p.id}"><span class="caret">${open ? '▾' : '▸'}</span><span class="label">${esc(p.name)}</span><span class="count">${items.length}</span><button class="item-menu" data-project-menu="${p.id}" title="项目操作" aria-label="项目操作">⋯</button></li>${open ? items.map(docItem).join('') : ''}`
+  }).join('')
+  $('docList').innerHTML = (loose.length && projects.length ? '<li class="group-label">未分组</li>' : '') + loose.map(docItem).join('') + groups
+    + (docRows.length === 0 ? '<li class="nav-empty">还没有文档</li>' : '')
 }
 
-$('docList').onclick = e => {
-  const li = (e.target as HTMLElement).closest('li')
+let searchTimer: number | undefined
+async function runSearch(): Promise<void> {
+  const q = $<HTMLInputElement>('docSearch').value.trim()
+  if (!q) { void loadDocs(); return }
+  const hits = await api<any[]>(`/api/search?q=${encodeURIComponent(q)}`)
+  // 命中词在片段里用 [ ] 括起：转义后换成高亮
+  const mark = (s: string) => esc(s).replace(/\[([^\]]*)\]/g, '<mark>$1</mark>')
+  $('docList').innerHTML = hits.length === 0
+    ? `<li class="nav-empty">没有找到「${esc(q)}」</li>`
+    : hits.map(h => `<li data-id="${h.doc_id}" class="hit${h.doc_id === session?.docId ? ' active' : ''}" title="${esc(h.title)}">${h.kind === 'deck' ? ICON_DECK : ICON_DOC}<span class="hit-text"><span class="label">${esc(h.title)}</span><span class="snippet">${mark(h.snippet)}</span></span></li>`).join('')
+}
+$('docSearch').oninput = () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => void runSearch(), 200) }
+$('docSearch').onkeydown = e => { if (e.key === 'Escape') { $<HTMLInputElement>('docSearch').value = ''; void loadDocs() } }
+
+/** 小菜单（固定定位在按钮旁边）。 */
+function popMenu(anchor: HTMLElement, items: Array<[string, () => void | Promise<void>, boolean?]>): void {
+  document.querySelector('.pop-menu')?.remove()
+  const menu = document.createElement('div')
+  menu.className = 'pop-menu'
+  menu.innerHTML = items.map(([label, , danger], i) => `<button data-i="${i}" class="${danger ? 'danger-text' : ''}">${esc(label)}</button>`).join('')
+  const r = anchor.getBoundingClientRect()
+  Object.assign(menu.style, { left: `${r.right - 4}px`, top: `${r.top}px` })
+  document.body.appendChild(menu)
+  const close = () => { menu.remove(); document.removeEventListener('mousedown', outside) }
+  const outside = (e: MouseEvent) => { if (!menu.contains(e.target as Node)) close() }
+  setTimeout(() => document.addEventListener('mousedown', outside))
+  menu.onclick = e => {
+    const b = (e.target as HTMLElement).closest('[data-i]') as HTMLElement | null
+    if (!b) return
+    close()
+    void items[Number(b.dataset.i)]![1]()
+  }
+}
+
+async function moveDoc(docId: string): Promise<void> {
+  const options = [['', '未分组'], ...projects.map(p => [p.id, p.name])]
+  const current = docRows.find(d => d.id === docId)?.project_id ?? ''
+  const name = await askText({ title: '移动到项目', label: `项目名（现有：${options.map(o => o[1]).join('、')}；输入新名字会新建项目）`, value: options.find(o => o[0] === current)?.[1] ?? '未分组', confirm: '移动' })
+  if (name === null) return
+  let target = name.trim() === '' || name.trim() === '未分组' ? null : projects.find(p => p.name === name.trim())?.id
+  if (target === undefined) target = (await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: name.trim() }) })).id
+  await api(`/api/docs/${docId}`, { method: 'PATCH', body: JSON.stringify({ project_id: target }) })
+  await loadDocs()
+}
+
+$('docList').onclick = async e => {
+  const t = e.target as HTMLElement
+  const docMenu = t.closest('[data-doc-menu]') as HTMLElement | null
+  if (docMenu) {
+    e.stopPropagation()
+    const id = docMenu.dataset.docMenu!
+    const d = docRows.find(x => x.id === id)
+    popMenu(docMenu, [
+      ['重命名', async () => {
+        const title = await askText({ title: '重命名', label: '标题', value: d?.title ?? '' })
+        if (title?.trim()) { await api(`/api/docs/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }); await loadDocs(); if (session?.docId === id) await refresh(false) }
+      }],
+      ['移动到项目…', () => moveDoc(id)],
+      ['复制', async () => { const c = await api(`/api/docs/${id}/duplicate`, { method: 'POST' }); await loadDocs(); await open(c.id) }],
+      ['移到回收站', async () => {
+        await api(`/api/docs/${id}`, { method: 'DELETE' })
+        if (session?.docId === id) { close(); $('chatLog').innerHTML = ''; showWelcome() }
+        await loadDocs()
+        showNotice(`「${d?.title ?? '文档'}」已移到回收站（30 天内可恢复）`)
+      }, true],
+    ])
+    return
+  }
+  const projMenu = t.closest('[data-project-menu]') as HTMLElement | null
+  if (projMenu) {
+    e.stopPropagation()
+    const id = projMenu.dataset.projectMenu!
+    const p = projects.find(x => x.id === id)
+    popMenu(projMenu, [
+      ['重命名', async () => {
+        const name = await askText({ title: '重命名项目', label: '项目名', value: p?.name ?? '' })
+        if (name?.trim()) { await api(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }); await loadDocs() }
+      }],
+      ['删除项目', async () => {
+        if (!await askConfirm({ title: '删除项目', message: `删除项目「${p?.name ?? ''}」？里面的文档不会删除，会回到「未分组」。`, confirm: '删除项目', danger: true })) return
+        await api(`/api/projects/${id}`, { method: 'DELETE' })
+        await loadDocs()
+      }, true],
+    ])
+    return
+  }
+  const group = t.closest('li.group') as HTMLElement | null
+  if (group) {
+    const id = group.dataset.project!
+    if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id)
+    saveCollapsed()
+    await loadDocs()
+    return
+  }
+  const li = t.closest('li[data-id]') as HTMLElement | null
   if (li?.dataset.id) void open(li.dataset.id)
+}
+
+$('newProject').onclick = async () => {
+  const name = await askText({ title: '新建项目', label: '项目名', placeholder: '例如：SELECT 试验汇报', confirm: '新建' })
+  if (!name?.trim()) return
+  await api('/api/projects', { method: 'POST', body: JSON.stringify({ name }) })
+  await loadDocs()
+}
+
+$('trashBtn').onclick = () => void openTrash()
+
+async function openTrash(): Promise<void> {
+  const rows = await api<any[]>('/api/trash')
+  const dlg = $('dialog')
+  const render = (list: any[]) => {
+    dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="回收站">
+      <div class="dialog-head"><h2>回收站</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
+      <div class="dialog-body">${list.length === 0 ? '<div class="muted">回收站是空的</div>' : `<div class="muted">删除的文档保留 30 天，之后自动彻底删除。</div>
+        <table class="users"><tbody>${list.map(d => `<tr data-id="${d.id}"><td>${d.kind === 'deck' ? ICON_DECK : ICON_DOC} ${esc(d.title)}</td><td class="muted">删除于 ${new Date(d.deleted_at).toLocaleString('zh-CN', { hour12: false })}</td>
+          <td class="actions"><div class="actions-row"><button data-restore>恢复</button><button data-purge class="danger">彻底删除</button></div></td></tr>`).join('')}</tbody></table>`}</div></div>`
+  }
+  render(rows)
+  dlg.hidden = false
+  dlg.onclick = async e => {
+    const t = e.target as HTMLElement
+    if (t === dlg || t.closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = ''; return }
+    const id = (t.closest('tr[data-id]') as HTMLElement | null)?.dataset.id
+    if (!id) return
+    if (t.closest('[data-restore]')) {
+      await api(`/api/docs/${id}/restore`, { method: 'POST' })
+      showNotice('已恢复')
+    } else if (t.closest('[data-purge]')) {
+      dlg.hidden = true
+      const ok = await askConfirm({ title: '彻底删除', message: '彻底删除后无法恢复，包括版本历史与评论。', confirm: '彻底删除', danger: true })
+      if (ok) await api(`/api/docs/${id}/purge`, { method: 'DELETE' })
+      void openTrash()
+      await loadDocs()
+      return
+    }
+    render(await api<any[]>('/api/trash'))
+    await loadDocs()
+  }
 }
 
 // 新建：直接建一份「未命名」并打开，标题进入编辑状态（不弹窗问标题）
 async function createDoc(kind: 'doc' | 'deck', renameNow = true): Promise<void> {
-  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify(kind === 'deck' ? { title: '未命名汇报', kind } : { title: '未命名文档' }) })
+  // 新文档放进当前打开文档所在的项目
+  const project_id = docRows.find(x => x.id === session?.docId)?.project_id ?? null
+  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify(kind === 'deck' ? { title: '未命名汇报', kind, project_id } : { title: '未命名文档', project_id }) })
   await loadDocs()
   await open(d.id)
   if (renameNow) editTitle()

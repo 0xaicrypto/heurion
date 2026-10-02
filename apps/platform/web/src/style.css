@@ -407,3 +407,32 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .deck-toolbar .menu-wrap { display: inline-flex; }
 .deck-toolbar .dropdown { left: 0; right: auto; display: grid; grid-template-columns: repeat(3, auto); }
 .deck-toolbar .dropdown[hidden] { display: none; }
+
+/* 左栏：文档仓库 */
+.nav-search { padding: 12px 14px 0; }
+.nav-search input { width: 100%; font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, .28); background: rgba(148, 163, 184, .08); color: var(--nav-text); }
+.nav-search input::placeholder { color: var(--nav-muted); }
+.nav-search input:focus { outline: none; border-color: var(--sky); background: rgba(148, 163, 184, .14); }
+.nav-label { display: flex; align-items: center; justify-content: space-between; }
+.nav-add { border: 0; background: transparent; color: var(--nav-muted); font-size: 11px; padding: 0 4px; letter-spacing: 0; }
+.nav-add:hover:not(:disabled) { color: #fff; background: transparent; }
+.doclist li .item-menu { margin-left: auto; border: 0; background: transparent; color: var(--nav-muted); padding: 0 4px; font-size: 14px; line-height: 1; opacity: 0; }
+.doclist li:hover .item-menu, .doclist li.active .item-menu { opacity: 1; }
+.doclist li .item-menu:hover:not(:disabled) { color: #fff; background: rgba(148, 163, 184, .2); }
+.doclist li.group { color: var(--nav-muted); font-size: 12px; font-weight: 600; margin-top: 6px; }
+.doclist li.group .caret { width: 12px; font-size: 10px; }
+.doclist li.group .count { font-weight: 400; font-size: 11px; opacity: .7; }
+.doclist li.group + li[data-id], .doclist li.group ~ li[data-id] { }
+.doclist li.group-label { color: var(--nav-muted); font-size: 11px; padding: 2px 10px; cursor: default; }
+.doclist li.group-label:hover { background: transparent; }
+.doclist li.nav-empty { color: var(--nav-muted); font-size: 12px; cursor: default; }
+.doclist li.hit { align-items: flex-start; }
+.doclist .hit-text { display: flex; flex-direction: column; min-width: 0; }
+.doclist .snippet { font-size: 11.5px; color: var(--nav-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; }
+.doclist .snippet mark { background: rgba(14, 165, 233, .3); color: #fff; border-radius: 2px; }
+.nav-trash { margin: 0 14px 8px; border: 0; background: transparent; color: var(--nav-muted); font-size: 12px; text-align: left; padding: 4px 6px; }
+.nav-trash:hover:not(:disabled) { color: #fff; background: var(--nav-hover); }
+.pop-menu { position: fixed; z-index: 30; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; min-width: 140px; }
+.pop-menu button { border: 0; border-radius: 6px; background: transparent; text-align: left; padding: 6px 10px; font-size: 13px; }
+.pop-menu button:hover:not(:disabled) { background: var(--raised); }
+.pop-menu .danger-text { color: var(--danger); }
