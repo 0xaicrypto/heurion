@@ -4,7 +4,8 @@ import 'prosemirror-gapcursor/style/gapcursor.css'
 import './style.css'
 import * as Y from 'yjs'
 import { initUserMenu, showAuthScreen, signOut, storedToken, type Me } from './account.ts'
-import { DeckView } from './deck.ts'
+import { DeckView, type ChartData } from './deck.ts'
+import { EDITABLE_CHART_TYPES, editChartData } from './chart-dialog.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { initLibrary } from './library.ts'
@@ -289,6 +290,7 @@ async function open(docId: string): Promise<void> {
       onEdit: (ops, baseRev) => deckEdit(docId, ops, baseRev),
       onSelectShape: () => syncDeckToolbar(),
       onNotice: msg => showNotice(msg),
+      onEditChart: (shapeId, chart) => void editChart(deck, shapeId, chart),
     })
     session = { docId, kind: 'deck', stream, deck }
     $('page').classList.add('deck')
@@ -455,6 +457,8 @@ function syncDeckToolbar(): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#deckToolbar [data-needs-shape]')) b.disabled = !sel
   const isTable = sel?.shape.attrs?.kind === 'table'
   for (const b of document.querySelectorAll<HTMLButtonElement>('#deckToolbar [data-needs-table]')) b.hidden = !isTable
+  const isChart = sel?.shape.attrs?.kind === 'chart' && !!sel.shape.attrs.chart
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#deckToolbar [data-needs-chart]')) b.hidden = !isChart
   const n = session?.deck?.selectionIds().length ?? 0
   for (const b of document.querySelectorAll<HTMLButtonElement>('#arrangeMenu [data-distribute]')) b.disabled = n < 3
 }
@@ -516,7 +520,36 @@ $('arrangeMenu').onclick = async e => {
   if (b.dataset.arrange) await deck.edit([{ op: 'align_shapes', shape_ids, align: b.dataset.arrange }])
   if (b.dataset.distribute) await deck.edit([{ op: 'distribute_shapes', shape_ids, direction: b.dataset.distribute }])
 }
-document.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('.menu-wrap')) $('arrangeMenu').hidden = true })
+document.addEventListener('click', e => {
+  if ((e.target as HTMLElement).closest('.menu-wrap')) return
+  $('arrangeMenu').hidden = true
+  $('chartMenu').hidden = true
+})
+
+/** 插入图表：示例数据（饼 / 圆环只有一个系列），之后双击或「编辑数据」改。与 AI 同一个 add_chart。 */
+$('chartMenu').onclick = async e => {
+  const b = (e.target as HTMLElement).closest('[data-chart-type]') as HTMLButtonElement | null
+  const deck = session?.deck
+  const slide = deck?.selection()?.slide ?? deck?.currentSlide()
+  if (!b || !deck || !slide) return
+  $('chartMenu').hidden = true
+  const type = b.dataset.chartType!
+  const W = deck.slideSize.cx / 12700
+  const H = deck.slideSize.cy / 12700
+  const round = type === 'pie' || type === 'doughnut'
+  const series = round
+    ? [{ name: '占比', values: [45, 30, 25] }]
+    : [{ name: '组 A', values: [4.3, 2.5, 3.5] }, { name: '组 B', values: [2.4, 4.4, 1.8] }]
+  const w = round ? 420 : 560
+  await deck.edit([{ op: 'add_chart', slide_id: slide.attrs!.id, type, x: Math.round(W / 2 - w / 2), y: Math.round(H / 2 - 160), w, h: 320, title: '图表标题', categories: ['类别 1', '类别 2', '类别 3'], series }])
+}
+
+/** 改图表数据：数据表对话框 → chart_set_data（与 AI 同一个操作）。 */
+async function editChart(deck: DeckView, shapeId: string, chart: ChartData): Promise<void> {
+  if (!EDITABLE_CHART_TYPES.includes(chart.type)) { showNotice('这种图表（散点 / 雷达等）暂不支持在这里改数据，可在 PowerPoint 里改，或删掉后用「＋图表」重建'); return }
+  const next = await editChartData(chart)
+  if (next) await deck.edit([{ op: 'chart_set_data', shape_id: shapeId, ...next }])
+}
 
 $('deckImageInput').onchange = async () => {
   const input = $<HTMLInputElement>('deckImageInput')
@@ -554,6 +587,14 @@ $('deckToolbar').onclick = async e => {
     case 'textbox': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '新文本框', x: Math.round(W / 2 - 200), y: Math.round(H / 2 - 30), w: 400, h: 60, color: 'body' }]); break
     case 'block': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '', x: Math.round(W / 2 - 150), y: Math.round(H / 2 - 60), w: 300, h: 120, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF' }]); break
     case 'image': $('deckImageInput').click(); break
+    case 'chart': {
+      const menu = $('chartMenu')
+      const r = btn.getBoundingClientRect()
+      Object.assign(menu.style, { position: 'fixed', left: `${r.left}px`, top: `${r.bottom + 6}px`, right: 'auto' })
+      menu.hidden = !menu.hidden
+      break
+    }
+    case 'chart-data': if (id && sel!.shape.attrs?.chart) await editChart(deck, id, sel!.shape.attrs.chart as ChartData); break
     case 'table': await deck.edit([{ op: 'add_table', slide_id: slide.attrs!.id, x: Math.round(W / 2 - 300), y: Math.round(H / 2 - 64), w: 600, rows: [['项目', '组 A', '组 B'], ['', '', ''], ['', '', '']] }]); break
     case 'fill': { const c = await pickColor(btn, theme, true); if (c && id) await deck.edit(each({ op: 'set_fill', color: c })); break }
     case 'color': { const c = await pickColor(btn, theme, false); if (c && id) await deck.edit(each({ op: 'set_text_style', color: c })); break }

@@ -494,3 +494,16 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .mem-edit select { font-size: 12px; }
 .mem-history { margin: 4px 0 0; padding-left: 18px; }
 
+/* 图表：预览与数据表 */
+.shape-chart:has(.chart-svg) { border: 0; }
+.chart-svg { display: block; font-family: inherit; }
+.chart-dialog { width: min(820px, 100%); }
+.chart-title { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 500; }
+.chart-grid-wrap { overflow: auto; max-height: 50vh; border: 1px solid var(--line); border-radius: 10px; }
+.chart-grid { border-collapse: collapse; font-size: 13px; width: 100%; }
+.chart-grid th, .chart-grid td { border-bottom: 1px solid var(--line); padding: 4px; }
+.chart-grid th { background: var(--raised); position: sticky; top: 0; white-space: nowrap; }
+.chart-grid input { width: 100%; min-width: 80px; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; background: transparent; color: var(--text); font: inherit; }
+.chart-grid input:focus { border-color: var(--sky); outline: none; background: var(--panel); }
+.chart-grid th input { font-weight: 600; }
+.chart-grid button { font-size: 12px; padding: 1px 8px; }

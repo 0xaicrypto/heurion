@@ -97,6 +97,13 @@
       <button data-dk="block" title="插入色块（标题条、强调卡片）">＋色块</button>
       <button data-dk="image" title="插入图片">＋图片</button>
       <button data-dk="table" title="插入表格（双击单元格改字）">＋表格</button>
+      <span class="menu-wrap">
+        <button data-dk="chart" title="插入原生图表（双击图表编辑数据；导出后 PowerPoint 里也能编辑数据）">＋图表 ▾</button>
+        <div class="dropdown" id="chartMenu" hidden>
+          <button data-chart-type="column">柱状图</button><button data-chart-type="bar">条形图</button><button data-chart-type="line">折线图</button>
+          <button data-chart-type="area">面积图</button><button data-chart-type="pie">饼图</button><button data-chart-type="doughnut">圆环图</button>
+        </div>
+      </span>
       <input id="deckImageInput" type="file" accept="image/png,image/jpeg,image/gif" hidden>
       <span class="sep"></span>
       <button data-dk="fill" data-needs-shape title="填充色">填充</button>
@@ -115,6 +122,7 @@
           <button data-distribute="horizontal" title="至少选 3 个">横向等距</button><button data-distribute="vertical" title="至少选 3 个">纵向等距</button>
         </div>
       </span>
+      <button data-dk="chart-data" data-needs-chart hidden title="编辑图表的类别、系列、数值与标题（也可双击图表）">编辑数据</button>
       <button data-dk="row-add" data-needs-table hidden title="在所点单元格下方插一行">＋行</button>
       <button data-dk="col-add" data-needs-table hidden title="在所点单元格右侧插一列">＋列</button>
       <button data-dk="row-del" data-needs-table hidden title="删除所点单元格所在行">−行</button>

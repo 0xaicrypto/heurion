@@ -21,7 +21,11 @@ export interface DeckViewOptions {
   onSelectShape?: (shapeId: string | null) => void
   /** 给用户的提示（并发修改等）。 */
   onNotice?: (message: string) => void
+  /** 双击图表：编辑数据（数据表对话框，提交 chart_set_data）。 */
+  onEditChart?: (shapeId: string, chart: ChartData) => void
 }
+
+export interface ChartData { type: string; title?: string; categories: string[]; series: Array<{ name: string; values: Array<number | null> }>; colors?: string[] }
 
 type Box = { l: number; t: number; w: number; h: number }
 
@@ -129,7 +133,7 @@ export class DeckView {
         : (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s, slide.attrs?.layout as string | undefined)).join('')
       return `<div class="slide-wrap" data-id="${esc(slide.attrs?.id)}" data-index="${i}"${suggest}>
         <div class="slide-head"><span>第 ${i + 1} 页 · ${esc(slide.attrs?.layout_name || '无版式')}</span><button data-precise="${i}">${this.precise.has(i) ? '近似预览' : '精确预览'}</button></div>
-        <div class="slide" style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg}` : ''}">${body}</div>
+        <div class="slide" style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg};${isDark(slide.attrs.bg) ? 'color:#E2E8F0;' : ''}` : ''}">${body}</div>
         <div class="slide-notes"><span class="notes-label">备注</span><div class="notes-text${notes && this.text(notes) ? '' : ' empty'}" data-notes="${esc(slide.attrs?.id)}" title="双击编辑演讲者备注">${notes && this.text(notes) ? esc(this.text(notes)) : '双击添加演讲者备注'}</div></div>
       </div>`
     }).join('')
@@ -396,6 +400,7 @@ export class DeckView {
     const kind = sel.attrs?.kind as string
     const td = t.closest('td[data-r]') as HTMLElement | null
     if (kind === 'table' && td) { this.editCell(id, td, e); return }
+    if (kind === 'chart' && sel.attrs?.chart) { this.opts.onEditChart?.(id, sel.attrs.chart as ChartData); return }
     if (kind === 'text' || kind === 'shape') this.editShape(id, shapeEl, sel, e)
   }
 
@@ -529,6 +534,7 @@ export class DeckView {
     }
     // 色块 / 卡片：文字垂直居中（与导出的 anchor="ctr" 一致）
     if (a.kind === 'shape') return `<div ${common}><div class="shape-text">${(s.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</div></div>`
+    if (a.kind === 'chart' && a.chart) return `<div ${common} title="双击编辑图表数据">${chartSvg(a.chart as ChartData, a.w / EMU_PER_PT * k, a.h / EMU_PER_PT * k)}</div>`
     return `<div ${common}><span class="shape-label">${esc(a.description || a.kind)}</span></div>`
   }
 
@@ -704,4 +710,94 @@ function domParagraphs(container: HTMLElement): Array<{ text: string; lvl: numbe
     else if (c.nodeType === 3 && (c.textContent ?? '').trim()) out.push({ text: escapeMd(c.textContent!.trim()), lvl: 0 })
   })
   return out
+}
+
+const CHART_COLORS = ['0EA5E9', 'F59E0B', '10B981', '8B5CF6', 'EF4444', '64748B']
+
+/** 图表的近似预览（SVG）：柱 / 条 / 折线 / 面积 / 饼 / 圆环；其他类型画柱状。精确效果看 LibreOffice 预览。 */
+export function chartSvg(c: ChartData, w: number, h: number): string {
+  const color = (i: number) => `#${c.colors?.[i] || CHART_COLORS[i % CHART_COLORS.length]}`
+  const fs = Math.max(8, Math.min(14, h / 22))
+  const titleH = c.title ? fs * 1.8 : 0
+  const legendH = fs * 1.8
+  const title = c.title ? `<text x="${w / 2}" y="${fs * 1.3}" font-size="${fs * 1.1}" font-weight="600" text-anchor="middle" fill="currentColor">${esc(c.title)}</text>` : ''
+  const round = c.type === 'pie' || c.type === 'doughnut'
+  const legendItems = round ? c.categories : c.series.map(s => s.name)
+  const itemW = Math.min(90, w / Math.max(1, legendItems.length))
+  const legend = legendItems.map((name, i) => {
+    const x = w / 2 - (legendItems.length * itemW) / 2 + i * itemW
+    return `<rect x="${x}" y="${h - legendH + fs * 0.3}" width="${fs * 0.8}" height="${fs * 0.8}" fill="${color(i)}"/><text x="${x + fs}" y="${h - legendH + fs * 1.05}" font-size="${fs * 0.85}" fill="currentColor">${esc(name.slice(0, 10))}</text>`
+  }).join('')
+  const top = titleH + fs * 0.5
+  const bottom = h - legendH
+  let body = ''
+  if (round) {
+    const values = (c.series[0]?.values ?? []).map(v => Math.max(0, v ?? 0))
+    const total = values.reduce((a, b) => a + b, 0) || 1
+    const r = Math.max(4, Math.min(w, bottom - top) / 2 - 4)
+    const cx = w / 2
+    const cy = (top + bottom) / 2
+    let angle = -Math.PI / 2
+    body = values.map((v, i) => {
+      const a2 = angle + (v / total) * Math.PI * 2
+      const large = a2 - angle > Math.PI ? 1 : 0
+      const p1 = [cx + r * Math.cos(angle), cy + r * Math.sin(angle)]
+      const p2 = [cx + r * Math.cos(a2), cy + r * Math.sin(a2)]
+      angle = a2
+      if (v >= total) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color(i)}"/>`
+      return `<path d="M${cx},${cy} L${p1[0]},${p1[1]} A${r},${r} 0 ${large} 1 ${p2[0]},${p2[1]} Z" fill="${color(i)}" stroke="#fff" stroke-width="1"/>`
+    }).join('')
+    if (c.type === 'doughnut') body += `<circle cx="${cx}" cy="${cy}" r="${r * 0.55}" fill="#fff"/>`
+  } else {
+    const all = c.series.flatMap(s => s.values).filter((v): v is number => v !== null)
+    const max = Math.max(0, ...all)
+    const min = Math.min(0, ...all)
+    const span = max - min || 1
+    const left = fs * 3
+    const plotW = w - left - fs
+    const plotH = bottom - top - fs * 1.6
+    const n = c.categories.length || 1
+    const horizontal = c.type === 'bar'
+    const y = (v: number) => top + plotH - ((v - min) / span) * plotH
+    const grid = [0, 0.25, 0.5, 0.75, 1].map(f => {
+      const v = min + span * f
+      const yy = y(v)
+      return horizontal ? '' : `<line x1="${left}" x2="${w - fs}" y1="${yy}" y2="${yy}" stroke="currentColor" stroke-opacity=".12"/><text x="${left - 4}" y="${yy + fs * 0.35}" font-size="${fs * 0.8}" text-anchor="end" fill="currentColor" fill-opacity=".7">${+v.toFixed(2)}</text>`
+    }).join('')
+    const labels = c.categories.map((cat, ci) => horizontal
+      ? `<text x="${left - 4}" y="${top + (ci + 0.5) * (plotH / n) + fs * 0.35}" font-size="${fs * 0.8}" text-anchor="end" fill="currentColor">${esc(cat.slice(0, 8))}</text>`
+      : `<text x="${left + (ci + 0.5) * (plotW / n)}" y="${top + plotH + fs * 1.2}" font-size="${fs * 0.8}" text-anchor="middle" fill="currentColor">${esc(cat.slice(0, 10))}</text>`).join('')
+    if (c.type === 'line' || c.type === 'area') {
+      body = c.series.map((s, si) => {
+        const pts = s.values.map((v, ci) => v === null ? null : [left + (ci + 0.5) * (plotW / n), y(v)] as const).filter((p): p is readonly [number, number] => !!p)
+        if (pts.length === 0) return ''
+        const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]},${p[1]}`).join(' ')
+        const area = c.type === 'area' ? `<path d="${line} L${pts.at(-1)![0]},${y(Math.max(min, 0))} L${pts[0]![0]},${y(Math.max(min, 0))} Z" fill="${color(si)}" fill-opacity=".35"/>` : ''
+        return `${area}<path d="${line}" fill="none" stroke="${color(si)}" stroke-width="2"/>${c.type === 'line' ? pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="2.5" fill="${color(si)}"/>`).join('') : ''}`
+      }).join('')
+    } else {
+      const groupW = (horizontal ? plotH : plotW) / n
+      const barW = (groupW * 0.75) / Math.max(1, c.series.length)
+      const zero = horizontal ? left + ((0 - min) / span) * plotW : y(0)
+      body = c.categories.map((_, ci) => c.series.map((s, si) => {
+        const v = s.values[ci]
+        if (v === null || v === undefined) return ''
+        const offset = ci * groupW + groupW * 0.125 + si * barW
+        if (horizontal) {
+          const x2 = left + ((v - min) / span) * plotW
+          return `<rect x="${Math.min(zero, x2)}" y="${top + offset}" width="${Math.abs(x2 - zero)}" height="${barW * 0.9}" fill="${color(si)}"/>`
+        }
+        const yy = y(v)
+        return `<rect x="${left + offset}" y="${Math.min(zero, yy)}" width="${barW * 0.9}" height="${Math.abs(zero - yy)}" fill="${color(si)}"/>`
+      }).join('')).join('')
+    }
+    body = grid + body + labels
+  }
+  return `<svg class="chart-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${title}${body}${legend}</svg>`
+}
+
+/** 深色背景（图表的坐标轴与文字用浅色）。 */
+function isDark(hex: string): boolean {
+  const n = parseInt(hex, 16)
+  return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 < 128
 }

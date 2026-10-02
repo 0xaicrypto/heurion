@@ -279,6 +279,47 @@ await wait(1000)
 const tableText = JSON.stringify((await deckModel()).content.flatMap((sl: any) => (sl.content ?? []).filter((c: any) => c.attrs?.kind === 'table')))
 ok('插入表格并双击单元格改字', tableText.includes('6.5%') && tableText.includes('项目'))
 
+// 图表：「＋图表」插入原生图表（SVG 预览）→ 双击打开数据表 → 改一个数值、加一行 → 保存（chart_set_data）
+await page.click('[data-dk="chart"]')
+await page.click('#chartMenu [data-chart-type="column"]')
+await page.waitForSelector('.slide .shape-chart .chart-svg')
+ok('插入图表并显示预览', await page.locator('.slide .shape-chart .chart-svg rect').count() > 0)
+await page.locator('.slide .shape-chart').last().dblclick()
+await page.waitForSelector('.chart-dialog input[data-v="0,0"]')
+await page.fill('.chart-dialog input[data-v="0,0"]', '9.9')
+await page.click('.chart-dialog [data-add-cat]')
+await page.fill('.chart-dialog input[data-cat="3"]', '类别 4')
+await page.fill('.chart-dialog input[data-v="1,3"]', '5')
+await page.click('#chartOk')
+await wait(1000)
+const charts = (await deckModel()).content.flatMap((sl: any) => (sl.content ?? []).filter((c: any) => c.attrs?.kind === 'chart'))
+const chartData = charts.at(-1)?.attrs.chart
+ok('双击图表编辑数据（chart_set_data）', chartData?.series?.[0]?.values?.[0] === 9.9 && chartData?.categories?.length === 4 && chartData?.series?.[1]?.values?.[3] === 5, JSON.stringify(chartData?.series))
+// 选中图表 → 工具条「编辑数据」→ 改标题、加系列 → 回车保存
+await page.locator('.slide .shape-chart').last().click()
+await page.click('[data-dk="chart-data"]')
+await page.waitForSelector('.chart-dialog #chartTitle')
+await page.fill('.chart-dialog #chartTitle', '主要终点')
+await page.click('.chart-dialog [data-add-ser]')
+await page.fill('.chart-dialog input[data-v="2,0"]', '1.5')
+await page.press('.chart-dialog input[data-v="2,0"]', 'Enter')
+await wait(1000)
+const chart2 = (await deckModel()).content.flatMap((sl: any) => (sl.content ?? []).filter((c: any) => c.attrs?.kind === 'chart')).at(-1)?.attrs.chart
+ok('工具条「编辑数据」改标题、加系列', chart2?.title === '主要终点' && chart2?.series?.length === 3 && chart2?.series?.[2]?.values?.[0] === 1.5 && await page.locator('.slide .shape-chart .chart-svg text', { hasText: '主要终点' }).count() > 0, JSON.stringify(chart2))
+// 饼图：只有一个系列（数据表里没有「＋系列」）
+await page.click('[data-dk="chart"]')
+await page.click('#chartMenu [data-chart-type="pie"]')
+await wait(1000)
+const pie = (await deckModel()).content.flatMap((sl: any) => (sl.content ?? []).filter((c: any) => c.attrs?.chart?.type === 'pie')).at(-1)?.attrs.chart
+ok('插入饼图并显示扇区', pie?.series?.length === 1 && await page.locator('.slide .shape-chart .chart-svg path').count() >= 3)
+// 删掉两张图表（与后面表格的测试位置重叠）
+for (let i = 0; i < 2; i++) {
+  await page.locator('.slide .shape-chart').last().click()
+  await page.keyboard.press('Delete')
+  await wait(800)
+}
+ok('删除图表', await page.locator('.slide .shape-chart').count() === 0)
+
 // C1 第 3 周：表格增行；Shift 多选 + 排列（左对齐）；拖动吸附页面中线（Alt 不吸附）；多选 Delete
 const tableEl = page.locator('.slide .shape-table').last()
 const rowsBefore = await tableEl.locator('tr').count()
