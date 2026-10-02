@@ -173,7 +173,9 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 
 ## 7. deck 内核
 
-**现状（P2 后端 + 查看器已实现）：平台自己的 deck 模型 + 自写 pptx 导入 / 修补式导出 + LibreOffice 渲染；直接编辑形状的画布（Univer）是 P2 的下一步。**
+**现状（P2 后端 + C1 画布第 1 周已实现）：平台自己的 deck 模型 + 自写 pptx 导入 / 修补式导出 + LibreOffice 渲染 + 在查看器上自建的画布（选中、拖动、缩放、样式、插图、主题）。**
+
+**原则：人和 AI 能力一致（2026-10-02 JZ）。** 画布上人能做的每个编辑都是操作层里的一个 deck 操作，画布（REST edit，actor=user）与 AI（MCP `deck_edit`）用同一套定义（`ops/deck.ts` 的 `DeckOp`）；不做只有界面能用的修改。每个画布功能的验收都包含「AI 经 MCP 也能做」（`tests/mcp.test.ts`、e2e）。
 
 - **模型**（`model/deck-schema.ts`）：与 doc 一样用 ProseMirror + Yjs 表示（幻灯片 → 形状 → 段落），因此版本、op log、冲突守卫、修订、撤销本轮全部复用。形状记录种类（文本 / 图形 / 图片 / 表格 / 图表 / 组合 / 线条 / 不可编辑）、占位符、几何（EMU）、原 cNvPr id；段落与文字段的原始格式（`a:pPr` / `a:rPr`）以属性保留，改文字时沿用字号、颜色、字体。
 - **导入**（`convert/pptx-import.ts`）：自写。不用 Casual Slides 的导入器——它输出 Univer 的渲染结构，而后端需要的是形状 / 文字 / 占位符 / 几何与**逐字节原文**（修补式导出的前提）；Casual 的导入器留给画布阶段。没写位置的占位符从版式 / 母版继承几何；纯色填充与页面背景记下供查看器近似渲染；备注读入。
@@ -184,7 +186,11 @@ turns(id, user_id, doc_id, message, status) / messages(doc_id, role, text, turn_
 - **MCP 面**：`doc_outline`（各页 id / 版式 / 标题 + 可用版式）/ `slide_read`（形状 id、种类、占位符、几何 pt、文字）/ `deck_edit(ops)`（add_slide 按版式填占位符 / delete_slide / move_slide / set_text / replace_text / add_shape / set_xfrm / delete_shape / set_notes / table_set_cells）/ `layout_check` / `slide_render`（PNG 交给多模态模型自查）；守卫同 §5.3，按形状判定。
 - **页面**：deck 查看器按模型近似渲染（位置、文字、填充、图片），每页可切换 LibreOffice 精确预览；AI 改动高亮、修订标红 / 绿。评论按最小颗粒度：形状里一个段落内选中文字，或单击形状评论整个形状（§5.1）。编辑走对话。
 - **形状内 `replace_text`**：逐段匹配（同 doc 的规则，不跨段落），改文字时沿用原文字段的 `a:rPr`。
-- **下一步（P2 画布）**：Univer slides 编辑面（Apache-2.0）+ Casual Slides 导入层作为渲染数据来源；拖拽 / 缩放形状、直接改字经同一操作层落库。图表数据编辑（`set_chart_data`）、插图（`set_image`）随画布一起做。
+- **样式与素材操作（C1）**：`set_fill`（形状填充 / 无填充）、`set_background`（页面背景）、`set_text_style`（颜色、字号、粗斜体、对齐，整个形状或某一段）、`add_shape` 带 `geometry`（rect / roundRect / ellipse）与 `fill` / `color`（色块、标题条、卡片）、`add_image`（资产插图，高度按原图比例）、`set_z`（叠放顺序）、`apply_theme`（`model/deck-themes.ts` 的四套主题：背景、标题 / 正文颜色、强调色；之后新加的页沿用）。颜色可写主题记号（accent / title / body / surface…），按该页主题取色，换主题时跟着变。导出全部写回 pptx：`spPr` 填充与几何、`p:bg`、文字段 `a:rPr` 颜色与字号、`a:pPr` 对齐、`p:pic` + `ppt/media` + 关系、pptx 主题的强调色与字体。`slide_read` 显示主题、背景、填充、文字颜色与字号，AI 看得到样式。
+- **AI 生成图片**：`diagram_render`（MCP）——模型写自包含 SVG（机制、流程、研究设计图），平台用 resvg 本地渲染成 PNG 存为资产，再插入文档（`![图注](asset:id)`）或幻灯片（`add_image`）；脚本、事件属性、外部引用一律拒绝。数据图仍用 shell 里的 matplotlib + `asset_upload`。照片式插画需要图像生成模型（未接入，待定）。
+- **画布（`web/src/deck.ts`）**：单击选中形状 → 拖顶部手柄移动、拖 8 个控制点缩放（图片拖角保持比例）、方向键微调（Shift 10pt，连续按键合并成一次提交）、Delete 删除；选中框画在页面外层，形状超出页面时控制点仍可拖；形状里拖动仍是选文字评论，与移动互不干扰。幻灯片工具条：主题、背景、插入文本框 / 色块 / 图片、填充、文字色、字号、粗体、对齐、置顶 / 置底、删除；颜色板列当前主题的颜色（以主题记号提交）+ 自定义。幻灯片宽度随中间栏自适应。
+- **为什么不用 Univer（2026-10-02 调研）**：开源版 slides 是原型（元素修改是 OPERATION 不是 MUTATION，没有撤销与协同事件，没有表格 / 图表），pptx 导入导出、表格、图表、协同都在 Univer Pro（商业许可）；还要引入 React 与约 1MB 的界面框架，并维护两套模型的映射。Casual Slides 基于改过的 Univer OSS，导入层输出 Univer 的模型，不适合作我们的数据来源。
+- **下一步（C1 第 2–3 周）**：画布上直接改字（双击进入文字编辑，提交 `set_text` / `replace_text`）、表格单元格与备注就地编辑；多选与对齐吸附；画布拖动中与 AI 并发修改的冲突处理。之后：图表数据编辑（`chart_set_data`）。
 - **过渡**：Collabora / WOPI 已于 2026-10-01 随 S 系列停用。
 
 ## 8. MCP 接口面
@@ -256,7 +262,8 @@ dsh 经 `/mcp`（Streamable HTTP，无状态）访问；MCP server 名 `heurion`
 | 协同 | Yjs + y-prosemirror + 自制最小 ws 协议（帧 = 类型 + y-protocols sync） | y-websocket 协议面大于需要 |
 | 修订粒度 | 块级 | 实现稳、和块 id / 冲突守卫同一粒度；字符级修订留到需要时再做 |
 | AI 回合撤销 | 每回合一个服务端 Y.UndoManager | CRDT 语义下只撤该回合的改动，用户期间的编辑保留；服务重启后不可用，退回版本回滚 |
-| deck 内核（P2） | Univer slides + fork Casual Slides 导入；导出修补式 | 开源 JS 里 pptx 往返保真最高；PptxGenJS 整份重建会丢形状 id |
+| deck 内核（P2） | 自建模型 + 修补式导出；画布在查看器上自建（2026-10-02 由 Univer 改为自建） | Univer 开源版 slides 是原型、完整功能在 Pro；自建画布与操作层同一套模型，每个手势都是 AI 也能用的操作 |
+| 人和 AI 能力一致（2026-10-02 JZ） | 画布的每个编辑都是共享的 deck 操作，MCP 同样开放 | 平台的核心是 AI 经 MCP 编辑；只有界面能做的功能会让 AI 做不到用户要求的事 |
 | 放弃 OnlyOffice（2026-10-01 JZ） | 自建内核 | 引擎在外 = 渲染 / 载体 / 许可三重不可控 |
 | Collabora | 2026-10-01 随 S 系列停用 | 平台模式下接入需「导出 → 编辑 → 整份导入」，不再值得维护 |
 

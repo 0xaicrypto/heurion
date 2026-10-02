@@ -29,8 +29,10 @@ export const deckSchema = new Schema({
         layout: { default: null },
         layout_name: { default: '' },
         hidden: { default: false },
-        /** 页面纯色背景（查看器近似渲染用）。 */
+        /** 页面纯色背景（6 位十六进制）。导入时记下原背景；set_background / apply_theme 修改后导出写回。 */
         bg: { default: null },
+        /** 套用的主题（deck-themes.ts 的键）；颜色参数里的主题记号按它解析，新加的页沿用前一页的主题。 */
+        theme: { default: null },
         ...suggestAttrs,
       },
       toDOM: (node): DOMOutputSpec => ['section', { class: 'slide', ...domId(node) }, 0],
@@ -53,8 +55,10 @@ export const deckSchema = new Schema({
         /** 不可编辑形状（图表、组合、SmartArt…）的描述。 */
         description: { default: '' },
         body_pr: { default: null },
-        /** 纯色填充（查看器近似渲染用；导出以原文为准）。 */
+        /** 纯色填充（6 位十六进制，或 'none' 无填充）。set_fill 修改后导出写回。 */
         fill: { default: null },
+        /** 新建形状的几何：rect / roundRect / ellipse（导入的形状以原文为准，为 null）。 */
+        geom: { default: null },
         ...suggestAttrs,
       },
       toDOM: (node): DOMOutputSpec => ['div', { class: `shape shape-${node.attrs.kind}`, ...domId(node) }, 0],

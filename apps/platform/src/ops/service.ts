@@ -69,7 +69,16 @@ export class OpService {
 
     const taken = this.docs.takenIds(batch.doc_id)
     const applied = deck
-      ? applyDeckOps(before, batch.ops as DeckOp[], { taken, ...this.deckContextInfo(batch.doc_id) })
+      ? applyDeckOps(before, batch.ops as DeckOp[], {
+        taken,
+        ...this.deckContextInfo(batch.doc_id),
+        // 插图只能用文档所有者自己的资产
+        asset: id => {
+          const a = store.getAsset(id)
+          const bytes = a && a.owner === row.owner ? store.getAssetBytes(id) : null
+          return a && bytes ? { mime: a.mime, bytes } : null
+        },
+      })
       : applyOps(before, batch.ops as DocOp[], { taken })
     const results = applied.results
     let after = batch.mode === 'suggest'

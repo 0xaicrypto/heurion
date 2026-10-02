@@ -1,13 +1,17 @@
 import { Fragment, type Mark, type Node as PMNode } from 'prosemirror-model'
 import { Transform } from 'prosemirror-transform'
 import { z } from 'zod'
+import { imageSize } from '../convert/image-size.ts'
 import { deckSchema, emu, pt } from '../model/deck-schema.ts'
+import { DECK_THEMES, DEFAULT_THEME, resolveColor } from '../model/deck-themes.ts'
 import { assignIds, indexById } from '../model/ids.ts'
 import { MarkdownError, parseBlocks, parseInline } from '../model/markdown.ts'
 import { replaceError, replaceInTextblock } from './apply.ts'
 import { OpError } from './types.ts'
 
-/** deck_edit 的操作（PLATFORM.md §7 MCP 面）。几何单位 pt。 */
+const COLOR = z.string().describe('颜色：6 位十六进制（如 0EA5E9），或主题记号 accent / accent2 / title / body / muted / bg / surface')
+
+/** deck_edit 的操作（PLATFORM.md §7 MCP 面）。几何单位 pt。画布上人能做的操作都在这里，AI 与人用同一套。 */
 export const DeckOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('add_slide'),
@@ -29,9 +33,38 @@ export const DeckOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('add_shape'),
     slide_id: z.string(),
-    markdown: z.string().describe('文本框的文字'),
+    markdown: z.string().default('').describe('形状里的文字（色块可留空）'),
     x: z.number(), y: z.number(), w: z.number().positive(), h: z.number().positive(),
     font_size: z.number().positive().optional().describe('字号（pt），缺省 18'),
+    geometry: z.enum(['rect', 'roundRect', 'ellipse']).optional().describe('形状：矩形 / 圆角矩形 / 椭圆；缺省为无边框文本框'),
+    fill: COLOR.optional().describe('填充色（色块、标题条、强调卡片）'),
+    color: COLOR.optional().describe('文字颜色'),
+  }),
+  z.object({ op: z.literal('set_fill'), shape_id: z.string(), color: COLOR.describe('填充色；none 为无填充') }),
+  z.object({ op: z.literal('set_background'), slide_id: z.string(), color: COLOR }),
+  z.object({
+    op: z.literal('set_text_style'),
+    shape_id: z.string(),
+    paragraph: z.number().int().min(0).optional().describe('只改第几段（从 0 起）；缺省改整个形状'),
+    color: COLOR.optional(),
+    size: z.number().min(6).max(200).optional().describe('字号（pt）'),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    align: z.enum(['left', 'center', 'right', 'justify']).optional(),
+  }),
+  z.object({
+    op: z.literal('add_image'),
+    slide_id: z.string(),
+    asset_id: z.string().describe('asset_upload 返回的资产 id'),
+    x: z.number(), y: z.number(), w: z.number().positive(),
+    h: z.number().positive().optional().describe('缺省按原图比例'),
+    description: z.string().optional().describe('图片说明（替代文字）'),
+  }),
+  z.object({ op: z.literal('set_z'), shape_id: z.string(), to: z.enum(['front', 'back', 'forward', 'backward']).describe('置顶 / 置底 / 上移一层 / 下移一层') }),
+  z.object({
+    op: z.literal('apply_theme'),
+    theme: z.enum(Object.keys(DECK_THEMES) as [string, ...string[]]).describe(Object.entries(DECK_THEMES).map(([k, t]) => `${k}：${t.label}（${t.description}）`).join('；')),
+    slide_ids: z.array(z.string()).optional().describe('只套用到这些页；缺省全部'),
   }),
   z.object({
     op: z.literal('set_xfrm'),
@@ -67,12 +100,15 @@ export interface DeckContext {
   taken: Set<string>
   layouts: LayoutInfo[]
   size: { cx: number; cy: number }
+  /** 文档所有者的资产（add_image 用）；别人的资产返回 null。 */
+  asset?: (id: string) => { mime: string; bytes: Uint8Array } | null
 }
 
 export function deckTargetIds(op: DeckOp): string[] {
   switch (op.op) {
-    case 'add_slide': case 'add_shape': return []
-    case 'delete_slide': case 'move_slide': case 'set_notes': return [op.slide_id]
+    case 'add_slide': case 'add_shape': case 'add_image': return []
+    case 'delete_slide': case 'move_slide': case 'set_notes': case 'set_background': return [op.slide_id]
+    case 'apply_theme': return op.slide_ids ?? []
     default: return [op.shape_id]
   }
 }
@@ -212,7 +248,11 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
         if (op.title) shapes.push(textBox(op.title, { x: 40, y: 30, w: pt(ctx.size.cx) - 80, h: 60 }, 32))
         if (op.body) shapes.push(textBox(op.body, { x: 40, y: 110, w: pt(ctx.size.cx) - 80, h: pt(ctx.size.cy) - 150 }, 20))
       }
-      const slide = assignIds(deckSchema.node('slide', { layout: layout?.part ?? null, layout_name: layout?.name ?? '' }, shapes), ctx.taken)
+      let slide = assignIds(deckSchema.node('slide', { layout: layout?.part ?? null, layout_name: layout?.name ?? '' }, shapes), ctx.taken)
+      // 新页沿用前一页（或第一页）的主题
+      const neighbour = op.after ? indexById(tr.doc).get(op.after)?.node : tr.doc.firstChild
+      const theme = neighbour?.attrs.theme as string | null | undefined
+      if (theme) slide = themedSlide(slide, theme)
       insertSlide(tr, slide, op.after)
       return [slide.attrs.id as string, ...contentOf(slide).map(s => s.attrs.id as string)]
     }
@@ -233,7 +273,8 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
       const hit = find(tr, op.shape_id, 'shape')
       if (!EDITABLE_TEXT.has(hit.node.attrs.kind as string)) throw notEditable(hit.node)
       const paragraphs = deckParagraphs(op.markdown, templateOf(hit.node))
-      const next = hit.node.type.create({ ...hit.node.attrs, kind: 'text' }, paragraphs.length > 0 ? paragraphs : [deckSchema.node('paragraph')])
+      // 色块（kind=shape）写文字后仍是色块，不变成文本框
+      const next = hit.node.type.create({ ...hit.node.attrs, kind: hit.node.attrs.kind === 'shape' ? 'shape' : 'text' }, paragraphs.length > 0 ? paragraphs : [deckSchema.node('paragraph')])
       tr.replaceWith(hit.pos, hit.pos + hit.node.nodeSize, next)
       return [op.shape_id]
     }
@@ -255,7 +296,12 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
     }
     case 'add_shape': {
       const hit = find(tr, op.slide_id, 'slide')
-      const shape = assignIds(textBox(op.markdown, op, op.font_size ?? 18), ctx.taken)
+      const theme = hit.node.attrs.theme as string | null
+      const fill = op.fill !== undefined ? color(op.fill, theme) : null
+      const textColor = op.color !== undefined ? color(op.color, theme) : null
+      let shape = textBox(op.markdown ?? '', op, op.font_size ?? 18, textColor)
+      if (op.geometry || fill) shape = shape.type.create({ ...shape.attrs, kind: 'shape', name: op.geometry ? 'Shape' : 'TextBox', geom: op.geometry ?? 'rect', fill }, shape.content)
+      shape = assignIds(shape, ctx.taken)
       // 插在备注之前（slide 内容：shape* notes?）
       const last = hit.node.lastChild
       const at = last?.type.name === 'notes' ? hit.pos + hit.node.nodeSize - 1 - last.nodeSize : hit.pos + hit.node.nodeSize - 1
@@ -274,6 +320,85 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
         xfrm_inherited: false,
       })
       return [op.shape_id]
+    }
+    case 'set_fill': {
+      const hit = find(tr, op.shape_id, 'shape')
+      if (!['text', 'shape'].includes(hit.node.attrs.kind as string)) throw new OpError('node_not_editable', `形状 ${op.shape_id}（${hit.node.attrs.kind}）不能设置填充`)
+      tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, fill: color(op.color, slideAt(tr, hit.pos)?.attrs.theme) })
+      return [op.shape_id]
+    }
+    case 'set_background': {
+      const hit = find(tr, op.slide_id, 'slide')
+      const bg = color(op.color, hit.node.attrs.theme)
+      if (bg === 'none') throw new OpError('invalid_color', '背景不能是 none，请给一个颜色')
+      tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, bg })
+      return [op.slide_id]
+    }
+    case 'set_text_style': {
+      const hit = find(tr, op.shape_id, 'shape')
+      if (!EDITABLE_TEXT.has(hit.node.attrs.kind as string) && hit.node.attrs.kind !== 'table') throw notEditable(hit.node)
+      const theme = slideAt(tr, hit.pos)?.attrs.theme as string | null
+      const style: TextStyle = {
+        color: op.color !== undefined ? color(op.color, theme) : undefined,
+        size: op.size, bold: op.bold, italic: op.italic, align: op.align,
+      }
+      if (style.color === 'none') throw new OpError('invalid_color', '文字颜色不能是 none')
+      let index = 0
+      let touched = false
+      const next = mapParagraphs(hit.node, p => {
+        const mine = op.paragraph === undefined || index === op.paragraph
+        index++
+        if (!mine) return p
+        touched = true
+        return styledParagraph(p, style)
+      })
+      if (!touched) throw new OpError('paragraph_not_found', `形状 ${op.shape_id} 没有第 ${(op.paragraph ?? 0) + 1} 段`, { hint: `共 ${index} 段，从 0 起。` })
+      tr.replaceWith(hit.pos, hit.pos + hit.node.nodeSize, next)
+      return [op.shape_id]
+    }
+    case 'add_image': {
+      const hit = find(tr, op.slide_id, 'slide')
+      const asset = ctx.asset?.(op.asset_id)
+      if (!asset) throw new OpError('asset_not_found', `找不到图片资产 ${op.asset_id}`, { hint: '先用 asset_upload 上传图片文件，拿到 asset_id。' })
+      if (!/^image\/(png|jpeg|gif)$/.test(asset.mime)) throw new OpError('invalid_asset', `资产 ${op.asset_id} 不是 PNG / JPEG / GIF 图片（${asset.mime}）`)
+      let h = op.h
+      if (h === undefined) {
+        const size = imageSize(asset.bytes)
+        h = size ? op.w * size.height / size.width : op.w * 0.75
+      }
+      const shape = assignIds(deckSchema.node('shape', {
+        kind: 'image', name: 'Picture', asset_id: op.asset_id, description: op.description ?? '',
+        x: emu(op.x), y: emu(op.y), w: emu(op.w), h: emu(h),
+      }), ctx.taken)
+      const last = hit.node.lastChild
+      const at = last?.type.name === 'notes' ? hit.pos + hit.node.nodeSize - 1 - last.nodeSize : hit.pos + hit.node.nodeSize - 1
+      tr.insert(at, shape)
+      return [shape.attrs.id as string]
+    }
+    case 'set_z': {
+      const hit = find(tr, op.shape_id, 'shape')
+      const slidePos = tr.doc.resolve(hit.pos).before(1)
+      const slide = tr.doc.nodeAt(slidePos)!
+      const shapes: PMNode[] = []
+      let notes: PMNode | null = null
+      slide.forEach(n => { if (n.type.name === 'notes') notes = n; else shapes.push(n) })
+      const from = shapes.findIndex(n => n.attrs.id === op.shape_id)
+      const to = op.to === 'front' ? shapes.length - 1 : op.to === 'back' ? 0 : op.to === 'forward' ? Math.min(shapes.length - 1, from + 1) : Math.max(0, from - 1)
+      const [moved] = shapes.splice(from, 1)
+      shapes.splice(to, 0, moved!)
+      tr.replaceWith(slidePos, slidePos + slide.nodeSize, slide.type.create(slide.attrs, notes ? [...shapes, notes] : shapes))
+      return [op.shape_id]
+    }
+    case 'apply_theme': {
+      if (!DECK_THEMES[op.theme]) throw new OpError('theme_not_found', `没有主题「${op.theme}」`, { hint: `可用主题：${Object.keys(DECK_THEMES).join('、')}` })
+      const ids: string[] = []
+      tr.doc.forEach((slide, offset) => {
+        if (op.slide_ids && !op.slide_ids.includes(slide.attrs.id as string)) return
+        tr.replaceWith(offset, offset + slide.nodeSize, themedSlide(slide, op.theme))
+        ids.push(slide.attrs.id as string)
+      })
+      if (op.slide_ids) for (const id of op.slide_ids) if (!ids.includes(id)) throw new OpError('node_not_found', `找不到幻灯片 ${id}`)
+      return ids
     }
     case 'delete_shape': {
       const hit = find(tr, op.shape_id, 'shape')
@@ -316,8 +441,10 @@ function notEditable(shape: PMNode): OpError {
   return new OpError('node_not_editable', `形状 ${shape.attrs.id}（${shape.attrs.kind}）的内容不可编辑`, { hint: '不可编辑形状只能移动（set_xfrm）或删除（delete_shape）。' })
 }
 
-function textBox(markdown: string, box: { x: number; y: number; w: number; h: number }, fontSize: number): PMNode {
-  const rpr = deckSchema.marks.rpr!.create({ xml: `<a:rPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" lang="zh-CN" sz="${Math.round(fontSize * 100)}" dirty="0"/>` })
+function textBox(markdown: string, box: { x: number; y: number; w: number; h: number }, fontSize: number, textColor: string | null = null): PMNode {
+  let xml = `<a:rPr ${A_NS} lang="zh-CN" sz="${Math.round(fontSize * 100)}" dirty="0"/>`
+  if (textColor && textColor !== 'none') xml = rprWithColor(xml, textColor)
+  const rpr = deckSchema.marks.rpr!.create({ xml })
   const paragraphs = deckParagraphs(markdown, { ppr: () => null, rpr })
   return deckSchema.node('shape', { kind: 'text', name: 'TextBox', x: emu(box.x), y: emu(box.y), w: emu(box.w), h: emu(box.h) }, paragraphs.length > 0 ? paragraphs : [deckSchema.node('paragraph')])
 }
@@ -340,4 +467,100 @@ export function newDeckContent(layouts: LayoutInfo[], title = ''): PMNode {
     }, [deckSchema.node('paragraph', null, ph.type !== 'subTitle' && title ? [deckSchema.text(title)] : [])]))
   }
   return deckSchema.node('doc', null, [deckSchema.node('slide', { layout: layout?.part ?? null, layout_name: layout?.name ?? '' }, shapes)])
+}
+
+// —— 样式（颜色、字号、对齐、主题） ——
+
+const A_NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+
+function color(value: string, theme: unknown): string {
+  const c = resolveColor(value, theme as string | null)
+  if (!c) throw new OpError('invalid_color', `颜色「${value}」无效`, { hint: '用 6 位十六进制（如 0EA5E9）或主题记号 accent / accent2 / title / body / muted / bg / surface。' })
+  return c
+}
+
+/** 位置所在的幻灯片。 */
+function slideAt(tr: Transform, pos: number): PMNode | null {
+  const $pos = tr.doc.resolve(pos)
+  return $pos.depth >= 1 ? $pos.node(1) : tr.doc.nodeAt(pos)
+}
+
+interface TextStyle { color?: string; size?: number; bold?: boolean; italic?: boolean; align?: 'left' | 'center' | 'right' | 'justify' }
+
+/** a:rPr 片段设颜色：替换顶层的填充（不动 a:ln 里的线条填充）。 */
+export function rprWithColor(xml: string, hex: string): string {
+  const fill = `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
+  const self = /^(<a:rPr\b[^>]*?)\s*\/>$/.exec(xml.trim())
+  if (self) return `${self[1]}>${fill}</a:rPr>`
+  const m = /^(<a:rPr\b[^>]*>)([\s\S]*)(<\/a:rPr>)$/.exec(xml.trim())
+  if (!m) return xml
+  const ln = /<a:ln\b[^>]*?\/>|<a:ln\b[^>]*>[\s\S]*?<\/a:ln>/.exec(m[2]!)?.[0] ?? ''
+  const rest = m[2]!.replace(ln, '').replace(/<a:(solidFill|gradFill|pattFill)\b[^>]*>[\s\S]*?<\/a:\1>|<a:noFill\s*\/>/g, '')
+  return `${m[1]}${ln}${fill}${rest}${m[3]}`
+}
+
+function rprWithSize(xml: string, size: number): string {
+  const sz = String(Math.round(size * 100))
+  return /\ssz="[^"]*"/.test(xml) ? xml.replace(/\ssz="[^"]*"/, ` sz="${sz}"`) : xml.replace(/^<a:rPr\b/, `<a:rPr sz="${sz}"`)
+}
+
+const ALGN = { left: 'l', center: 'ctr', right: 'r', justify: 'just' } as const
+
+function styledParagraph(p: PMNode, style: TextStyle): PMNode {
+  const content: PMNode[] = []
+  p.forEach(child => {
+    if (!child.isText) { content.push(child); return }
+    let marks = child.marks
+    if (style.color || style.size) {
+      let xml = (marks.find(m => m.type.name === 'rpr')?.attrs.xml as string | undefined) ?? `<a:rPr ${A_NS} lang="zh-CN" dirty="0"/>`
+      if (style.color) xml = rprWithColor(xml, style.color)
+      if (style.size) xml = rprWithSize(xml, style.size)
+      marks = deckSchema.marks.rpr!.create({ xml }).addToSet(marks.filter(m => m.type.name !== 'rpr'))
+    }
+    for (const [key, type] of [['bold', deckSchema.marks.bold!], ['italic', deckSchema.marks.italic!]] as const) {
+      if (style[key] === true) marks = type.create().addToSet(marks)
+      if (style[key] === false) marks = type.removeFromSet(marks)
+    }
+    content.push(child.mark(marks))
+  })
+  let attrs = p.attrs
+  if (style.align) {
+    const ppr = (p.attrs.ppr as string | null) ?? `<a:pPr ${A_NS}/>`
+    const algn = ALGN[style.align]
+    const nextPpr = /\salgn="[^"]*"/.test(ppr) ? ppr.replace(/\salgn="[^"]*"/, ` algn="${algn}"`) : ppr.replace(/^<a:pPr\b/, `<a:pPr algn="${algn}"`)
+    attrs = { ...attrs, ppr: nextPpr, align: style.align === 'left' ? null : style.align }
+  }
+  return p.type.create(attrs, content, p.marks)
+}
+
+/** 形状里的每个段落（含表格单元格里的）按 fn 替换。 */
+function mapParagraphs(node: PMNode, fn: (p: PMNode) => PMNode): PMNode {
+  if (node.type.name === 'paragraph') return fn(node)
+  if (node.isLeaf) return node
+  const children: PMNode[] = []
+  node.forEach(c => children.push(mapParagraphs(c, fn)))
+  return node.type.create(node.attrs, children, node.marks)
+}
+
+/** 套用主题：背景、标题 / 正文颜色；原来用上一个主题强调色、卡片色的填充换成新主题的。 */
+export function themedSlide(slide: PMNode, themeKey: string): PMNode {
+  const theme = DECK_THEMES[themeKey] ?? DECK_THEMES[DEFAULT_THEME]!
+  const old = DECK_THEMES[(slide.attrs.theme as string | null) ?? ''] ?? null
+  const shapes: PMNode[] = []
+  slide.forEach(shape => {
+    if (shape.type.name !== 'shape') { shapes.push(shape); return }
+    const ph = shape.attrs.ph as string | null
+    const isTitle = ph === 'title' || ph === 'ctrTitle'
+    let attrs = shape.attrs
+    if (old && attrs.fill === old.accent) attrs = { ...attrs, fill: theme.accent }
+    else if (old && attrs.fill === old.accent2) attrs = { ...attrs, fill: theme.accent2 }
+    else if (old && attrs.fill === old.surface) attrs = { ...attrs, fill: theme.surface }
+    // 实心色块上的文字保持原色（多为反白），其余按标题 / 正文着色
+    const onFill = attrs.fill && attrs.fill !== 'none'
+    const restyled = onFill || !['text', 'shape', 'table'].includes(attrs.kind as string)
+      ? shape
+      : mapParagraphs(shape, p => styledParagraph(p, { color: isTitle ? theme.title : ph === 'subTitle' ? theme.muted : theme.body }))
+    shapes.push(restyled.type.create(attrs, restyled.content, restyled.marks))
+  })
+  return slide.type.create({ ...slide.attrs, theme: themeKey, bg: theme.bg }, shapes)
 }

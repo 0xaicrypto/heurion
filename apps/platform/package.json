@@ -19,6 +19,7 @@
     "@deepseek-ai/dsh-sdk-client": "0.2.0-rc.2",
     "@hono/node-server": "^1.19.17",
     "@modelcontextprotocol/sdk": "^1.31.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@xmldom/xmldom": "^0.9.12",
     "bcryptjs": "^3.0.3",
     "fflate": "^0.8.3",

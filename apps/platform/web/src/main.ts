@@ -126,7 +126,11 @@ async function open(docId: string): Promise<void> {
     document.querySelector(`[data-cid="${CSS.escape(thread)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
   if (meta.kind === 'deck') {
-    const deck = new DeckView($('page'), { docId, token: TOKEN, onCommentClick, onSelection: a => { anchor = a; placeFab() } })
+    const deck = new DeckView($('page'), {
+      docId, token: TOKEN, onCommentClick, onSelection: a => { anchor = a; placeFab() },
+      onEdit: (ops, baseRev) => deckEdit(docId, ops, baseRev),
+      onSelectShape: () => syncDeckToolbar(),
+    })
     session = { docId, kind: 'deck', stream, deck }
     $('page').classList.add('deck')
     setSyncStatus('synced')
@@ -155,6 +159,8 @@ async function open(docId: string): Promise<void> {
     $('page').classList.remove('deck')
   }
   $('toolbar').hidden = meta.kind === 'deck'
+  $('deckToolbar').hidden = meta.kind !== 'deck'
+  if (meta.kind === 'deck') void initDeckToolbar()
   $('exportDocxBtn').hidden = meta.kind === 'deck'
   $('exportMdBtn').hidden = meta.kind === 'deck'
   $('exportPptxBtn').hidden = meta.kind !== 'deck'
@@ -263,6 +269,127 @@ function editTitle(): void {
   el.addEventListener('blur', onBlur)
 }
 $('docTitle').onclick = () => editTitle()
+
+// —— 幻灯片画布工具条（与 AI 的 deck_edit 同一套操作） ——
+
+type DeckTheme = { label: string; bg: string; surface: string; title: string; body: string; muted: string; accent: string; accent2: string }
+let deckThemes: Record<string, DeckTheme> = {}
+
+async function deckEdit(docId: string, ops: Array<Record<string, unknown>>, baseRev: number): Promise<boolean> {
+  try {
+    await api(`/api/docs/${docId}/edit`, { method: 'POST', body: JSON.stringify({ base_rev: baseRev, ops }) })
+    return true
+  } catch (err) {
+    showNotice((err as Error).message, true)
+    return false
+  }
+}
+
+async function initDeckToolbar(): Promise<void> {
+  if (Object.keys(deckThemes).length === 0) deckThemes = await api('/api/deck-themes').catch(() => ({}))
+  $('deckTheme').innerHTML = '<option value="">主题</option>' + Object.entries(deckThemes).map(([k, t]) => `<option value="${esc(k)}">${esc(t.label)}</option>`).join('')
+  syncDeckToolbar()
+}
+
+function syncDeckToolbar(): void {
+  const sel = session?.deck?.selection()
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#deckToolbar [data-needs-shape]')) b.disabled = !sel
+}
+
+/** 颜色板：当前页主题的颜色（以主题记号提交，换主题时跟着变）+ 自定义颜色。 */
+function pickColor(anchor: HTMLElement, themeKey: string, allowNone: boolean): Promise<string | null> {
+  return new Promise(resolve => {
+    document.querySelector('.color-pop')?.remove()
+    const t = deckThemes[themeKey] ?? deckThemes.clinical
+    const swatches: Array<[string, string, string]> = t ? [
+      ['accent', t.accent, '强调色'], ['accent2', t.accent2, '强调色 2'], ['title', t.title, '标题色'], ['body', t.body, '正文色'],
+      ['muted', t.muted, '次要色'], ['surface', t.surface, '卡片色'], ['bg', t.bg, '背景色'], ['FFFFFF', 'FFFFFF', '白色'],
+    ] : []
+    const pop = document.createElement('div')
+    pop.className = 'color-pop'
+    pop.innerHTML = `<div class="swatches">${swatches.map(([v, hex, label]) => `<button data-c="${v}" title="${label}" style="background:#${hex}"></button>`).join('')}</div>
+      <div class="color-row">${allowNone ? '<button data-c="none">无填充</button>' : ''}<label>自定义 <input type="color" value="#${t?.accent ?? '0EA5E9'}"></label></div>`
+    const r = anchor.getBoundingClientRect()
+    pop.style.left = `${r.left}px`
+    pop.style.top = `${r.bottom + 6}px`
+    document.body.appendChild(pop)
+    const done = (v: string | null) => { pop.remove(); document.removeEventListener('mousedown', outside); resolve(v) }
+    const outside = (e: MouseEvent) => { if (!pop.contains(e.target as Node)) done(null) }
+    setTimeout(() => document.addEventListener('mousedown', outside))
+    pop.onclick = e => { const c = (e.target as HTMLElement).closest('[data-c]') as HTMLElement | null; if (c) done(c.dataset.c!) }
+    pop.querySelector<HTMLInputElement>('input[type=color]')!.onchange = e => done((e.target as HTMLInputElement).value.slice(1).toUpperCase())
+  })
+}
+
+/** 形状当前的字号（第一段文字的 a:rPr sz；没有时按占位符类型估）。 */
+function shapeFontSize(shape: any): number {
+  let sz: number | null = null
+  const walk = (n: any) => {
+    if (sz !== null) return
+    if (n.type === 'text') { const xml = n.marks?.find((m: any) => m.type === 'rpr')?.attrs?.xml as string | undefined; const m = xml && /\ssz="(\d+)"/.exec(xml); if (m) sz = Number(m[1]) / 100 }
+    n.content?.forEach(walk)
+  }
+  walk(shape)
+  return sz ?? ({ title: 40, ctrTitle: 44, subTitle: 24, body: 28 } as Record<string, number>)[shape.attrs?.ph as string] ?? 18
+}
+
+const hasBold = (shape: any): boolean => JSON.stringify(shape).includes('"type":"bold"')
+
+$('deckTheme').onchange = async () => {
+  const theme = $<HTMLSelectElement>('deckTheme').value
+  $<HTMLSelectElement>('deckTheme').value = ''
+  if (theme && session?.deck) await session.deck.edit([{ op: 'apply_theme', theme }])
+}
+
+$('deckImageInput').onchange = async () => {
+  const input = $<HTMLInputElement>('deckImageInput')
+  const file = input.files?.[0]
+  input.value = ''
+  const deck = session?.deck
+  const slide = deck?.currentSlide()
+  if (!file || !deck || !slide || !session) return
+  const form = new FormData()
+  form.set('file', file)
+  try {
+    const r = await api(`/api/docs/${session.docId}/assets`, { method: 'POST', body: form })
+    const W = deck.slideSize.cx / 12700
+    await deck.edit([{ op: 'add_image', slide_id: slide.attrs!.id, asset_id: r.asset_id, x: Math.round(W / 2 - 200), y: 100, w: 400, description: file.name }])
+  } catch (err) { showNotice((err as Error).message, true) }
+}
+
+$('deckToolbar').onclick = async e => {
+  const btn = (e.target as HTMLElement).closest('[data-dk]') as HTMLButtonElement | null
+  const deck = session?.deck
+  if (!btn || !deck || btn.disabled) return
+  const sel = deck.selection()
+  const slide = sel?.slide ?? deck.currentSlide()
+  if (!slide) return
+  const theme = (slide.attrs?.theme as string | null) ?? 'clinical'
+  const W = deck.slideSize.cx / 12700
+  const H = deck.slideSize.cy / 12700
+  const id = sel?.shape.attrs?.id as string | undefined
+  switch (btn.dataset.dk) {
+    case 'bg': { const c = await pickColor(btn, theme, false); if (c) await deck.edit([{ op: 'set_background', slide_id: slide.attrs!.id, color: c }]); break }
+    case 'textbox': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '新文本框', x: Math.round(W / 2 - 200), y: Math.round(H / 2 - 30), w: 400, h: 60, color: 'body' }]); break
+    case 'block': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '', x: Math.round(W / 2 - 150), y: Math.round(H / 2 - 60), w: 300, h: 120, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF' }]); break
+    case 'image': $('deckImageInput').click(); break
+    case 'fill': { const c = await pickColor(btn, theme, true); if (c && id) await deck.edit([{ op: 'set_fill', shape_id: id, color: c }]); break }
+    case 'color': { const c = await pickColor(btn, theme, false); if (c && id) await deck.edit([{ op: 'set_text_style', shape_id: id, color: c }]); break }
+    case 'bigger': case 'smaller': {
+      if (!id) break
+      const now = shapeFontSize(sel!.shape)
+      const step = now >= 28 ? 4 : 2
+      await deck.edit([{ op: 'set_text_style', shape_id: id, size: Math.max(8, Math.min(120, btn.dataset.dk === 'bigger' ? now + step : now - step)) }])
+      break
+    }
+    case 'bold': if (id) await deck.edit([{ op: 'set_text_style', shape_id: id, bold: !hasBold(sel!.shape) }]); break
+    case 'align-left': if (id) await deck.edit([{ op: 'set_text_style', shape_id: id, align: 'left' }]); break
+    case 'align-center': if (id) await deck.edit([{ op: 'set_text_style', shape_id: id, align: 'center' }]); break
+    case 'front': if (id) await deck.edit([{ op: 'set_z', shape_id: id, to: 'front' }]); break
+    case 'back': if (id) await deck.edit([{ op: 'set_z', shape_id: id, to: 'back' }]); break
+    case 'delete': if (id) await deck.edit([{ op: 'delete_shape', shape_id: id }]); break
+  }
+}
 
 // —— 工具栏 ——
 

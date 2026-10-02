@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { Mark, Node as PMNode } from 'prosemirror-model'
+import { DECK_THEMES } from '../model/deck-themes.ts'
 import type { CitationRow } from '../store/db.ts'
 import { citationOrder } from '../views/read.ts'
 import { childrenRaw } from './pptx-import.ts'
@@ -18,7 +19,42 @@ export interface PptxExportInput {
   pkg: Uint8Array
   src: (nodeId: string) => string | null
   citations: CitationRow[]
+  /** 图片资产（新插入的图片写进 ppt/media）。 */
+  asset?: (id: string) => { mime: string; bytes: Uint8Array } | null
 }
+
+/** 一页幻灯片的关系表：新图片要在这里登记，返回 rId。 */
+interface SlideRels { image(assetId: string): string | null }
+
+const FILL_ELEMENTS = /<a:(solidFill|gradFill|pattFill|blipFill|grpFill)\b[^>]*>[\s\S]*?<\/a:\1>|<a:(noFill|grpFill)\s*\/>/
+
+const fillXml = (fill: string) => fill === 'none' ? '<a:noFill/>' : `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>`
+
+/** spPr 里设置填充：替换已有的顶层填充（不动 a:ln 里的），没有就放在几何之后。 */
+function withShapeFill(xml: string, fill: string): string {
+  const sp = /<p:spPr\b[^>]*?\/>|<p:spPr\b[^>]*>[\s\S]*?<\/p:spPr>/.exec(xml)
+  if (!sp) return xml
+  let inner = sp[0].startsWith('<p:spPr') && sp[0].endsWith('/>') ? '' : sp[0].replace(/^<p:spPr\b[^>]*>/, '').replace(/<\/p:spPr>$/, '')
+  const openTag = /^<p:spPr\b[^>]*?(?=\/?>)/.exec(sp[0])![0]
+  const ln = /<a:ln\b[^>]*?\/>|<a:ln\b[^>]*>[\s\S]*?<\/a:ln>/.exec(inner)?.[0] ?? ''
+  const withoutLn = ln ? inner.replace(ln, '\u0000LN\u0000') : inner
+  let replaced = withoutLn.replace(FILL_ELEMENTS, fillXml(fill))
+  if (replaced === withoutLn) {
+    const geom = /<a:(prstGeom|custGeom)\b[^>]*?\/>|<a:(prstGeom|custGeom)\b[^>]*>[\s\S]*?<\/a:\2>/.exec(replaced)
+    replaced = geom ? replaced.replace(geom[0], geom[0] + fillXml(fill)) : replaced.replace(/^(<a:xfrm\b[\s\S]*?<\/a:xfrm>)?/, m => m + fillXml(fill))
+  }
+  inner = replaced.replace('\u0000LN\u0000', ln)
+  return xml.replace(sp[0], `${openTag}>${inner}</p:spPr>`)
+}
+
+/** 页面背景：替换或新建 p:bg（cSld 的第一个子元素）。 */
+function withBackground(xml: string, bg: string): string {
+  const el = `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${bg}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>`
+  if (/<p:bg\b[\s\S]*?<\/p:bg>/.test(xml)) return xml.replace(/<p:bg\b[\s\S]*?<\/p:bg>/, el)
+  return xml.replace(/<p:cSld\b([^>]*)>/, `<p:cSld$1>${el}`)
+}
+
+const PRST = { rect: 'rect', roundRect: 'roundRect', ellipse: 'ellipse' } as const
 
 const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
 const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -94,8 +130,9 @@ function patchShape(src: string, shape: PMNode, before: PMNode | undefined, numb
     else if (/<p:spPr\s*\/>/.test(xml)) xml = xml.replace(/<p:spPr\s*\/>/, `<p:spPr><a:xfrm>${xfrm}</a:xfrm></p:spPr>`)
     else xml = xml.replace(/<p:spPr(\b[^>]*)>/, `<p:spPr$1><a:xfrm>${xfrm}</a:xfrm>`)
   }
+  if (a.fill && a.fill !== (before?.attrs.fill ?? null)) xml = withShapeFill(xml, a.fill as string)
   const textChanged = !before || !before.content.eq(shape.content)
-  if (textChanged && a.kind === 'text') {
+  if (textChanged && (a.kind === 'text' || a.kind === 'shape')) {
     const body = /<p:txBody>([\s\S]*?)<\/p:txBody>/.exec(xml)
     if (body) {
       const keep = (element(body[1]!, 'a:bodyPr') ?? '<a:bodyPr/>') + (element(body[1]!, 'a:lstStyle') ?? '<a:lstStyle/>')
@@ -122,12 +159,25 @@ function patchShape(src: string, shape: PMNode, before: PMNode | undefined, numb
   return xml
 }
 
-function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>): string {
+function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, rels: SlideRels): string {
   const a = shape.attrs
   const name = esc(String(a.name || (a.ph ? 'Placeholder' : 'TextBox')))
+  if (a.kind === 'image') {
+    const rid = a.asset_id ? rels.image(a.asset_id as string) : null
+    if (!rid) return ''
+    return `<p:pic><p:nvPicPr><p:cNvPr id="${nvId}" name="${name}" descr="${esc(String(a.description ?? ''))}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
+  }
+  if (!a.ph && (a.geom || (a.fill && a.fill !== 'none'))) {
+    // 色块 / 标题条 / 卡片：几何 + 填充，文字居中
+    const geom = PRST[(a.geom as keyof typeof PRST) ?? 'rect'] ?? 'rect'
+    const xfrm = `<a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm>`
+    return `<p:sp><p:nvSpPr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm}<a:prstGeom prst="${geom}"><a:avLst/></a:prstGeom>${fillXml((a.fill as string | null) ?? 'none')}<a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" rtlCol="0" anchor="ctr"/><a:lstStyle/>${txBodyInner(shape, numbers)}</p:txBody></p:sp>`
+  }
   const ph = a.ph ? `<p:ph${a.ph === 'body' ? '' : ` type="${a.ph}"`}${a.ph_idx !== null ? ` idx="${a.ph_idx}"` : ''}/>` : ''
   const xfrm = a.xfrm_inherited ? '' : `<a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm>`
-  const spPr = a.ph ? (xfrm ? `<p:spPr>${xfrm}</p:spPr>` : '<p:spPr/>') : `<p:spPr>${xfrm}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>`
+  const spPr = a.ph
+    ? (xfrm || a.fill ? `<p:spPr>${xfrm}${a.fill ? fillXml(a.fill as string) : ''}</p:spPr>` : '<p:spPr/>')
+    : `<p:spPr>${xfrm}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml((a.fill as string | null) ?? 'none')}</p:spPr>`
   const bodyPr = a.ph ? '<a:bodyPr/>' : '<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr>'
   return `<p:sp><p:nvSpPr><p:cNvPr id="${nvId}" name="${name}"/><p:cNvSpPr${a.ph ? '><a:spLocks noGrp="1"/></p:cNvSpPr>' : ' txBox="1"/>'}<p:nvPr>${ph}</p:nvPr></p:nvSpPr>${spPr}<p:txBody>${bodyPr}<a:lstStyle/>${txBodyInner(shape, numbers)}</p:txBody></p:sp>`
 }
@@ -164,21 +214,66 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
   const keptParts = new Set<string>()
   const sldIds: string[] = []
 
+  // 新插入的图片：写进 ppt/media（同一资产只写一份），在所在页的关系表里登记
+  const media = new Map<string, string>()
+  const ensureMedia = (assetId: string): string | null => {
+    if (media.has(assetId)) return media.get(assetId)!
+    const a = input.asset?.(assetId)
+    const ext = a ? ({ 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' } as Record<string, string>)[a.mime] : undefined
+    if (!a || !ext) return null
+    const name = `heurion-${assetId}.${ext}`
+    files[`ppt/media/${name}`] = new Uint8Array(a.bytes)
+    if (!new RegExp(`<Default Extension="${ext}"`, 'i').test(contentTypes)) {
+      contentTypes = contentTypes.replace('</Types>', `<Default Extension="${ext}" ContentType="${a.mime}"/></Types>`)
+    }
+    media.set(assetId, name)
+    return name
+  }
+  const slideRels = (part: string, initial: string) => {
+    const relsPart = part.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels')
+    let xml = initial
+    let next = Math.max(0, ...[...xml.matchAll(/Id="rId(\d+)"/g)].map(m => Number(m[1]))) + 1
+    const added = new Map<string, string>()
+    let dirty = false
+    return {
+      rels: {
+        image(assetId: string): string | null {
+          if (added.has(assetId)) return added.get(assetId)!
+          const name = ensureMedia(assetId)
+          if (!name) { warnings.push(`图片资产 ${assetId} 读取失败，未导出`); return null }
+          const rid = `rId${next++}`
+          xml = xml.replace('</Relationships>', `<Relationship Id="${rid}" Type="${REL}/image" Target="../media/${name}"/></Relationships>`)
+          added.set(assetId, rid)
+          dirty = true
+          return rid
+        },
+      } satisfies SlideRels,
+      flush(force = false) { if (dirty || force) put(relsPart, xml) },
+    }
+  }
+
   input.doc.forEach(slide => {
     const before = baseline.get(slide.attrs.id as string)
     let part = slide.attrs.part as string | null
     if (part && files[part]) {
       keptParts.add(part)
       if (!(before && before.eq(slide))) {
-        put(part, rebuildSlide(text(part), slide, before, input, numbers))
+        const r = slideRels(part, text(part.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels')) || EMPTY_RELS)
+        let xml = rebuildSlide(text(part), slide, before, input, numbers, r.rels)
+        if (slide.attrs.bg && slide.attrs.bg !== (before?.attrs.bg ?? null)) xml = withBackground(xml, slide.attrs.bg as string)
+        put(part, xml)
+        r.flush()
         patchNotes(part, slide, before)
       }
     } else {
       part = `ppt/slides/slide${nextSlideNo++}.xml`
       keptParts.add(part)
-      put(part, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld ${NS}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>${shapesXml(slide, [], 2, input, numbers)}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`)
       const layout = (slide.attrs.layout as string | null) ?? Object.keys(files).find(f => /^ppt\/slideLayouts\/slideLayout\d+\.xml$/.test(f))
-      put(part.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels'), `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${layout ? `<Relationship Id="rId1" Type="${REL}/slideLayout" Target="../slideLayouts/${layout.split('/').pop()}"/>` : ''}</Relationships>`)
+      const r = slideRels(part, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${layout ? `<Relationship Id="rId1" Type="${REL}/slideLayout" Target="../slideLayouts/${layout.split('/').pop()}"/>` : ''}</Relationships>`)
+      let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld ${NS}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>${shapesXml(slide, [], 2, input, numbers, r.rels)}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
+      if (slide.attrs.bg) xml = withBackground(xml, slide.attrs.bg as string)
+      put(part, xml)
+      r.flush(true)
       contentTypes = contentTypes.replace('</Types>', `<Override PartName="/${part}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>`)
       const rid = `rId${nextRel++}`
       presRels = presRels.replace('</Relationships>', `<Relationship Id="${rid}" Type="${REL}/slide" Target="slides/${part.split('/').pop()}"/></Relationships>`)
@@ -205,6 +300,21 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
     ? presXml.replace(/<p:sldIdLst\b[^>]*>[\s\S]*?<\/p:sldIdLst>|<p:sldIdLst\s*\/>/, `<p:sldIdLst>${sldIds.join('')}</p:sldIdLst>`)
     : presXml.replace(/(<p:sldMasterIdLst\b[\s\S]*?<\/p:sldMasterIdLst>)/, `$1<p:sldIdLst>${sldIds.join('')}</p:sldIdLst>`)
   if (!unchangedOrder) put('ppt/presentation.xml', presXml)
+  // 套用过主题：强调色与字体写进 pptx 主题（PowerPoint 里新建的页、图表也匹配）
+  const themed = (() => { let k: string | null = null; input.doc.forEach(sl => { k ??= (sl.attrs.theme as string | null) ?? null }); return k })()
+  const theme = themed ? DECK_THEMES[themed] : undefined
+  if (theme && !(input.baseline && sameThemes(input.baseline, input.doc))) {
+    for (const f of Object.keys(files)) {
+      if (!/^ppt\/theme\/theme\d+\.xml$/.test(f)) continue
+      let xml = text(f)
+      for (const [slot, hex] of [['accent1', theme.accent], ['accent2', theme.accent2]] as const) {
+        xml = xml.replace(new RegExp(`<a:${slot}>[\\s\\S]*?</a:${slot}>`), `<a:${slot}><a:srgbClr val="${hex}"/></a:${slot}>`)
+      }
+      xml = xml.replace(/(<a:majorFont>[\s\S]*?)<a:ea typeface="[^"]*"\s*\/>/, `$1<a:ea typeface="${esc(theme.titleFont)}"/>`)
+      xml = xml.replace(/(<a:minorFont>[\s\S]*?)<a:ea typeface="[^"]*"\s*\/>/, `$1<a:ea typeface="${esc(theme.bodyFont)}"/>`)
+      put(f, xml)
+    }
+  }
   put('ppt/_rels/presentation.xml.rels', presRels)
   put('[Content_Types].xml', contentTypes)
   return { bytes: zipSync(files), warnings }
@@ -227,18 +337,27 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
   }
 }
 
+const EMPTY_RELS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+
+/** 每页的主题都没变（不必重写 pptx 主题部件）。 */
+function sameThemes(a: PMNode, b: PMNode): boolean {
+  if (a.childCount !== b.childCount) return false
+  for (let i = 0; i < a.childCount; i++) if (a.child(i).attrs.theme !== b.child(i).attrs.theme) return false
+  return true
+}
+
 /** 重建一页的形状树：保留组头与其他非形状元素，形状按模型顺序。 */
-function rebuildSlide(xml: string, slide: PMNode, before: PMNode | undefined, input: PptxExportInput, numbers: Map<string, number>): string {
+function rebuildSlide(xml: string, slide: PMNode, before: PMNode | undefined, input: PptxExportInput, numbers: Map<string, number>, rels: SlideRels): string {
   const raw = childrenRaw(xml, /<p:spTree\b[^>]*>/)
   const head = raw.filter(r => /^<p:(nvGrpSpPr|grpSpPr)\b/.test(r))
   const usedIds = [...xml.matchAll(/<p:cNvPr\b[^>]*\bid="(\d+)"/g)].map(m => Number(m[1]))
-  const body = shapesXml(slide, head, Math.max(1, ...usedIds) + 1, input, numbers, before)
+  const body = shapesXml(slide, head, Math.max(1, ...usedIds) + 1, input, numbers, rels, before)
   const open = /<p:spTree\b[^>]*>/.exec(xml)!
   const close = xml.indexOf('</p:spTree>', open.index)
   return xml.slice(0, open.index + open[0].length) + body + xml.slice(close)
 }
 
-function shapesXml(slide: PMNode, head: string[], nextId: number, input: PptxExportInput, numbers: Map<string, number>, before?: PMNode): string {
+function shapesXml(slide: PMNode, head: string[], nextId: number, input: PptxExportInput, numbers: Map<string, number>, rels: SlideRels, before?: PMNode): string {
   const prev = new Map<string, PMNode>()
   before?.forEach(s => { if (s.attrs.id) prev.set(s.attrs.id as string, s) })
   let out = head.join('')
@@ -249,7 +368,7 @@ function shapesXml(slide: PMNode, head: string[], nextId: number, input: PptxExp
     const old = prev.get(shape.attrs.id as string)
     if (src && old && old.eq(shape)) out += src
     else if (src) out += patchShape(src, shape, old, numbers)
-    else out += newShapeXml(shape, id++, numbers)
+    else out += newShapeXml(shape, id++, numbers, rels)
   })
   return out
 }

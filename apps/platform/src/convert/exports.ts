@@ -37,5 +37,10 @@ export function pptxFor(docs: Documents, docId: string) {
     pkg: store.getPackage(docId) ?? pptxTemplate(),
     src: id => store.getNodeSrc(docId, id),
     citations: store.listCitations(docId),
+    asset: id => {
+      const a = store.getAsset(id)
+      const bytes = a ? store.getAssetBytes(id) : null
+      return a && bytes ? { mime: a.mime, bytes } : null
+    },
   })
 }

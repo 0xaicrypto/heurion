@@ -172,6 +172,14 @@ let deckId = ''
   const c11 = (await api(`/api/docs/${deck.id}`)).comments.find((c: any) => c.id === wc.id)
   const after = shapeText((((await api(`/api/docs/${deck.id}/deck`)).doc.content as any[])[1].content as any[]).find(s => s.attrs?.id === bodyShape.attrs.id) ?? {})
   check('幻灯片：整形状评论改写后锚点仍在、内容已改成英文', c11.anchor.located && after.length > 0 && !/[\u4e00-\u9fff]/.test(after) && c11.replies.some((r: any) => r.role === 'ai'), `${summary(t11)} · ${after.slice(0, 80)}`)
+
+  // C1：AI 用与画布相同的操作做样式——套主题、生成示意图并插入、加强调色结论条
+  const t12 = await turn(`/api/docs/${deck.id}/chat`, { message: '给这份幻灯片套用「深夜蓝」主题；在「研究设计」那一页右侧画一张研究流程示意图（筛选 → 随机 → 两组随访 → 主要终点）并插入，左侧文字保持不变；在该页底部加一条强调色的结论条。做完检查版面。' })
+  const d12 = await api(`/api/docs/${deck.id}/deck`)
+  const allShapes = (d12.doc.content as any[]).flatMap(s => (s.content ?? []).filter((c: any) => c.type === 'shape'))
+  check('幻灯片：AI 套主题、生成示意图插入、加色块（与画布同一套操作）',
+    (d12.doc.content as any[]).every(s => s.attrs.theme === 'midnight') && allShapes.some(s => s.attrs.kind === 'image' && s.attrs.asset_id) && allShapes.some(s => s.attrs.fill && s.attrs.fill !== 'none'),
+    `${summary(t12)} · 工具 ${[...new Set(t12.calls)].join(' ')}`)
 }
 
 // —— 10. 导出 docx 能被 LibreOffice 打开（需要 podman 与 heurion2:dev 镜像，否则跳过） ——

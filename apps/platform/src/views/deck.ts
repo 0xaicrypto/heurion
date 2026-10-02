@@ -68,8 +68,19 @@ export function deckOutline(input: { doc: PMNode; docId: string; title: string; 
   return lines.join('\n')
 }
 
+/** 形状第一段文字的颜色与字号（读 a:rPr）。 */
+function textLook(shape: PMNode): string {
+  let xml: string | undefined
+  shape.descendants(n => { if (!xml && n.isText) xml = n.marks.find(m => m.type.name === 'rpr')?.attrs.xml as string | undefined; return !xml })
+  if (!xml) return ''
+  const color = /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(xml.replace(/<a:ln\b[\s\S]*?<\/a:ln>/, ''))?.[1]
+  const sz = /\ssz="(\d+)"/.exec(xml)?.[1]
+  return [color ? `文字 #${color.toUpperCase()}` : '', sz ? `${Number(sz) / 100}pt` : ''].filter(Boolean).join(' ')
+}
+
 export function slideRead(slide: PMNode, index: number, rev: number): string {
-  const lines = [`第 ${index + 1} 页 {#${slide.attrs.id}} [${slide.attrs.layout_name || '无版式'}] · rev=${rev}`, '形状（x, y, 宽 × 高，单位 pt；* 表示位置继承自版式）：']
+  const look = [slide.attrs.theme ? `主题 ${slide.attrs.theme}` : '', slide.attrs.bg ? `背景 #${slide.attrs.bg}` : ''].filter(Boolean).join(' · ')
+  const lines = [`第 ${index + 1} 页 {#${slide.attrs.id}} [${slide.attrs.layout_name || '无版式'}]${look ? ` · ${look}` : ''} · rev=${rev}`, '形状（x, y, 宽 × 高，单位 pt；* 表示位置继承自版式；从下到上的叠放顺序）：']
   slide.forEach(shape => {
     if (shape.type.name === 'notes') { lines.push(`备注：${shape.textContent}`); return }
     const a = shape.attrs
@@ -77,8 +88,9 @@ export function slideRead(slide: PMNode, index: number, rev: number): string {
     const geo = `(${pt(a.x as number)}, ${pt(a.y as number)}, ${pt(a.w as number)}×${pt(a.h as number)})${a.xfrm_inherited ? '*' : ''}`
     const pending = a.suggest ? ` ⟨待采纳·${a.suggest === 'insert' ? '新增' : '删除'}⟩` : ''
     const body = a.kind === 'text' || a.kind === 'table' ? shapeText(shape) : (a.description as string) || (a.kind === 'shape' ? '（无文字）' : '')
-    const editable = a.kind === 'text' || a.kind === 'table' || a.kind === 'shape' ? '' : ' [内容不可编辑]'
-    lines.push(`- {#${a.id}}${pending} ${role} ${geo}${editable}${body ? `\n  ${body.replace(/\n/g, '\n  ')}` : ''}`)
+    const editable = a.kind === 'text' || a.kind === 'table' || a.kind === 'shape' || a.kind === 'image' ? '' : ' [内容不可编辑]'
+    const style = [a.geom && a.geom !== 'rect' ? String(a.geom) : '', a.fill ? (a.fill === 'none' ? '无填充' : `填充 #${a.fill}`) : '', textLook(shape)].filter(Boolean).join(' ')
+    lines.push(`- {#${a.id}}${pending} ${role} ${geo}${style ? ` [${style}]` : ''}${editable}${body ? `\n  ${body.replace(/\n/g, '\n  ')}` : ''}`)
   })
   return lines.join('\n')
 }

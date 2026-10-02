@@ -86,6 +86,27 @@
       <button data-all="0">全部拒绝</button>
       <button data-all="1" class="primary">全部采纳</button>
     </div>
+    <div class="toolbar deck-toolbar" id="deckToolbar" hidden>
+      <select id="deckTheme" title="给整份幻灯片套用主题（配色、字体）"><option value="">主题</option></select>
+      <button data-dk="bg" title="当前页的背景色">背景</button>
+      <span class="sep"></span>
+      <button data-dk="textbox" title="在当前页插入文本框">＋文本框</button>
+      <button data-dk="block" title="插入色块（标题条、强调卡片）">＋色块</button>
+      <button data-dk="image" title="插入图片">＋图片</button>
+      <input id="deckImageInput" type="file" accept="image/png,image/jpeg,image/gif" hidden>
+      <span class="sep"></span>
+      <button data-dk="fill" data-needs-shape title="填充色">填充</button>
+      <button data-dk="color" data-needs-shape title="文字颜色">文字色</button>
+      <button data-dk="smaller" data-needs-shape title="缩小字号">A−</button>
+      <button data-dk="bigger" data-needs-shape title="放大字号">A＋</button>
+      <button data-dk="bold" data-needs-shape title="粗体"><b>B</b></button>
+      <button data-dk="align-left" data-needs-shape title="左对齐">≡</button>
+      <button data-dk="align-center" data-needs-shape title="居中">☰</button>
+      <span class="sep"></span>
+      <button data-dk="front" data-needs-shape title="置于顶层">置顶</button>
+      <button data-dk="back" data-needs-shape title="置于底层">置底</button>
+      <button data-dk="delete" data-needs-shape title="删除形状（Delete）">删除</button>
+    </div>
     <div class="turn-banner" id="turnBanner" hidden>
       <span class="dot"></span><span id="turnSummary"></span>
       <span class="grow"></span>

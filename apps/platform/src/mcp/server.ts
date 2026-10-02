@@ -21,6 +21,7 @@ import type { Documents } from '../model/runtime.ts'
 import type { OpService } from '../ops/service.ts'
 import { DocOp, OpError } from '../ops/types.ts'
 import { citationOrder, diff, outline, read, ReadError, search } from '../views/read.ts'
+import { DiagramError, renderSvg } from '../render/diagram.ts'
 import type { TurnRegistry } from './turns.ts'
 
 export interface McpDeps {
@@ -56,7 +57,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 评论是用户锚定在具体文字上的修改要求：comments_list 读取 → 修改 → comment_reply 说明改了什么。
 - 回复用户时用平常的话说明改了什么、改在哪（如「第 2 节第一段」），不要提块 id、rev、cite_id、工具名等内部信息。
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
-- 图表用 shell 生成图片文件后，用 asset_upload 上传，再用 ![说明](asset:<asset_id>) 插入。
+- 插图：数据图（曲线、森林图、柱状图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -264,8 +265,13 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       '编辑幻灯片：一批操作原子提交，base_rev 用最近读到的 rev。几何单位 pt。操作：' +
       'add_slide {after, layout?, title?, body?}（按版式填占位符，不需要算坐标）；delete_slide {slide_id}；move_slide {slide_id, after}；' +
       'set_text {shape_id, markdown}（沿用原字号颜色；列表项 - 对应项目符号）；replace_text {shape_id, find, replace}（小改动首选）；' +
-      'add_shape {slide_id, markdown, x, y, w, h, font_size?}（文本框）；set_xfrm {shape_id, x?, y?, w?, h?}；delete_shape {shape_id}；' +
-      'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。改完用 layout_check 检查溢出与重叠。',
+      'add_shape {slide_id, markdown?, x, y, w, h, font_size?, geometry?: rect|roundRect|ellipse, fill?, color?}（文本框；带 geometry / fill 即色块、标题条、卡片）；' +
+      'set_xfrm {shape_id, x?, y?, w?, h?}；delete_shape {shape_id}；set_z {shape_id, to: front|back|forward|backward}；' +
+      'set_fill {shape_id, color}；set_background {slide_id, color}；set_text_style {shape_id, paragraph?, color?, size?, bold?, italic?, align?}；' +
+      'add_image {slide_id, asset_id, x, y, w, h?}（图片先用 asset_upload 上传；h 缺省按原图比例）；' +
+      'apply_theme {theme, slide_ids?}（整套配色：背景、标题与正文颜色、强调色；之后新加的页沿用）；' +
+      'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。' +
+      '颜色写 6 位十六进制或主题记号（accent / accent2 / title / body / muted / bg / surface，按该页主题取色）。改完用 layout_check 检查溢出与重叠，必要时 slide_render 看效果。',
     inputSchema: {
       doc_id: z.string(),
       base_rev: z.number().int().min(0),
@@ -468,6 +474,31 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (statSync(file).size > MAX_ASSET) return fail('too_large', '文件超过 10MB')
     const asset = store.putAsset({ owner: claims.u, mime, name: rel, bytes: readFileSync(file) })
     return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id})` })
+  })
+
+  server.registerTool('diagram_render', {
+    description:
+      '生成示意图：写一段自包含的 SVG（机制图、流程图、研究设计图、对比图等），平台渲染成 PNG 存为资产，返回 asset_id。' +
+      '之后插入：文档用 doc_edit 写 ![图注](asset:<asset_id>)；幻灯片用 deck_edit 的 add_image。' +
+      '要求：带 viewBox 与 width/height；文字用 <text>（中文字体用 Noto Sans CJK SC）；不能有脚本、事件属性、foreignObject、外部链接或外部图片。' +
+      '数据图（生存曲线、森林图等）用 shell 里的 matplotlib 画再 asset_upload 更准确。',
+    inputSchema: {
+      svg: z.string().min(20).describe('完整的 SVG 文本'),
+      name: z.string().max(80).optional().describe('文件名 / 说明'),
+      width_px: z.number().int().min(200).max(4096).optional().describe('输出宽度像素，缺省 1600'),
+    },
+  }, async ({ svg, name, width_px }) => {
+    if (!claims.p.includes('write')) return fail('forbidden', '当前令牌不能上传资产')
+    let out: ReturnType<typeof renderSvg>
+    try {
+      out = renderSvg(svg, width_px)
+    } catch (err) {
+      if (err instanceof DiagramError) return fail('invalid_svg', err.message, { hint: '改正后重新调用；SVG 必须自包含。' })
+      throw err
+    }
+    const label = (name ?? '示意图').trim() || '示意图'
+    const asset = store.putAsset({ owner: claims.u, mime: 'image/png', name: `${label}.png`, bytes: out.png })
+    return json({ asset_id: asset.id, width: out.width, height: out.height, markdown: `![${label}](asset:${asset.id})` })
   })
 
   return server

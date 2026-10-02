@@ -194,3 +194,48 @@ describe('MCP 会话失效', () => {
     expect((await call('g-now')).code).not.toBe(401)
   })
 })
+
+describe('AI 生成图片并插入（与人的插图能力一致）', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200"><rect width="400" height="200" fill="#F1F5F9"/><circle cx="100" cy="100" r="50" fill="#0EA5E9"/><text x="180" y="108" font-size="24" font-family="Noto Sans CJK SC">T 细胞 → 肿瘤</text></svg>'
+
+  it('diagram_render：拒绝脚本、事件属性、外部链接；合法 SVG 渲染成资产，插进文档', async () => {
+    const t = await connect('# 原理\n\n待补充。')
+    for (const bad of [
+      SVG.replace('</svg>', '<script>alert(1)</script></svg>'),
+      SVG.replace('<circle', '<circle onclick="x()"'),
+      SVG.replace('</svg>', '<image href="https://evil.example/a.png" width="10" height="10"/></svg>'),
+    ]) {
+      const r = await t.call('diagram_render', { svg: bad })
+      expect([r.isError, r.body.code]).toEqual([true, 'invalid_svg'])
+    }
+    const r = await t.call('diagram_render', { svg: SVG, name: '免疫机制', width_px: 800 })
+    expect(r.isError).toBe(false)
+    expect([r.body.width, r.body.height]).toEqual([800, 400])
+    const asset = t.store.getAsset(r.body.asset_id)!
+    expect([asset.owner, asset.mime]).toEqual(['u1', 'image/png'])
+    const outline = await t.call('doc_outline', { doc_id: t.docId })
+    const h = /# \{#([a-z0-9]+)\} 原理/.exec(outline.text)![1]!
+    const edit = await t.call('doc_edit', { doc_id: t.docId, base_rev: 0, ops: [{ op: 'insert_after', anchor_id: h, markdown: r.body.markdown }] })
+    expect(edit.isError).toBe(false)
+    expect((await t.call('doc_read', { doc_id: t.docId })).text).toContain(`asset:${r.body.asset_id}`)
+  })
+
+  it('幻灯片：AI 经 MCP 套主题、加色块、插入生成的图（画布能做的 AI 都能做）', async () => {
+    const t = await connect('占位。')
+    const created = await t.call('doc_create', { title: '机制汇报', kind: 'deck' })
+    const deckId = created.body.doc_id as string
+    const outline = await t.call('doc_outline', { doc_id: deckId })
+    const slideId = /\{#([a-z0-9]+)\}/.exec(outline.text)![1]!
+    const img = await t.call('diagram_render', { svg: SVG })
+    const edit = await t.call('deck_edit', { doc_id: deckId, base_rev: created.body.rev, ops: [
+      { op: 'apply_theme', theme: 'midnight' },
+      { op: 'add_shape', slide_id: slideId, x: 40, y: 360, w: 300, h: 60, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF', markdown: 'PD-1 阻断' },
+      { op: 'add_image', slide_id: slideId, asset_id: img.body.asset_id, x: 400, y: 120, w: 480 },
+    ] })
+    expect(edit.isError).toBe(false)
+    const read = await t.call('slide_read', { doc_id: deckId, slide_id: slideId })
+    expect(read.text).toContain('主题 midnight')
+    expect(read.text).toContain('roundRect')
+    expect(read.text).toMatch(/图片/)
+  })
+})

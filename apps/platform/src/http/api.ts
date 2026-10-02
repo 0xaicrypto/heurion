@@ -9,6 +9,7 @@ import { docxFor, pptxFor } from '../convert/exports.ts'
 import { bindDeckAssets, importPptx, PptxImportError } from '../convert/pptx-import.ts'
 import { readLayouts } from '../convert/pptx-layouts.ts'
 import { pptxTemplate } from '../convert/pptx-template.ts'
+import { DECK_THEMES } from '../model/deck-themes.ts'
 import { newDeckContent } from '../ops/deck.ts'
 import { readFileSync } from 'node:fs'
 import type { SlideRenderer } from '../render/slides.ts'
@@ -310,6 +311,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
 
   /** 用户编辑（P1 编辑器上线前的入口）：同一操作层，actor=user。 */
+  // 幻灯片主题（画布的主题选择与颜色板用；与 MCP apply_theme 同一份定义）
+  app.get('/api/deck-themes', c => c.json(DECK_THEMES))
+
   app.post('/api/docs/:id/edit', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
