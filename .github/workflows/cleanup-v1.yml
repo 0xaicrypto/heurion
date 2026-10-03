@@ -43,3 +43,4 @@ jobs:
             fi
             ids=$(docker ps -aq --filter name=heurion-worker); [ -z "$ids" ] || docker rm -f $ids
             echo "== worker 上剩下的容器："; docker ps -a --format "{{.Names}}\t{{.Status}}"
+          '
