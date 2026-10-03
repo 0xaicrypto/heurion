@@ -36,7 +36,14 @@ const USERNAME = /^(?!\s)[\p{L}\p{N}\p{P}\p{S} ]{1,64}(?<!\s)$/u
 
 export function importH1Users(h1Path: string, store: Store, apply: boolean): ImportReport {
   const h1 = new DatabaseSync(h1Path, { readOnly: true })
-  const rows = h1.prepare(`SELECT id, username, display_name, password_hash, role, status, is_admin, disabled_at, deleted_at, email, email_verified FROM users ORDER BY created_at`).all() as unknown as H1User[]
+  // 1.0 各版本的 users 表列不同（#1136 之前没有 username，用显示名登录；更早的还缺 email 等）：只选存在的列，缺的当作 null
+  const have = new Set((h1.prepare(`SELECT name FROM pragma_table_info('users')`).all() as Array<{ name: string }>).map(c => c.name))
+  for (const required of ['id', 'display_name', 'password_hash']) {
+    if (!have.has(required)) { h1.close(); throw new Error(`1.0 的 users 表缺少 ${required} 列，无法导入`) }
+  }
+  const wanted = ['id', 'username', 'display_name', 'password_hash', 'role', 'status', 'is_admin', 'disabled_at', 'deleted_at', 'email', 'email_verified']
+  const cols = wanted.map(c => (have.has(c) ? c : `NULL AS ${c}`)).join(', ')
+  const rows = h1.prepare(`SELECT ${cols} FROM users ORDER BY ${have.has('created_at') ? 'created_at' : 'rowid'}`).all() as unknown as H1User[]
   h1.close()
   const report: ImportReport = { imported: [], already: [], skipped: [], conflicts: [] }
   const importedIds = new Set(store.listUsers().map(u => u.imported_from).filter(Boolean))

@@ -249,6 +249,39 @@ describe('1.0 账户导入', () => {
   })
 })
 
+describe('1.0 账户导入：旧版表结构', () => {
+  it('#1136 之前的 1.0（没有 username / email 列）：用显示名作登录名导入', async () => {
+    const bcrypt = (await import('bcryptjs')).default
+    const { DatabaseSync } = await import('node:sqlite')
+    const { importH1Users } = await import('../src/auth/import-h1.ts')
+    const path = join(mkdtempSync(join(tmpdir(), 'h1old-')), 'h1.db')
+    const h1 = new DatabaseSync(path)
+    h1.exec(`PRAGMA journal_mode = WAL; CREATE TABLE users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, password_hash TEXT, role TEXT, status TEXT,
+      is_admin INTEGER, created_at TEXT NOT NULL)`)
+    h1.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?)').run('o1', 'Dr Old', bcrypt.hashSync('oldpass123', 4), 'user', 'approved', 1, '2025-01-01')
+    h1.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?)').run('o2', '待审核', bcrypt.hashSync('pending123', 4), 'user', 'pending', 0, '2025-01-02')
+    h1.close()
+    const t = env()
+    const report = importH1Users(path, t.store, true)
+    expect(report.imported).toEqual([
+      { username: 'Dr Old', role: 'admin', status: 'active' },
+      { username: '待审核', role: 'user', status: 'disabled' },
+    ])
+    expect((await t.call('POST', '/api/auth/login', undefined, { username: 'dr old', password: 'oldpass123' })).status).toBe(200)
+    expect(t.store.getUserByName('Dr Old')!.email).toBeNull()
+  })
+
+  it('users 表缺必需列时报清楚的错', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const { importH1Users } = await import('../src/auth/import-h1.ts')
+    const path = join(mkdtempSync(join(tmpdir(), 'h1bad-')), 'h1.db')
+    const h1 = new DatabaseSync(path)
+    h1.exec('CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)')
+    h1.close()
+    expect(() => importH1Users(path, env().store, false)).toThrow('缺少 display_name')
+  })
+})
+
 describe('防机器人', () => {
   it('注册 / 登录必须带人机校验的解；陷阱字段被填、解被重放都拒绝', async () => {
     const t = env()

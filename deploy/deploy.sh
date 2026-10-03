@@ -33,14 +33,40 @@ for i in 1 2 3; do
 done
 [ "$pulled" -eq 1 ] || { echo "❌ 拉取镜像失败"; exit 1; }
 
+# 切换中途失败：停 2.0，把 1.0 拉回来（1.0 的卷与 /opt/heurion 在清理前都在）
+restore_v1() {
+  echo "↩️  恢复 1.0"
+  "${COMPOSE[@]}" down >/dev/null 2>&1 || true
+  if [ -f /opt/heurion/docker-compose.yml ] && ! docker inspect nexus-server >/dev/null 2>&1; then
+    # 1.0 的容器已被删：按切换时记下的镜像重建
+    ( set -a; [ -f "$DIR/v1-images.env" ] && . "$DIR/v1-images.env"; set +a
+      cd /opt/heurion && docker compose --env-file .env.production up -d ) || true
+  fi
+  docker start nexus-server nexus-embedding-server nexus-stats-worker nexus-caddy >/dev/null 2>&1 || true
+  for i in $(seq 1 24); do
+    curl -fsS "https://${HOSTNAME}/healthz" >/dev/null 2>&1 && { echo "↩️  1.0 已恢复"; return 0; }
+    sleep 5
+  done
+  echo "❌ 1.0 恢复后仍不健康，需要人工介入（docker ps -a | grep nexus）"
+}
+
 CUTOVER=0
 if [ ! -f .cutover-done ] && docker inspect nexus-server >/dev/null 2>&1; then
   CUTOVER=1
-  echo "== 检测到 1.0 在跑：开始切换"
-  bash scripts/cutover-v1.sh
+  echo "== 检测到 1.0：开始切换"
+  if ! bash scripts/cutover-v1.sh; then
+    echo "❌ 切换失败"
+    restore_v1
+    exit 1
+  fi
 fi
 
-"${COMPOSE[@]}" up -d --remove-orphans
+if ! "${COMPOSE[@]}" up -d --remove-orphans; then
+  echo "❌ 启动 2.0 失败"
+  "${COMPOSE[@]}" logs --tail=80 || true
+  [ "$CUTOVER" -eq 1 ] && restore_v1
+  exit 1
+fi
 
 wait_health() {
   for i in $(seq 1 36); do
@@ -73,9 +99,7 @@ fi
 echo "❌ 健康检查失败"
 "${COMPOSE[@]}" logs --tail=80 heurion2 || true
 if [ "$CUTOVER" -eq 1 ]; then
-  echo "↩️  切换失败：停 2.0，恢复 1.0"
-  "${COMPOSE[@]}" down
-  ( cd /opt/heurion && docker compose --env-file .env.production up -d ) || echo "❌ 1.0 恢复失败，需要人工介入"
+  restore_v1
   exit 1
 fi
 if [ -n "$PREV_APP" ]; then
