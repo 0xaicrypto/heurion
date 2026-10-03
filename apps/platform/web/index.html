@@ -193,6 +193,7 @@
       <div class="composer">
         <div class="kb-picked" id="kbPicked" hidden></div>
         <div class="kb-picked" id="dsPicked" hidden></div>
+        <div class="kb-picked" id="ptPicked" hidden></div>
         <div class="chat-images" id="chatImages" hidden></div>
         <textarea id="chatInput" rows="3" placeholder="让 Heurion 修改文档，例如：在方法部分补充纳入标准，并引用相关 RCT（⌘↩ 发送；可以粘贴或拖入图片）"></textarea>
         <div class="row">
@@ -200,6 +201,7 @@
             <label class="toggle" title="AI 的修改作为待采纳修订，由你逐条采纳"><input type="checkbox" id="suggestMode"> 修订模式</label>
             <label class="toggle" title="这一轮不使用、也不新增记忆"><input type="checkbox" id="noMemory"> 不用记忆</label>
             <button class="quiet small-btn" id="kbPickBtn" title="选资料库里的资料，让 AI 依据它们写">＋ 引用资料</button>
+            <button class="quiet small-btn" id="ptPickBtn" title="选患者，让 AI 读这位患者的资料与化验（按诊疗组权限，记入访问记录）" hidden>＋ 引用患者</button>
             <button class="quiet small-btn" id="dsPickBtn" title="选上传的数据，让 AI 做统计分析（Table 1、生存曲线、组间比较……）">＋ 引用数据</button>
           </div>
           <button id="cancelBtn" disabled>停止</button>

@@ -454,7 +454,48 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   }
   document.getElementById('docSearch')!.addEventListener('input', () => { if (!$('patientList').hidden) renderList() })
 
+  // —— 对话框下方：「引用患者」（任意文档的对话里把患者带给 AI；只列诊疗组里的，紧急访问的不列） ——
+  let picked: Array<{ id: string; label: string }> = []
+  const pickedBox = () => document.getElementById('ptPicked')!
+  function renderPicked(): void {
+    pickedBox().hidden = picked.length === 0
+    pickedBox().innerHTML = picked.map(p => `<span class="chip" data-id="${p.id}" title="AI 会读这位患者的资料与化验">⚕ ${esc(p.label)}<button class="chip-x" aria-label="移除">✕</button></span>`).join('')
+  }
+  pickedBox().onclick = e => {
+    const id = ((e.target as HTMLElement).closest('.chip-x')?.parentElement as HTMLElement | undefined)?.dataset.id
+    if (id) { picked = picked.filter(p => p.id !== id); renderPicked() }
+  }
+  document.getElementById('ptPickBtn')!.onclick = async e => {
+    const anchor = e.currentTarget as HTMLElement
+    document.querySelector('.kb-picker')?.remove()
+    let all: Patient[] = []
+    try { all = (await api<Patient[]>('/api/patients')).filter(p => p.role !== 'break_glass') } catch (err) { notice((err as Error).message, true); return }
+    const menu = document.createElement('div')
+    menu.className = 'pop-menu kb-picker'
+    menu.innerHTML = all.length === 0
+      ? '<div class="muted small kb-picker-empty">诊疗组里还没有患者</div>'
+      : all.map(p => `<label><input type="checkbox" value="${p.id}" ${picked.some(x => x.id === p.id) ? 'checked' : ''}> ${esc(label(p))} <span class="muted small">${esc(p.tags.slice(0, 2).join('、'))}</span></label>`).join('')
+    document.body.append(menu)
+    const r = anchor.getBoundingClientRect()
+    menu.style.left = `${Math.max(8, r.left)}px`
+    menu.style.bottom = `${window.innerHeight - r.top + 6}px`
+    menu.onchange = ev => {
+      const box = ev.target as HTMLInputElement
+      const p = all.find(y => y.id === box.value)!
+      picked = box.checked ? [...picked, { id: p.id, label: label(p) }].slice(0, 10) : picked.filter(x => x.id !== p.id)
+      renderPicked()
+    }
+    const done = () => { menu.remove(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', onKey) }
+    const away = (ev: MouseEvent) => { if (!menu.contains(ev.target as Node) && ev.target !== anchor) done() }
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') done() }
+    setTimeout(() => { document.addEventListener('mousedown', away); document.addEventListener('keydown', onKey) })
+  }
+
   return {
+    /** 发送对话时取走「引用患者」（发送后清空） */
+    takePicked(): string[] { const ids = picked.map(p => p.id); picked = []; renderPicked(); return ids },
+    /** 机构开了患者模块才显示「＋ 引用患者」 */
+    setPickEnabled(on: boolean): void { document.getElementById('ptPickBtn')!.hidden = !on },
     /** 打开文档时：患者页失效 */
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
     /** 打开患者页（从病例报告回到患者） */

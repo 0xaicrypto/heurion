@@ -1119,7 +1119,7 @@ async function send(): Promise<void> {
   renderChatImages()
   $<HTMLTextAreaElement>('chatInput').value = ''
   // 属于患者的文档（病例报告等）：对话自动带上这位患者
-  const patients = docPatient ? [docPatient] : []
+  const patients = [...new Set([...(docPatient ? [docPatient] : []), ...patientsUi.takePicked()])]
   try {
     await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), datasets: datasets.takePicked(), images, patients, memory: memory.takeMemoryFlag() }) })
   } catch (err) {
@@ -1446,6 +1446,7 @@ async function boot(): Promise<void> {
   initUserMenu(me, api, showNotice)
   // 回到上次停留的工作空间（显示该空间的开始页）
   spaces.setEnabled('patients', me.tenant?.settings.patient_module !== false)
+  patientsUi.setPickEnabled(me.tenant?.settings.patient_module !== false)
   leaveDoc()
   spaces.set(spaces.saved())
   await loadDocs()
