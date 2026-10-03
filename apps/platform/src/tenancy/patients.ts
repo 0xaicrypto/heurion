@@ -1,0 +1,463 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import type { TenantService, TenantSettings } from '../auth/tenants.ts'
+import type { Store } from '../store/db.ts'
+import type { TenantKeys } from './keys.ts'
+
+/**
+ * 患者数据（docs/design/TENANCY.md §2、§4；患者模块第二期的底座）。
+ * - **每个机构一个库文件**：data/tenants/<机构>/patients.db 与 files/。连接本身只属于一个机构，查询写错也读不到别的机构。
+ * - 患者只有代号（P-0001）、性别、出生年份、诊断标签；**不存姓名**（代号 ↔ 姓名只在医生自己的浏览器里）。
+ * - 原始报告文件、文件名、自由文本用机构数据密钥加密（keys.ts）。
+ * - 可见范围：诊疗组（创建者 + 被加入的成员），或机构设置为本机构全员；机构管理员不自动可见，查看要走紧急访问（填理由、24 小时、留痕）。
+ *   看不到的患者一律当不存在（不暴露存在与否）。
+ * - 每次查看、下载、导出都记访问日志（谁、何时、做了什么）。
+ * - 化验值、报告、标签的修改：人直接改；AI 只能提议（proposals），由诊疗组成员采纳。
+ * - 化验日期是报告上的日期（collected_on），不是上传时间（v1 的教训）。
+ */
+
+export class PatientError extends Error {
+  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 400) { super(message) }
+}
+
+export interface PatientRow {
+  id: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+  status: 'active' | 'archived'; created_by: string; created_at: string; updated_at: string
+}
+export interface LabRow {
+  id: string; patient_id: string; record_id: string | null; test_key: string; test_name: string
+  value_num: number | null; value_text: string | null; unit: string | null
+  ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null
+  collected_on: string; status: 'pending' | 'confirmed' | 'rejected'; source: 'manual' | 'extracted' | 'ai'
+  locator: { page?: number; bbox?: number[] } | null
+  created_by: string; created_at: string; confirmed_by: string | null; confirmed_at: string | null
+}
+export interface RecordRow {
+  id: string; patient_id: string; kind: 'lab_report' | 'discharge' | 'pathology' | 'imaging' | 'note' | 'other'
+  title: string; report_date: string | null; file_id: string | null; status: 'pending' | 'confirmed' | 'rejected'
+  created_by: string; created_at: string; confirmed_by: string | null; confirmed_at: string | null
+}
+export interface ProposalRow {
+  id: string; patient_id: string; kind: 'lab' | 'tag' | 'note'; payload: Record<string, unknown>; reason: string
+  turn_id: string | null; status: 'pending' | 'accepted' | 'rejected'; created_by: string; created_at: string; resolved_by: string | null; resolved_at: string | null
+}
+
+const now = () => new Date().toISOString()
+const rid = (p: string) => p + randomUUID().replace(/-/g, '').slice(0, 12)
+const DATE = /^\d{4}-\d{2}-\d{2}$/
+const BREAK_GLASS_HOURS = 24
+
+/** 化验项目名 → 标准键（同一项目不同叫法归一）。常见的先列，其余用规范化后的原名。 */
+const TEST_ALIASES: Array<[RegExp, string]> = [
+  [/^(alt|gpt|谷丙转氨酶|丙氨酸氨基转移酶)$/i, 'alt'], [/^(ast|got|谷草转氨酶|天门冬氨酸氨基转移酶)$/i, 'ast'],
+  [/^(cr|crea|scr|肌酐|血肌酐)$/i, 'creatinine'], [/^(egfr|估算肾小球滤过率)$/i, 'egfr'],
+  [/^(hba1c|糖化血红蛋白)$/i, 'hba1c'], [/^(glu|fpg|葡萄糖|空腹血糖|血糖)$/i, 'glucose'],
+  [/^(tc|chol|总胆固醇)$/i, 'cholesterol'], [/^(tg|甘油三酯)$/i, 'triglycerides'], [/^(ldl-?c|低密度脂蛋白胆固醇)$/i, 'ldl'], [/^(hdl-?c|高密度脂蛋白胆固醇)$/i, 'hdl'],
+  [/^(wbc|白细胞|白细胞计数)$/i, 'wbc'], [/^(hb|hgb|血红蛋白)$/i, 'hemoglobin'], [/^(plt|血小板|血小板计数)$/i, 'platelets'],
+  [/^(alb|白蛋白)$/i, 'albumin'], [/^(tbil|总胆红素)$/i, 'bilirubin'], [/^(ua|尿酸)$/i, 'uric_acid'], [/^(k|钾|血钾)$/i, 'potassium'],
+  [/^(bnp|脑钠肽)$/i, 'bnp'], [/^(nt-?probnp|n末端脑钠肽前体)$/i, 'nt_probnp'], [/^(crp|c反应蛋白)$/i, 'crp'],
+]
+export function testKey(name: string): string {
+  const n = name.trim().replace(/[\s（）()]+/g, '')
+  for (const [re, key] of TEST_ALIASES) if (re.test(n)) return key
+  return n.toLowerCase()
+}
+
+/** 一个机构的患者库（库文件 + 加密文件目录）。只由 PatientService 打开。 */
+class TenantPatientDb {
+  readonly db: DatabaseSync
+  readonly files: string
+
+  constructor(root: string, readonly tenantId: string) {
+    const dir = join(root, tenantId.replace(/[^A-Za-z0-9_-]/g, '_'))
+    this.files = join(dir, 'files')
+    mkdirSync(this.files, { recursive: true })
+    this.db = new DatabaseSync(join(dir, 'patients.db'))
+    this.db.exec(`
+      PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS seq (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS patients (
+        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, sex TEXT, birth_year INTEGER, tags TEXT NOT NULL DEFAULT '[]', summary_enc TEXT,
+        status TEXT NOT NULL DEFAULT 'active', created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS care_team (
+        patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, user_id TEXT NOT NULL, role TEXT NOT NULL,
+        added_by TEXT NOT NULL, added_at TEXT NOT NULL, PRIMARY KEY (patient_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS files (
+        id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, name_enc TEXT NOT NULL, mime TEXT NOT NULL,
+        size INTEGER NOT NULL, sha256 TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS records (
+        id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, kind TEXT NOT NULL, title TEXT NOT NULL,
+        report_date TEXT, file_id TEXT, status TEXT NOT NULL, text_enc TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        confirmed_by TEXT, confirmed_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS labs (
+        id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, record_id TEXT, test_key TEXT NOT NULL, test_name TEXT NOT NULL,
+        value_num REAL, value_text TEXT, unit TEXT, ref_low REAL, ref_high REAL, ref_text TEXT, flag TEXT, collected_on TEXT NOT NULL,
+        status TEXT NOT NULL, source TEXT NOT NULL, locator TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, confirmed_by TEXT, confirmed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS labs_patient ON labs (patient_id, test_key, collected_on);
+      CREATE TABLE IF NOT EXISTS proposals (
+        id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, kind TEXT NOT NULL, payload TEXT NOT NULL, reason TEXT NOT NULL,
+        turn_id TEXT, status TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, resolved_by TEXT, resolved_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS access_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, user_id TEXT NOT NULL, patient_id TEXT NOT NULL, action TEXT NOT NULL, via TEXT NOT NULL, detail TEXT
+      );
+      CREATE INDEX IF NOT EXISTS access_log_patient ON access_log (patient_id, at);
+      CREATE TABLE IF NOT EXISTS break_glass (
+        id TEXT PRIMARY KEY, patient_id TEXT NOT NULL, user_id TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL, expires_at TEXT NOT NULL
+      );
+    `)
+  }
+
+  nextCode(): string {
+    const row = this.db.prepare("INSERT INTO seq (name, value) VALUES ('patient', 1) ON CONFLICT(name) DO UPDATE SET value = value + 1 RETURNING value").get() as { value: number }
+    return `P-${String(row.value).padStart(4, '0')}`
+  }
+
+  close(): void { this.db.close() }
+}
+
+const patientOf = (r: Record<string, unknown>): PatientRow => ({
+  id: r.id as string, code: r.code as string, sex: (r.sex as PatientRow['sex']) ?? null, birth_year: (r.birth_year as number | null) ?? null,
+  tags: JSON.parse((r.tags as string) || '[]') as string[], status: r.status as PatientRow['status'],
+  created_by: r.created_by as string, created_at: r.created_at as string, updated_at: r.updated_at as string,
+})
+const labOf = (r: Record<string, unknown>): LabRow => ({ ...(r as unknown as LabRow), locator: r.locator ? JSON.parse(r.locator as string) : null })
+const proposalOf = (r: Record<string, unknown>): ProposalRow => ({ ...(r as unknown as ProposalRow), payload: JSON.parse(r.payload as string) })
+
+export interface Actor {
+  userId: string
+  /** ai = AI 经 MCP 代该用户访问（访问日志里区分） */
+  via: 'user' | 'ai'
+  turnId?: string | null
+}
+
+export class PatientService {
+  private dbs = new Map<string, TenantPatientDb>()
+
+  constructor(
+    private readonly root: string,
+    private readonly tenants: TenantService,
+    private readonly keys: TenantKeys,
+    private readonly store: Store,
+  ) {}
+
+  // —— 机构与权限 ——
+
+  /** 打开操作者所在机构的患者库。机构不开患者模块时拒绝。 */
+  private ctx(a: Actor): { db: TenantPatientDb; tenantId: string; settings: TenantSettings; tenantAdmin: boolean } {
+    const t = this.tenants.of(a.userId)
+    const settings = this.tenants.settings(t)
+    if (!settings.patient_module) throw new PatientError('patient_module_off', '本机构没有启用患者模块', 403)
+    if (a.via === 'ai' && !settings.external_model_for_patients) throw new PatientError('external_model_off', '本机构设置为患者数据不交给外部模型分析', 403)
+    let db = this.dbs.get(t.id)
+    if (!db) { db = new TenantPatientDb(this.root, t.id); this.dbs.set(t.id, db) }
+    return { db, tenantId: t.id, settings, tenantAdmin: this.tenants.roleOf(a.userId) === 'admin' }
+  }
+
+  private teamRole(db: TenantPatientDb, patientId: string, userId: string): 'owner' | 'member' | null {
+    return (db.db.prepare('SELECT role FROM care_team WHERE patient_id = ? AND user_id = ?').get(patientId, userId) as { role: 'owner' | 'member' } | undefined)?.role ?? null
+  }
+
+  private breakGlassActive(db: TenantPatientDb, patientId: string, userId: string): boolean {
+    return Boolean(db.db.prepare('SELECT 1 FROM break_glass WHERE patient_id = ? AND user_id = ? AND expires_at > ?').get(patientId, userId, now()))
+  }
+
+  /** 能看到的患者；看不到的当不存在。 */
+  private visible(a: Actor, patientId: string): { c: ReturnType<PatientService['ctx']>; p: PatientRow; role: 'owner' | 'member' | 'tenant' | 'break_glass' } {
+    const c = this.ctx(a)
+    const r = c.db.db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId) as Record<string, unknown> | undefined
+    if (!r) throw new PatientError('not_found', '患者不存在', 404)
+    const team = this.teamRole(c.db, patientId, a.userId)
+    const role = team ?? (c.settings.patient_visibility === 'tenant' ? 'tenant' : this.breakGlassActive(c.db, patientId, a.userId) ? 'break_glass' : null)
+    if (!role) throw new PatientError('not_found', '患者不存在', 404)
+    return { c, p: patientOf(r), role }
+  }
+
+  private log(c: { db: TenantPatientDb }, a: Actor, patientId: string, action: string, detail: string | null = null): void {
+    c.db.db.prepare('INSERT INTO access_log (at, user_id, patient_id, action, via, detail) VALUES (?, ?, ?, ?, ?, ?)').run(now(), a.userId, patientId, action, a.via, detail)
+  }
+
+  // —— 患者 ——
+
+  create(a: Actor, input: { sex?: unknown; birth_year?: unknown; tags?: unknown }): PatientRow {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能新建患者', 403)
+    const c = this.ctx(a)
+    const id = rid('pt')
+    const t = now()
+    c.db.db.prepare('INSERT INTO patients (id, code, sex, birth_year, tags, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, c.db.nextCode(), sex(input.sex), birthYear(input.birth_year), JSON.stringify(tags(input.tags)), a.userId, t, t)
+    c.db.db.prepare('INSERT INTO care_team (patient_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)').run(id, a.userId, 'owner', a.userId, t)
+    this.log(c, a, id, 'create')
+    return this.visible(a, id).p
+  }
+
+  list(a: Actor): Array<PatientRow & { role: string; labs: number; last_lab: string | null; pending: number }> {
+    const c = this.ctx(a)
+    const rows = (c.settings.patient_visibility === 'tenant'
+      ? c.db.db.prepare('SELECT * FROM patients ORDER BY updated_at DESC').all()
+      : c.db.db.prepare(`SELECT p.* FROM patients p WHERE p.id IN (SELECT patient_id FROM care_team WHERE user_id = ?)
+          OR p.id IN (SELECT patient_id FROM break_glass WHERE user_id = ? AND expires_at > ?) ORDER BY p.updated_at DESC`).all(a.userId, a.userId, now())) as Array<Record<string, unknown>>
+    return rows.map(r => {
+      const p = patientOf(r)
+      const stats = c.db.db.prepare("SELECT COUNT(*) AS n, MAX(collected_on) AS last FROM labs WHERE patient_id = ? AND status = 'confirmed'").get(p.id) as { n: number; last: string | null }
+      const pending = (c.db.db.prepare("SELECT (SELECT COUNT(*) FROM labs WHERE patient_id = ? AND status = 'pending') + (SELECT COUNT(*) FROM proposals WHERE patient_id = ? AND status = 'pending') AS n").get(p.id, p.id) as { n: number }).n
+      return { ...p, role: this.teamRole(c.db, p.id, a.userId) ?? (c.settings.patient_visibility === 'tenant' ? 'tenant' : 'break_glass'), labs: stats.n, last_lab: stats.last, pending }
+    })
+  }
+
+  /** 概况：基本信息、诊疗组、报告、各项化验的最近值。记一次查看。 */
+  read(a: Actor, patientId: string) {
+    const { c, p, role } = this.visible(a, patientId)
+    const summary = c.db.db.prepare('SELECT summary_enc FROM patients WHERE id = ?').get(patientId) as { summary_enc: string | null }
+    const team = (c.db.db.prepare('SELECT user_id, role, added_at FROM care_team WHERE patient_id = ? ORDER BY added_at').all(patientId) as Array<{ user_id: string; role: string; added_at: string }>)
+      .map(m => ({ ...m, name: this.store.getUser(m.user_id)?.display_name ?? m.user_id }))
+    const records = (c.db.db.prepare('SELECT * FROM records WHERE patient_id = ? ORDER BY COALESCE(report_date, created_at) DESC').all(patientId) as unknown as RecordRow[])
+      .map(r => ({ ...r, text_enc: undefined }))
+    const latest = (c.db.db.prepare(`SELECT l.* FROM labs l WHERE l.patient_id = ? AND l.status = 'confirmed' AND l.collected_on = (
+        SELECT MAX(collected_on) FROM labs WHERE patient_id = l.patient_id AND test_key = l.test_key AND status = 'confirmed') ORDER BY l.test_key`).all(patientId) as Array<Record<string, unknown>>).map(labOf)
+    this.log(c, a, patientId, 'view')
+    return { ...p, access: role, summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
+  }
+
+  update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown }): PatientRow {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能直接修改患者，请用 patient_record_propose 提议', 403)
+    const { c } = this.requireTeam(a, patientId)
+    const sets: string[] = []
+    const args: Array<string | number | null> = []
+    if (patch.sex !== undefined) { sets.push('sex = ?'); args.push(sex(patch.sex)) }
+    if (patch.birth_year !== undefined) { sets.push('birth_year = ?'); args.push(birthYear(patch.birth_year)) }
+    if (patch.tags !== undefined) { sets.push('tags = ?'); args.push(JSON.stringify(tags(patch.tags))) }
+    if (typeof patch.summary === 'string') { sets.push('summary_enc = ?'); args.push(this.keys.encryptText(c.tenantId, patch.summary.slice(0, 5000))) }
+    if (patch.status === 'active' || patch.status === 'archived') { sets.push('status = ?'); args.push(patch.status) }
+    if (sets.length) c.db.db.prepare(`UPDATE patients SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...args, now(), patientId)
+    this.log(c, a, patientId, 'update', Object.keys(patch).join(','))
+    return this.visible(a, patientId).p
+  }
+
+  /** 删除患者（只有负责人）：库里的记录与加密文件一起删。 */
+  remove(a: Actor, patientId: string): void {
+    const { c } = this.requireTeam(a, patientId, 'owner')
+    for (const f of c.db.db.prepare('SELECT id FROM files WHERE patient_id = ?').all(patientId) as Array<{ id: string }>) rmSync(join(c.db.files, f.id), { force: true })
+    c.db.db.prepare('DELETE FROM patients WHERE id = ?').run(patientId)
+    this.log(c, a, patientId, 'delete')
+  }
+
+  /** 诊疗组成员才能改（机构全员可见 / 紧急访问只能看）。 */
+  private requireTeam(a: Actor, patientId: string, need: 'owner' | 'member' = 'member') {
+    const v = this.visible(a, patientId)
+    if (v.role !== 'owner' && (need === 'owner' || v.role !== 'member')) throw new PatientError('forbidden', need === 'owner' ? '只有负责人能做这件事' : '只有诊疗组成员能修改', 403)
+    return v
+  }
+
+  // —— 诊疗组与紧急访问 ——
+
+  addMember(a: Actor, patientId: string, userId: string): void {
+    const { c } = this.requireTeam(a, patientId, 'owner')
+    const u = this.store.getUser(userId)
+    if (!u || u.tenant_id !== c.tenantId || u.status !== 'active') throw new PatientError('not_found', '本机构没有这位成员', 404)
+    c.db.db.prepare('INSERT OR IGNORE INTO care_team (patient_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)').run(patientId, userId, 'member', a.userId, now())
+    this.log(c, a, patientId, 'team_add', userId)
+  }
+
+  removeMember(a: Actor, patientId: string, userId: string): void {
+    const { c } = this.requireTeam(a, patientId, 'owner')
+    if (userId === a.userId) throw new PatientError('self', '负责人不能把自己移出诊疗组', 409)
+    c.db.db.prepare("DELETE FROM care_team WHERE patient_id = ? AND user_id = ? AND role = 'member'").run(patientId, userId)
+    this.log(c, a, patientId, 'team_remove', userId)
+  }
+
+  /** 紧急访问：机构管理员填写理由后获得 24 小时只读访问，记访问日志与审计。 */
+  breakGlass(a: Actor, patientId: string, reason: unknown): { expires_at: string } {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能申请紧急访问', 403)
+    const c = this.ctx(a)
+    if (!c.tenantAdmin) throw new PatientError('forbidden', '只有机构管理员能紧急访问', 403)
+    const why = typeof reason === 'string' ? reason.trim() : ''
+    if (why.length < 10) throw new PatientError('reason_required', '请写明紧急访问的理由（至少 10 个字）')
+    if (!c.db.db.prepare('SELECT 1 FROM patients WHERE id = ?').get(patientId)) throw new PatientError('not_found', '患者不存在', 404)
+    const expires = new Date(Date.now() + BREAK_GLASS_HOURS * 3600_000).toISOString()
+    c.db.db.prepare('INSERT INTO break_glass (id, patient_id, user_id, reason, at, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run(rid('bg'), patientId, a.userId, why.slice(0, 500), now(), expires)
+    this.log(c, a, patientId, 'break_glass', why.slice(0, 500))
+    this.store.addAudit({ actor: a.userId, action: 'patient.break_glass', target: `患者 ${patientId}`, detail: why.slice(0, 200), tenant_id: c.tenantId })
+    return { expires_at: expires }
+  }
+
+  /** 机构管理员紧急访问前要知道患者存在：只给代号（不给内容）。 */
+  directory(a: Actor): Array<{ id: string; code: string }> {
+    const c = this.ctx(a)
+    if (!c.tenantAdmin) throw new PatientError('forbidden', '只有机构管理员能看患者目录', 403)
+    return c.db.db.prepare('SELECT id, code FROM patients ORDER BY code').all() as Array<{ id: string; code: string }>
+  }
+
+  accessLog(a: Actor, patientId: string): Array<{ at: string; user: string; action: string; via: string; detail: string | null }> {
+    const { c } = this.requireTeam(a, patientId, 'owner')
+    return (c.db.db.prepare('SELECT * FROM access_log WHERE patient_id = ? ORDER BY id DESC LIMIT 500').all(patientId) as Array<{ at: string; user_id: string; action: string; via: string; detail: string | null }>)
+      .map(r => ({ at: r.at, user: this.store.getUser(r.user_id)?.display_name ?? r.user_id, action: r.action, via: r.via, detail: r.detail }))
+  }
+
+  // —— 化验 ——
+
+  /** 人录入 / 确认的化验值直接生效；AI 走 propose。 */
+  addLab(a: Actor, patientId: string, input: Record<string, unknown>, opts: { status?: LabRow['status']; source?: LabRow['source']; recordId?: string | null } = {}): LabRow {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能直接写化验值，请用 patient_record_propose 提议', 403)
+    const { c } = this.requireTeam(a, patientId)
+    const lab = labInput(input)
+    const id = rid('lb')
+    const status = opts.status ?? 'confirmed'
+    c.db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, status, source, locator, created_by, created_at, confirmed_by, confirmed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, patientId, opts.recordId ?? null, testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit,
+      lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), lab.collected_on, status, opts.source ?? 'manual', lab.locator ? JSON.stringify(lab.locator) : null, a.userId, now(),
+      status === 'confirmed' ? a.userId : null, status === 'confirmed' ? now() : null)
+    c.db.db.prepare('UPDATE patients SET updated_at = ? WHERE id = ?').run(now(), patientId)
+    this.log(c, a, patientId, 'lab_add', lab.test_name)
+    return labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(id) as Record<string, unknown>)
+  }
+
+  setLabStatus(a: Actor, patientId: string, labId: string, status: 'confirmed' | 'rejected'): void {
+    const { c } = this.requireTeam(a, patientId)
+    const r = c.db.db.prepare("UPDATE labs SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ? AND patient_id = ? AND status = 'pending'").run(status, a.userId, now(), labId, patientId)
+    if (Number(r.changes) === 0) throw new PatientError('not_found', '没有待确认的这条化验', 404)
+    this.log(c, a, patientId, status === 'confirmed' ? 'lab_confirm' : 'lab_reject', labId)
+  }
+
+  /** 化验长表（只含已确认的；includePending 给审核界面用）。 */
+  labs(a: Actor, patientId: string, f: { tests?: string[]; from?: string; to?: string; includePending?: boolean } = {}): LabRow[] {
+    const { c } = this.visible(a, patientId)
+    const where = ['patient_id = ?', f.includePending ? "status IN ('confirmed', 'pending')" : "status = 'confirmed'"]
+    const args: string[] = [patientId]
+    if (f.from && DATE.test(f.from)) { where.push('collected_on >= ?'); args.push(f.from) }
+    if (f.to && DATE.test(f.to)) { where.push('collected_on <= ?'); args.push(f.to) }
+    let rows = (c.db.db.prepare(`SELECT * FROM labs WHERE ${where.join(' AND ')} ORDER BY test_key, collected_on`).all(...args) as Array<Record<string, unknown>>).map(labOf)
+    if (f.tests?.length) { const keys = new Set(f.tests.map(testKey)); rows = rows.filter(r => keys.has(r.test_key)) }
+    this.log(c, a, patientId, 'labs_read', f.tests?.join(',') ?? null)
+    return rows
+  }
+
+  /** 化验长表导出成 CSV（AI 放进工作区分析用；不含任何身份信息）。 */
+  labsCsv(a: Actor, patientId: string): { code: string; csv: string; rows: number } {
+    const { p } = this.visible(a, patientId)
+    const rows = this.labs(a, patientId)
+    const q = (v: unknown) => v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v)
+    const head = 'patient,test_key,test_name,value,value_text,unit,ref_low,ref_high,flag,collected_on'
+    const body = rows.map(r => [p.code, r.test_key, r.test_name, r.value_num, r.value_text, r.unit, r.ref_low, r.ref_high, r.flag, r.collected_on].map(q).join(','))
+    return { code: p.code, csv: [head, ...body].join('\n') + '\n', rows: rows.length }
+  }
+
+  // —— 文件与报告 ——
+
+  /** 上传原始报告：内容与文件名用机构密钥加密存盘，生成一条待确认的报告记录。 */
+  addFile(a: Actor, patientId: string, input: { name: string; mime: string; bytes: Uint8Array; kind?: RecordRow['kind']; report_date?: string | null; title?: string }): { file_id: string; record: RecordRow } {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能上传患者文件', 403)
+    const { c } = this.requireTeam(a, patientId)
+    if (input.bytes.byteLength > 30 * 1024 * 1024) throw new PatientError('too_large', '文件超过 30 MB')
+    const fid = rid('pf')
+    writeFileSync(join(c.db.files, fid), this.keys.encrypt(c.tenantId, Buffer.from(input.bytes)))
+    c.db.db.prepare('INSERT INTO files (id, patient_id, name_enc, mime, size, sha256, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(fid, patientId, this.keys.encryptText(c.tenantId, input.name)!, input.mime, input.bytes.byteLength, createHash('sha256').update(input.bytes).digest('hex'), a.userId, now())
+    const recId = rid('rc')
+    const kind = input.kind && ['lab_report', 'discharge', 'pathology', 'imaging', 'note', 'other'].includes(input.kind) ? input.kind : 'other'
+    c.db.db.prepare('INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(recId, patientId, kind, (input.title ?? '').trim().slice(0, 120) || '未命名报告', input.report_date && DATE.test(input.report_date) ? input.report_date : null, fid, 'pending', a.userId, now())
+    this.log(c, a, patientId, 'file_upload', fid)
+    return { file_id: fid, record: c.db.db.prepare('SELECT * FROM records WHERE id = ?').get(recId) as unknown as RecordRow }
+  }
+
+  file(a: Actor, patientId: string, fileId: string): { name: string; mime: string; bytes: Buffer } {
+    const { c } = this.visible(a, patientId)
+    const f = c.db.db.prepare('SELECT * FROM files WHERE id = ? AND patient_id = ?').get(fileId, patientId) as { id: string; name_enc: string; mime: string } | undefined
+    if (!f || !existsSync(join(c.db.files, f.id))) throw new PatientError('not_found', '文件不存在', 404)
+    this.log(c, a, patientId, 'file_download', fileId)
+    return { name: this.keys.decryptText(c.tenantId, f.name_enc)!, mime: f.mime, bytes: this.keys.decrypt(c.tenantId, readFileSync(join(c.db.files, f.id))) }
+  }
+
+  // —— AI 提议 ——
+
+  propose(a: Actor, patientId: string, input: { kind?: unknown; payload?: unknown; reason?: unknown }): ProposalRow {
+    const { c } = this.visible(a, patientId)
+    const kind = input.kind
+    if (kind !== 'lab' && kind !== 'tag' && kind !== 'note') throw new PatientError('bad_kind', 'kind 只能是 lab / tag / note')
+    const payload = (input.payload && typeof input.payload === 'object' ? input.payload : {}) as Record<string, unknown>
+    if (kind === 'lab') labInput(payload) // 先校验
+    if (kind === 'tag' && (typeof payload.tag !== 'string' || !payload.tag.trim())) throw new PatientError('bad_payload', 'tag 需要 payload.tag')
+    if (kind === 'note' && (typeof payload.text !== 'string' || !payload.text.trim())) throw new PatientError('bad_payload', 'note 需要 payload.text')
+    const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 300) : ''
+    if (!reason) throw new PatientError('reason_required', '请写明依据（来自哪份报告、哪一页）')
+    const id = rid('pp')
+    c.db.db.prepare('INSERT INTO proposals (id, patient_id, kind, payload, reason, turn_id, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, patientId, kind, JSON.stringify(payload), reason, a.turnId ?? null, 'pending', a.via === 'ai' ? `ai:${a.userId}` : a.userId, now())
+    this.log(c, a, patientId, 'propose', kind)
+    return proposalOf(c.db.db.prepare('SELECT * FROM proposals WHERE id = ?').get(id) as Record<string, unknown>)
+  }
+
+  private proposals(a: Actor, patientId: string, c: ReturnType<PatientService['ctx']>): ProposalRow[] {
+    return (c.db.db.prepare("SELECT * FROM proposals WHERE patient_id = ? AND status = 'pending' ORDER BY created_at").all(patientId) as Array<Record<string, unknown>>).map(proposalOf)
+  }
+
+  /** 诊疗组成员采纳 / 驳回 AI 的提议。采纳化验 → 一条已确认的化验（来源记为 ai）。 */
+  resolveProposal(a: Actor, patientId: string, proposalId: string, accept: boolean): void {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能采纳自己的提议', 403)
+    const { c, p } = this.requireTeam(a, patientId)
+    const r = c.db.db.prepare("SELECT * FROM proposals WHERE id = ? AND patient_id = ? AND status = 'pending'").get(proposalId, patientId) as Record<string, unknown> | undefined
+    if (!r) throw new PatientError('not_found', '没有这条待处理的提议', 404)
+    const prop = proposalOf(r)
+    if (accept) {
+      if (prop.kind === 'lab') {
+        const lab = this.addLab({ ...a, via: 'user' }, patientId, prop.payload)
+        c.db.db.prepare("UPDATE labs SET source = 'ai' WHERE id = ?").run(lab.id)
+      } else if (prop.kind === 'tag') {
+        this.update(a, patientId, { tags: [...new Set([...p.tags, String(prop.payload.tag).trim()])] })
+      } else {
+        const cur = this.keys.decryptText(c.tenantId, (c.db.db.prepare('SELECT summary_enc FROM patients WHERE id = ?').get(patientId) as { summary_enc: string | null }).summary_enc) ?? ''
+        this.update(a, patientId, { summary: (cur ? cur + '\n' : '') + String(prop.payload.text).trim() })
+      }
+    }
+    c.db.db.prepare('UPDATE proposals SET status = ?, resolved_by = ?, resolved_at = ? WHERE id = ?').run(accept ? 'accepted' : 'rejected', a.userId, now(), proposalId)
+    this.log(c, a, patientId, accept ? 'proposal_accept' : 'proposal_reject', proposalId)
+  }
+
+  /** 关掉所有库连接（测试 / 停机）。 */
+  close(): void { for (const d of this.dbs.values()) d.close(); this.dbs.clear() }
+}
+
+// —— 输入校验 ——
+
+function sex(v: unknown): 'M' | 'F' | null {
+  return v === 'M' || v === 'F' ? v : v === '男' ? 'M' : v === '女' ? 'F' : null
+}
+function birthYear(v: unknown): number | null {
+  const n = Number(v)
+  if (v === null || v === undefined || v === '') return null
+  if (!Number.isInteger(n) || n < 1900 || n > new Date().getFullYear()) throw new PatientError('bad_birth_year', '出生年份不对')
+  return n
+}
+function tags(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  return [...new Set(v.filter((x): x is string => typeof x === 'string').map(x => x.trim().slice(0, 40)).filter(Boolean))].slice(0, 20)
+}
+function labInput(v: Record<string, unknown>) {
+  const name = typeof v.test_name === 'string' ? v.test_name.trim().slice(0, 60) : ''
+  if (!name) throw new PatientError('bad_lab', '化验项目名不能为空')
+  const date = typeof v.collected_on === 'string' ? v.collected_on.trim() : ''
+  if (!DATE.test(date)) throw new PatientError('bad_lab', '化验日期要写成 YYYY-MM-DD（报告上的日期）')
+  const num = (x: unknown) => x === null || x === undefined || x === '' || !Number.isFinite(Number(x)) ? null : Number(x)
+  const value_num = num(v.value)
+  const value_text = value_num === null && typeof v.value === 'string' && v.value.trim() ? v.value.trim().slice(0, 60) : (typeof v.value_text === 'string' ? v.value_text.slice(0, 60) : null)
+  if (value_num === null && !value_text) throw new PatientError('bad_lab', '化验值不能为空')
+  const locator = v.locator && typeof v.locator === 'object' ? v.locator as LabRow['locator'] : null
+  return {
+    test_name: name, value_num, value_text, unit: typeof v.unit === 'string' ? v.unit.trim().slice(0, 20) || null : null,
+    ref_low: num(v.ref_low), ref_high: num(v.ref_high), ref_text: typeof v.ref_text === 'string' ? v.ref_text.slice(0, 60) : null, collected_on: date, locator,
+  }
+}
+function flagOf(l: ReturnType<typeof labInput>): 'H' | 'L' | null {
+  if (l.value_num === null) return null
+  if (l.ref_high !== null && l.value_num > l.ref_high) return 'H'
+  if (l.ref_low !== null && l.value_num < l.ref_low) return 'L'
+  return null
+}

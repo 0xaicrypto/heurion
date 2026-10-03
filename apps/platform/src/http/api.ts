@@ -9,6 +9,7 @@ import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
 import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import { TenantError, TenantService } from '../auth/tenants.ts'
+import { PatientError, type PatientService } from '../tenancy/patients.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
@@ -60,6 +61,8 @@ export interface ApiDeps {
   evolution?: MemoryEvolution
   /** 数据集（实验室数据分析）。 */
   datasets?: DatasetService
+  /** 患者（按机构分库，见 docs/design/TENANCY.md）。 */
+  patients?: PatientService
   devUser: string
 }
 
@@ -117,6 +120,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
     { method: 'POST', re: /^\/api\/datasets$/, action: 'dataset.upload' },
     { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
+    { method: 'POST', re: /^\/api\/patients$/, action: 'patient.create' },
+    { method: 'DELETE', re: /^\/api\/patients\/[^/]+$/, action: 'patient.delete' },
+    { method: 'GET', re: /^\/api\/patients\/[^/]+\/files\/[^/]+$/, action: 'patient.file_download' },
+    { method: 'POST', re: /^\/api\/patients\/[^/]+\/team$/, action: 'patient.team_add' },
+    { method: 'DELETE', re: /^\/api\/patients\/[^/]+\/team\/[^/]+$/, action: 'patient.team_remove' },
     { method: 'PATCH', re: /^\/api\/tenant\/members\/[^/]+$/, action: 'tenant.member_update' },
     { method: 'POST', re: /^\/api\/tenant\/invites$/, action: 'tenant.invite' },
     { method: 'DELETE', re: /^\/api\/tenant\/invites\/[^/]+$/, action: 'tenant.invite_revoke' },
@@ -251,6 +259,70 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       const rows = store.listAudit({ tenant: t.id, actor, action: c.req.query('action') || undefined, before: Number(c.req.query('before')) || undefined, limit: Number(c.req.query('limit')) || 100 })
       return c.json(rows.map(r => ({ ...r, actor_name: r.actor ? store.getUser(r.actor)?.username ?? r.actor : null })))
     } catch (err) { return tenantFailure(c, err) }
+  })
+
+  /** 同机构的同事（诊疗组选人用；只给名字）。 */
+  app.get('/api/tenant/colleagues', c => {
+    try {
+      const t = tenants.of(c.get('user'))
+      return c.json(store.tenantMembers(t.id).filter(u => u.status === 'active').map(u => ({ id: u.id, display_name: u.display_name, username: u.username })))
+    } catch (err) { return tenantFailure(c, err) }
+  })
+
+  // —— 患者（第二期）：机构分库、诊疗组、紧急访问；AI 只能提议 ——
+  const patientFailure = (c: Context, err: unknown) => {
+    if (err instanceof PatientError) return c.json({ error: err.message, code: err.code }, err.status)
+    if (err instanceof TenantError) return c.json({ error: err.message, code: err.code }, err.status)
+    throw err
+  }
+  const me = (c: Context<{ Variables: { user: string } }>) => ({ userId: c.get('user'), via: 'user' as const })
+  const pt = (c: Context<{ Variables: { user: string } }>) => {
+    if (!deps.patients) throw new PatientError('patient_module_off', '患者模块未启用', 403)
+    return deps.patients
+  }
+  app.get('/api/patients', c => { try { return c.json(pt(c).list(me(c))) } catch (err) { return patientFailure(c, err) } })
+  app.post('/api/patients', async c => { try { return c.json(pt(c).create(me(c), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) } })
+  app.get('/api/patients-directory', c => { try { return c.json(pt(c).directory(me(c))) } catch (err) { return patientFailure(c, err) } })
+  app.get('/api/patients/:ptid', c => { try { return c.json(pt(c).read(me(c), c.req.param('ptid'))) } catch (err) { return patientFailure(c, err) } })
+  app.patch('/api/patients/:ptid', async c => { try { return c.json(pt(c).update(me(c), c.req.param('ptid'), await c.req.json())) } catch (err) { return patientFailure(c, err) } })
+  app.delete('/api/patients/:ptid', c => { try { pt(c).remove(me(c), c.req.param('ptid')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
+  app.post('/api/patients/:ptid/team', async c => {
+    try { pt(c).addMember(me(c), c.req.param('ptid'), String((await c.req.json<{ user_id?: string }>()).user_id ?? '')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }
+  })
+  app.delete('/api/patients/:ptid/team/:uid', c => { try { pt(c).removeMember(me(c), c.req.param('ptid'), c.req.param('uid')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
+  app.post('/api/patients/:ptid/break-glass', async c => {
+    try { return c.json(pt(c).breakGlass(me(c), c.req.param('ptid'), (await c.req.json<{ reason?: string }>()).reason)) } catch (err) { return patientFailure(c, err) }
+  })
+  app.get('/api/patients/:ptid/access-log', c => { try { return c.json(pt(c).accessLog(me(c), c.req.param('ptid'))) } catch (err) { return patientFailure(c, err) } })
+  app.get('/api/patients/:ptid/labs', c => {
+    try {
+      const tests = c.req.query('tests')?.split(',').map(x => x.trim()).filter(Boolean)
+      return c.json(pt(c).labs(me(c), c.req.param('ptid'), { tests, from: c.req.query('from'), to: c.req.query('to'), includePending: c.req.query('pending') === '1' }))
+    } catch (err) { return patientFailure(c, err) }
+  })
+  app.post('/api/patients/:ptid/labs', async c => { try { return c.json(pt(c).addLab(me(c), c.req.param('ptid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) } })
+  app.post('/api/patients/:ptid/labs/:lid/:action{confirm|reject}', c => {
+    try { pt(c).setLabStatus(me(c), c.req.param('ptid'), c.req.param('lid'), c.req.param('action') === 'confirm' ? 'confirmed' : 'rejected'); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }
+  })
+  app.post('/api/patients/:ptid/files', async c => {
+    try {
+      const form = await c.req.parseBody()
+      const file = form.file instanceof File ? form.file : null
+      if (!file) return c.json({ error: '请选择文件' }, 400)
+      return c.json(pt(c).addFile(me(c), c.req.param('ptid'), {
+        name: file.name, mime: file.type || 'application/octet-stream', bytes: new Uint8Array(await file.arrayBuffer()),
+        kind: typeof form.kind === 'string' ? form.kind as never : undefined, report_date: typeof form.report_date === 'string' ? form.report_date : null, title: typeof form.title === 'string' ? form.title : undefined,
+      }), 201)
+    } catch (err) { return patientFailure(c, err) }
+  })
+  app.get('/api/patients/:ptid/files/:pfid', c => {
+    try {
+      const f = pt(c).file(me(c), c.req.param('ptid'), c.req.param('pfid'))
+      return c.body(new Uint8Array(f.bytes), 200, { 'Content-Type': f.mime, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'Cache-Control': 'no-store' })
+    } catch (err) { return patientFailure(c, err) }
+  })
+  app.post('/api/patients/:ptid/proposals/:prid/:action{accept|reject}', c => {
+    try { pt(c).resolveProposal(me(c), c.req.param('ptid'), c.req.param('prid'), c.req.param('action') === 'accept'); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }
   })
 
   // —— 平台运营：机构列表、新建机构（邀请首位管理员）、停用 / 恢复 ——

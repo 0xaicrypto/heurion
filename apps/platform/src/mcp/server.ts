@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, statSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, join, relative, isAbsolute } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -25,6 +25,8 @@ import { DocOp, OpError } from '../ops/types.ts'
 import { citationOrder, diff, outline, read, ReadError, search } from '../views/read.ts'
 import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import type { KbService } from '../kb/service.ts'
+import { PatientError, type PatientService } from '../tenancy/patients.ts'
+import { TenantError } from '../auth/tenants.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import { DiagramError, renderSvg } from '../render/diagram.ts'
@@ -51,6 +53,8 @@ export interface McpDeps {
   evolution?: MemoryEvolution
   /** 数据集（实验室数据分析）。 */
   datasets?: DatasetService
+  /** 患者（按机构分库）。 */
+  patients?: PatientService
   /** 开放获取全文（可选）。 */
   fulltext?: FullTextClient
 }
@@ -80,6 +84,8 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
   报告规范：先说明纳入多少例、缺失怎么处理；连续变量正态用均值±标准差、偏态用中位数（四分位距），分类变量用 n（%）；写清检验方法；效应量给 95% CI，P 值保留三位小数（<0.001 写 P<0.001）。
   Table 1 用文档原生表格写入（表题在表上方、表注写明统计方法）；图用 matplotlib 画（插入时写图注：图号、图题、样本量、统计方法，例如「图 1 两组 Kaplan-Meier 生存曲线（n=312，log-rank 检验）」）（中文用 Noto Sans CJK SC 字体），分析脚本存成 .py 文件运行，asset_upload 时给 code_path 和 dataset_ids，用户能看到图是怎么来的。
   只报告代码实际算出的数字，不要估计或编造；结果与预期不符就如实写。
+- 患者（patient_*、labs_*）：患者只有代号（P-0001），没有姓名，写作时也只用代号或「患者，男，60 余岁」这样的去标识写法。
+  只引用已确认的化验值并写明日期；发现报告里有值得记录的化验、诊断时用 patient_record_propose 提议（写清来自哪份报告、哪一页），由医生确认——你不能直接改患者记录。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -601,6 +607,85 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       const labels = Object.entries(dataset.labels)
       return json({ path: rel, rows: dataset.rows, columns: dataset.columns.map(c => c.name), ...(labels.length ? { labels: Object.fromEntries(labels) } : {}), hint: `pd.read_csv('${rel}')；画图、做表时用 labels 里的中文名` })
     } catch (err) { return datasetFail(err) }
+  })
+
+  const patientFail = (err: unknown) => {
+    if (err instanceof PatientError || err instanceof TenantError) return fail(err.code, err.message, err.code === 'external_model_off' ? { hint: '告诉用户本机构设置为患者数据不交给外部模型分析，需要机构管理员调整。' } : {})
+    throw err
+  }
+  const aiActor = () => ({ userId: claims.u, via: 'ai' as const, turnId: ctx.turnId })
+
+  server.registerTool('patient_list', {
+    description: '列出用户能看到的患者（代号、性别、出生年份、诊断标签、已确认的化验条数、最近化验日期）。患者没有姓名，只有代号。',
+    inputSchema: {},
+  }, async () => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      return json(deps.patients.list(aiActor()).map(p => ({ patient_id: p.id, code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, labs: p.labs, last_lab: p.last_lab, pending_review: p.pending })))
+    } catch (err) { return patientFail(err) }
+  })
+
+  server.registerTool('patient_read', {
+    description: '一位患者的概况：基本信息、诊断标签、摘要、报告列表（类型、报告日期、是否已确认）、各项化验的最近值（只含医生已确认的）。',
+    inputSchema: { patient_id: z.string() },
+  }, async ({ patient_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const p = deps.patients.read(aiActor(), patient_id)
+      return json({
+        patient_id: p.id, code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, summary: p.summary,
+        records: p.records.map(r => ({ kind: r.kind, title: r.title, report_date: r.report_date, status: r.status })),
+        latest_labs: p.latest_labs.map(l => ({ test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref: l.ref_low !== null || l.ref_high !== null ? `${l.ref_low ?? ''}–${l.ref_high ?? ''}` : l.ref_text, date: l.collected_on })),
+        pending_proposals: p.pending_proposals.length,
+      })
+    } catch (err) { return patientFail(err) }
+  })
+
+  server.registerTool('labs_query', {
+    description: '一位患者的化验长表（只含已确认的；按项目、日期排序）。tests 可写中文或缩写（肌酐 / Cr / creatinine 视为同一项）。看趋势、写病例时用。',
+    inputSchema: {
+      patient_id: z.string(),
+      tests: z.array(z.string()).optional(),
+      from: z.string().optional().describe('YYYY-MM-DD'),
+      to: z.string().optional().describe('YYYY-MM-DD'),
+    },
+  }, async ({ patient_id, tests, from, to }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      return json(deps.patients.labs(aiActor(), patient_id, { tests, from, to }).map(l => ({ test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref_low: l.ref_low, ref_high: l.ref_high, date: l.collected_on })))
+    } catch (err) { return patientFail(err) }
+  })
+
+  server.registerTool('labs_open', {
+    description: '把一位患者的已确认化验长表（CSV，只有代号）放进工作区 data/，用 Python 画趋势图或做统计。',
+    inputSchema: { patient_id: z.string() },
+  }, async ({ patient_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const r = deps.patients.labsCsv(aiActor(), patient_id)
+      const dir = join(deps.workspaceDir(claims.u), 'data')
+      if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
+      const rel = `data/patient-${r.code}-labs.csv`
+      writeFileSync(join(deps.workspaceDir(claims.u), rel), r.csv, { mode: 0o644 })
+      return json({ path: rel, rows: r.rows, columns: ['patient', 'test_key', 'test_name', 'value', 'value_text', 'unit', 'ref_low', 'ref_high', 'flag', 'collected_on'] })
+    } catch (err) { return patientFail(err) }
+  })
+
+  server.registerTool('patient_record_propose', {
+    description: '提议补充患者记录，由诊疗组的医生确认后才生效（你不能直接改患者记录）。kind=lab：payload {test_name, value, unit?, ref_low?, ref_high?, collected_on: 报告上的日期 YYYY-MM-DD}；' +
+      'kind=tag：payload {tag}（诊断标签）；kind=note：payload {text}（摘要补充）。reason 写清依据：来自哪份报告、哪一页。',
+    inputSchema: {
+      patient_id: z.string(),
+      kind: z.enum(['lab', 'tag', 'note']),
+      payload: z.record(z.string(), z.unknown()),
+      reason: z.string().min(1).max(300),
+    },
+  }, async ({ patient_id, kind, payload, reason }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const p = deps.patients.propose(aiActor(), patient_id, { kind, payload, reason })
+      return json({ result: 'proposed', proposal_id: p.id, message: '已提议，等医生在患者页确认' })
+    } catch (err) { return patientFail(err) }
   })
 
   server.registerTool('kb_search', {

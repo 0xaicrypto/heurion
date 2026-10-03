@@ -437,6 +437,8 @@ export class Store {
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
     if (!userCols.includes('tenant_id')) this.db.exec('ALTER TABLE users ADD COLUMN tenant_id TEXT')
+    const tenantCols = (this.db.prepare('PRAGMA table_info(tenants)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!tenantCols.includes('dek')) this.db.exec('ALTER TABLE tenants ADD COLUMN dek TEXT')
     if (!userCols.includes('tenant_role')) this.db.exec("ALTER TABLE users ADD COLUMN tenant_role TEXT NOT NULL DEFAULT 'member'")
     const auditCols = (this.db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>).map(c => c.name)
     if (!auditCols.includes('tenant_id')) this.db.exec('ALTER TABLE audit_events ADD COLUMN tenant_id TEXT')
@@ -506,6 +508,15 @@ export class Store {
   updateTenant(id: string, patch: Partial<Pick<TenantRow, 'name' | 'status' | 'settings' | 'kind'>>): void {
     const keys = Object.keys(patch) as Array<keyof typeof patch>
     if (keys.length) this.db.prepare(`UPDATE tenants SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string), id)
+  }
+
+  /** 机构数据密钥（已用平台主密钥加密，base64）；null = 还没生成或已销毁。 */
+  getTenantDek(id: string): string | null {
+    return (this.db.prepare('SELECT dek FROM tenants WHERE id = ?').get(id) as { dek: string | null } | undefined)?.dek ?? null
+  }
+
+  setTenantDek(id: string, dek: string | null): void {
+    this.db.prepare('UPDATE tenants SET dek = ? WHERE id = ?').run(dek, id)
   }
 
   tenantMembers(tenantId: string): Array<UserRow & { doc_count: number }> {

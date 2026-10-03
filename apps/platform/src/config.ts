@@ -53,6 +53,10 @@ export const config = {
   dshHomesDir: resolve(dataDir, 'platform', 'dsh-homes'),
   /** 数据集（上传的原文件、规范化后的 data.csv 与概况）。 */
   datasetsDir: resolve(dataDir, 'platform', 'datasets'),
+  /** 患者数据：每个机构一个子目录（patients.db + 加密文件），见 docs/design/TENANCY.md。 */
+  tenantsDir: resolve(dataDir, 'tenants'),
+  /** 平台主密钥（base64 的 32 字节）：包裹各机构的数据密钥。没配时从 HEURION_SECRET 派生。 */
+  kek: process.env.HEURION_KEK ?? '',
   /** 计算用的 Python（统计、数据导入）：容器里是 /opt/compute 的 venv；本地开发用仓库里的 .venv-compute。 */
   computePython: env('HEURION_PYTHON', existsSync('/opt/compute/bin/python3') ? '/opt/compute/bin/python3' : resolve(repoRoot, '.venv-compute/bin/python3')),
   /** OCR 语言模型目录（镜像里构建时已下载好；本机开发第一次用时下载）。 */

@@ -12,6 +12,9 @@ import { localOcr } from './kb/ocr.ts'
 import { KbService } from './kb/service.ts'
 import { makeIngest } from './datasets/ingest.ts'
 import { DatasetService } from './datasets/service.ts'
+import { TenantService } from './auth/tenants.ts'
+import { kekFrom, TenantKeys } from './tenancy/keys.ts'
+import { PatientService } from './tenancy/patients.ts'
 import { MemoryEvolution } from './memory/evolve.ts'
 import { MemoryService } from './memory/service.ts'
 import { MemorySignals } from './memory/signals.ts'
@@ -65,6 +68,8 @@ const datasets = new DatasetService(store, config.datasetsDir, makeIngest({
   script: fileURLToPath(new URL('../scripts/dataset_ingest.py', import.meta.url)),
   sandbox: config.sandbox ? { uid: userId => store.sandboxUid(userId), workspaceDir: userId => pool.workspaceDir(userId), homeDir: userId => pool.homeDir(userId) } : null,
 }))
+// 患者（按机构分库、机构密钥加密，见 docs/design/TENANCY.md）
+const patients = new PatientService(config.tenantsDir, new TenantService(store, { devMode: config.devMode }), new TenantKeys(store, kekFrom({ kek: config.kek, secret: config.secret })), store)
 const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
@@ -75,6 +80,7 @@ const mcpDeps = {
   memory,
   evolution,
   datasets,
+  patients,
   fulltext,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
@@ -98,7 +104,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

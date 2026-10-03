@@ -48,17 +48,40 @@ case "$MODE" in
     gzip -9 "$TMP/platform-$STAMP.db"
     rclone copy "$TMP/platform-$STAMP.db.gz" "$DEST/db/" --s3-no-check-bucket
     echo "✓ 数据库备份：platform-$STAMP.db.gz"
-    KEEP="${BACKUP_RETAIN_DAYS:-30}"; PREFIX=db ;;
+    # 各机构的患者库（docs/design/TENANCY.md）：逐个做一致性快照，连同已加密的原始文件一起打包。
+    # 文件与自由文本是用机构密钥加密的密文；机构密钥由平台主密钥（HEURION_KEK / HEURION_SECRET）包裹——恢复时必须有同一把主密钥。
+    docker exec heurion2 node -e "
+      const { DatabaseSync, backup } = require('node:sqlite'); const fs = require('node:fs'); const path = require('node:path')
+      const root = '/app/data/tenants', out = '/tmp/hb/tenants'
+      fs.rmSync('/tmp/hb', { recursive: true, force: true }); fs.mkdirSync(out, { recursive: true })
+      const dirs = fs.existsSync(root) ? fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 'patients.db'))) : []
+      ;(async () => {
+        for (const d of dirs) {
+          fs.mkdirSync(path.join(out, d), { recursive: true })
+          await backup(new DatabaseSync(path.join(root, d, 'patients.db'), { readOnly: true }), path.join(out, d, 'patients.db'))
+          if (fs.existsSync(path.join(root, d, 'files'))) fs.cpSync(path.join(root, d, 'files'), path.join(out, d, 'files'), { recursive: true })
+        }
+        console.log('tenants', dirs.length)
+      })().catch(e => { console.error(e); process.exit(1) })"
+    docker exec heurion2 tar czf /tmp/tenants-backup.tar.gz -C /tmp/hb tenants
+    docker cp heurion2:/tmp/tenants-backup.tar.gz "$TMP/tenants-$STAMP.tar.gz"
+    docker exec heurion2 rm -rf /tmp/hb /tmp/tenants-backup.tar.gz
+    rclone copy "$TMP/tenants-$STAMP.tar.gz" "$DEST/tenants/" --s3-no-check-bucket
+    echo "✓ 患者库备份：tenants-$STAMP.tar.gz"
+    KEEP="${BACKUP_RETAIN_DAYS:-30}"; PREFIXES="db tenants" ;;
   weekly)
-    docker run --rm -v heurion2_data:/data:ro alpine tar czf - -C /data platform/workspaces > "$TMP/workspaces-$STAMP.tar.gz"
+    # 工作区与数据集（上传的研究数据表）
+    docker run --rm -v heurion2_data:/data:ro alpine sh -c 'cd /data && tar czf - platform/workspaces $( [ -d platform/datasets ] && echo platform/datasets )' > "$TMP/workspaces-$STAMP.tar.gz"
     rclone copy "$TMP/workspaces-$STAMP.tar.gz" "$DEST/workspaces/" --s3-no-check-bucket
     echo "✓ 工作区备份：workspaces-$STAMP.tar.gz"
-    KEEP="${BACKUP_RETAIN_WEEKS:-8}"; PREFIX=workspaces ;;
+    KEEP="${BACKUP_RETAIN_WEEKS:-8}"; PREFIXES=workspaces ;;
   *) echo "usage: $0 daily|weekly|upload-dir <dir> <prefix>"; exit 2 ;;
 esac
 
 # 只保留最新 KEEP 份
-rclone lsf "$DEST/$PREFIX/" 2>/dev/null | sort -r | tail -n +$((KEEP + 1)) \
-  | while read -r f; do rclone deletefile "$DEST/$PREFIX/$f" 2>/dev/null || true; done || true
+for PREFIX in $PREFIXES; do
+  rclone lsf "$DEST/$PREFIX/" 2>/dev/null | sort -r | tail -n +$((KEEP + 1)) \
+    | while read -r f; do rclone deletefile "$DEST/$PREFIX/$f" 2>/dev/null || true; done || true
+done
 status ok "backup $MODE"
 echo "[BACKUP-OK] $MODE"
