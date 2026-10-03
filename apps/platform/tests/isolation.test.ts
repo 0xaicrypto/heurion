@@ -115,6 +115,7 @@ async function setup() {
   await json('POST', `/api/patients/${patient.id}/records/${pfile.record.id}/confirm`, A.token, {})
   const study = await json('POST', '/api/studies', A.token, { title: `研究 ${MARK}`, summary: MARK })
   await json('POST', `/api/studies/${study.id}/items`, A.token, { kind: 'dataset', ref_id: dataset.id })
+  await json('POST', `/api/studies/${study.id}/cohort`, A.token, { patient_ids: [patient.id] })
   const proposal = patients.propose({ userId: A.user.id, via: 'ai' }, patient.id, { kind: 'tag', payload: { tag: MARK }, reason: MARK })
 
   const seed: Seed = {
@@ -160,6 +161,8 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     expect((await t.call('GET', `/api/patients/${t.seed.patient}`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/patients/${t.seed.patient}/files/${t.seed.pfile}`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/studies/${t.seed.study}`, t.A.token)).text).toContain(MARK)
+    expect((await t.call('GET', `/api/studies/${t.seed.study}/cohort`, t.A.token)).text).toContain(MARK)
+    expect((await t.call('POST', `/api/studies/${t.seed.study}/cohort/preview`, t.A.token, {})).text).toContain(MARK)
     // 列表接口：B 看不到 A 的任何东西
     for (const p of ['/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies']) {
       const r = await t.call('GET', p, t.B.token)
@@ -176,7 +179,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
   const TOOL_PARAMS: Record<string, (s: Seed) => unknown> = {
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
-    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
+    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {
@@ -203,6 +206,8 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     expect(text(await own.callTool({ name: 'patient_read', arguments: { patient_id: t.seed.patient } }))).toContain(MARK)
     expect(text(await own.callTool({ name: 'labs_query', arguments: { patient_id: t.seed.patient } }))).toContain(MARK)
     expect(text(await own.callTool({ name: 'study_read', arguments: { study_id: t.seed.study } }))).toContain(MARK)
+    expect(text(await own.callTool({ name: 'study_cohort_list', arguments: { study_id: t.seed.study } }))).toContain(MARK)
+    expect(text(await own.callTool({ name: 'study_cohort_preview', arguments: { study_id: t.seed.study } }))).toContain(MARK)
 
     const client = await connect(t.B.user.id)
     const { tools } = await client.listTools()

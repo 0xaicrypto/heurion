@@ -23,13 +23,18 @@ export class DatasetError extends Error {
   constructor(readonly code: string, message: string) { super(message) }
 }
 
-export interface DatasetView extends Omit<DatasetRow, 'profile' | 'labels'> {
+export interface DatasetView extends Omit<DatasetRow, 'profile' | 'labels' | 'origin'> {
   columns: ColumnProfile[]
+  /** 平台生成的数据集的来源（研究队列快照等）；用户上传的为 null */
+  origin: DatasetOrigin | null
   labels: Record<string, string>
   /** 待用户处理的疑似身份信息列 */
   phi: Array<{ name: string; reason: string }>
   truncated: boolean
 }
+
+/** 平台生成的数据集（如研究队列快照）。trusted_columns：平台自己生成的列，不按「疑似身份信息」拦（列名像编号、日期也不是身份信息）。 */
+export interface DatasetOrigin { kind: string; trusted_columns?: string[]; [k: string]: unknown }
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '_')
 
@@ -46,7 +51,7 @@ export class DatasetService {
   csvPath(d: DatasetRow): string { return join(this.folder(d), 'data.csv') }
 
   /** 上传：同一用户重复上传同一文件返回已有的。处理在后台排队进行。 */
-  upload(owner: string, filename: string, bytes: Uint8Array): { dataset: DatasetView; duplicate: boolean } {
+  upload(owner: string, filename: string, bytes: Uint8Array, opts: { name?: string; origin?: DatasetOrigin; version?: number } = {}): { dataset: DatasetView; duplicate: boolean } {
     const ext = extname(filename).toLowerCase()
     const format = DATASET_FORMATS[ext]
     if (!format) throw new DatasetError('bad_format', `不支持的格式：${ext || '无扩展名'}（支持 CSV、Excel、SAS、SPSS、Stata）`)
@@ -55,8 +60,8 @@ export class DatasetService {
     const sha256 = createHash('sha256').update(bytes).digest('hex')
     const same = this.store.findDatasetBySha(owner, sha256)
     if (same) return { dataset: this.view(same), duplicate: true }
-    const name = filename.replace(/\.[^.]+$/, '').slice(0, 120) || '数据集'
-    const row = this.store.addDataset({ owner, name, filename: filename.slice(0, 200), format, size: bytes.byteLength, sha256 })
+    const name = (opts.name ?? filename.replace(/\.[^.]+$/, '')).slice(0, 120) || '数据集'
+    const row = this.store.addDataset({ owner, name, filename: filename.slice(0, 200), format, size: bytes.byteLength, sha256, origin: opts.origin ? JSON.stringify(opts.origin) : null, version: opts.version })
     mkdirSync(this.folder(row), { recursive: true })
     writeFileSync(this.original(row), bytes)
     this.schedule(row.id)
@@ -92,6 +97,8 @@ export class DatasetService {
       copyFileSync(r.csv, tmp)
       renameSync(tmp, this.csvPath(d))
       chmodSync(this.csvPath(d), 0o640)
+      const trusted = new Set((d.origin ? JSON.parse(d.origin) as DatasetOrigin : null)?.trusted_columns ?? [])
+      for (const c of r.profile.columns) if (c.phi && trusted.has(c.name)) delete c.phi
       const phi = r.profile.columns.filter(c => c.phi)
       this.store.updateDataset(id, { status: phi.length ? 'review' : 'ready', rows: r.profile.rows, cols: r.profile.columns.length, profile: JSON.stringify(r.profile), error: null })
     } finally {
@@ -146,6 +153,12 @@ export class DatasetService {
     return this.view(this.store.getDataset(id)!)
   }
 
+  /** 改平台生成的数据集的来源记录（研究队列刷新时数据没变，只更新指纹）。 */
+  setOrigin(owner: string, id: string, origin: DatasetOrigin): void {
+    this.own(owner, id)
+    this.store.updateDataset(id, { origin: JSON.stringify(origin) })
+  }
+
   remove(owner: string, id: string): void {
     const d = this.own(owner, id)
     this.store.deleteDataset(id)
@@ -183,8 +196,8 @@ export class DatasetService {
   private view(d: DatasetRow): DatasetView {
     const p = d.profile ? JSON.parse(d.profile) as Profile : null
     const columns = p && p.ok ? p.columns : []
-    const { profile: _p, labels, ...rest } = d
-    return { ...rest, columns, labels: JSON.parse(labels || '{}') as Record<string, string>, phi: columns.filter(c => c.phi).map(c => ({ name: c.name, reason: c.phi!.reason })), truncated: Boolean(p && p.ok && p.truncated) }
+    const { profile: _p, labels, origin, ...rest } = d
+    return { ...rest, origin: origin ? JSON.parse(origin) as DatasetOrigin : null, columns, labels: JSON.parse(labels || '{}') as Record<string, string>, phi: columns.filter(c => c.phi).map(c => ({ name: c.name, reason: c.phi!.reason })), truncated: Boolean(p && p.ok && p.truncated) }
   }
 }
 

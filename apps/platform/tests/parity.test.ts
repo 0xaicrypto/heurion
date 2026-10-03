@@ -49,6 +49,11 @@ const STUDY_PARITY: Record<string, string> = {
   'PATCH /api/studies/:sid': 'study_update',
   'POST /api/studies/:sid/items': 'study_link',
   'DELETE /api/studies/:sid/items/:kind/:rid': 'study_link',
+  'GET /api/studies/:sid/cohort': 'study_cohort_list',
+  'POST /api/studies/:sid/cohort/preview': 'study_cohort_preview',
+  'POST /api/studies/:sid/cohort': 'study_enroll',
+  'DELETE /api/studies/:sid/cohort/:ptid': 'study_unenroll',
+  'POST /api/studies/:sid/cohort/dataset': 'study_cohort_dataset',
 }
 const NOT_FOR_AI: Record<string, string> = {
   'DELETE /api/patients/:ptid': '删除患者不可恢复（与文档一致，AI 没有删除工具）',

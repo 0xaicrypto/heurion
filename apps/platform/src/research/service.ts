@@ -7,7 +7,7 @@ import type { Store, StudyRow } from '../store/db.ts'
  * - 分析不用手工维护：用这个研究的数据集画出来的图（带分析来源的资产）自动汇总。
  * - 删除研究只删这个容器：文档回到文档列表，数据集仍在「全部数据集」里。
  * - 归属按用户（与文档、数据集一致）；以后加研究团队协作时改按租户 + 成员。
- * 入组患者（从患者库按条件筛选）是第三期。
+ * 入组患者（从患者库按条件筛选）见 cohort.ts：入组关系在机构的患者库里，不进 study_items。
  */
 
 export const DESIGNS: Record<NonNullable<StudyRow['design']>, string> = {
@@ -23,7 +23,13 @@ export class StudyError extends Error {
 const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 export class StudyService {
+  /** 删除研究时的回调（清掉患者库里的入组关系，见 cohort.ts） */
+  onRemove: ((owner: string, id: string) => void) | null = null
+
   constructor(private readonly store: Store, private readonly datasets?: DatasetService) {}
+
+  /** 研究本身（只能是自己的；别人的当不存在）。 */
+  get(owner: string, id: string): StudyRow { return this.own(owner, id) }
 
   private own(owner: string, id: string): StudyRow {
     const s = this.store.getStudy(id)
@@ -61,6 +67,7 @@ export class StudyService {
   remove(owner: string, id: string): void {
     this.own(owner, id)
     for (const i of this.store.studyItems(id)) if (i.kind === 'doc') this.store.setDocContext(i.ref_id, null)
+    this.onRemove?.(owner, id)
     this.store.deleteStudy(id)
   }
 
@@ -105,7 +112,8 @@ export class StudyService {
     const datasetIds = items.filter(i => i.kind === 'dataset').map(i => i.ref_id)
     const datasets = datasetIds.flatMap(dsId => {
       const d = this.store.getDataset(dsId)
-      return d ? [{ dataset_id: d.id, name: d.name, format: d.format, rows: d.rows, cols: d.cols, status: d.status, updated_at: d.updated_at }] : []
+      const o = d?.origin ? JSON.parse(d.origin) as { kind?: string; shape?: string } : null
+      return d ? [{ dataset_id: d.id, name: d.name, format: d.format, rows: d.rows, cols: d.cols, status: d.status, updated_at: d.updated_at, version: d.version, cohort: o?.kind === 'cohort' ? { shape: o.shape ?? 'wide' } : null }] : []
     })
     const ids = new Set(datasetIds)
     const analyses = this.store.provenanceAssets(owner).filter(a => a.provenance.datasets.some(d => ids.has(d.id)))
