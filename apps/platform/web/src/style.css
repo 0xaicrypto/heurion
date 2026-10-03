@@ -868,3 +868,10 @@ button.block { width: 100%; padding: 10px 12px; }
 /* 浅色主题：照片与页面之间只留很短的过渡，避免大片发白 */
 :root[data-theme="light"] .start-photo::before { background: linear-gradient(90deg, var(--bg) 0%, transparent 10%), linear-gradient(0deg, rgba(4, 12, 9, .5) 0%, transparent 20%); }
 :root[data-theme="light"] .auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 10%), linear-gradient(0deg, rgba(4, 12, 9, .5) 0%, transparent 20%); }
+/* 照片再淡一些：整体盖一层页面底色（深色约 50%、浅色约 45%），署名不受影响 */
+.start-photo::before { background: linear-gradient(90deg, var(--bg) 0%, transparent 30%), linear-gradient(0deg, rgba(4, 12, 9, .45) 0%, transparent 18%), linear-gradient(color-mix(in srgb, var(--bg) 50%, transparent), color-mix(in srgb, var(--bg) 50%, transparent)); }
+.auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 30%), linear-gradient(0deg, rgba(4, 12, 9, .45) 0%, transparent 18%), linear-gradient(color-mix(in srgb, var(--bg) 50%, transparent), color-mix(in srgb, var(--bg) 50%, transparent)); }
+:root[data-theme="light"] .start-photo::before { background: linear-gradient(90deg, var(--bg) 0%, transparent 18%), linear-gradient(0deg, rgba(4, 12, 9, .4) 0%, transparent 16%), linear-gradient(color-mix(in srgb, var(--bg) 45%, transparent), color-mix(in srgb, var(--bg) 45%, transparent)); }
+:root[data-theme="light"] .auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 18%), linear-gradient(0deg, rgba(4, 12, 9, .4) 0%, transparent 16%), linear-gradient(color-mix(in srgb, var(--bg) 45%, transparent), color-mix(in srgb, var(--bg) 45%, transparent)); }
+:root:not([data-theme="light"]) .start-photo { filter: saturate(.75); }
+:root[data-theme="light"] .start-photo { filter: saturate(.8); }
