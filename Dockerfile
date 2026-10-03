@@ -4,7 +4,7 @@ FROM node:24-bookworm-slim
 # dsh shell 的计算环境（统计、作图、读资料）。文档编辑只走 MCP，因此不装 python-docx/pptx。
 # LibreOffice 无界面版（Writer / Impress）：导出文件的渲染校验、幻灯片渲染；poppler：PDF 转 PNG；Noto CJK 保证中文渲染
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv git ca-certificates sudo \
+      python3 python3-venv git ca-certificates sudo iptables curl \
       libreoffice-writer-nogui libreoffice-impress-nogui poppler-utils \
       fonts-noto-cjk fonts-liberation2 \
     && rm -rf /var/lib/apt/lists/*

@@ -19,6 +19,8 @@ services:
     restart: unless-stopped
     logging: *default-logging
     mem_limit: 4g
+    # AI 代码出站白名单（入口用 iptables 只放行本机平台端口）
+    cap_add: [NET_ADMIN]
     env_file: [.env.production]
     environment:
       - NODE_ENV=production

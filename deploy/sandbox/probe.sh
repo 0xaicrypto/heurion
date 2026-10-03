@@ -31,6 +31,9 @@ run_as 59999 "$A" "cat $ROOT/workspaces/$B/secret.txt" | grep -q b-secret && bad
 run_as 59999 "$A" "echo x > $ROOT/workspaces/$B/pwn.txt" >/dev/null; [ -e "$ROOT/workspaces/$B/pwn.txt" ] && bad "写进了别人的工作区" || ok "写不进别人的工作区"
 run_as 59999 "$A" 'sudo -n true' >/dev/null 2>&1 && bad "隔离用户能用 sudo" || ok "隔离用户不能用 sudo"
 run_as 59999 "$A" 'ls /app/data' >/dev/null 2>&1 && bad "能列出 /app/data" || ok "不能列出 /app/data"
+run_as 59999 "$A" "curl -fsS -m 5 http://127.0.0.1:${PORT:-8787}/healthz" | grep -q '"ok":true' && ok "能连本机平台（MCP / 模型代理）" || bad "连不上本机平台"
+run_as 59999 "$A" 'curl -sS -m 5 -o /dev/null https://example.com' >/dev/null 2>&1 && bad "能访问外网" || ok "不能访问外网"
+run_as 59999 "$A" 'curl -sS -m 5 -o /dev/null http://embedder:8003/health' >/dev/null 2>&1 && bad "能访问内部网络的其他服务" || ok "不能访问内部网络的其他服务"
 
 rm -rf "$ROOT/workspaces/$A" "$ROOT/workspaces/$B" "$ROOT/dsh-homes/$A" "$ROOT/dsh-homes/$B" 2>/dev/null \
   || sudo -n /usr/local/bin/heurion-sandbox-exec 59999 "$ROOT/workspaces/$A" "$ROOT/dsh-homes/$A" -- bash -c 'rm -rf ./* ./.tmp' >/dev/null 2>&1

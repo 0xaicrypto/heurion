@@ -10,7 +10,7 @@
 | `heurion2-embedder` | `ghcr.io/0xaicrypto/heurion2-embedder:<sha>`（`apps/embedder/Dockerfile`） | 本地 bge-m3 嵌入服务，模型构建时打进镜像；只在内部网络可达 |
 | `heurion2-caddy` | `caddy:2.8-alpine` | 反向代理 + 自动 HTTPS，唯一暴露 80/443；`/mcp` 不对外 |
 
-**AI 代码隔离**：平台容器以 root 启动，入口（`deploy/entrypoint.sh`）整理数据目录权限后降到 `node` 运行平台。每个平台用户的 dsh 进程及其执行的代码经 `sudo` + `deploy/sandbox/heurion-sandbox-exec` 降到该用户专属的 uid（20000 起，见 `sandbox_uids` 表）：只能进自己的工作区，读不到数据库、其他用户的工作区和平台进程的环境；环境只有白名单变量；进程数与文件大小受限。模型调用经平台代理（`/llm/v1`），真实 DeepSeek key 不进 dsh。部署后 `deploy/sandbox/probe.sh` 自检。出站网络尚未限制（M2）。
+**AI 代码隔离**：平台容器以 root 启动，入口（`deploy/entrypoint.sh`）整理数据目录权限后降到 `node` 运行平台。每个平台用户的 dsh 进程及其执行的代码经 `sudo` + `deploy/sandbox/heurion-sandbox-exec` 降到该用户专属的 uid（20000 起，见 `sandbox_uids` 表）：只能进自己的工作区，读不到数据库、其他用户的工作区和平台进程的环境；环境只有白名单变量；进程数与文件大小受限。模型调用经平台代理（`/llm/v1`），真实 DeepSeek key 不进 dsh。部署后 `deploy/sandbox/probe.sh` 自检。出站白名单：入口用 iptables 只允许隔离 uid 连本机平台端口（MCP 与模型代理），外网与内部网络的其他服务一律拒绝（容器需要 `cap_add: [NET_ADMIN]`）。
 
 VPS 上的目录 `/opt/heurion2`：`docker-compose.yml`、`Caddyfile`、`.env.production`（0600）、`scripts/`、`backups/`（0700）、`.cutover-done`。
 
