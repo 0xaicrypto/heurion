@@ -20,7 +20,8 @@ import { readLayouts } from '../convert/pptx-layouts.ts'
 import { pptxTemplate } from '../convert/pptx-template.ts'
 import { DECK_THEMES } from '../model/deck-themes.ts'
 import { newDeckContent } from '../ops/deck.ts'
-import { readFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { SlideRenderer } from '../render/slides.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
 import { importReferences, parseReferences } from '../literature/import-refs.ts'
@@ -63,6 +64,8 @@ export interface ApiDeps {
   datasets?: DatasetService
   /** 患者（按机构分库，见 docs/design/TENANCY.md）。 */
   patients?: PatientService
+  /** 用户的 AI 工作区（对话里贴的图片放这里，AI 用 read_image 看）。 */
+  workspaceDir?: (userId: string) => string
   devUser: string
 }
 
@@ -1051,7 +1054,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { message, suggest, kb_files, datasets, patients, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; datasets?: string[]; patients?: string[]; memory?: boolean }>()
+    const { message, suggest, kb_files, datasets, patients, images, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; datasets?: string[]; patients?: string[]; images?: string[]; memory?: boolean }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
     // 对话里选中的参考资料：告诉 AI 用哪几份（只认自己的资料）
     const picked = (kb_files ?? []).slice(0, 20).map(id => store.getKbFile(id)).filter(f => f && f.owner === c.get('user'))
@@ -1068,7 +1071,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         if (picked.length) pnote = `\n\n［患者］请用 patient_read / labs_query 查看（只用代号，不要写姓名）：${picked.map(p => `${p!.code}(patient_id=${p!.id})`).join('、')}`
       } catch { /* 本机构没开患者模块 */ }
     }
-    return streamTurn(c, deps, row.id, message.trim() + note + dnote + pnote, { suggest, ...(memory === false ? { memory: false } : {}) })
+    // 对话里贴的图片（自己的图片资产）：放进 AI 工作区 attachments/，AI 用 read_image 看；要插进文稿可直接用资产 id
+    let inote = ''
+    const pics = (images ?? []).slice(0, 8).map(id => store.getAsset(id)).filter(a => a && a.owner === c.get('user') && a.mime.startsWith('image/'))
+    if (pics.length && deps.workspaceDir) {
+      const dir = join(deps.workspaceDir(c.get('user')), 'attachments')
+      if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
+      const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' }
+      const files = pics.map(a => {
+        const rel = `attachments/${a!.id}.${EXT[a!.mime] ?? 'png'}`
+        writeFileSync(join(deps.workspaceDir!(c.get('user')), rel), store.getAssetBytes(a!.id)!, { mode: 0o644 })
+        return `${rel}(asset_id=${a!.id})`
+      })
+      inote = `\n\n［图片］用户在对话里附了 ${pics.length} 张图片，用 read_image 查看：${files.join('、')}。要放进文稿时直接用 ![说明](asset:<asset_id> "图注")。`
+    }
+    return streamTurn(c, deps, row.id, message.trim() + note + dnote + pnote + inote, { suggest, ...(memory === false ? { memory: false } : {}) })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消

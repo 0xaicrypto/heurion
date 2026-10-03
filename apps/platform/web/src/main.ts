@@ -751,6 +751,7 @@ function displayMessage(text: string): string {
   return text.replace(/\n\n［(参考资料|数据集)］[^：]*：(.*)/g, (_m, kind: string, list: string) =>
     `\n（${kind === '数据集' ? '数据' : '资料'}：${[...list.matchAll(/《([^》]+)》/g)].map(x => x[1]).join('、')}）`)
     .replace(/\n\n［患者］[^：]*：(.*)/g, (_m, list: string) => `\n（患者：${[...list.matchAll(/(P-\d+)\(/g)].map(x => x[1]).join('、')}）`)
+    .replace(/\n\n［图片］.*/g, m => [...m.matchAll(/asset_id=([A-Za-z0-9]+)/g)].map(x => `⟦img:${x[1]}⟧`).join(''))
 }
 
 /** AI 文字常带 **粗体** 与 `代码`：转义后只渲染这两种。 */
@@ -763,7 +764,17 @@ function addMsg(role: 'user' | 'assistant', text: string, revertTurn: string | n
   div.className = `msg ${role}`
   // AI 回复常带 **粗体** 与 `代码`：转义后只渲染这两种
   if (role === 'assistant') div.innerHTML = lightMarkdown(text)
-  else div.textContent = text
+  else {
+    // 用户消息里贴的图片（displayMessage 留下的 ⟦img:资产 id⟧）：显示缩略图
+    const ids = [...text.matchAll(/⟦img:([A-Za-z0-9]+)⟧/g)].map(m => m[1]!)
+    div.textContent = text.replace(/⟦img:[A-Za-z0-9]+⟧/g, '').trim()
+    if (ids.length) {
+      const row = document.createElement('div')
+      row.className = 'msg-images'
+      row.innerHTML = ids.map(id => `<a href="/api/assets/${id}?token=${encodeURIComponent(TOKEN)}" target="_blank" rel="noreferrer"><img src="/api/assets/${id}?token=${encodeURIComponent(TOKEN)}" alt="图片"></a>`).join('')
+      div.appendChild(row)
+    }
+  }
   if (revertTurn) attachRevert(div, revertTurn)
   $('chatLog').appendChild(div)
   $('chatLog').scrollTop = 1e9
@@ -994,12 +1005,49 @@ function setBusy(b: boolean): void {
   $<HTMLButtonElement>('sendBtn').textContent = b ? '排队发送' : '发送'
 }
 
+// —— 对话里贴图：粘贴 / 拖入的图片先上传为资产，发送时一起带上（AI 用 read_image 看） ——
+let chatImages: Array<{ id: string; name: string }> = []
+function renderChatImages(): void {
+  const box = $('chatImages')
+  box.hidden = chatImages.length === 0
+  box.innerHTML = chatImages.map(i => `<span class="chat-img" data-id="${i.id}"><img src="/api/assets/${i.id}?token=${encodeURIComponent(TOKEN)}" alt="${esc(i.name)}"><button class="chip-x" aria-label="移除">✕</button></span>`).join('')
+    + (chatImages.length ? '<span class="muted small chat-img-hint">图片会发给 AI 模型，不要贴含患者姓名、证件号等身份信息的图</span>' : '')
+}
+async function attachImages(files: File[]): Promise<void> {
+  if (!session) { showNotice('先打开一份文档再贴图', true); return }
+  for (const f of files.slice(0, 8 - chatImages.length)) {
+    if (f.size > 10 * 1024 * 1024) { showNotice(`${f.name} 超过 10MB`, true); continue }
+    const fd = new FormData()
+    fd.append('file', f)
+    try { chatImages.push({ id: (await api(`/api/docs/${session.docId}/assets`, { method: 'POST', body: fd })).asset_id, name: f.name || '图片' }) }
+    catch (err) { showNotice(`图片上传失败：${(err as Error).message}`, true) }
+  }
+  renderChatImages()
+}
+$<HTMLTextAreaElement>('chatInput').addEventListener('paste', e => {
+  const files = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'))
+  if (files.length) { e.preventDefault(); void attachImages(files) }
+})
+document.querySelector('.composer')!.addEventListener('dragover', e => { if ([...((e as DragEvent).dataTransfer?.items ?? [])].some(i => i.type.startsWith('image/'))) e.preventDefault() })
+document.querySelector('.composer')!.addEventListener('drop', e => {
+  const files = [...((e as DragEvent).dataTransfer?.files ?? [])].filter(f => f.type.startsWith('image/'))
+  if (files.length) { e.preventDefault(); void attachImages(files) }
+})
+$('chatImages').onclick = e => {
+  const id = ((e.target as HTMLElement).closest('.chip-x')?.parentElement as HTMLElement | undefined)?.dataset.id
+  if (id) { chatImages = chatImages.filter(i => i.id !== id); renderChatImages() }
+}
+
 async function send(): Promise<void> {
-  const text = $<HTMLTextAreaElement>('chatInput').value.trim()
-  if (!text || !session) return
+  const typed = $<HTMLTextAreaElement>('chatInput').value.trim()
+  if ((!typed && chatImages.length === 0) || !session) return
+  const text = typed || '请看我附的图片'
+  const images = chatImages.map(i => i.id)
+  chatImages = []
+  renderChatImages()
   $<HTMLTextAreaElement>('chatInput').value = ''
   try {
-    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), datasets: datasets.takePicked(), memory: memory.takeMemoryFlag() }) })
+    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), datasets: datasets.takePicked(), images, memory: memory.takeMemoryFlag() }) })
   } catch (err) {
     showNotice((err as Error).message, true)
   }
