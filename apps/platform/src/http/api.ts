@@ -9,6 +9,7 @@ import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
 import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import { TenantError, TenantService } from '../auth/tenants.ts'
+import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
@@ -64,6 +65,8 @@ export interface ApiDeps {
   datasets?: DatasetService
   /** 患者（按机构分库，见 docs/design/TENANCY.md）。 */
   patients?: PatientService
+  /** 临床研究项目。 */
+  studies?: StudyService
   /** 用户的 AI 工作区（对话里贴的图片放这里，AI 用 read_image 看）。 */
   workspaceDir?: (userId: string) => string
   devUser: string
@@ -122,6 +125,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'GET', re: /^\/api\/memory-export$/, action: 'memory.export' },
     { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
     { method: 'POST', re: /^\/api\/datasets$/, action: 'dataset.upload' },
+    { method: 'DELETE', re: /^\/api\/studies\/[^/]+$/, action: 'study.delete' },
     { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
     { method: 'POST', re: /^\/api\/patients$/, action: 'patient.create' },
     { method: 'DELETE', re: /^\/api\/patients\/[^/]+$/, action: 'patient.delete' },
@@ -1009,6 +1013,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   // —— 对话 ——
 
+  // —— 临床研究项目 ——
+  const studyFailure = (c: Context, err: unknown) => {
+    if (err instanceof StudyError) return c.json({ error: err.message, code: err.code }, err.status)
+    throw err
+  }
+  const st = () => { if (!deps.studies) throw new StudyError('unavailable', '临床研究未启用', 400); return deps.studies }
+  app.get('/api/studies', c => { try { return c.json(st().list(c.get('user'))) } catch (err) { return studyFailure(c, err) } })
+  app.post('/api/studies', async c => { try { return c.json(st().create(c.get('user'), await c.req.json()), 201) } catch (err) { return studyFailure(c, err) } })
+  app.get('/api/studies/:sid', c => { try { return c.json(st().read(c.get('user'), c.req.param('sid'))) } catch (err) { return studyFailure(c, err) } })
+  app.patch('/api/studies/:sid', async c => { try { return c.json(st().update(c.get('user'), c.req.param('sid'), await c.req.json())) } catch (err) { return studyFailure(c, err) } })
+  app.delete('/api/studies/:sid', c => { try { st().remove(c.get('user'), c.req.param('sid')); return c.json({ ok: true }) } catch (err) { return studyFailure(c, err) } })
+  /** 归入文档 / 数据集：{kind: doc | dataset, ref_id, role?: protocol | manuscript | slides | other} */
+  app.post('/api/studies/:sid/items', async c => { try { st().link(c.get('user'), c.req.param('sid'), await c.req.json()); return c.json({ ok: true }, 201) } catch (err) { return studyFailure(c, err) } })
+  app.delete('/api/studies/:sid/items/:kind/:rid', c => { try { st().unlink(c.get('user'), c.req.param('sid'), c.req.param('kind'), c.req.param('rid')); return c.json({ ok: true }) } catch (err) { return studyFailure(c, err) } })
+
   // —— 数据集（实验室数据分析） ——
   const datasetFailure = (c: Context, err: unknown) => {
     if (err instanceof DatasetError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : 400)
@@ -1059,8 +1078,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     // 对话里选中的参考资料：告诉 AI 用哪几份（只认自己的资料）
     const picked = (kb_files ?? []).slice(0, 20).map(id => store.getKbFile(id)).filter(f => f && f.owner === c.get('user'))
     const note = picked.length === 0 ? '' : `\n\n［参考资料］请依据这些资料（kb_search 用 file_ids 限定检索，kb_read 读原文）：${picked.map(f => `《${f!.name}》(file_id=${f!.id})`).join('、')}`
-    // 对话里选中的数据集（只认自己的、已可用的）
-    const sets = (datasets ?? []).slice(0, 10).map(id => store.getDataset(id)).filter(d => d && d.owner === c.get('user') && d.status === 'ready')
+    // 对话里选中的数据集（只认自己的、已可用的）；研究项目里的文档自动带上这个研究的数据集
+    const ctx = row.context ? JSON.parse(row.context) as { kind?: string; study_id?: string; title?: string } : null
+    const studySets = ctx?.kind === 'study' && ctx.study_id && deps.studies ? (() => { try { return deps.studies!.readyDatasets(c.get('user'), ctx.study_id!).map(d => d.dataset_id) } catch { return [] } })() : []
+    const sets = [...new Set([...(datasets ?? []).slice(0, 10), ...studySets])].map(id => store.getDataset(id)).filter(d => d && d.owner === c.get('user') && d.status === 'ready')
+    const snote = ctx?.kind === 'study' ? `\n\n［研究］这份文档属于研究项目「${ctx.title ?? ''}」(study_id=${ctx.study_id})，可用 study_read 看方案、数据集、已有分析。` : ''
     const dnote = sets.length === 0 ? '' : `\n\n［数据集］请用这些数据分析（dataset_describe 看变量，dataset_open 放进工作区后用 Python 分析）：${sets.map(d => `《${d!.name}》(dataset_id=${d!.id}，${d!.rows} 行 × ${d!.cols} 列)`).join('、')}`
     // 对话里带上的患者（只认自己看得到的；只给代号）
     let pnote = ''
@@ -1085,7 +1107,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       })
       inote = `\n\n［图片］用户在对话里附了 ${pics.length} 张图片，用 read_image 查看：${files.join('、')}。要放进文稿时直接用 ![说明](asset:<asset_id> "图注")。`
     }
-    return streamTurn(c, deps, row.id, message.trim() + note + dnote + pnote + inote, { suggest, ...(memory === false ? { memory: false } : {}) })
+    return streamTurn(c, deps, row.id, message.trim() + note + dnote + snote + pnote + inote, { suggest, ...(memory === false ? { memory: false } : {}) })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消

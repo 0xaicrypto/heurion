@@ -779,6 +779,7 @@ function displayMessage(text: string): string {
   return text.replace(/\n\n［(参考资料|数据集)］[^：]*：(.*)/g, (_m, kind: string, list: string) =>
     `\n（${kind === '数据集' ? '数据' : '资料'}：${[...list.matchAll(/《([^》]+)》/g)].map(x => x[1]).join('、')}）`)
     .replace(/\n\n［患者］[^：]*：(.*)/g, (_m, list: string) => `\n（患者：${[...list.matchAll(/(P-\d+)\(/g)].map(x => x[1]).join('、')}）`)
+    .replace(/\n\n［研究］.*/g, '')
     .replace(/\n\n［图片］.*/g, m => [...m.matchAll(/asset_id=([A-Za-z0-9]+)/g)].map(x => `⟦img:${x[1]}⟧`).join(''))
 }
 

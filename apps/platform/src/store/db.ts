@@ -126,6 +126,14 @@ export interface DatasetRow {
   error: string | null; version: number; created_at: string; updated_at: string
 }
 
+/** 临床研究项目：方案、数据集、分析、稿件放在一起（文档与数据集经 study_items 归入，各自只属于一个研究）。 */
+export interface StudyRow {
+  id: string; owner: string; title: string
+  design: 'retrospective_cohort' | 'prospective_cohort' | 'rct' | 'case_control' | 'cross_sectional' | 'other' | null
+  status: 'planning' | 'ongoing' | 'completed'; summary: string | null; created_at: string; updated_at: string
+}
+export interface StudyItemRow { study_id: string; kind: 'doc' | 'dataset'; ref_id: string; role: string; added_at: string }
+
 /** 记忆演进的信号：用户改写了 AI 写的段落（edit_ai）、拒绝了 AI 的修订（reject）。整理时交给模型总结规律。 */
 export interface MemorySignalRow {
   id: string; owner: string; doc_id: string; node_id: string | null; kind: 'edit_ai' | 'reject'
@@ -397,6 +405,14 @@ export class Store {
         sha256 TEXT NOT NULL, status TEXT NOT NULL, rows INTEGER NOT NULL DEFAULT 0, cols INTEGER NOT NULL DEFAULT 0, profile TEXT,
         labels TEXT NOT NULL DEFAULT '{}', error TEXT, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
         UNIQUE (owner, sha256)
+      );
+      CREATE TABLE IF NOT EXISTS studies (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, design TEXT, status TEXT NOT NULL DEFAULT 'planning', summary TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS study_items (
+        study_id TEXT NOT NULL REFERENCES studies(id) ON DELETE CASCADE, kind TEXT NOT NULL, ref_id TEXT NOT NULL, role TEXT NOT NULL, added_at TEXT NOT NULL,
+        PRIMARY KEY (study_id, kind, ref_id), UNIQUE (kind, ref_id)
       );
       CREATE TABLE IF NOT EXISTS memory_signals (
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc_id TEXT NOT NULL, node_id TEXT, kind TEXT NOT NULL,
@@ -906,6 +922,57 @@ export class Store {
     const t = now()
     const st = this.db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?')
     for (const id of ids) st.run(t, id)
+  }
+
+  // —— 临床研究 ——
+
+  addStudy(s: Pick<StudyRow, 'owner' | 'title' | 'design' | 'status' | 'summary'>): StudyRow {
+    const id = 'st' + randomUUID().replace(/-/g, '').slice(0, 10)
+    const t = now()
+    this.db.prepare('INSERT INTO studies (id, owner, title, design, status, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, s.owner, s.title, s.design, s.status, s.summary, t, t)
+    return this.getStudy(id)!
+  }
+
+  getStudy(id: string): StudyRow | undefined {
+    return this.db.prepare('SELECT * FROM studies WHERE id = ?').get(id) as unknown as StudyRow | undefined
+  }
+
+  listStudies(owner: string): StudyRow[] {
+    return this.db.prepare('SELECT * FROM studies WHERE owner = ? ORDER BY updated_at DESC').all(owner) as unknown as StudyRow[]
+  }
+
+  updateStudy(id: string, patch: Partial<Pick<StudyRow, 'title' | 'design' | 'status' | 'summary'>>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    this.db.prepare(`UPDATE studies SET ${[...keys.map(k => `${k} = ?`), 'updated_at = ?'].join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string | null), now(), id)
+  }
+
+  deleteStudy(id: string): void {
+    this.db.prepare('DELETE FROM study_items WHERE study_id = ?').run(id)
+    this.db.prepare('DELETE FROM studies WHERE id = ?').run(id)
+  }
+
+  studyItems(studyId: string): StudyItemRow[] {
+    return this.db.prepare('SELECT * FROM study_items WHERE study_id = ? ORDER BY added_at').all(studyId) as unknown as StudyItemRow[]
+  }
+
+  /** 某个文档 / 数据集归在哪个研究里（每样只属于一个研究）。 */
+  studyOf(kind: StudyItemRow['kind'], refId: string): StudyItemRow | undefined {
+    return this.db.prepare('SELECT * FROM study_items WHERE kind = ? AND ref_id = ?').get(kind, refId) as unknown as StudyItemRow | undefined
+  }
+
+  addStudyItem(i: Omit<StudyItemRow, 'added_at'>): void {
+    this.db.prepare('INSERT INTO study_items (study_id, kind, ref_id, role, added_at) VALUES (?, ?, ?, ?, ?)').run(i.study_id, i.kind, i.ref_id, i.role, now())
+    this.db.prepare('UPDATE studies SET updated_at = ? WHERE id = ?').run(now(), i.study_id)
+  }
+
+  removeStudyItem(studyId: string, kind: StudyItemRow['kind'], refId: string): boolean {
+    return Number(this.db.prepare('DELETE FROM study_items WHERE study_id = ? AND kind = ? AND ref_id = ?').run(studyId, kind, refId).changes) > 0
+  }
+
+  /** 用户带分析来源的图（研究的「分析」从这里按数据集汇总）。 */
+  provenanceAssets(owner: string): Array<{ id: string; name: string; created_at: string; provenance: AssetProvenance }> {
+    return (this.db.prepare('SELECT id, name, created_at, provenance FROM assets WHERE owner = ? AND provenance IS NOT NULL ORDER BY created_at DESC').all(owner) as Array<{ id: string; name: string; created_at: string; provenance: string }>)
+      .map(r => ({ ...r, provenance: JSON.parse(r.provenance) as AssetProvenance }))
   }
 
   // —— 数据集 ——

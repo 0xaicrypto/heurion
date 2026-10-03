@@ -25,6 +25,7 @@ import { DocOp, OpError } from '../ops/types.ts'
 import { citationOrder, diff, outline, read, ReadError, search } from '../views/read.ts'
 import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import type { KbService } from '../kb/service.ts'
+import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
 import { TenantError } from '../auth/tenants.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
@@ -55,6 +56,8 @@ export interface McpDeps {
   datasets?: DatasetService
   /** 患者（按机构分库）。 */
   patients?: PatientService
+  /** 临床研究项目。 */
+  studies?: StudyService
   /** 开放获取全文（可选）。 */
   fulltext?: FullTextClient
 }
@@ -86,6 +89,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
   只报告代码实际算出的数字，不要估计或编造；结果与预期不符就如实写。
 - 患者（patient_* / report_* / lab_*）：你和医生能做同样的操作（新建、改信息、上传报告、补项改项、确认、关联病例报告、诊疗组）。患者只有代号（P-0001），没有姓名，写作时也只用代号或「患者，男，60 余岁」这样的去标识写法。
   化验只来自上传的报告；只引用已确认的化验值并写明日期。本机构若设为「AI 的修改需医生确认」，你的写入进待确认、确认 / 驳回由医生做——遇到 needs_human_review 就告诉用户去患者页「待确认」审核。
+  临床研究（study_*）：一个研究项目把方案、数据集、分析、稿件放在一起；在研究的文档里写作时用 study_read 看方案与已有分析，分析用研究里的数据集（dataset_open），画的图 asset_upload 时带 dataset_ids，就会自动出现在研究的「分析」里。新写方案 / 论文：doc_create → study_link 归入研究。
   写病例报告：doc_create 新建文档 → patient_doc_link 关联到患者（这样它出现在患者页的「病例报告」里，不在文档列表里）→ 依据 patient_read / labs_query 写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
@@ -800,6 +804,39 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description: '患者的访问记录（谁、何时、做了什么、是不是 AI）。只有负责人能看。',
     inputSchema: { patient_id: z.string() },
   }, async ({ patient_id }) => pt(svc => svc.accessLog(aiActor(), patient_id).slice(0, 200)))
+
+  // —— 临床研究项目（与界面相同；删除研究由用户在界面上做）——
+  const sd = (fn: (svc: StudyService) => unknown) => {
+    if (!deps.studies) return fail('studies_unavailable', '临床研究未启用')
+    try { return json(fn(deps.studies)) } catch (err) {
+      if (err instanceof StudyError) return fail(err.code, err.message)
+      throw err
+    }
+  }
+  server.registerTool('study_list', {
+    description: '列出用户的研究项目（名称、设计、状态、文档数、数据集数）。',
+    inputSchema: {},
+  }, async () => sd(svc => svc.list(claims.u).map(x => ({ study_id: x.id, title: x.title, design: x.design, status: x.status, docs: x.docs, datasets: x.datasets }))))
+  server.registerTool('study_create', {
+    description: '新建研究项目。design：retrospective_cohort 回顾性队列 / prospective_cohort 前瞻性队列 / rct / case_control / cross_sectional / other；status：planning / ongoing / completed。',
+    inputSchema: { title: z.string().min(1).max(120), design: z.string().optional(), status: z.string().optional(), summary: z.string().max(4000).optional() },
+  }, async args => sd(svc => { const x = svc.create(claims.u, args); return { study_id: x.id, title: x.title } }))
+  server.registerTool('study_read', {
+    description: '一个研究项目的全部内容：方案与稿件（文档 id、角色）、数据集（dataset_id、行列数、是否可分析）、已有分析（用研究数据集画的图：asset_id、用到的数据集、是否有代码）。',
+    inputSchema: { study_id: z.string() },
+  }, async ({ study_id }) => sd(svc => svc.read(claims.u, study_id)))
+  server.registerTool('study_update', {
+    description: '改研究项目的名称、设计、状态、简介。',
+    inputSchema: { study_id: z.string(), title: z.string().max(120).optional(), design: z.string().optional(), status: z.string().optional(), summary: z.string().max(4000).optional() },
+  }, async ({ study_id, ...patch }) => sd(svc => { const x = svc.update(claims.u, study_id, patch); return { study_id: x.id, title: x.title, status: x.status } }))
+  server.registerTool('study_link', {
+    description: '把文档或数据集归入研究（action=unlink 移出）。文档 role：protocol 研究方案 / manuscript 论文 / slides 幻灯片 / other。归入的文档不出现在文档列表里，在研究页里。',
+    inputSchema: { study_id: z.string(), kind: z.enum(['doc', 'dataset']), ref_id: z.string(), role: z.enum(['protocol', 'manuscript', 'slides', 'other']).optional(), action: z.enum(['link', 'unlink']).optional() },
+  }, async ({ study_id, kind, ref_id, role, action }) => sd(svc => {
+    if (action === 'unlink') svc.unlink(claims.u, study_id, kind, ref_id)
+    else svc.link(claims.u, study_id, { kind, ref_id, role })
+    return { result: action ?? 'link' }
+  }))
 
   server.registerTool('kb_search', {
     description:

@@ -27,6 +27,7 @@ import { TurnService } from '../src/turns/service.ts'
 import { TenantService } from '../src/auth/tenants.ts'
 import { kekFrom, TenantKeys } from '../src/tenancy/keys.ts'
 import { PatientService } from '../src/tenancy/patients.ts'
+import { StudyService } from '../src/research/service.ts'
 
 /**
  * 跨租户 / 跨用户越权（docs/design/TENANCY.md §9，上线门槛）：
@@ -38,11 +39,11 @@ const SECRET = 'test-secret'
 const MARK = '机密暗号-7f3a91'
 
 /** 机构 A 的资源 → 接口参数（新接口的参数必须在这里登记）。 */
-type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record', string>
+type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study', string>
 const PARAMS: Record<string, (s: Seed) => string> = {
   id: s => s.doc, did: s => s.dataset, fid: s => s.kb, mid: s => s.memory, cid: s => s.comment, pid: s => s.project,
   uid: s => s.userA, code: s => s.invite, tid: s => s.tenantA, jid: s => s.job, turnId: s => s.turn, seq: () => '1', index: () => '0', group: () => 'g1',
-  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record,
+  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc,
 }
 /** 按设计公开的接口（不需要登录或本身就是给持有链接的人用的）。 */
 const PUBLIC: Record<string, string> = {
@@ -66,12 +67,13 @@ async function setup() {
     return { csv: join(dir, 'data.csv'), cleanup: () => {}, profile: { ok: true, rows: 1, truncated: false, columns: [{ name: 'note', type: 'text', missing: 0, unique: 1, top: [{ value: MARK, count: 1 }] }] } }
   })
   const kb = new KbService(store, null)
+  const studies = new StudyService(store)
   const patients = new PatientService(mkdtempSync(join(tmpdir(), 'iso-pt-')), new TenantService(store, { devMode: false }), new TenantKeys(store, kekFrom({ secret: SECRET })), store)
   const turns = new TurnService(docs, pool, new TurnRegistry(), { memory })
   const ops = new OpService(docs)
   const app = buildApi({
     docs, ops, turns, postcheck: new PostCheck(docs), crossref: {} as CrossrefClient,
-    renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r-'))), accounts, devMode: false, devUser: 'dev', kb, memory, evolution, datasets, patients,
+    renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r-'))), accounts, devMode: false, devUser: 'dev', kb, memory, evolution, datasets, patients, studies,
   })
   const call = async (method: string, path: string, token?: string, body?: unknown, form?: FormData) => {
     if (/^\/api\/auth\/(register|login)$/.test(path)) body = { ...(body as object), pow: solveChallenge((await (await app.request('/api/auth/challenge')).json()) as Challenge) }
@@ -111,14 +113,16 @@ async function setup() {
   const pfile = await json('POST', `/api/patients/${patient.id}/files`, A.token, undefined, pForm)
   const lab = await json('POST', `/api/patients/${patient.id}/records/${pfile.record.id}/labs`, A.token, { test_name: MARK, value: 141, unit: 'µmol/L' })
   await json('POST', `/api/patients/${patient.id}/records/${pfile.record.id}/confirm`, A.token, {})
+  const study = await json('POST', '/api/studies', A.token, { title: `研究 ${MARK}`, summary: MARK })
+  await json('POST', `/api/studies/${study.id}/items`, A.token, { kind: 'dataset', ref_id: dataset.id })
   const proposal = patients.propose({ userId: A.user.id, via: 'ai' }, patient.id, { kind: 'tag', payload: { tag: MARK }, reason: MARK })
 
   const seed: Seed = {
     doc: doc.id, dataset: dataset.id, kb: kbFile.id, memory: mem.memory.id, comment: comment.id ?? comment.comment?.id ?? 'c0', project: project.id,
     userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
-    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id,
+    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id,
   }
-  return { app, store, docs, ops, kb, memory, evolution, datasets, patients, call, seed, A, B, op }
+  return { app, store, docs, ops, kb, memory, evolution, datasets, patients, studies, call, seed, A, B, op }
 }
 
 describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 都碰不到', () => {
@@ -155,8 +159,9 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     expect((await t.call('GET', `/api/kb/${t.seed.kb}/text`, t.A.token)).status).toBe(200)
     expect((await t.call('GET', `/api/patients/${t.seed.patient}`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/patients/${t.seed.patient}/files/${t.seed.pfile}`, t.A.token)).text).toContain(MARK)
+    expect((await t.call('GET', `/api/studies/${t.seed.study}`, t.A.token)).text).toContain(MARK)
     // 列表接口：B 看不到 A 的任何东西
-    for (const p of ['/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues']) {
+    for (const p of ['/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies']) {
       const r = await t.call('GET', p, t.B.token)
       expect(r.text, `B ${p}`).not.toContain(MARK)
       expect(r.text, `B ${p}`).not.toContain('alice')
@@ -171,7 +176,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
   const TOOL_PARAMS: Record<string, (s: Seed) => unknown> = {
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
-    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, record_id: s => s.record, lab_id: s => s.lab, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
+    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {
@@ -181,7 +186,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     const server = buildMcpServer({
       docs: t.docs, ops: t.ops, turns: new TurnRegistry(), secret: SECRET, claims: new ClaimService(t.docs, {} as PubMedClient), renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r2-'))),
       pubmed: {} as PubMedClient, crossref: {} as CrossrefClient, workspaceDir: () => mkdtempSync(join(tmpdir(), 'iso-mws-')), isLiveSession: () => true,
-      kb: t.kb, memory: t.memory, evolution: t.evolution, datasets: t.datasets, patients: t.patients,
+      kb: t.kb, memory: t.memory, evolution: t.evolution, datasets: t.datasets, patients: t.patients, studies: t.studies,
     }, claims)
     const [a, b] = InMemoryTransport.createLinkedPair()
     await server.connect(a)
@@ -197,6 +202,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     expect(text(await own.callTool({ name: 'kb_read', arguments: { file_id: t.seed.kb } }))).toContain(MARK)
     expect(text(await own.callTool({ name: 'patient_read', arguments: { patient_id: t.seed.patient } }))).toContain(MARK)
     expect(text(await own.callTool({ name: 'labs_query', arguments: { patient_id: t.seed.patient } }))).toContain(MARK)
+    expect(text(await own.callTool({ name: 'study_read', arguments: { study_id: t.seed.study } }))).toContain(MARK)
 
     const client = await connect(t.B.user.id)
     const { tools } = await client.listTools()
