@@ -613,7 +613,15 @@ button.block { width: 100%; padding: 10px 12px; }
   .tabs button { padding: 12px 0 10px; }
 }
 
-/* 审计日志（用户管理里） */
+/* 机构管理 / 平台运营 */
+.tenant-settings { display: flex; flex-direction: column; gap: 8px; }
+.tenant-settings select { font-size: 12px; margin-left: 6px; }
+.invite-link { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--green-line); background: var(--green-soft); display: flex; flex-direction: column; gap: 6px; }
+.invite-link input { font-family: var(--mono); font-size: 12px; }
+#newTenant, #inviteForm { flex-wrap: wrap; }
+#newTenant input, #inviteForm input { flex: 1; min-width: 180px; }
+
+/* 审计日志（平台运营、机构管理里） */
 .audit { border-top: 1px solid var(--line); padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 .audit input[type=search] { width: 180px; padding: 5px 10px; font-size: 12px; }
 .audit select { font-size: 12px; }

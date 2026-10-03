@@ -294,7 +294,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!accounts.isAdmin(c.get('user'))) return c.json({ error: '需要管理员权限' }, 403)
     await next()
   })
-  app.get('/api/admin/users', c => c.json(accounts.listUsers()))
+  app.get('/api/admin/users', c => {
+    const names = new Map(store.listTenants().map(t => [t.id, t.kind === 'org' ? t.name : '个人']))
+    return c.json(accounts.listUsers().map(u => ({ ...u, tenant: names.get(store.getUser(u.id)?.tenant_id ?? '') ?? '—' })))
+  })
   app.patch('/api/admin/users/:uid', async c => {
     try {
       return c.json(accounts.adminUpdate(c.get('user'), c.req.param('uid'), await c.req.json()))
