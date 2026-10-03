@@ -10,6 +10,7 @@ import type { PubMedClient } from '../src/literature/pubmed.ts'
 import { ClaimService } from '../src/claims/service.ts'
 import { KbService } from '../src/kb/service.ts'
 import { MemoryService } from '../src/memory/service.ts'
+import type { FullTextClient } from '../src/literature/fulltext.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
 import { buildMcpServer } from '../src/mcp/server.ts'
 import { TurnRegistry } from '../src/mcp/turns.ts'
@@ -39,6 +40,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     isLiveSession: () => true,
     kb,
     memory,
+    fulltext: { get: async (doi: string) => doi === '10.1/open' ? { source: 'pmc', url: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/', license: 'CC BY', text: 'Intro paragraph that is long enough to count as a passage for ranking purposes here.\n\nResults: the hazard ratio was 0.80 (95% CI 0.72 to 0.90) for the primary endpoint in all participants.' } : null } as unknown as FullTextClient,
   }, claims)
   const [a, b] = InMemoryTransport.createLinkedPair()
   await server.connect(a)
@@ -181,6 +183,16 @@ describe('论断核对', () => {
     t.ops.edit({ doc_id: t.docId, base_rev: t.docs.rev(t.docId), mode: 'apply', ack_comments: comments.map(c => c.id), ops: [{ op: 'replace_text', id, find: '因安全性问题提前终止', replace: '按计划完成' }] }, { actor: 'user', turnId: null })
     const stale = await t.call('claim_report', { doc_id: t.docId, results: [{ claim_id: ev.claims[0].claim_id, verdict: 'supported', reason: 'x' }] })
     expect(stale.body.results[0].status).toBe('stale')
+  })
+})
+
+describe('开放获取全文（AI 读全文）', () => {
+  it('oa_fulltext 按 query 返回相关片段；没有开放全文时如实报错', async () => {
+    const t = await connect('占位。')
+    const r = await t.call('oa_fulltext', { doi: '10.1/OPEN', query: 'hazard ratio 0.80 primary endpoint' })
+    expect(r.body).toMatchObject({ source: 'pmc', license: 'CC BY' })
+    expect(r.body.passages[0]).toContain('0.80')
+    expect(JSON.parse((await t.call('oa_fulltext', { doi: '10.1/closed' })).text).code).toBe('no_open_fulltext')
   })
 })
 

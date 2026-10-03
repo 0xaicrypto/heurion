@@ -15,6 +15,7 @@ import { deckOutline, deckRead, slideRead } from '../views/deck.ts'
 import { checkLayout } from '../views/layout.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
 import { formatAma, normalizeDoi } from '../literature/format.ts'
+import { relevantPassages, type FullTextClient } from '../literature/fulltext.ts'
 import { importReferences, parseReferences } from '../literature/import-refs.ts'
 import type { PubMedClient } from '../literature/pubmed.ts'
 import { locate, threadMarks } from '../model/anchors.ts'
@@ -44,6 +45,8 @@ export interface McpDeps {
   kb?: KbService
   /** 记忆（可选）。 */
   memory?: MemoryService
+  /** 开放获取全文（可选）。 */
+  fulltext?: FullTextClient
 }
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
@@ -416,6 +419,19 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description: '检索 PubMed，返回 PMID、DOI、标题、作者、期刊、年份。',
     inputSchema: { query: z.string().min(1).describe('PubMed 检索式，可用 MeSH 与布尔运算'), limit: z.number().int().min(1).max(20).default(10) },
   }, async ({ query, limit }) => json(await deps.pubmed.search(query, limit)))
+
+  server.registerTool('oa_fulltext', {
+    description:
+      '读一篇文献的开放获取全文（PMC 开放获取，或 Unpaywall 找到的开放 PDF）。给 query 时只返回与之最相关的几段，不给时返回开头一段与全文长度。' +
+      '摘要里找不到需要的数字或细节时用；没有开放全文时如实说明，不要凭记忆补。',
+    inputSchema: { doi: z.string().min(1), query: z.string().optional().describe('要找的内容（论断原句或关键词）') },
+  }, async ({ doi, query }) => {
+    if (!deps.fulltext) return fail('fulltext_unavailable', '全文服务未启用')
+    const full = await deps.fulltext.get(normalizeDoi(doi))
+    if (!full) return fail('no_open_fulltext', `DOI ${normalizeDoi(doi)} 没有可用的开放获取全文`, { hint: '只能依据摘要；必要时请用户提供全文（可上传到参考资料库）。' })
+    const passages = query ? relevantPassages(full.text, query, 4000, 6) : [full.text.slice(0, 3000)]
+    return json({ source: full.source, url: full.url, license: full.license, length: full.text.length, passages })
+  })
 
   server.registerTool('doi_lookup', {
     description: '按 DOI 查 Crossref 元数据，核实文献是否存在。',

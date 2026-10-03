@@ -75,7 +75,7 @@ export async function extractText(name: string, bytes: Uint8Array, opts: { ocr?:
   return { pages, doi, pmid, note }
 }
 
-async function pdfPages(bytes: Uint8Array): Promise<string[]> {
+export async function pdfPages(bytes: Uint8Array): Promise<string[]> {
   const dir = mkdtempSync(join(tmpdir(), 'heurion-kb-'))
   try {
     const file = join(dir, 'in.pdf')

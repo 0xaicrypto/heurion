@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CLAIM_CRITERIA, ClaimService, type ClaimEvidence } from '../src/claims/service.ts'
+import { FullTextClient } from '../src/literature/fulltext.ts'
 import { PubMedClient } from '../src/literature/pubmed.ts'
 import { assignIds } from '../src/model/ids.ts'
 import { parseBlocks } from '../src/model/markdown.ts'
@@ -58,6 +59,7 @@ const V3 = `你在核对医学文稿里带引用的论断。${CLAIM_CRITERIA}
 const VARIANTS: Record<string, { system: string; abstractMax: number | 'product'; label: string }> = {
   v1: { system: V1, abstractMax: ABSTRACT_MAX, label: '2026-10-02 的产品：旧判定标准，摘要截断 1800 字' },
   v2: { system: V1, abstractMax: FULL_MAX, label: '旧判定标准，摘要放宽到 4000 字（结构化摘要的结果 / 结论段不再被截掉）' },
+  v4: { system: V3, abstractMax: 'product', label: 'v3 + 开放获取全文片段（PMC / Unpaywall，按论断挑最相关的 2–3 段）' },
   v3: { system: V3, abstractMax: 'product', label: '2026-10-03 的产品：新判定标准（理由指出不符必须判不支持、标出无证据、中文理由）+ 摘要 4000 字且截断时保留结果 / 结论段' },
 }
 
@@ -65,7 +67,7 @@ async function judge(batch: ClaimEvidence[], system: string): Promise<Map<string
   const user = batch.map(c => ({
     claim_id: c.claim_id,
     sentence: c.sentence,
-    citations: c.citations.map(x => ({ number: x.number, reference: x.reference, abstract: x.abstract ?? '（无摘要）' })),
+    citations: c.citations.map(x => ({ number: x.number, reference: x.reference, abstract: x.abstract ?? '（无摘要）', ...(x.fulltext ? { fulltext_passages: x.fulltext.passages } : {}) })),
   }))
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
@@ -131,7 +133,9 @@ async function main(): Promise<void> {
   const key = (c: EvalClaim, version = PROMPT) => `${c.id}|${MODEL}|${version}`
   const store = new Store(join(DATA, 'eval.db'))
   const docs = new Documents(store)
-  const service = new ClaimService(docs, new PubMedClient(fetch, process.env.NCBI_API_KEY ?? '', process.env.CONTACT_EMAIL ?? ''))
+  // v4 起证据带开放获取全文片段（与产品一致）；之前的版本只用摘要
+  const fulltext = PROMPT === 'v4' ? new FullTextClient(store, fetch, process.env.CONTACT_EMAIL || 'no-reply@heurion.org') : null
+  const service = new ClaimService(docs, new PubMedClient(fetch, process.env.NCBI_API_KEY ?? '', process.env.CONTACT_EMAIL ?? ''), fulltext)
   let budget = REPORT_ONLY ? 0 : LIMIT
 
   for (const article of manifest) {
@@ -196,7 +200,7 @@ async function main(): Promise<void> {
       const cites = list.flatMap(p => p.ev.citations)
       // 产品口径：任一片段会挂评论即算（v1 / v2 时代无法判断一律挂）
       const commented = list.some(p => p.verdict!.verdict === 'unsupported' || (p.verdict!.verdict === 'unclear'
-        && (PROMPT !== 'v3' || (!p.verdict!.noEvidence && p.ev.citations.some(x => !!x.abstract)))))
+        && (!['v3', 'v4'].includes(PROMPT) || (!p.verdict!.noEvidence && p.ev.citations.some(x => !!x.abstract || !!x.fulltext)))))
       cache[key(c)] = {
         verdict: worst.verdict!.verdict,
         reason: worst.verdict!.reason,

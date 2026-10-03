@@ -20,6 +20,7 @@ import { HarnessPool } from './harness/pool.ts'
 import { handleLlmProxy, LLM_PREFIX } from './harness/llm-proxy.ts'
 import { buildApi } from './http/api.ts'
 import { CrossrefClient } from './literature/crossref.ts'
+import { FullTextClient } from './literature/fulltext.ts'
 import { PubMedClient } from './literature/pubmed.ts'
 import { handleMcp } from './mcp/server.ts'
 import { TurnRegistry } from './mcp/turns.ts'
@@ -37,7 +38,9 @@ const postcheck = new PostCheck(docs)
 
 const pubmed = new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail)
 const crossref = new CrossrefClient(fetch, config.contactEmail)
-const claims = new ClaimService(docs, pubmed)
+// 开放获取全文：论断核对的补充证据、AI 写作时可读（M3）
+const fulltext = new FullTextClient(store, fetch, config.contactEmail)
+const claims = new ClaimService(docs, pubmed, fulltext)
 const renderer = new SlideRenderer(config.renderDir)
 // 参考资料库：本地嵌入服务（apps/embedder）可选，不在时只用关键词检索
 const embedder = config.embeddingUrl ? new HttpEmbedder(config.embeddingUrl) : null
@@ -56,6 +59,7 @@ const mcpDeps = {
   workspaceDir: (userId: string) => pool.workspaceDir(userId),
   kb,
   memory,
+  fulltext,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 

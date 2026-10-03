@@ -279,6 +279,9 @@ export class Store {
         doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, node_id TEXT NOT NULL, xml TEXT NOT NULL,
         PRIMARY KEY (doc_id, node_id)
       );
+      CREATE TABLE IF NOT EXISTS citation_fulltexts (
+        doi TEXT PRIMARY KEY, source TEXT, url TEXT, license TEXT, text TEXT, fetched_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS citation_abstracts (
         doi TEXT PRIMARY KEY, pmid TEXT, abstract TEXT, fetched_at TEXT NOT NULL
       );
@@ -871,6 +874,16 @@ export class Store {
   }
 
   // —— 论断核对 ——
+
+  /** 开放获取全文缓存（text 为 null = 查过没有；过一段时间可重查）。 */
+  getFullText(doi: string): { source: string | null; url: string | null; license: string | null; text: string | null; fetched_at: string } | null {
+    return (this.db.prepare('SELECT source, url, license, text, fetched_at FROM citation_fulltexts WHERE doi = ?').get(doi) as never) ?? null
+  }
+
+  putFullText(doi: string, row: { source: string | null; url: string | null; license: string | null; text: string | null }): void {
+    this.db.prepare('INSERT INTO citation_fulltexts (doi, source, url, license, text, fetched_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (doi) DO UPDATE SET source = excluded.source, url = excluded.url, license = excluded.license, text = excluded.text, fetched_at = excluded.fetched_at')
+      .run(doi, row.source, row.url, row.license, row.text, now())
+  }
 
   getAbstract(doi: string): { pmid: string | null; abstract: string | null } | null {
     return (this.db.prepare('SELECT pmid, abstract FROM citation_abstracts WHERE doi = ?').get(doi) as { pmid: string | null; abstract: string | null } | undefined) ?? null

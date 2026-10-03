@@ -1,5 +1,6 @@
 import { attachComment, AnchorError } from '../model/anchors.ts'
 import type { Documents } from '../model/runtime.ts'
+import { relevantPassages, type FullTextClient } from '../literature/fulltext.ts'
 import type { PubMedClient } from '../literature/pubmed.ts'
 import type { ClaimVerdict } from '../store/db.ts'
 import { citationOrder } from '../views/read.ts'
@@ -31,25 +32,27 @@ export function fitAbstract(abstract: string, max = ABSTRACT_MAX): string {
  * v3（2026-10-03，按 C2 评测）：理由里指出不符就必须判不支持；没有可核对的证据单独标出，不逐句挂评论；理由用中文。
  */
 export const CLAIM_CRITERIA =
-  '逐条只依据所引文献的摘要判断，不凭记忆补充：' +
+  '逐条只依据所引文献的摘要（以及给出的开放获取全文片段）判断，不凭记忆补充：' +
   'supported = 摘要支持该句的说法与数字；' +
   'unsupported = 摘要与该句矛盾，或数字、结论、人群、药物 / 干预、效应方向任何一处对不上——只要你的理由里指出了某处不符，结论就必须是 unsupported，不能是 unclear；' +
   'unclear = 摘要涉及该句的内容，但信息不足以确认或否定。' +
-  '没有摘要，或摘要根本没涉及该句说的内容时，判 unclear 并标 no_evidence=true（这类不会逐句挂评论，只在总结里汇总）。' +
+  '没有摘要和全文片段，或它们根本没涉及该句说的内容时，判 unclear 并标 no_evidence=true（这类不会逐句挂评论，只在总结里汇总）。' +
   'reason 用中文，一两句话写明依据（引用摘要里的关键数字或结论）。'
 
 export interface ClaimEvidence {
   claim_id: string
   node_id: string
   sentence: string
-  citations: Array<{ cite_id: string; number: number | null; reference: string; abstract: string | null }>
+  citations: Array<{ cite_id: string; number: number | null; reference: string; abstract: string | null
+    /** 开放获取全文里与该句最相关的片段（摘要之外的证据；没有开放全文时缺省）。 */
+    fulltext?: { source: string; passages: string[] } }>
   /** 所引文献都没有可用摘要：没有可核对的证据。 */
   no_abstract?: true
   last_verdict?: ClaimVerdict
 }
 
 export class ClaimService {
-  constructor(private readonly docs: Documents, private readonly pubmed: PubMedClient) {}
+  constructor(private readonly docs: Documents, private readonly pubmed: PubMedClient, private readonly fulltext: FullTextClient | null = null) {}
 
   private extract(docId: string): { claims: Claim[]; unsourced: Claim[] } {
     const doc = this.docs.get(docId)
@@ -86,10 +89,15 @@ export class ClaimService {
         const row = cites.get(id)
         if (!row) continue
         const abstract = await this.abstractFor(row.doi, row.pmid)
-        citations.push({ cite_id: id, number: order.includes(id) ? order.indexOf(id) + 1 : null, reference: row.formatted, abstract: abstract ? fitAbstract(abstract) : null })
+        const full = this.fulltext ? await this.fulltext.get(row.doi).catch(() => null) : null
+        const passages = full ? relevantPassages(full.text, c.sentence) : []
+        citations.push({
+          cite_id: id, number: order.includes(id) ? order.indexOf(id) + 1 : null, reference: row.formatted, abstract: abstract ? fitAbstract(abstract) : null,
+          ...(passages.length ? { fulltext: { source: full!.source === 'pmc' ? 'PMC 开放获取全文' : '开放获取全文（Unpaywall）', passages } } : {}),
+        })
       }
       const last = store.getClaimCheck(docId, c.claim_id)?.verdict
-      const noAbstract = citations.every(x => !x.abstract)
+      const noAbstract = citations.every(x => !x.abstract && !x.fulltext)
       out.push({ claim_id: c.claim_id, node_id: c.node_id, sentence: c.sentence, citations, ...(noAbstract ? { no_abstract: true as const } : {}), ...(last ? { last_verdict: last } : {}) })
     }
     const next = cursor + PAGE < claims.length ? cursor + PAGE : null
@@ -112,7 +120,7 @@ export class ClaimService {
     const { claims, unsourced } = this.extract(docId)
     const byId = new Map([...claims, ...unsourced].map(c => [c.claim_id, c]))
     const cites = new Map(store.listCitations(docId).map(c => [c.id, c]))
-    const hasAbstract = (claim: Claim) => claim.cite_ids.some(id => { const row = cites.get(id); return !!(row && store.getAbstract(row.doi)?.abstract) })
+    const hasAbstract = (claim: Claim) => claim.cite_ids.some(id => { const row = cites.get(id); return !!(row && (store.getAbstract(row.doi)?.abstract || store.getFullText(row.doi)?.text)) })
     const out: Array<{ claim_id: string; status: 'recorded' | 'commented' | 'unchanged' | 'stale' | 'no_evidence'; comment_id?: string }> = []
     for (const r of results) {
       const claim = byId.get(r.claim_id)
