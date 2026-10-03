@@ -9,6 +9,7 @@ import { EDITABLE_CHART_TYPES, editChartData } from './chart-dialog.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { initDatasets } from './datasets.ts'
+import { initPatients } from './patients.ts'
 import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
@@ -190,6 +191,13 @@ $('trashBtn').onclick = () => void openTrash()
 const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e))
 const memory = initMemory(api, (m, e) => showNotice(m, e), id => void open(id))
 const datasets = initDatasets(api, (m, e) => showNotice(m, e))
+let ME: Me | null = null
+const patientsUi = initPatients(api, (m, e) => showNotice(m, e), {
+  leaveDoc: () => leaveDoc(),
+  openDoc: id => open(id),
+  tenantId: () => ME?.tenant?.id ?? null,
+  token: () => TOKEN,
+})
 
 async function openTrash(): Promise<void> {
   const rows = await api<any[]>('/api/trash')
@@ -275,14 +283,36 @@ $('page').addEventListener('click', async e => {
   input.focus()
 })
 
+/** 离开文档（打开患者页时）：关掉编辑器，清空中间区域与对话。 */
+function leaveDoc(): void {
+  close()
+  hideTurnBanner()
+  turnUi = null
+  $('chatLog').innerHTML = ''
+  $('page').className = 'page'
+  $('page').innerHTML = ''
+  $('toolbar').hidden = true
+  $('deckToolbar').hidden = true
+  $('docTitle').textContent = ''
+  setSyncStatus('offline')
+  $('syncStatus').textContent = ''
+  for (const b of ['exportBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = true
+  void loadDocs()
+}
+
+/** 当前文档事件流收到 hello 的次数（大于 1 说明是断线重连）。 */
+let streamHellos = 0
+
 async function open(docId: string): Promise<void> {
+  streamHellos = 0
   refImportHtml = ''
+  patientsUi.leave()
   close()
   hideTurnBanner()
   turnUi = null
   $('chatLog').innerHTML = ''
   $('page').innerHTML = ''
-  $('page').classList.remove('welcome-page')
+  $('page').className = 'page'
   const meta = await api(`/api/docs/${docId}`)
   const stream = new EventSource(`/api/docs/${docId}/stream?token=${encodeURIComponent(TOKEN)}`)
   stream.onmessage = e => onStreamEvent(JSON.parse(e.data))
@@ -355,7 +385,12 @@ function setSyncStatus(s: ProviderStatus): void {
 
 function onStreamEvent(e: any): void {
   if (!session) return
-  if (e.type === 'hello') { setBusy(Boolean(e.busy)); return }
+  if (e.type === 'hello') {
+    setBusy(Boolean(e.busy))
+    // 断线重连（服务重启、网络抖动）：断线期间这一轮已经结束了，界面却还停在「进行中」——重新拉取对话，显示真实结果与重试按钮
+    if (streamHellos++ > 0 && !e.busy && turnUi) { turnUi = null; void refresh(true) }
+    return
+  }
   if (e.type === 'commit') {
     const ids = e.changes.filter((c: any) => c.kind !== 'removed').map((c: any) => c.node_id)
     if (e.actor === 'ai' && e.turn_id) {
@@ -391,7 +426,7 @@ async function refresh(full: boolean): Promise<void> {
       // 没正常完成的回合：在该轮用户消息后标出原因（刷新页面后也看得到）
       const f = m.role === 'user' && m.turn_id ? failed.get(m.turn_id) : undefined
       if (f) {
-        addStep(`${TURN_STATUS[f.status] ?? f.status}${f.error ? `：${f.error}` : ''}`, 'err')
+        addStep(`${TURN_STATUS[f.status] ?? f.status}${f.error ? `：${friendlyError(f.error)}` : ''}`, 'err', f.error ?? '')
         addRetry(m.turn_id)
       }
     }
@@ -707,6 +742,7 @@ function displayMessage(text: string): string {
   // 发送时附给 AI 的说明（选中的资料 / 数据集）：对话里只显示名字
   return text.replace(/\n\n［(参考资料|数据集)］[^：]*：(.*)/g, (_m, kind: string, list: string) =>
     `\n（${kind === '数据集' ? '数据' : '资料'}：${[...list.matchAll(/《([^》]+)》/g)].map(x => x[1]).join('、')}）`)
+    .replace(/\n\n［患者］[^：]*：(.*)/g, (_m, list: string) => `\n（患者：${[...list.matchAll(/(P-\d+)\(/g)].map(x => x[1]).join('、')}）`)
 }
 
 /** AI 文字常带 **粗体** 与 `代码`：转义后只渲染这两种。 */
@@ -1276,7 +1312,9 @@ document.addEventListener('heurion:readview', async () => {
 async function boot(): Promise<void> {
   if (!TOKEN) { $('app').hidden = true; await showAuthScreen(); return }
   const me = await api<Me>('/api/me')
+  ME = me
   initUserMenu(me, api, showNotice)
+  patientsUi.setEnabled(me.tenant?.settings.patient_module !== false)
   showWelcome()
   await loadDocs()
 }
@@ -1284,6 +1322,7 @@ boot().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Er
 
 /** 模型服务的报错翻成用户看得懂的话（原文仍在工作过程里）。 */
 function friendlyError(message: string): string {
+  if (/runtime exited|服务重启/.test(message)) return 'AI 进程中途退出（多为服务重启或升级），这一轮没有完成，请点「重试这一轮」。'
   if (/Authentication Fails|api key.*invalid|401/i.test(message)) return '模型服务认证失败（平台的 API key 无效或过期），请联系管理员。'
   if (/rate limit|429|Too Many Requests/i.test(message)) return '模型服务繁忙（限流），请稍后重试。'
   if (/insufficient|balance|402/i.test(message)) return '模型服务余额不足，请联系管理员。'

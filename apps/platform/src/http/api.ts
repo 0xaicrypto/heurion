@@ -1039,7 +1039,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { message, suggest, kb_files, datasets, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; datasets?: string[]; memory?: boolean }>()
+    const { message, suggest, kb_files, datasets, patients, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; datasets?: string[]; patients?: string[]; memory?: boolean }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
     // 对话里选中的参考资料：告诉 AI 用哪几份（只认自己的资料）
     const picked = (kb_files ?? []).slice(0, 20).map(id => store.getKbFile(id)).filter(f => f && f.owner === c.get('user'))
@@ -1047,7 +1047,16 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     // 对话里选中的数据集（只认自己的、已可用的）
     const sets = (datasets ?? []).slice(0, 10).map(id => store.getDataset(id)).filter(d => d && d.owner === c.get('user') && d.status === 'ready')
     const dnote = sets.length === 0 ? '' : `\n\n［数据集］请用这些数据分析（dataset_describe 看变量，dataset_open 放进工作区后用 Python 分析）：${sets.map(d => `《${d!.name}》(dataset_id=${d!.id}，${d!.rows} 行 × ${d!.cols} 列)`).join('、')}`
-    return streamTurn(c, deps, row.id, message.trim() + note + dnote, { suggest, ...(memory === false ? { memory: false } : {}) })
+    // 对话里带上的患者（只认自己看得到的；只给代号）
+    let pnote = ''
+    if (patients?.length && deps.patients) {
+      try {
+        const visible = new Map(deps.patients.list({ userId: c.get('user'), via: 'user' }).map(p => [p.id, p]))
+        const picked = patients.slice(0, 10).map(id => visible.get(id)).filter(Boolean)
+        if (picked.length) pnote = `\n\n［患者］请用 patient_read / labs_query 查看（只用代号，不要写姓名）：${picked.map(p => `${p!.code}(patient_id=${p!.id})`).join('、')}`
+      } catch { /* 本机构没开患者模块 */ }
+    }
+    return streamTurn(c, deps, row.id, message.trim() + note + dnote + pnote, { suggest, ...(memory === false ? { memory: false } : {}) })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消

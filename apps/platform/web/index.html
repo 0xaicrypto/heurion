@@ -27,8 +27,10 @@
       <input id="uploadInput" type="file" accept=".docx,.pptx" hidden>
     </div>
     <div class="nav-search"><input type="search" id="docSearch" placeholder="搜索文档（标题与正文）" autocomplete="off"></div>
-    <div class="nav-label"><span>文档</span><button class="nav-add" id="newProject" title="新建项目（文件夹）">＋项目</button></div>
+    <div class="nav-label"><span class="nav-tabs"><button id="navDocs" class="on">文档</button><button id="navPatients" title="患者：上传化验单、看趋势、写病例报告（只用代号）">患者</button></span>
+      <button class="nav-add" id="newProject" title="新建项目（文件夹）">＋项目</button><button class="nav-add" id="newPatient" title="新建患者（只有代号，不填姓名）" hidden>＋患者</button></div>
     <ul class="doclist" id="docList"></ul>
+    <ul class="doclist" id="patientList" hidden></ul>
     <div class="nav-foot"><button class="nav-trash" id="libraryBtn" title="参考资料库：上传论文、指南，AI 写作时检索">资料库</button><button class="nav-trash" id="datasetsBtn" title="数据：上传研究数据表（CSV、Excel、SAS、SPSS、Stata），让 AI 做统计分析">数据</button><button class="nav-trash" id="trashBtn" title="回收站：删除的文档保留 30 天">回收站</button></div>
     <div class="user">
       <button id="userButton" class="user-button" aria-haspopup="menu" title="账户">
