@@ -8,6 +8,7 @@ import { DeckView, type ChartData } from './deck.ts'
 import { EDITABLE_CHART_TYPES, editChartData } from './chart-dialog.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
+import { initDatasets } from './datasets.ts'
 import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
@@ -188,6 +189,7 @@ $('newProject').onclick = async () => {
 $('trashBtn').onclick = () => void openTrash()
 const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e))
 const memory = initMemory(api, (m, e) => showNotice(m, e), id => void open(id))
+const datasets = initDatasets(api, (m, e) => showNotice(m, e))
 
 async function openTrash(): Promise<void> {
   const rows = await api<any[]>('/api/trash')
@@ -317,6 +319,7 @@ async function open(docId: string): Promise<void> {
         }
       },
       onCommentClick,
+      analysis: { has: id => datasets.hasProvenance(id), show: id => void datasets.showProvenance(id) },
       onSuggestion: (group, accept) => void resolveSuggestion(group, accept),
       onSelection: a => { anchor = a; placeFab(); syncToolbar() },
     })
@@ -952,7 +955,7 @@ async function send(): Promise<void> {
   if (!text || !session) return
   $<HTMLTextAreaElement>('chatInput').value = ''
   try {
-    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), memory: memory.takeMemoryFlag() }) })
+    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), datasets: datasets.takePicked(), memory: memory.takeMemoryFlag() }) })
   } catch (err) {
     showNotice((err as Error).message, true)
   }

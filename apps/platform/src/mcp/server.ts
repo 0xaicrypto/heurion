@@ -73,12 +73,12 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 评论是用户锚定在具体文字上的修改要求：comments_list 读取 → 修改 → comment_reply 说明改了什么。
 - 回复用户时用平常的话说明改了什么、改在哪（如「第 2 节第一段」），不要提块 id、rev、cite_id、工具名等内部信息。
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
-- 插图：幻灯片里的柱状 / 条形 / 折线 / 饼图优先用 deck_edit 的 add_chart（原生图表，用户能在 PowerPoint 里改数据）；其他数据图（生存曲线、森林图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
+- 插图：幻灯片里的柱状 / 条形 / 折线 / 饼图优先用 deck_edit 的 add_chart（原生图表，用户能在 PowerPoint 里改数据）；其他数据图（生存曲线、森林图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![简短说明](asset:<asset_id> "图 1 图题。图注说明") 插入（引号里是显示在图下方的图注，学术图必须有），幻灯片用 deck_edit 的 add_image。
 - 参考资料库：写作需要依据时用 kb_search 检索用户上传的资料（论文、指南、内部材料），kb_read 读原文；资料是文献时仍用 insert_citation 规范引用。
 - 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；用户说「忘掉…」「别再…」时用 memory_forget；用户要你「整理一下记忆」时用 memory_review（结果是待用户采纳的建议）；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
 - 数据分析（用户选了数据集，或要求分析数据）：dataset_describe 看变量 → dataset_open 放进工作区 → 在 shell 里用 Python（pandas、scipy、statsmodels、lifelines、matplotlib 已装好，不能联网装包）分析。
   报告规范：先说明纳入多少例、缺失怎么处理；连续变量正态用均值±标准差、偏态用中位数（四分位距），分类变量用 n（%）；写清检验方法；效应量给 95% CI，P 值保留三位小数（<0.001 写 P<0.001）。
-  Table 1 用文档原生表格写入（表题在表上方、表注写明统计方法）；图用 matplotlib 画（中文用 Noto Sans CJK SC 字体），分析脚本存成 .py 文件运行，asset_upload 时给 code_path 和 dataset_ids，用户能看到图是怎么来的。
+  Table 1 用文档原生表格写入（表题在表上方、表注写明统计方法）；图用 matplotlib 画（插入时写图注：图号、图题、样本量、统计方法，例如「图 1 两组 Kaplan-Meier 生存曲线（n=312，log-rank 检验）」）（中文用 Noto Sans CJK SC 字体），分析脚本存成 .py 文件运行，asset_upload 时给 code_path 和 dataset_ids，用户能看到图是怎么来的。
   只报告代码实际算出的数字，不要估计或编造；结果与预期不符就如实写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
@@ -558,7 +558,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     const sets = (dataset_ids ?? []).map(id => store.getDataset(id)).filter(d => d && d.owner === claims.u).map(d => ({ id: d!.id, name: d!.name, version: d!.version, rows: d!.rows }))
     const provenance = code || sets.length ? { code, code_path: code_path ?? null, datasets: sets, turn_id: ctx.turnId, at: new Date().toISOString() } : null
     const asset = store.putAsset({ owner: claims.u, mime, name: rel, bytes: readFileSync(file), provenance })
-    return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id})`, ...(provenance ? { provenance: code ? '已记录代码与数据来源' : '已记录数据来源（没找到脚本）' } : {}) })
+    return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id} "图 N 图题")`, ...(provenance ? { provenance: code ? '已记录代码与数据来源' : '已记录数据来源（没找到脚本）' } : {}) })
   })
 
   const datasetFail = (err: unknown) => {

@@ -25,6 +25,8 @@ export interface EditorOptions {
   onCommentClick: (thread: string) => void
   onSuggestion: (group: string, accept: boolean) => void
   onSelection: (anchor: SelectionAnchor | null) => void
+  /** 图是否由数据分析生成（有则显示「来自分析」，点开看代码与数据来源）。 */
+  analysis?: { has: (assetId: string) => Promise<boolean>; show: (assetId: string) => void }
 }
 
 export interface SelectionAnchor {
@@ -267,6 +269,18 @@ export class Editor {
           if (!node.attrs.caption) cap.className = 'placeholder'
           dom.appendChild(cap)
           dom.title = '双击编辑图注'
+          const assetId = node.attrs.asset_id as string
+          if (opts.analysis && assetId) void opts.analysis.has(assetId).then(has => {
+            if (!has) return
+            const badge = document.createElement('button')
+            badge.className = 'fig-prov'
+            badge.type = 'button'
+            badge.textContent = '来自分析'
+            badge.title = '查看生成这张图的代码与数据'
+            badge.onmousedown = e => e.preventDefault()
+            badge.onclick = e => { e.stopPropagation(); opts.analysis!.show(assetId) }
+            dom.appendChild(badge)
+          })
           dom.addEventListener('dblclick', async () => {
             const pos = getPos()
             if (pos === undefined) return

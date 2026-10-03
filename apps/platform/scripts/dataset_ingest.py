@@ -132,6 +132,12 @@ def main() -> None:
         if df.columns.duplicated().any():
             raise ValueError('有重名的列：' + '、'.join(sorted(set(df.columns[df.columns.duplicated()]))))
         df = df.drop(columns=[c for c in drop if c in df.columns])
+        # 有缺失的整数列被 pandas 读成小数（1.0、2.0）：取值全是整数的改回整数，CSV 与概况里都写成 1、2
+        for c in df.columns:
+            if pd.api.types.is_float_dtype(df[c]):
+                vals = df[c].dropna()
+                if len(vals) and (vals % 1 == 0).all() and vals.abs().max() < 2**53:
+                    df[c] = df[c].astype('Int64')
         # SAS 的字节串列转成文字
         for c in df.columns:
             if df[c].dtype == object and df[c].map(lambda v: isinstance(v, bytes)).any():
