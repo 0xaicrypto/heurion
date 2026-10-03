@@ -774,10 +774,12 @@ let noticeTimer: number | undefined
 function showNotice(text: string, error = false): void {
   const el = $('notice')
   el.textContent = text
-  el.className = `notice${error ? ' error' : ''}`
+  el.className = `notice toast${error ? ' error' : ''}`
+  el.setAttribute('role', error ? 'alert' : 'status')
   el.hidden = false
   clearTimeout(noticeTimer)
-  noticeTimer = window.setTimeout(() => { el.hidden = true }, 8000)
+  // 成功的提示短一点；出错的多停一会儿（点一下可以关）
+  noticeTimer = window.setTimeout(() => { el.hidden = true }, error ? 9000 : 4000)
 }
 $('notice').onclick = () => { $('notice').hidden = true }
 

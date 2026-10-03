@@ -327,7 +327,7 @@ describe('患者：多次化验单', () => {
     t.svc.resolveRecord(dr, p.id, r2.record.id, { accept: true })
     const labs = t.svc.labs(dr, p.id)
     expect(labs.map(l => [l.std_value, l.std_unit, l.converted, l.flag])).toEqual([[112, 'µmol/L', false, 'H'], [168, 'µmol/L', true, 'H']])
-    expect(labs[1]).toMatchObject({ value_num: 1.9, unit: 'mg/dL', std_ref_high: 114.9 })
+    expect(labs[1]).toMatchObject({ value_num: 1.9, unit: 'mg/dL', std_ref_low: 61.9, std_ref_high: 115 })
   })
 
   it('同一天：更正报告选「替换」后旧值标为已被更正；完全相同的重复值自动去掉；不同的值都保留', () => {

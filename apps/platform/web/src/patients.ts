@@ -148,7 +148,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <div class="row pt-actions">
           ${canEdit ? `<button class="primary" data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
           <button data-act="report" title="新建一份病例报告并关联到这位患者；对话框里会填好建议的指令，由你确认后发送">写病例报告</button>
-          ${d.access === 'owner' ? '<button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button class="danger" data-act="delete">删除</button>' : ''}
+          ${d.access === 'owner' ? `<span class="grow"></span><div class="menu-wrap"><button data-act="ptmore" aria-haspopup="menu">更多 ▾</button>
+            <div class="dropdown" id="ptMore" hidden><button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button data-act="delete" class="danger-text">删除患者</button></div></div>` : ''}
         </div>
         ${pendingCount ? `<div class="banner pt-pending"><span class="dot"></span>${d.records.filter(r => r.status === 'pending').length} 份报告、${d.pending_proposals.length} 条 AI 提议待确认<button data-tab="review">去审核</button></div>` : ''}
       </div>
@@ -304,6 +305,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const file = t.closest<HTMLElement>('[data-file]')
     if (file) { window.open(`/api/patients/${id}/files/${file.dataset.file}?token=${encodeURIComponent(hooks.token())}`, '_blank'); return }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
+    if (act === 'ptmore') { const m = document.getElementById('ptMore'); if (m) m.hidden = !m.hidden; return }
+    document.getElementById('ptMore')?.setAttribute('hidden', '')
     try {
       if (act === 'alias') {
         const n = await askText({ title: '本机备注姓名', label: `${d.code} 的姓名（只存在这台电脑的浏览器里，平台不保存、不发给 AI）`, value: names()[id] ?? '', confirm: '保存' })

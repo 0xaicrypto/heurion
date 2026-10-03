@@ -68,5 +68,8 @@ export function standardize(key: string, value: number | null, unit: string | nu
 
 /** 参考范围一起换算（两端用同一个函数）。 */
 export function standardizeRange(key: string, low: number | null, high: number | null, unit: string | null): { low: number | null; high: number | null } {
-  return { low: standardize(key, low, unit).value, high: standardize(key, high, unit).value }
+  // 换算出来的参考范围保留 3 位有效数字（57–111 这样的写法，而不是 61.89–114.9）；没换算的保持报告原样
+  const r = (v: number | null, d: Std) => v === null || !d.converted ? d.value : Number(Number(d.value).toPrecision(3))
+  const lo = standardize(key, low, unit), hi = standardize(key, high, unit)
+  return { low: r(low, lo), high: r(high, hi) }
 }
