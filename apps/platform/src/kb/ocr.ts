@@ -47,3 +47,19 @@ export function tidy(text: string): string {
   const cjk = '[\\u3000-\\u303f\\u3400-\\u9fff\\uff00-\\uffef]'
   return text.replace(new RegExp(`(${cjk}) +(?=${cjk})`, 'g'), '$1').replace(/[ \t]+\n/g, '\n').trim()
 }
+
+/** 图片 OCR（拍照的化验单）：tesseract 直接识别图片。 */
+export type ImageOcr = (image: Uint8Array) => Promise<string>
+
+export function localImageOcr(cacheDir: string, langs = 'chi_sim+eng'): ImageOcr {
+  mkdirSync(cacheDir, { recursive: true })
+  return async image => {
+    const worker = await createWorker(langs, 1, { cachePath: cacheDir })
+    try {
+      const { data } = await worker.recognize(Buffer.from(image))
+      return tidy(data.text)
+    } finally {
+      await worker.terminate()
+    }
+  }
+}

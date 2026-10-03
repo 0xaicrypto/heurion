@@ -8,7 +8,8 @@ import { createMailer } from './auth/mailer.ts'
 import { Alerts } from './ops-alert/alerts.ts'
 import { SearchIndex } from './model/search-index.ts'
 import { HttpEmbedder } from './kb/embedder.ts'
-import { localOcr } from './kb/ocr.ts'
+import { localImageOcr, localOcr } from './kb/ocr.ts'
+import { extractText } from './kb/extract.ts'
 import { KbService } from './kb/service.ts'
 import { makeIngest } from './datasets/ingest.ts'
 import { DatasetService } from './datasets/service.ts'
@@ -69,7 +70,15 @@ const datasets = new DatasetService(store, config.datasetsDir, makeIngest({
   sandbox: config.sandbox ? { uid: userId => store.sandboxUid(userId), workspaceDir: userId => pool.workspaceDir(userId), homeDir: userId => pool.homeDir(userId) } : null,
 }))
 // 患者（按机构分库、机构密钥加密，见 docs/design/TENANCY.md）
-const patients = new PatientService(config.tenantsDir, new TenantService(store, { devMode: config.devMode }), new TenantKeys(store, kekFrom({ kek: config.kek, secret: config.secret })), store)
+// 上传的报告：PDF（文字层，扫描件 OCR）、图片（OCR）、docx / txt → 每页文字，打码后交给模型提取（patients.ts / extract-report.ts）
+const reportOcr = localOcr(config.ocrCacheDir)
+const reportImageOcr = localImageOcr(config.ocrCacheDir)
+const reportPages = async (name: string, mime: string, bytes: Uint8Array): Promise<string[]> => {
+  if (mime.startsWith('image/')) return [await reportImageOcr(bytes)]
+  return (await extractText(name, bytes, { ocr: reportOcr })).pages
+}
+const patients = new PatientService(config.tenantsDir, new TenantService(store, { devMode: config.devMode }), new TenantKeys(store, kekFrom({ kek: config.kek, secret: config.secret })), store,
+  { pages: reportPages, complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }) })
 const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,

@@ -6,6 +6,7 @@ import { TenantService } from '../src/auth/tenants.ts'
 import { Store } from '../src/store/db.ts'
 import { kekFrom, KeyDestroyedError, TenantKeys } from '../src/tenancy/keys.ts'
 import { PatientError, PatientService, testKey, type Actor } from '../src/tenancy/patients.ts'
+import { redact } from '../src/tenancy/extract-report.ts'
 
 function env() {
   const store = new Store(':memory:')
@@ -71,6 +72,7 @@ describe('患者：化验', () => {
     const a = t.as(t.u.drA)
     const p = t.svc.create(a, {})
     expect([testKey('谷丙转氨酶'), testKey('ALT'), testKey('血肌酐'), testKey('HbA1c')]).toEqual(['alt', 'alt', 'creatinine', 'hba1c'])
+    expect([testKey('丙氨酸氨基转移酶(ALT)'), testKey('肌酐（Cr）'), testKey('估算肾小球滤过率(eGFR)'), testKey('某新项目(XYZ)')]).toEqual(['alt', 'creatinine', 'egfr', '某新项目'])
     t.svc.addLab(a, p.id, { test_name: '血肌酐', value: '126', unit: 'µmol/L', ref_low: 57, ref_high: 111, collected_on: '2025-06-10' })
     t.svc.addLab(a, p.id, { test_name: 'Cr', value: 98, unit: 'µmol/L', ref_low: 57, ref_high: 111, collected_on: '2025-03-02' })
     t.svc.addLab(a, p.id, { test_name: '血红蛋白', value: 98, unit: 'g/L', ref_low: 130, ref_high: 175, collected_on: '2025-06-10' }, { status: 'pending', source: 'extracted' })
@@ -141,5 +143,92 @@ describe('患者：加密', () => {
     t2.svc.remove(t2.as(t2.u.drA), p2.id)
     expect(existsSync(join(t2.root, t2.hospA.id, 'files', f2.file_id))).toBe(false)
     expect(t2.svc.list(t2.as(t2.u.drA))).toEqual([])
+  })
+})
+
+describe('患者：报告自动提取', () => {
+  it('打码：姓名字段里的名字在全文任何位置都换掉；证件号、电话、住院号、床号、出生日期；化验数值不动', () => {
+    const text = '姓 名：李建国  床 号：12  住院号：0098231  出生日期：1962-03-05  电话 13812345678  身份证 340102196203051234\n肌酐 168 µmol/L\n审核：陈某  李建国 签名'
+    const out = redact(text)
+    expect(out).not.toMatch(/李建国|0098231|1962-03-05|13812345678|340102196203051234|床 号：12/)
+    expect(out).toContain('肌酐 168 µmol/L')
+  })
+
+  const REPORT = `某某医院检验报告单
+姓名：张三   性别：男   年龄：62岁   住院号：ZY20250312   联系电话：13812345678
+采样时间：2025-09-01 08:12
+项目            结果      单位      参考范围
+谷丙转氨酶      52↑       U/L       9-50
+血肌酐          141       µmol/L    57-111
+血红蛋白        128       g/L       130-175`
+
+  function withExtractor(reply: (input: string) => unknown) {
+    const t = env()
+    const sent: string[] = []
+    const svc = new PatientService(t.root, t.tenants, t.keys, t.store, {
+      pages: async () => [REPORT],
+      complete: async (_system, user) => { sent.push(user); return JSON.stringify(reply(user)) },
+    })
+    return { ...t, svc, sent }
+  }
+  const good = () => ({ kind: 'lab_report', title: '肝肾功能 张三', report_date: '2025-09-01', labs: [
+    { test_name: '谷丙转氨酶', value: '52↑', unit: 'U/L', ref_low: 9, ref_high: 50, page: 1 },
+    { test_name: '血肌酐', value: '141', unit: 'µmol/L', ref_low: 57, ref_high: 111, page: 1 },
+    { test_name: '血红蛋白', value: '128', unit: 'g/L', ref_low: 130, ref_high: 175, page: 1 },
+    { test_name: '尿酸', value: '612', unit: 'µmol/L', ref_low: 208, ref_high: 428, page: 1 }, // 报告里没有：模型编的
+  ] })
+
+  it('发给模型前打码；提取结果进待确认、带页码；原文里找不到的数标出来；确认报告后生效', async () => {
+    const t = withExtractor(good)
+    const a = t.as(t.u.drA)
+    const p = t.svc.create(a, {})
+    const up = t.svc.addFile(a, p.id, { name: '张三化验.pdf', mime: 'application/pdf', bytes: Buffer.from('pdf') })
+    expect(up.record.extraction).toBe('queued')
+    await t.svc.idle()
+    expect(t.sent[0]).not.toMatch(/张三|13812345678|ZY20250312/)
+    expect(t.sent[0]).toContain('谷丙转氨酶')
+
+    const rec = t.svc.read(a, p.id).records[0]!
+    expect(rec).toMatchObject({ kind: 'lab_report', title: '肝肾功能 【姓名】', report_date: '2025-09-01', extraction: 'done' })
+    expect(rec.extraction_note).toContain('1 项在原文里没找到')
+    expect(t.svc.labs(a, p.id)).toEqual([])
+    const pending = t.svc.labs(a, p.id, { includePending: true })
+    expect(pending.map(l => [l.test_key, l.value_num, l.flag, l.locator?.verified])).toEqual([
+      ['alt', 52, 'H', true], ['creatinine', 141, 'H', true], ['hemoglobin', 128, 'L', true], ['uric_acid', 612, 'H', false],
+    ])
+    // 医生驳回编造的那条、改一条，再确认整份报告
+    t.svc.setLabStatus(a, p.id, pending.find(l => l.test_key === 'uric_acid')!.id, 'rejected')
+    t.svc.editLab(a, p.id, pending.find(l => l.test_key === 'hemoglobin')!.id, { value: 131 })
+    t.svc.resolveRecord(a, p.id, rec.id, { accept: true })
+    expect(t.svc.labs(a, p.id).map(l => [l.test_key, l.value_num, l.flag, l.collected_on])).toEqual([
+      ['alt', 52, 'H', '2025-09-01'], ['creatinine', 141, 'H', '2025-09-01'], ['hemoglobin', 131, null, '2025-09-01'],
+    ])
+  })
+
+  it('报告上没有日期：化验先不带日期，确认报告时必须补填（不用上传时间代替）', async () => {
+    const t = withExtractor(() => ({ ...good(), report_date: null, labs: good().labs.slice(1, 2) }))
+    const a = t.as(t.u.drA)
+    const p = t.svc.create(a, {})
+    t.svc.addFile(a, p.id, { name: 'x.pdf', mime: 'application/pdf', bytes: Buffer.from('pdf') })
+    await t.svc.idle()
+    const rec = t.svc.read(a, p.id).records[0]!
+    expect(rec.extraction_note).toContain('没找到日期')
+    const lab = t.svc.labs(a, p.id, { includePending: true })[0]!
+    expect(lab.collected_on).toBeNull()
+    expect(() => t.svc.setLabStatus(a, p.id, lab.id, 'confirmed')).toThrow('日期')
+    expect(() => t.svc.resolveRecord(a, p.id, rec.id, { accept: true })).toThrow('日期')
+    t.svc.resolveRecord(a, p.id, rec.id, { accept: true, report_date: '2025-08-30' })
+    expect(t.svc.labs(a, p.id)[0]!.collected_on).toBe('2025-08-30')
+  })
+
+  it('机构关闭「交给外部模型」：不提取、不发给模型，改手工录入', async () => {
+    const t = withExtractor(good)
+    t.tenants.update(t.u.adminA, { settings: { external_model_for_patients: false } })
+    const a = t.as(t.u.drA)
+    const p = t.svc.create(a, {})
+    const up = t.svc.addFile(a, p.id, { name: 'x.pdf', mime: 'application/pdf', bytes: Buffer.from('pdf') })
+    await t.svc.idle()
+    expect([up.record.extraction, up.record.extraction_note]).toEqual(['skipped', '本机构设置为患者数据不交给外部模型，请手工录入'])
+    expect(t.sent).toEqual([])
   })
 })

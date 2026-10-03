@@ -38,11 +38,11 @@ const SECRET = 'test-secret'
 const MARK = '机密暗号-7f3a91'
 
 /** 机构 A 的资源 → 接口参数（新接口的参数必须在这里登记）。 */
-type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal', string>
+type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record', string>
 const PARAMS: Record<string, (s: Seed) => string> = {
   id: s => s.doc, did: s => s.dataset, fid: s => s.kb, mid: s => s.memory, cid: s => s.comment, pid: s => s.project,
   uid: s => s.userA, code: s => s.invite, tid: s => s.tenantA, jid: s => s.job, turnId: s => s.turn, seq: () => '1', index: () => '0', group: () => 'g1',
-  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, pfid: s => s.pfile, prid: s => s.proposal,
+  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record,
 }
 /** 按设计公开的接口（不需要登录或本身就是给持有链接的人用的）。 */
 const PUBLIC: Record<string, string> = {
@@ -115,7 +115,7 @@ async function setup() {
   const seed: Seed = {
     doc: doc.id, dataset: dataset.id, kb: kbFile.id, memory: mem.memory.id, comment: comment.id ?? comment.comment?.id ?? 'c0', project: project.id,
     userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
-    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id,
+    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id,
   }
   return { app, store, docs, ops, kb, memory, evolution, datasets, patients, call, seed, A, B, op }
 }
@@ -127,7 +127,7 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     const valueFor = (path: string, name: string) => {
       if (path.startsWith('/api/assets/') && name === 'id') return t.seed.asset
       if (path.startsWith('/api/memory/changes/') && name === 'cid') return t.seed.change
-      if (name === 'action') return path.includes('suggestions') ? 'accept' : path.includes('changes') ? 'apply' : 'resolve'
+      if (name === 'action') return path.includes('suggestions') || path.includes('proposals') ? 'accept' : path.includes('changes') ? 'apply' : path.includes('/labs/') || path.includes('/records/') ? 'confirm' : 'resolve'
       return PARAMS[name]!(t.seed)
     }
     const routes = [...new Set(t.app.routes.filter(r => r.path.includes(':') && r.method !== 'ALL').map(r => `${r.method} ${r.path}`))]

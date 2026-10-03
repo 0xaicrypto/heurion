@@ -321,6 +321,17 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.body(new Uint8Array(f.bytes), 200, { 'Content-Type': f.mime, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'Cache-Control': 'no-store' })
     } catch (err) { return patientFailure(c, err) }
   })
+  app.patch('/api/patients/:ptid/labs/:lid', async c => {
+    try { return c.json(pt(c).editLab(me(c), c.req.param('ptid'), c.req.param('lid'), await c.req.json())) } catch (err) { return patientFailure(c, err) }
+  })
+  /** 确认 / 驳回一份报告（确认时一并确认它的待确认化验；报告没有日期时要带 report_date）。 */
+  app.post('/api/patients/:ptid/records/:rcid/:action{confirm|reject}', async c => {
+    try {
+      const body = await c.req.json<{ report_date?: string }>().catch(() => ({} as { report_date?: string }))
+      pt(c).resolveRecord(me(c), c.req.param('ptid'), c.req.param('rcid'), { accept: c.req.param('action') === 'confirm', report_date: body.report_date })
+      return c.json({ ok: true })
+    } catch (err) { return patientFailure(c, err) }
+  })
   app.post('/api/patients/:ptid/proposals/:prid/:action{accept|reject}', c => {
     try { pt(c).resolveProposal(me(c), c.req.param('ptid'), c.req.param('prid'), c.req.param('action') === 'accept'); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }
   })

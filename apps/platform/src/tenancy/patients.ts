@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite'
 import type { TenantService, TenantSettings } from '../auth/tenants.ts'
 import type { Store } from '../store/db.ts'
 import type { TenantKeys } from './keys.ts'
+import type { Complete } from '../memory/evolve.ts'
+import { extractReport } from './extract-report.ts'
 
 /**
  * 患者数据（docs/design/TENANCY.md §2、§4；患者模块第二期的底座）。
@@ -30,15 +32,21 @@ export interface LabRow {
   id: string; patient_id: string; record_id: string | null; test_key: string; test_name: string
   value_num: number | null; value_text: string | null; unit: string | null
   ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null
-  collected_on: string; status: 'pending' | 'confirmed' | 'rejected'; source: 'manual' | 'extracted' | 'ai'
-  locator: { page?: number; bbox?: number[] } | null
+  /** 报告上的日期；提取时报告上没写日期的为 null，确认报告时由医生补填 */
+  collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected'; source: 'manual' | 'extracted' | 'ai'
+  locator: { page?: number; bbox?: number[]; verified?: boolean } | null
   created_by: string; created_at: string; confirmed_by: string | null; confirmed_at: string | null
 }
 export interface RecordRow {
   id: string; patient_id: string; kind: 'lab_report' | 'discharge' | 'pathology' | 'imaging' | 'note' | 'other'
   title: string; report_date: string | null; file_id: string | null; status: 'pending' | 'confirmed' | 'rejected'
+  /** 自动提取：排队 / 进行中 / 完成 / 失败 / 跳过（机构不允许交给外部模型，或没有可读文字） */
+  extraction: 'queued' | 'running' | 'done' | 'failed' | 'skipped' | null; extraction_note: string | null
   created_by: string; created_at: string; confirmed_by: string | null; confirmed_at: string | null
 }
+
+/** 报告文字：PDF（文字层 / 扫描件 OCR）、图片（OCR）→ 每页文字。 */
+export type ReportPages = (name: string, mime: string, bytes: Uint8Array) => Promise<string[]>
 export interface ProposalRow {
   id: string; patient_id: string; kind: 'lab' | 'tag' | 'note'; payload: Record<string, unknown>; reason: string
   turn_id: string | null; status: 'pending' | 'accepted' | 'rejected'; created_by: string; created_at: string; resolved_by: string | null; resolved_at: string | null
@@ -57,12 +65,19 @@ const TEST_ALIASES: Array<[RegExp, string]> = [
   [/^(tc|chol|总胆固醇)$/i, 'cholesterol'], [/^(tg|甘油三酯)$/i, 'triglycerides'], [/^(ldl-?c|低密度脂蛋白胆固醇)$/i, 'ldl'], [/^(hdl-?c|高密度脂蛋白胆固醇)$/i, 'hdl'],
   [/^(wbc|白细胞|白细胞计数)$/i, 'wbc'], [/^(hb|hgb|血红蛋白)$/i, 'hemoglobin'], [/^(plt|血小板|血小板计数)$/i, 'platelets'],
   [/^(alb|白蛋白)$/i, 'albumin'], [/^(tbil|总胆红素)$/i, 'bilirubin'], [/^(ua|尿酸)$/i, 'uric_acid'], [/^(k|钾|血钾)$/i, 'potassium'],
+  [/^(tp|总蛋白)$/i, 'total_protein'], [/^(urea|bun|尿素|尿素氮)$/i, 'urea'], [/^(na|钠|血钠)$/i, 'sodium'], [/^(cl|氯|血氯)$/i, 'chloride'],
   [/^(bnp|脑钠肽)$/i, 'bnp'], [/^(nt-?probnp|n末端脑钠肽前体)$/i, 'nt_probnp'], [/^(crp|c反应蛋白)$/i, 'crp'],
 ]
 export function testKey(name: string): string {
-  const n = name.trim().replace(/[\s（）()]+/g, '')
-  for (const [re, key] of TEST_ALIASES) if (re.test(n)) return key
-  return n.toLowerCase()
+  // 报告常写「中文名(缩写)」：整体、括号里的缩写、括号外的中文名依次试
+  const whole = name.trim().replace(/\s+/g, '')
+  const inner = /[（(]([^（）()]+)[）)]/.exec(whole)?.[1] ?? ''
+  const outer = whole.replace(/[（(][^（）()]*[）)]/g, '')
+  for (const n of [whole.replace(/[（）()]/g, ''), inner, outer]) {
+    if (!n) continue
+    for (const [re, key] of TEST_ALIASES) if (re.test(n)) return key
+  }
+  return (outer || whole).toLowerCase()
 }
 
 /** 一个机构的患者库（库文件 + 加密文件目录）。只由 PatientService 打开。 */
@@ -92,12 +107,12 @@ class TenantPatientDb {
       );
       CREATE TABLE IF NOT EXISTS records (
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, kind TEXT NOT NULL, title TEXT NOT NULL,
-        report_date TEXT, file_id TEXT, status TEXT NOT NULL, text_enc TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
-        confirmed_by TEXT, confirmed_at TEXT
+        report_date TEXT, file_id TEXT, status TEXT NOT NULL, text_enc TEXT, extraction TEXT, extraction_note TEXT,
+        created_by TEXT NOT NULL, created_at TEXT NOT NULL, confirmed_by TEXT, confirmed_at TEXT
       );
       CREATE TABLE IF NOT EXISTS labs (
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, record_id TEXT, test_key TEXT NOT NULL, test_name TEXT NOT NULL,
-        value_num REAL, value_text TEXT, unit TEXT, ref_low REAL, ref_high REAL, ref_text TEXT, flag TEXT, collected_on TEXT NOT NULL,
+        value_num REAL, value_text TEXT, unit TEXT, ref_low REAL, ref_high REAL, ref_text TEXT, flag TEXT, collected_on TEXT,
         status TEXT NOT NULL, source TEXT NOT NULL, locator TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, confirmed_by TEXT, confirmed_at TEXT
       );
       CREATE INDEX IF NOT EXISTS labs_patient ON labs (patient_id, test_key, collected_on);
@@ -140,13 +155,19 @@ export interface Actor {
 
 export class PatientService {
   private dbs = new Map<string, TenantPatientDb>()
+  private queue: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly root: string,
     private readonly tenants: TenantService,
     private readonly keys: TenantKeys,
     private readonly store: Store,
+    /** 报告自动提取（没有时上传的报告只能手工录入）。 */
+    private readonly extractor: { pages: ReportPages; complete: Complete | null } | null = null,
   ) {}
+
+  /** 等后台提取完（测试用）。 */
+  idle(): Promise<void> { return this.queue }
 
   // —— 机构与权限 ——
 
@@ -321,6 +342,9 @@ export class PatientService {
 
   setLabStatus(a: Actor, patientId: string, labId: string, status: 'confirmed' | 'rejected'): void {
     const { c } = this.requireTeam(a, patientId)
+    if (status === 'confirmed' && (c.db.db.prepare('SELECT collected_on FROM labs WHERE id = ?').get(labId) as { collected_on: string | null } | undefined)?.collected_on === null) {
+      throw new PatientError('date_required', '这条化验没有日期，请先填写报告日期')
+    }
     const r = c.db.db.prepare("UPDATE labs SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ? AND patient_id = ? AND status = 'pending'").run(status, a.userId, now(), labId, patientId)
     if (Number(r.changes) === 0) throw new PatientError('not_found', '没有待确认的这条化验', 404)
     this.log(c, a, patientId, status === 'confirmed' ? 'lab_confirm' : 'lab_reject', labId)
@@ -362,9 +386,16 @@ export class PatientService {
       .run(fid, patientId, this.keys.encryptText(c.tenantId, input.name)!, input.mime, input.bytes.byteLength, createHash('sha256').update(input.bytes).digest('hex'), a.userId, now())
     const recId = rid('rc')
     const kind = input.kind && ['lab_report', 'discharge', 'pathology', 'imaging', 'note', 'other'].includes(input.kind) ? input.kind : 'other'
-    c.db.db.prepare('INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(recId, patientId, kind, (input.title ?? '').trim().slice(0, 120) || '未命名报告', input.report_date && DATE.test(input.report_date) ? input.report_date : null, fid, 'pending', a.userId, now())
+    // 自动提取：机构允许交给外部模型、配置了模型时排队；否则跳过，由医生手工录入
+    const canExtract = Boolean(this.extractor?.complete) && c.settings.external_model_for_patients
+    c.db.db.prepare('INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, extraction, extraction_note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(recId, patientId, kind, (input.title ?? '').trim().slice(0, 120) || '未命名报告', input.report_date && DATE.test(input.report_date) ? input.report_date : null, fid, 'pending',
+        canExtract ? 'queued' : 'skipped', canExtract ? null : this.extractor?.complete ? '本机构设置为患者数据不交给外部模型，请手工录入' : '没有配置模型，请手工录入', a.userId, now())
     this.log(c, a, patientId, 'file_upload', fid)
+    if (canExtract) {
+      const tenantId = c.tenantId
+      this.queue = this.queue.then(() => this.runExtraction(tenantId, patientId, recId, a.userId)).catch(err => console.error('[patient-extract]', err))
+    }
     return { file_id: fid, record: c.db.db.prepare('SELECT * FROM records WHERE id = ?').get(recId) as unknown as RecordRow }
   }
 
@@ -374,6 +405,76 @@ export class PatientService {
     if (!f || !existsSync(join(c.db.files, f.id))) throw new PatientError('not_found', '文件不存在', 404)
     this.log(c, a, patientId, 'file_download', fileId)
     return { name: this.keys.decryptText(c.tenantId, f.name_enc)!, mime: f.mime, bytes: this.keys.decrypt(c.tenantId, readFileSync(join(c.db.files, f.id))) }
+  }
+
+  /** 后台提取：解密原文 → 每页文字 → 打码后交给模型 → 待确认的化验（带页码、原文核对结果）。 */
+  private async runExtraction(tenantId: string, patientId: string, recordId: string, userId: string): Promise<void> {
+    const db = this.dbs.get(tenantId)
+    if (!db || !this.extractor?.complete) return
+    const rec = db.db.prepare('SELECT * FROM records WHERE id = ?').get(recordId) as (RecordRow & { file_id: string }) | undefined
+    if (!rec) return
+    const set = (extraction: RecordRow['extraction'], note: string | null) => db.db.prepare('UPDATE records SET extraction = ?, extraction_note = ? WHERE id = ?').run(extraction, note, recordId)
+    set('running', null)
+    try {
+      const f = db.db.prepare('SELECT name_enc, mime FROM files WHERE id = ?').get(rec.file_id) as { name_enc: string; mime: string }
+      const name = this.keys.decryptText(tenantId, f.name_enc)!
+      const bytes = this.keys.decrypt(tenantId, readFileSync(join(db.files, rec.file_id)))
+      const pages = await this.extractor.pages(name, f.mime, bytes)
+      if (pages.join('').trim().length < 20) { set('skipped', '没有识别出文字，请手工录入'); return }
+      db.db.prepare('UPDATE records SET text_enc = ? WHERE id = ?').run(this.keys.encryptText(tenantId, pages.join('\f')), recordId)
+      const r = await extractReport(pages, this.extractor.complete)
+      const date = rec.report_date ?? r.report_date
+      db.db.prepare("UPDATE records SET kind = CASE WHEN kind = 'other' THEN ? ELSE kind END, title = CASE WHEN title = '未命名报告' THEN ? ELSE title END, report_date = ? WHERE id = ?").run(r.kind, r.title, date, recordId)
+      const ins = db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, status, source, locator, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'extracted', ?, ?, ?)`)
+      for (const l of r.labs) {
+        const parsed = parseValue(l.value)
+        const flag = parsed.num === null ? (/[↑]|(?<![A-Za-z])H$/.test(l.value) ? 'H' : /[↓]|(?<![A-Za-z])L$/.test(l.value) ? 'L' : null)
+          : l.ref_high !== null && parsed.num > l.ref_high ? 'H' : l.ref_low !== null && parsed.num < l.ref_low ? 'L' : null
+        ins.run(rid('lb'), patientId, recordId, testKey(l.test_name), l.test_name, parsed.num, parsed.num === null ? l.value : null, l.unit, l.ref_low, l.ref_high, l.ref_text, flag, date,
+          JSON.stringify({ page: l.page, verified: l.verified }), userId, now())
+      }
+      const unverified = r.labs.filter(l => !l.verified).length
+      set('done', [r.labs.length ? `提取到 ${r.labs.length} 项化验` : '没有提取到化验项', unverified ? `${unverified} 项在原文里没找到对应数字，请重点核对` : '', date ? '' : '报告上没找到日期，确认时请补填'].filter(Boolean).join('；'))
+    } catch (err) {
+      set('failed', `自动提取失败：${(err as Error).message.slice(0, 120)}，请手工录入`)
+    }
+  }
+
+  /** 确认 / 驳回一份报告：确认时一并确认它的待确认化验（报告没有日期时必须补填）。 */
+  resolveRecord(a: Actor, patientId: string, recordId: string, input: { accept: boolean; report_date?: unknown }): void {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能确认报告', 403)
+    const { c } = this.requireTeam(a, patientId)
+    const rec = c.db.db.prepare('SELECT * FROM records WHERE id = ? AND patient_id = ?').get(recordId, patientId) as RecordRow | undefined
+    if (!rec) throw new PatientError('not_found', '报告不存在', 404)
+    if (!input.accept) {
+      c.db.db.prepare("UPDATE records SET status = 'rejected', confirmed_by = ?, confirmed_at = ? WHERE id = ?").run(a.userId, now(), recordId)
+      c.db.db.prepare("UPDATE labs SET status = 'rejected', confirmed_by = ?, confirmed_at = ? WHERE record_id = ? AND status = 'pending'").run(a.userId, now(), recordId)
+      this.log(c, a, patientId, 'record_reject', recordId)
+      return
+    }
+    const date = typeof input.report_date === 'string' && DATE.test(input.report_date) ? input.report_date : rec.report_date
+    const undated = (c.db.db.prepare("SELECT COUNT(*) AS n FROM labs WHERE record_id = ? AND status = 'pending' AND collected_on IS NULL").get(recordId) as { n: number }).n
+    if (!date && undated) throw new PatientError('date_required', '这份报告没有日期，请填写报告上的日期（YYYY-MM-DD）')
+    c.db.db.prepare("UPDATE records SET status = 'confirmed', report_date = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?").run(date, a.userId, now(), recordId)
+    c.db.db.prepare("UPDATE labs SET collected_on = COALESCE(collected_on, ?) WHERE record_id = ? AND status = 'pending'").run(date, recordId)
+    c.db.db.prepare("UPDATE labs SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE record_id = ? AND status = 'pending'").run(a.userId, now(), recordId)
+    c.db.db.prepare('UPDATE patients SET updated_at = ? WHERE id = ?').run(now(), patientId)
+    this.log(c, a, patientId, 'record_confirm', recordId)
+  }
+
+  /** 改一条待确认的化验（审核时修正提取错误）。 */
+  editLab(a: Actor, patientId: string, labId: string, input: Record<string, unknown>): LabRow {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能修改化验', 403)
+    const { c } = this.requireTeam(a, patientId)
+    const cur = c.db.db.prepare("SELECT * FROM labs WHERE id = ? AND patient_id = ? AND status = 'pending'").get(labId, patientId) as Record<string, unknown> | undefined
+    if (!cur) throw new PatientError('not_found', '没有待确认的这条化验', 404)
+    const merged = { test_name: cur.test_name, value: cur.value_num ?? cur.value_text, unit: cur.unit, ref_low: cur.ref_low, ref_high: cur.ref_high, ref_text: cur.ref_text, collected_on: cur.collected_on ?? '1900-01-01', ...input }
+    const lab = labInput(merged)
+    c.db.db.prepare('UPDATE labs SET test_key = ?, test_name = ?, value_num = ?, value_text = ?, unit = ?, ref_low = ?, ref_high = ?, ref_text = ?, flag = ?, collected_on = ? WHERE id = ?')
+      .run(testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit, lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), input.collected_on ? lab.collected_on : (cur.collected_on as string | null), labId)
+    this.log(c, a, patientId, 'lab_edit', labId)
+    return labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(labId) as Record<string, unknown>)
   }
 
   // —— AI 提议 ——
@@ -455,6 +556,12 @@ function labInput(v: Record<string, unknown>) {
     ref_low: num(v.ref_low), ref_high: num(v.ref_high), ref_text: typeof v.ref_text === 'string' ? v.ref_text.slice(0, 60) : null, collected_on: date, locator,
   }
 }
+/** 报告上的数值：「141」「141↑」「141 H」→ 数值 141；「<0.5」「阴性」→ 文字。 */
+function parseValue(v: string): { num: number | null } {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*(?:[↑↓]|[HL](?![A-Za-z]))?\s*$/.exec(v)
+  return { num: m ? Number(m[1]) : null }
+}
+
 function flagOf(l: ReturnType<typeof labInput>): 'H' | 'L' | null {
   if (l.value_num === null) return null
   if (l.ref_high !== null && l.value_num > l.ref_high) return 'H'
