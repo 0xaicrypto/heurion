@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { imageSize } from '../convert/image-size.ts'
 import { checkChartData, EDITABLE_CHART_TYPES, type ChartData } from '../convert/pptx-chart.ts'
 import { deckSchema, emu, pt } from '../model/deck-schema.ts'
+import { decorations, isDecoName, LAYOUTS as LAYOUT_DEFS, layoutByName, layoutDef, layoutSpec, phSpecOf, themeOf, type LayoutKey, type PhSpec } from '../model/deck-templates.ts'
 import { DECK_THEMES, DEFAULT_THEME, resolveColor } from '../model/deck-themes.ts'
 import { assignIds, indexById } from '../model/ids.ts'
 import { MarkdownError, parseBlocks, parseInline } from '../model/markdown.ts'
@@ -24,7 +25,8 @@ export const DeckOp = z.discriminatedUnion('op', [
     after: z.string().nullable().describe('插在该页之后；null 表示开头'),
     layout: z.string().optional().describe('版式名（slide_read / doc_outline 列出的可用版式）；缺省为「标题和内容」类版式'),
     title: z.string().optional().describe('标题占位符的文字'),
-    body: z.string().optional().describe('正文占位符的 markdown（列表项 - 对应项目符号，缩进对应级别）'),
+    body: z.string().optional().describe('正文占位符的 markdown（列表项 - 对应项目符号，缩进对应级别）；封面是副标题，大数字版式是那个数字'),
+    body2: z.string().optional().describe('第二个正文区：两栏的右栏、大数字版式的说明（平台模板的版式才有）'),
   }),
   z.object({ op: z.literal('delete_slide'), slide_id: z.string() }),
   z.object({ op: z.literal('move_slide'), slide_id: z.string(), after: z.string().nullable() }),
@@ -132,7 +134,7 @@ export const DeckOp = z.discriminatedUnion('op', [
     op: z.literal('apply_theme'),
     theme: z.enum(Object.keys(DECK_THEMES) as [string, ...string[]]).describe(Object.entries(DECK_THEMES).map(([k, t]) => `${k}：${t.label}（${t.description}）`).join('；')),
     slide_ids: z.array(z.string()).optional().describe('只套用到这些页；缺省全部'),
-  }),
+  }).describe('换模板：配色与字体；平台新建的 deck 还会换掉模板装饰（色条、色块等），继承版式位置的占位符挪到新模板的位置'),
   z.object({
     op: z.literal('set_xfrm'),
     shape_id: z.string(),
@@ -170,6 +172,8 @@ export interface DeckContext {
   taken: Set<string>
   layouts: LayoutInfo[]
   size: { cx: number; cy: number }
+  /** 平台模板生成的 deck（有 8 个模板版式、带模板装饰）；导入的 pptx 为 false。 */
+  platform?: boolean
   /** 文档所有者的资产（add_image 用）；别人的资产返回 null。 */
   asset?: (id: string) => { mime: string; bytes: Uint8Array } | null
 }
@@ -215,17 +219,26 @@ function toDeckInline(nodes: readonly PMNode[], rpr: Mark | null): PMNode[] {
   })
 }
 
-interface Template { ppr: (lvl: number) => string | null; rpr: Mark | null }
+interface Template { ppr: (lvl: number) => string | null; rpr: Mark | null; bold?: boolean }
 
 function templateOf(shape: PMNode | null): Template {
   const pprs: Array<string | null> = []
   let rpr: Mark | null = null
+  let bold: boolean | undefined
   shape?.descendants(n => {
     if (n.type.name === 'paragraph') pprs[n.attrs.lvl as number] ??= n.attrs.ppr as string | null
-    if (n.isText && !rpr) rpr = n.marks.find(m => m.type.name === 'rpr') ?? null
+    if (n.isText && !rpr) { rpr = n.marks.find(m => m.type.name === 'rpr') ?? null; bold = n.marks.some(m => m.type.name === 'bold') }
     return true
   })
-  return { ppr: lvl => pprs[lvl] ?? pprs[0] ?? null, rpr }
+  // 还没有文字的模板占位符：字号、颜色、粗细取段落属性里的 a:defRPr（版式规定的样式）
+  if (!rpr && pprs[0]) {
+    const def = /<a:defRPr\b([^>]*?)(?:\/>|>([\s\S]*?)<\/a:defRPr>)/.exec(pprs[0])
+    if (def) {
+      bold = /\sb="1"/.test(def[1]!)
+      rpr = deckSchema.marks.rpr!.create({ xml: `<a:rPr ${A_NS} lang="zh-CN"${(/\ssz="\d+"/.exec(def[1]!)?.[0]) ?? ''} dirty="0">${def[2] ?? ''}</a:rPr>` })
+    }
+  }
+  return { ppr: lvl => pprs[lvl] ?? pprs[0] ?? null, rpr, bold }
 }
 
 /** markdown → 段落：标题 / 段落各成一段，列表项按嵌套深度设 lvl。 */
@@ -233,7 +246,7 @@ export function deckParagraphs(markdown: string, template: Template): PMNode[] {
   const out: PMNode[] = []
   const walk = (node: PMNode, depth: number) => {
     if (node.isTextblock) {
-      out.push(deckSchema.node('paragraph', { lvl: depth, ppr: template.ppr(depth) }, toDeckInline(contentOf(node), template.rpr)))
+      out.push(deckSchema.node('paragraph', { lvl: depth, ppr: template.ppr(depth), align: alignOf(template.ppr(depth)) }, boldIf(toDeckInline(contentOf(node), template.rpr), template.bold)))
       return
     }
     if (node.type.name === 'bullet_list' || node.type.name === 'ordered_list') {
@@ -256,7 +269,18 @@ function contentOf(node: PMNode): PMNode[] {
   return out
 }
 
-const deckInlineParser = (template: Template) => (md: string) => toDeckInline(parseInline(md), template.rpr)
+const deckInlineParser = (template: Template) => (md: string) => boldIf(toDeckInline(parseInline(md), template.rpr), template.bold)
+
+/** 模板规定粗体的占位符：新写的字加粗。 */
+function boldIf(nodes: PMNode[], bold: boolean | undefined): PMNode[] {
+  return bold ? nodes.map(n => n.isText ? n.mark(deckSchema.marks.bold!.create().addToSet(n.marks)) : n) : nodes
+}
+
+/** 段落属性里的对齐 → 段落的 align 属性（画布显示用）。 */
+function alignOf(ppr: string | null): string | null {
+  const a = ppr ? /\salgn="(ctr|r|just)"/.exec(ppr)?.[1] : undefined
+  return a ? ({ ctr: 'center', r: 'right', just: 'justify' } as Record<string, string>)[a]! : null
+}
 
 // —— 应用 ——
 
@@ -303,9 +327,25 @@ function pickLayout(ctx: DeckContext, name?: string): LayoutInfo | null {
     ?? ctx.layouts[0]!
 }
 
+/** 模板装饰只能移动、删除、改填充，不能改字。 */
+const DECO_LOCKED = new Set(['set_text', 'replace_text', 'set_paragraphs', 'set_text_style'])
+
 function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
+  const target = 'shape_id' in op ? indexById(tr.doc).get(op.shape_id) : undefined
+  if (target && DECO_LOCKED.has(op.op) && isDecoName(target.node.attrs.name)) {
+    throw new OpError('node_not_editable', `形状 ${(op as { shape_id: string }).shape_id} 是模板装饰，不能写字`, { hint: '装饰随模板走（apply_theme 换模板时自动替换）；要写字请 add_shape 新建文本框，不想要这个装饰可以 delete_shape。' })
+  }
   switch (op.op) {
     case 'add_slide': {
+      if (ctx.platform) {
+        // 平台模板的 deck：按前一页（或第一页）的模板与版式生成，占位符带版式样式，模板装饰在最底层
+        const neighbour = op.after ? indexById(tr.doc).get(op.after)?.node : tr.doc.firstChild
+        const def = op.layout ? layoutByName(op.layout) ?? LAYOUT_DEFS.find(l => l.name.includes(op.layout!.trim())) : LAYOUT_DEFS.find(l => l.key === 'content')
+        if (!def) throw new OpError('layout_not_found', `没有版式「${op.layout}」`, { hint: `可用版式：${LAYOUT_DEFS.map(l => `${l.name}（${l.hint}）`).join('、')}` })
+        const slide = assignIds(templateSlide(def.key, (neighbour?.attrs.theme as string | null) ?? null, { title: op.title, body: op.body, body2: op.body2 }), ctx.taken)
+        insertSlide(tr, slide, op.after)
+        return [slide.attrs.id as string, ...contentOf(slide).map(s => s.attrs.id as string)]
+      }
       const layout = pickLayout(ctx, op.layout)
       const shapes: PMNode[] = []
       const add = (ph: LayoutInfo['placeholders'][number], markdown: string) => {
@@ -640,11 +680,16 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
     case 'apply_theme': {
       if (!DECK_THEMES[op.theme]) throw new OpError('theme_not_found', `没有主题「${op.theme}」`, { hint: `可用主题：${Object.keys(DECK_THEMES).join('、')}` })
       const ids: string[] = []
+      const hits: Array<{ slide: PMNode; offset: number }> = []
       tr.doc.forEach((slide, offset) => {
         if (op.slide_ids && !op.slide_ids.includes(slide.attrs.id as string)) return
-        tr.replaceWith(offset, offset + slide.nodeSize, themedSlide(slide, op.theme))
+        hits.push({ slide, offset })
         ids.push(slide.attrs.id as string)
       })
+      // 从后往前替换：换装饰会改变页的大小，前面的位置不受影响
+      for (const { slide, offset } of hits.reverse()) {
+        tr.replaceWith(offset, offset + slide.nodeSize, assignIds(themedSlide(slide, op.theme, ctx.platform), ctx.taken))
+      }
       if (op.slide_ids) for (const id of op.slide_ids) if (!ids.includes(id)) throw new OpError('node_not_found', `找不到幻灯片 ${id}`)
       return ids
     }
@@ -701,6 +746,59 @@ function insertSlide(tr: Transform, slide: PMNode, after: string | null): void {
   if (after === null) { tr.insert(0, slide); return }
   const hit = find(tr, after, 'slide')
   tr.insert(hit.pos + hit.node.nodeSize, slide)
+}
+
+const PH_SHAPE_NAME: Record<string, string> = { ctrTitle: 'Title', title: 'Title', subTitle: 'Subtitle' }
+
+/** 占位符的段落属性：对齐、有无项目符号，以及版式规定的字号 / 粗细 / 颜色（a:defRPr，还没写字时也带着）。 */
+function specPpr(spec: PhSpec, color: string): string {
+  const marg = spec.bullets ? '' : ' marL="0" indent="0"'
+  const algn = spec.align === 'ctr' ? ' algn="ctr"' : ''
+  return `<a:pPr ${A_NS}${marg}${algn}>${spec.bullets ? '' : '<a:buNone/>'}<a:defRPr sz="${spec.size * 100}"${spec.bold ? ' b="1"' : ''}><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></a:defRPr></a:pPr>`
+}
+
+function specParagraphs(spec: PhSpec, themeKey: string, markdown?: string): PMNode[] {
+  const color = resolveColor(spec.color, themeKey)!
+  const ppr = specPpr(spec, color)
+  const rpr = deckSchema.marks.rpr!.create({ xml: `<a:rPr ${A_NS} lang="zh-CN" sz="${spec.size * 100}" dirty="0"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></a:rPr>` })
+  const paragraphs = markdown ? deckParagraphs(markdown, { ppr: () => ppr, rpr, bold: spec.bold }) : []
+  return paragraphs.length > 0 ? paragraphs : [deckSchema.node('paragraph', { ppr, align: alignOf(ppr) })]
+}
+
+/** 模板装饰形状（最底层；名字 deco: 开头）。 */
+function decoShapes(themeKey: string, key: LayoutKey): PMNode[] {
+  return decorations(themeKey, key).map(d => deckSchema.node('shape', {
+    kind: 'shape', name: d.name, geom: d.geom, fill: d.fill, x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]),
+  }))
+}
+
+/**
+ * 平台模板的一页：版式的全部文字占位符（按模板几何与样式，没给文字的留空）+ 模板装饰。
+ * themeKey 为 null（早期没套过模板的 deck）时不加装饰、不设主题，样式按默认模板。
+ */
+export function templateSlide(key: LayoutKey, themeKey: string | null, texts: { title?: string; body?: string; body2?: string } = {}): PMNode {
+  const k = themeKey && DECK_THEMES[themeKey] ? themeKey : DEFAULT_THEME
+  const def = layoutDef(key)
+  const shapes: PMNode[] = themeKey ? decoShapes(k, key) : []
+  for (const spec of layoutSpec(k, key)) {
+    if (spec.type === 'pic') continue // 图片区：装饰里的底色块标出位置，图片用 add_image 放上去
+    shapes.push(deckSchema.node('shape', {
+      kind: 'text', ph: spec.type, ph_idx: spec.idx, x: emu(spec.box[0]), y: emu(spec.box[1]), w: emu(spec.box[2]), h: emu(spec.box[3]), xfrm_inherited: true,
+      name: PH_SHAPE_NAME[spec.type] ?? 'Content',
+    }, specParagraphs(spec, k, spec.fill ? texts[spec.fill] : undefined)))
+  }
+  const theme = themeKey ? { theme: k, bg: themeOf(k).bg } : {}
+  return deckSchema.node('slide', { layout: `ppt/slideLayouts/slideLayout${def.n}.xml`, layout_name: def.name, ...theme }, shapes)
+}
+
+/** 平台模板新建 deck 的初始内容：一页封面（标题填好，副标题留空）。 */
+export function newTemplateDeck(title: string, themeKey: string = DEFAULT_THEME): PMNode {
+  return deckSchema.node('doc', null, [templateSlide('cover', DECK_THEMES[themeKey] ? themeKey : DEFAULT_THEME, { title: title ? escapeMarkdown(title) : undefined })])
+}
+
+/** 标题原样当文字（不按 markdown 解析）。 */
+function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_[\]#<>|~])/g, '\\$1')
 }
 
 /** 新建 deck 的初始内容：一页「标题页」版式（标题、副标题占位符留空）。 */
@@ -790,14 +888,32 @@ function mapParagraphs(node: PMNode, fn: (p: PMNode) => PMNode): PMNode {
   return node.type.create(node.attrs, children, node.marks)
 }
 
-/** 套用主题：背景、标题 / 正文颜色；原来用上一个主题强调色、卡片色的填充换成新主题的。 */
-export function themedSlide(slide: PMNode, themeKey: string): PMNode {
+/**
+ * 套用主题：背景、标题 / 正文颜色；原来用上一个主题强调色、卡片色的填充换成新主题的。
+ * 平台模板的 deck（platform）：再换掉模板装饰；版式里的占位符按新模板的样式着色、对齐，
+ * 位置继承自版式的（没被拖动过）挪到新模板的位置；早期的英文版式名换成模板版式名。
+ */
+export function themedSlide(slide: PMNode, themeKey: string, platform = false): PMNode {
   const theme = DECK_THEMES[themeKey] ?? DECK_THEMES[DEFAULT_THEME]!
   // 没套过主题的页按默认主题算（主题记号一直按默认主题取色）
   const old = DECK_THEMES[(slide.attrs.theme as string | null) ?? DEFAULT_THEME] ?? null
-  const shapes: PMNode[] = []
+  const def = platform ? layoutByName(slide.attrs.layout_name as string) : null
+  const specs = def ? layoutSpec(themeKey, def.key) : []
+  const shapes: PMNode[] = def ? decoShapes(themeKey, def.key) : []
   slide.forEach(shape => {
     if (shape.type.name !== 'shape') { shapes.push(shape); return }
+    if (isDecoName(shape.attrs.name)) { if (!def) shapes.push(shape); return }
+    const spec = def && shape.attrs.kind === 'text' ? phSpecOf(specs, shape.attrs.ph as string | null, shape.attrs.ph_idx as string | null) : null
+    if (spec && spec.type !== 'pic') {
+      const color = resolveColor(spec.color, themeKey)!
+      const box = shape.attrs.xfrm_inherited ? { x: emu(spec.box[0]), y: emu(spec.box[1]), w: emu(spec.box[2]), h: emu(spec.box[3]) } : {}
+      const restyled = mapParagraphs(shape, p => {
+        const ppr = specPpr(spec, color)
+        return styledParagraph(p.type.create({ ...p.attrs, ppr, align: alignOf(ppr) }, p.content, p.marks), { color })
+      })
+      shapes.push(restyled.type.create({ ...shape.attrs, ...box }, restyled.content, restyled.marks))
+      return
+    }
     const ph = shape.attrs.ph as string | null
     const isTitle = ph === 'title' || ph === 'ctrTitle'
     let attrs = shape.attrs
@@ -812,7 +928,8 @@ export function themedSlide(slide: PMNode, themeKey: string): PMNode {
       : mapParagraphs(shape, p => styledParagraph(p, { color: isTitle ? theme.title : ph === 'subTitle' ? theme.muted : theme.body }))
     shapes.push(restyled.type.create(attrs, restyled.content, restyled.marks))
   })
-  return slide.type.create({ ...slide.attrs, theme: themeKey, bg: theme.bg }, shapes)
+  const layout = def ? { layout: `ppt/slideLayouts/slideLayout${def.n}.xml`, layout_name: def.name } : {}
+  return slide.type.create({ ...slide.attrs, ...layout, theme: themeKey, bg: theme.bg }, shapes)
 }
 
 /**

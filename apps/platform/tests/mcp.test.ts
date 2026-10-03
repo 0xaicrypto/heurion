@@ -321,6 +321,30 @@ describe('AI 生成图片并插入（与人的插图能力一致）', () => {
     expect(read.text).toContain('roundRect')
     expect(read.text).toMatch(/图片/)
   })
+
+  it('幻灯片模板：AI 列出模板、按模板新建、按版式加页、换模板（与画布的模板选择器、加页菜单同一套）', async () => {
+    const t = await connect('占位。')
+    const list = await t.call('deck_templates', {})
+    expect(list.body.templates.length).toBeGreaterThanOrEqual(8)
+    expect(list.body.layouts.map((l: { name: string }) => l.name)).toContain('大数字')
+    const created = await t.call('doc_create', { title: '年度总结', kind: 'deck', template: 'swiss' })
+    expect(created.body.template).toBe('swiss')
+    const deckId = created.body.doc_id as string
+    const outline = await t.call('doc_outline', { doc_id: deckId })
+    expect(outline.text).toContain('[封面]')
+    expect(outline.text).toContain('两栏（')
+    const first = /\{#([a-z0-9]+)\}/.exec(outline.text)![1]!
+    const edit = await t.call('deck_edit', { doc_id: deckId, base_rev: created.body.rev, ops: [
+      { op: 'add_slide', after: first, layout: '两栏', title: '对比', body: '- 治疗组', body2: '- 对照组' },
+      { op: 'apply_theme', theme: 'mint' },
+    ] })
+    expect(edit.isError).toBe(false)
+    const slideId = /第 2 页 \{#([a-z0-9]+)\}/.exec((await t.call('doc_outline', { doc_id: deckId })).text)![1]!
+    const read = await t.call('slide_read', { doc_id: deckId, slide_id: slideId })
+    expect(read.text).toContain('主题 mint')
+    expect(read.text).toMatch(/模板装饰 \d+ 个/)
+    expect(read.text).toContain('对照组')
+  })
 })
 
 describe('文档仓库（AI 一侧）', () => {

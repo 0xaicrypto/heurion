@@ -17,10 +17,10 @@ import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
 import { bindDeckAssets, importPptx, PptxImportError } from '../convert/pptx-import.ts'
-import { readLayouts } from '../convert/pptx-layouts.ts'
 import { pptxTemplate } from '../convert/pptx-template.ts'
-import { DECK_THEMES } from '../model/deck-themes.ts'
-import { newDeckContent } from '../ops/deck.ts'
+import { templateCatalog } from '../model/deck-templates.ts'
+import { DECK_THEMES, DEFAULT_THEME } from '../model/deck-themes.ts'
+import { newTemplateDeck } from '../ops/deck.ts'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SlideRenderer } from '../render/slides.ts'
@@ -538,14 +538,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/docs', async c => {
     const user = c.get('user')
     if (c.req.header('content-type')?.includes('application/json')) {
-      const body = await c.req.json<{ title?: string; markdown?: string; kind?: string; project_id?: string | null }>()
+      const body = await c.req.json<{ title?: string; markdown?: string; kind?: string; project_id?: string | null; template?: string }>()
       const title = body.title?.trim() || '未命名'
       const project = projectOf(c, body.project_id)
       if (project === false) return c.json({ error: '项目不存在' }, 404)
       const place = (row: { id: string }) => { if (project) store.setDocProject(row.id, project); return store.getDoc(row.id)! }
       if (body.kind === 'deck') {
-        const pkg = pptxTemplate()
-        const row = docs.create({ owner: user, title, kind: 'deck', content: newDeckContent(readLayouts(pkg).layouts, title) })
+        const template = body.template && DECK_THEMES[body.template] ? body.template : DEFAULT_THEME
+        const pkg = pptxTemplate(template)
+        const row = docs.create({ owner: user, title, kind: 'deck', content: newTemplateDeck(title, template) })
         store.putPackage(row.id, 'pptx', pkg)
         return c.json(place(row), 201)
       }
@@ -806,6 +807,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   /** 用户编辑（P1 编辑器上线前的入口）：同一操作层，actor=user。 */
   // 幻灯片主题（画布的主题选择与颜色板用；与 MCP apply_theme 同一份定义）
   app.get('/api/deck-themes', c => c.json(DECK_THEMES))
+  // 模板清单：配色、说明、每个版式的占位符与装饰（模板选择器、加页的版式预览按它画）
+  app.get('/api/deck-templates', c => c.json(templateCatalog()))
 
   app.post('/api/docs/:id/edit', async c => {
     const row = owned(c)

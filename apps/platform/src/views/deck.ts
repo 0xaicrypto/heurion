@@ -1,5 +1,6 @@
 import type { Node as PMNode } from 'prosemirror-model'
 import { pt } from '../model/deck-schema.ts'
+import { isDecoName, layoutByName } from '../model/deck-templates.ts'
 import type { LayoutInfo } from '../ops/deck.ts'
 
 /**
@@ -26,8 +27,10 @@ function paragraphMd(p: PMNode, bulleted: boolean): string {
   return bulleted ? `${'  '.repeat(lvl)}- ${s}` : s
 }
 
+/** 正文占位符默认有项目符号；段落属性写了 a:buNone 的（模板的说明、数字等）没有。 */
+export const hasBullet = (shape: PMNode, p: PMNode) => (shape.attrs.ph === 'body' || shape.attrs.ph === 'obj') && !/<a:buNone\b/.test(String(p.attrs.ppr ?? ''))
+
 export function shapeText(shape: PMNode): string {
-  const bulleted = shape.attrs.ph === 'body' || shape.attrs.ph === 'obj'
   if (shape.attrs.kind === 'table') {
     const rows: string[] = []
     shape.firstChild?.forEach(row => {
@@ -38,7 +41,7 @@ export function shapeText(shape: PMNode): string {
     return rows.join('\n')
   }
   const lines: string[] = []
-  shape.forEach(p => { if (p.type.name === 'paragraph') lines.push(paragraphMd(p, bulleted && p.textContent.trim() !== '')) })
+  shape.forEach(p => { if (p.type.name === 'paragraph') lines.push(paragraphMd(p, hasBullet(shape, p) && p.textContent.trim() !== '')) })
   return lines.join('\n').trim()
 }
 
@@ -55,7 +58,7 @@ function slideTitle(slide: PMNode): string {
   return (best as PMNode | null)?.firstChild?.textContent.slice(0, 60) ?? ''
 }
 
-export function deckOutline(input: { doc: PMNode; docId: string; title: string; rev: number; layouts: LayoutInfo[]; size: { cx: number; cy: number }; openComments: number }): string {
+export function deckOutline(input: { doc: PMNode; docId: string; title: string; rev: number; layouts: LayoutInfo[]; size: { cx: number; cy: number }; openComments: number; platform?: boolean }): string {
   const lines = [`doc_id=${input.docId} · 《${input.title}》 · 幻灯片 ${input.doc.childCount} 页 · 页面 ${pt(input.size.cx)}×${pt(input.size.cy)}pt · rev=${input.rev} · open 评论 ${input.openComments}`]
   input.doc.forEach((slide, _o, i) => {
     let shapes = 0
@@ -64,7 +67,8 @@ export function deckOutline(input: { doc: PMNode; docId: string; title: string; 
     const pending = slide.attrs.suggest ? ` ⟨待采纳·${slide.attrs.suggest === 'insert' ? '新增' : '删除'}⟩` : ''
     lines.push(`第 ${i + 1} 页 {#${slide.attrs.id}}${pending} [${slide.attrs.layout_name || '无版式'}]${slide.attrs.hidden ? ' (隐藏)' : ''} ${slideTitle(slide) || '（无标题）'} · ${shapes} 个形状${notes ? ' · 有备注' : ''}`)
   })
-  if (input.layouts.length > 0) lines.push(`可用版式：${input.layouts.map(l => l.name).join('、')}`)
+  if (input.layouts.length > 0) lines.push(`可用版式：${input.layouts.map(l => { const def = layoutByName(l.name); return def && input.platform ? `${l.name}（${def.hint}）` : l.name }).join('、')}`)
+  if (input.platform) lines.push('模板：deck_templates 列出全部模板，apply_theme 换模板')
   return lines.join('\n')
 }
 
@@ -90,9 +94,16 @@ function chartText(chart: { type: string; title?: string; categories: string[]; 
 export function slideRead(slide: PMNode, index: number, rev: number): string {
   const look = [slide.attrs.theme ? `主题 ${slide.attrs.theme}` : '', slide.attrs.bg ? `背景 #${slide.attrs.bg}` : ''].filter(Boolean).join(' · ')
   const lines = [`第 ${index + 1} 页 {#${slide.attrs.id}} [${slide.attrs.layout_name || '无版式'}]${look ? ` · ${look}` : ''} · rev=${rev}`, '形状（x, y, 宽 × 高，单位 pt；* 表示位置继承自版式；从下到上的叠放顺序）：']
+  const decos: string[] = []
   slide.forEach(shape => {
     if (shape.type.name === 'notes') { lines.push(`备注：${shape.textContent}`); return }
     const a = shape.attrs
+    if (isDecoName(a.name)) {
+      // 模板装饰合成一行（换模板时自动替换，一般不用管）；图文版式的图片区单独标出位置
+      if (/:picture$/.test(a.name as string)) lines.push(`- {#${a.id}} 图片区 (${pt(a.x as number)}, ${pt(a.y as number)}, ${pt(a.w as number)}×${pt(a.h as number)}) [模板装饰：add_image 放在这里]`)
+      else decos.push(`{#${a.id}}`)
+      return
+    }
     const role = a.ph ? `${PH[a.ph as string] ?? a.ph}占位符` : (KIND[a.kind as string] ?? a.kind)
     const geo = `(${pt(a.x as number)}, ${pt(a.y as number)}, ${pt(a.w as number)}×${pt(a.h as number)})${a.xfrm_inherited ? '*' : ''}`
     const pending = a.suggest ? ` ⟨待采纳·${a.suggest === 'insert' ? '新增' : '删除'}⟩` : ''
@@ -101,6 +112,7 @@ export function slideRead(slide: PMNode, index: number, rev: number): string {
     const style = [a.geom && a.geom !== 'rect' ? String(a.geom) : '', a.fill ? (a.fill === 'none' ? '无填充' : `填充 #${a.fill}`) : '', textLook(shape)].filter(Boolean).join(' ')
     lines.push(`- {#${a.id}}${pending} ${role} ${geo}${style ? ` [${style}]` : ''}${editable}${body ? `\n  ${body.replace(/\n/g, '\n  ')}` : ''}`)
   })
+  if (decos.length > 0) lines.push(`- 模板装饰 ${decos.length} 个 ${decos.join(' ')}（色条、色块等，不能写字；apply_theme 换模板时自动替换，不想要可以 delete_shape）`)
   return lines.join('\n')
 }
 

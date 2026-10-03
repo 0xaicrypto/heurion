@@ -11,6 +11,11 @@ import { DOI, manualCitation } from './citation-check.ts'
 import { OpError, opTexts, targetIds, type DocOp, type EditBatch } from './types.ts'
 import { applyDeckOps, deckOpTexts, deckTargetIds, type DeckEditBatch, type DeckOp } from './deck.ts'
 import { readLayouts } from '../convert/pptx-layouts.ts'
+import { isPlatformPackage } from '../convert/pptx-template.ts'
+import { templateLayouts } from '../model/deck-templates.ts'
+import { DEFAULT_THEME } from '../model/deck-themes.ts'
+
+type DeckInfo = ReturnType<typeof readLayouts> & { platform: boolean }
 
 export interface EditResult {
   doc_id: string
@@ -29,13 +34,16 @@ export class OpService {
   constructor(private readonly docs: Documents) {}
 
   /** deck 的版式与页面尺寸（来自原始文件包；按文档缓存）。 */
-  private readonly deckInfo = new Map<string, ReturnType<typeof readLayouts>>()
+  private readonly deckInfo = new Map<string, DeckInfo>()
 
-  deckContextInfo(docId: string): ReturnType<typeof readLayouts> {
+  /** 平台模板生成的 deck 一律用模板的 8 个版式（早期只有 3 个版式的包也升级）；导入的 pptx 用文件自己的版式。 */
+  deckContextInfo(docId: string): DeckInfo {
     let info = this.deckInfo.get(docId)
     if (!info) {
       const pkg = this.docs.store.getPackage(docId)
-      info = pkg ? readLayouts(pkg) : { layouts: [], size: { cx: 12192000, cy: 6858000 } }
+      info = !pkg ? { layouts: [], size: { cx: 12192000, cy: 6858000 }, platform: false }
+        : isPlatformPackage(pkg) ? { layouts: templateLayouts(DEFAULT_THEME), size: { cx: 12192000, cy: 6858000 }, platform: true }
+          : { ...readLayouts(pkg), platform: false }
       this.deckInfo.set(docId, info)
     }
     return info
