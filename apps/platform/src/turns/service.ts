@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import type { Documents, CommitEvent } from '../model/runtime.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
 import type { MemoryService } from '../memory/service.ts'
+import type { Alerts } from '../ops-alert/alerts.ts'
 import type { HarnessPool } from '../harness/pool.ts'
 import type { TurnRegistry } from '../mcp/turns.ts'
 
@@ -83,6 +84,7 @@ export class TurnService {
   private readonly timedOut = new Set<string>()
   private readonly idleTimeoutMs: number
   private readonly memory: MemoryService | null
+  private readonly alerts: Alerts | null
   private readonly queues = new Map<string, Job[]>()
   private readonly running = new Map<string, Running>()
 
@@ -90,10 +92,11 @@ export class TurnService {
     private readonly docs: Documents,
     private readonly pool: HarnessPool,
     private readonly registry: TurnRegistry,
-    opts: { idleTimeoutMs?: number; memory?: MemoryService } = {},
+    opts: { idleTimeoutMs?: number; memory?: MemoryService; alerts?: Alerts } = {},
   ) {
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60_000
     this.memory = opts.memory ?? null
+    this.alerts = opts.alerts ?? null
   }
 
   /** 服务启动时恢复：上次没跑完的回合标为中断，排队中的任务重新入队。 */
@@ -272,6 +275,8 @@ export class TurnService {
         if (v) emit({ type: 'version', doc_id: id, seq: v.seq })
       }
       store.endTurn(turn.id, status, failure)
+      // 取消不算故障；出错、超时交给运维告警（模型认证 / 余额问题立即发，其余短时间内多次才发）
+      if ((status === 'error' || status === 'timeout') && failure) this.alerts?.turnFailed(failure)
       emit({ type: 'turn_done', turn_id: turn.id, status, docs: [...touched] })
       this.cancelling.delete(userId)
       this.timedOut.delete(userId)

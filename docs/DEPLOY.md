@@ -47,6 +47,8 @@ VPS 上的目录 `/opt/heurion2`：`docker-compose.yml`、`Caddyfile`、`.env.pr
 
 ## 运维
 
+- **告警**：平台内部——模型服务认证失败 / 余额不足立即、15 分钟内 5 个回合失败时，发邮件给绑定了邮箱的管理员（同类一小时一封，`src/ops-alert/alerts.ts`）。外部——`deploy/github-main/uptime.yml` 每 10 分钟探测 heurion.org，连续失败开 issue、恢复后关闭；它必须放在仓库默认分支 main 的 `.github/workflows/` 下才会定时运行。
+
 - 日志：`docker logs -f heurion2`（json-file 轮转，单容器最多约 250MB）。
 - 手动部署 / 回滚到某个版本：`cd /opt/heurion2 && HEURION2_IMAGE=ghcr.io/0xaicrypto/heurion2:<sha> EMBEDDER_IMAGE=ghcr.io/0xaicrypto/heurion2-embedder:<sha> bash scripts/deploy.sh`。
 - 备份：每天 02:20 数据库在线快照（`node:sqlite` backup，`heurion2/db/` 保留 30 份），每周日 03:20 用户工作区（`heurion2/workspaces/` 保留 8 份）；状态在 `/opt/heurion2/backup-status.json`。

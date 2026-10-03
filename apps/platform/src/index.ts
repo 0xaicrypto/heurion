@@ -5,6 +5,7 @@ import { createServer } from 'node:http'
 import { getRequestListener } from '@hono/node-server'
 import { Accounts } from './auth/accounts.ts'
 import { createMailer } from './auth/mailer.ts'
+import { Alerts } from './ops-alert/alerts.ts'
 import { SearchIndex } from './model/search-index.ts'
 import { HttpEmbedder } from './kb/embedder.ts'
 import { localOcr } from './kb/ocr.ts'
@@ -44,7 +45,10 @@ const kb = new KbService(store, embedder, localOcr(resolve(config.dataDir, 'ocr-
 kb.resume()
 // 记忆（R3）：相似去重与按相关度注入用同一个嵌入服务，不在时按文本
 const memory = new MemoryService(store, embedder)
-const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory })
+const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
+// 运维告警：模型服务不可用、回合大量失败时发邮件给管理员
+const alerts = new Alerts(store, mailer)
+const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
   pubmed,
@@ -55,7 +59,6 @@ const mcpDeps = {
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
-const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
 const accounts = new Accounts(store, { secret: config.secret, devMode: config.devMode, devToken: config.devToken, devUser: config.devUser, mailer })
 const search = new SearchIndex(docs)
 const indexed = search.backfill()
