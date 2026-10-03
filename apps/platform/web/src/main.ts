@@ -10,6 +10,8 @@ import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
 import { initDatasets } from './datasets.ts'
 import { initPatients } from './patients.ts'
+import { initResearch } from './research.ts'
+import { initSpaces } from './spaces.ts'
 import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
@@ -143,7 +145,7 @@ $('docList').onclick = async e => {
       ['复制', async () => { const c = await api(`/api/docs/${id}/duplicate`, { method: 'POST' }); await loadDocs(); await open(c.id) }],
       ['移到回收站', async () => {
         await api(`/api/docs/${id}`, { method: 'DELETE' })
-        if (session?.docId === id) { close(); $('chatLog').innerHTML = ''; showWelcome() }
+        if (session?.docId === id) { leaveDoc(); showWelcome() }
         await loadDocs()
         showNotice(`「${d?.title ?? '文档'}」已移到回收站（30 天内可恢复）`)
       }, true],
@@ -202,9 +204,19 @@ const patientsUi = initPatients(api, (m, e) => showNotice(m, e), {
     input.focus()
     input.setSelectionRange(input.value.length, input.value.length)
   },
-  showDocWelcome: () => { leaveDoc(); showWelcome() },
+  goSpace: space => spaces.set(space),
   tenantId: () => ME?.tenant?.id ?? null,
   token: () => TOKEN,
+})
+const researchUi = initResearch(api, (m, e) => showNotice(m, e))
+// 左侧图标栏：写作 / 患者 / 临床研究
+const spaces = initSpaces({
+  write: { title: '写作', label: '文档', actions: 'docActions', list: 'docList', placeholder: '搜索文档（标题与正文）',
+    enter: idle => { if (idle) { patientsUi.leave(); researchUi.leave(); leaveDoc(); showWelcome() } } },
+  patients: { title: '患者', label: '患者', actions: 'ptActions', list: 'patientList', placeholder: '按代号、本机备注、标签筛选',
+    enter: idle => { if (idle) researchUi.leave(); return patientsUi.enter(idle) } },
+  research: { title: '临床研究', label: '研究项目', actions: 'rsActions', list: 'studyList', placeholder: '按研究名称筛选',
+    enter: idle => { if (idle) { patientsUi.leave(); leaveDoc() } return researchUi.enter(idle) } },
 })
 
 async function openTrash(): Promise<void> {
@@ -293,6 +305,8 @@ $('page').addEventListener('click', async e => {
 
 /** 离开文档（打开患者页时）：关掉编辑器，清空中间区域与对话。 */
 function leaveDoc(): void {
+  // 没打开文档：AI 栏收起（对话要基于一份文档），顶栏不显示导出与同步状态
+  $('app').classList.add('no-doc')
   close()
   hideTurnBanner()
   turnUi = null
@@ -318,6 +332,7 @@ let streamHellos = 0
 
 async function open(docId: string): Promise<void> {
   streamHellos = 0
+  $('app').classList.remove('no-doc')
   refImportHtml = ''
   patientsUi.leave()
   close()
@@ -1385,9 +1400,10 @@ async function boot(): Promise<void> {
   const me = await api<Me>('/api/me')
   ME = me
   initUserMenu(me, api, showNotice)
-  // 上次停在患者页签时显示患者引导（患者模块自己负责），否则显示文档欢迎页
-  if (!patientsUi.isPatientMode()) showWelcome()
-  patientsUi.setEnabled(me.tenant?.settings.patient_module !== false)
+  // 回到上次停留的工作空间（显示该空间的开始页）
+  spaces.setEnabled('patients', me.tenant?.settings.patient_module !== false)
+  leaveDoc()
+  spaces.set(spaces.saved())
   await loadDocs()
 }
 boot().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Error).message)}</div>` })

@@ -84,9 +84,36 @@ input[type=checkbox] { accent-color: var(--mint-text); }
 .narrow-only { display: none !important; }
 
 /* —— 三栏布局（各自滚动，长文档不撑高整页） —— */
-.app { display: grid; grid-template-columns: 248px minmax(0, 1fr) 400px; grid-template-rows: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
+.app { display: grid; grid-template-columns: 292px minmax(0, 1fr) 400px; grid-template-rows: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
 .app > * { min-height: 0; }
 .scrim { display: none; }
+
+/* —— 左栏：图标栏（工作空间）+ 内容栏（当前空间的操作与列表） —— */
+.nav { flex-direction: row !important; }
+.rail { width: 60px; flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 12px 6px 10px; border-right: 1px solid var(--line); background: var(--bg-deep); }
+.rail-mark { display: grid; place-items: center; height: 44px; margin-bottom: 10px; }
+.rail-mark .mark { width: 26px; height: 24px; }
+.rail-spaces { display: flex; flex-direction: column; gap: 2px; }
+.rail-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0 6px; border: 0; border-left: 2px solid transparent; background: transparent; color: var(--muted); font-size: 11px; line-height: 1.2; }
+.rail-btn svg { width: 20px; height: 20px; }
+.rail-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: transparent; }
+.rail-btn.on { color: var(--text); background: var(--teal); border-left-color: var(--mint); }
+.rail-btn.on svg { color: var(--mint-text); }
+.rail-sep { height: 1px; background: var(--line); margin: 10px 6px; }
+.rail .grow { flex: 1; }
+.rail .user { padding: 0; border: 0; position: static; }
+.rail .user-button { width: 100%; justify-content: center; padding: 6px 0; }
+.rail .user-menu { position: fixed; left: 64px; right: auto; bottom: 12px; width: 240px; }
+.user-menu-head { display: flex; flex-direction: column; padding: 8px 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.nav-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; padding: 22px 16px 14px; }
+.panel-title { font-size: 18px; font-weight: 500; }
+.panel-brand { font-size: 10px; letter-spacing: .22em; color: var(--faint); }
+.split.one { grid-template-columns: 1fr; }
+
+/* 没打开文档：AI 栏收起，顶栏只留标题 */
+.app.no-doc { grid-template-columns: 292px minmax(0, 1fr) 0; }
+.app.no-doc .side, .app.no-doc #exportBtn, .app.no-doc #syncStatus, .app.no-doc #sideToggle, .app.no-doc #toolbar, .app.no-doc #deckToolbar { display: none !important; }
 
 /* —— 左栏 —— */
 .nav { background: var(--nav-bg); color: var(--nav-text); border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
@@ -254,14 +281,14 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .welcome-examples button:hover:not(:disabled) { background: var(--teal); }
 
 /* —— 开始页（文档欢迎页、患者引导）：填满整个工作区 —— */
-.scroller:has(> .page.welcome-page), .scroller:has(> .page.patient-page.pt-welcome) { padding: 0; display: flex; flex-direction: column; }
-.page.welcome-page, .page.patient-page.pt-welcome {
+.scroller:has(> .page.welcome-page), .scroller:has(> .page.patient-page.pt-welcome), .scroller:has(> .page.rs-welcome) { padding: 0; display: flex; flex-direction: column; }
+.page.welcome-page, .page.patient-page.pt-welcome, .page.study-page.rs-welcome {
   max-width: none; width: 100%; margin: 0; flex: 1 0 auto; min-height: 100%; border: 0; box-shadow: none;
   padding: clamp(32px, 7vh, 88px) clamp(24px, 6vw, 96px); display: flex; flex-direction: column; justify-content: center;
   background-color: transparent; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 100% 25%, 25% 100%; }
-.page.welcome-page .welcome, .page.pt-welcome .pt-welcome-body { max-width: 1000px; width: 100%; margin: 0 auto; }
-.page.pt-welcome .pt-welcome-body h1 { font-size: 44px; }
+.page.welcome-page .welcome, .page.pt-welcome .pt-welcome-body, .page.rs-welcome .pt-welcome-body { max-width: 1000px; width: 100%; margin: 0 auto; }
+.page.pt-welcome .pt-welcome-body h1, .page.rs-welcome .pt-welcome-body h1 { font-size: 44px; }
 
 /* —— 右栏 —— */
 .side { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
@@ -642,7 +669,8 @@ button.block { width: 100%; padding: 10px 12px; }
 
 /* —— 中等宽度：收窄两侧 —— */
 @media (max-width: 1280px) {
-  .app { grid-template-columns: 224px minmax(0, 1fr) 360px; }
+  .app { grid-template-columns: 276px minmax(0, 1fr) 360px; }
+  .app.no-doc { grid-template-columns: 276px minmax(0, 1fr) 0; }
   .page { padding: 52px 56px; }
   .welcome h1 { font-size: 36px; }
 }
@@ -658,6 +686,7 @@ button.block { width: 100%; padding: 10px 12px; }
   .narrow-only { display: inline-grid !important; }
   .side-head.narrow-only { display: flex !important; }
   .app { grid-template-columns: minmax(0, 1fr); }
+  .app.no-doc { grid-template-columns: minmax(0, 1fr); }
   .nav { position: fixed; z-index: 60; top: 0; bottom: 0; left: 0; width: min(320px, 86vw); transform: translateX(-102%); transition: transform .22s ease; }
   .side { position: fixed; z-index: 60; inset: 0; width: 100%; border-left: 0; transform: translateX(102%); transition: transform .22s ease; }
   .app.nav-open .nav, .app.side-open .side { transform: none; }

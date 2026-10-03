@@ -36,8 +36,8 @@ export interface PatientHooks {
   openDoc(id: string): Promise<void>
   /** 把指令填进对话框（不发送） */
   prefillChat(text: string): void
-  /** 文档模式的欢迎页 */
-  showDocWelcome(): void
+  /** 切到某个工作空间（左侧图标栏） */
+  goSpace(space: 'write' | 'patients' | 'research'): void
   tenantId(): string | null
   token(): string
 }
@@ -435,26 +435,6 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
   // —— 左栏页签 ——
 
-  const setMode = (mode: 'docs' | 'patients') => {
-    $('navDocs').classList.toggle('on', mode === 'docs')
-    $('navPatients').classList.toggle('on', mode === 'patients')
-    $('navDocs').setAttribute('aria-selected', String(mode === 'docs'))
-    $('navPatients').setAttribute('aria-selected', String(mode === 'patients'))
-    $('navLabel').textContent = mode === 'docs' ? '文档' : '患者'
-    $('docList').hidden = mode !== 'docs'
-    $('patientList').hidden = mode !== 'patients'
-    $('newProject').hidden = mode !== 'docs'
-    $('docActions').hidden = mode !== 'docs'
-    $('ptActions').hidden = mode !== 'patients'
-    ;(document.getElementById('docSearch') as HTMLInputElement).placeholder = mode === 'docs' ? '搜索文档（标题与正文）' : '按代号、本机备注、标签筛选'
-    try { localStorage.setItem('heurion.navMode', mode) } catch { /* 忽略 */ }
-    const page = $('page')
-    const idle = page.classList.contains('welcome-page') || page.classList.contains('pt-welcome') || page.childElementCount === 0
-    if (mode === 'patients') void loadList().then(() => { if (idle && !current) showWelcome() })
-    else if (idle || (page.classList.contains('patient-page') && current)) { current = null; hooks.showDocWelcome() }
-  }
-  $('navDocs').onclick = () => setMode('docs')
-  $('navPatients').onclick = () => setMode('patients')
   $('newPatientBig').onclick = () => void createPatient()
   $('patientList').onclick = e => {
     const t = e.target as HTMLElement
@@ -463,16 +443,18 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     if (li) void openPatient(li.dataset.pt!)
   }
   document.getElementById('docSearch')!.addEventListener('input', () => { if (!$('patientList').hidden) renderList() })
-  try { if (localStorage.getItem('heurion.navMode') === 'patients') setMode('patients') } catch { /* 忽略 */ }
 
   return {
     /** 打开文档时：患者页失效 */
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
     /** 打开患者页（从病例报告回到患者） */
-    async open(id: string): Promise<void> { setMode('patients'); await openPatient(id) },
-    /** 当前左栏是不是患者页签（启动时决定显示哪个欢迎页） */
-    isPatientMode(): boolean { return !$('patientList').hidden },
-    /** 机构没开患者模块时隐藏页签 */
-    setEnabled(on: boolean): void { $('navPatients').closest<HTMLElement>('.nav-switch')!.hidden = !on; if (!on) setMode('docs') },
+    async open(id: string): Promise<void> { hooks.goSpace('patients'); await openPatient(id) },
+    /** 进入患者空间（左侧图标栏）：刷新列表；中间区域空闲时显示患者引导 */
+    async enter(idle: boolean): Promise<void> {
+      if (idle && current && document.getElementById('page')!.classList.contains('patient-page') && !document.getElementById('page')!.classList.contains('pt-welcome')) { await loadList(); return }
+      current = null
+      await loadList()
+      if (idle) showWelcome()
+    },
   }
 }
