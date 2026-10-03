@@ -78,9 +78,18 @@ app.get('/assets/:file', c => {
   if (!existsSync(file)) return c.notFound()
   return c.body(readFileSync(file), 200, { 'Content-Type': MIME[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable' })
 })
-app.get('/', c => existsSync(join(DIST, 'index.html'))
+app.get('/app', c => existsSync(join(DIST, 'index.html'))
   ? c.html(readFileSync(join(DIST, 'index.html'), 'utf8'))
   : c.text('页面未构建：运行 pnpm --filter @heurion2/platform build，或用 dev:web 开发服务器（http://127.0.0.1:5173）', 503))
+app.get('/app/', c => c.redirect('/app'))
+// 官网：apps/site 的静态页（不用构建）；工作台在 /app
+const SITE = fileURLToPath(new URL('../../site/', import.meta.url))
+app.get('/', c => c.html(readFileSync(join(SITE, 'index.html'), 'utf8')))
+app.get('/site/:file', c => {
+  const file = join(SITE, basename(c.req.param('file')))
+  if (!existsSync(file) || !MIME[extname(file)]) return c.notFound()
+  return c.body(readFileSync(file), 200, { 'Content-Type': MIME[extname(file)]!, 'Cache-Control': 'public, max-age=300' })
+})
 const api = getRequestListener(app.fetch)
 
 // /mcp 用 Node 原生 req/res（MCP SDK transport 需要），其余交给 Hono

@@ -24,7 +24,7 @@ jobs:
         run: |
           ok=0
           for i in 1 2; do
-            if curl -fsS -m 20 https://heurion.org/healthz | grep -q '"ok":true' && curl -fsS -m 20 -o /dev/null https://heurion.org/; then ok=1; break; fi
+            if curl -fsS -m 20 https://heurion.org/healthz | grep -q '"ok":true' && curl -fsS -m 20 -o /dev/null https://heurion.org/ && curl -fsS -m 20 -o /dev/null https://heurion.org/app; then ok=1; break; fi
             sleep 60
           done
           echo "ok=$ok" >> "$GITHUB_OUTPUT"

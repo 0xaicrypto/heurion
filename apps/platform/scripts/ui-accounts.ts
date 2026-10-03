@@ -30,7 +30,7 @@ const newPage = async () => {
   return page
 }
 const register = async (page: Page, username: string, display: string, password: string) => {
-  await page.goto(B + '/')
+  await page.goto(B + '/app')
   await page.waitForSelector('#authScreen:not([hidden])')
   if (await page.locator('#authSwitch a[data-mode="register"]').isVisible()) await page.click('#authSwitch a[data-mode="register"]')
   await page.fill('#authUsername', username)
@@ -45,7 +45,7 @@ const register = async (page: Page, username: string, display: string, password:
 
 // 1. 第一个用户：创建管理员
 const admin = await newPage()
-await admin.goto(B + '/')
+await admin.goto(B + '/app')
 await admin.waitForSelector('#authScreen:not([hidden])')
 ok('全新实例显示「创建管理员账户」', (await admin.locator('.auth-title').innerText()) === '创建管理员账户')
 await shot(admin, 'register-admin')
@@ -118,7 +118,7 @@ if (SERVER_LOG) {
   await shot(admin, 'settings-email')
 
   const other = await newPage()
-  await other.goto(B + '/')
+  await other.goto(B + '/app')
   await other.waitForSelector('#authScreen:not([hidden])')
   await other.click('#authSwitch a[data-mode="reset"]')
   await other.fill('#resetEmail', 'WANG@hosp.example')

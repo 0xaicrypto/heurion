@@ -130,7 +130,9 @@ jobs:
       - name: 冒烟检查
         run: |
           curl -fsS https://heurion.org/healthz
-          curl -fsS https://heurion.org/ | grep -q 'id="page"'
+          curl -fsS https://heurion.org/ | grep -q 'CLINICAL AI WORKSTATION'
+          curl -fsS https://heurion.org/site/site.css >/dev/null
+          curl -fsS https://heurion.org/app | grep -q 'id="page"'
           # MCP 不对外
           [ "$(curl -s -o /dev/null -w '%{http_code}' https://heurion.org/mcp)" = "404" ]
           [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST https://heurion.org/llm/v1/messages)" = "404" ]
