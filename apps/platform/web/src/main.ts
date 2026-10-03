@@ -1283,3 +1283,20 @@ function friendlyError(message: string): string {
   return message.slice(0, 300)
 }
 
+// —— 窄屏（手机 / 平板竖屏）：左栏与右栏变成滑出面板 ——
+{
+  const app = $('app')
+  const setPanel = (which: 'nav' | 'side' | null) => {
+    app.classList.toggle('nav-open', which === 'nav')
+    app.classList.toggle('side-open', which === 'side')
+  }
+  $('navToggle').onclick = () => setPanel(app.classList.contains('nav-open') ? null : 'nav')
+  $('sideToggle').onclick = () => setPanel(app.classList.contains('side-open') ? null : 'side')
+  $('sideClose').onclick = () => setPanel(null)
+  $('scrim').onclick = () => setPanel(null)
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('.dialog:not([hidden])')) setPanel(null) })
+  // 在列表里点开文档、新建后收起左栏
+  $('docList').addEventListener('click', e => { if ((e.target as HTMLElement).closest('li[data-id]')) setPanel(null) })
+  for (const id of ['newDoc', 'newDeck']) $(id).addEventListener('click', () => setPanel(null))
+}
+

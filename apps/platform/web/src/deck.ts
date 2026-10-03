@@ -33,7 +33,8 @@ type DragKind = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
 const EMU_PER_PT = 12700
 /** 幻灯片显示宽度随中间栏自适应（窄屏不被裁掉），在这个范围内。 */
-const MIN_WIDTH = 480
+/** 最小宽度：手机上按屏宽缩放（不小于这个值，避免字小到看不清）。 */
+const MIN_WIDTH = 280
 const MAX_WIDTH = 960
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 const PH_SIZE: Record<string, number> = { title: 40, ctrTitle: 44, subTitle: 24 }
@@ -106,7 +107,9 @@ export class DeckView {
   /** 中间栏可用宽度（减去滚动区与页面的内边距）。 */
   private fitWidth(): number {
     const scroller = this.mount.closest('.scroller') as HTMLElement | null
-    const avail = (scroller?.clientWidth ?? 856) - 48 - 48
+    // 桌面：滚动区与页面各留 48px；手机（窄于 700px）：两边一共只留 20px，幻灯片尽量占满屏宽
+    const width = scroller?.clientWidth ?? 856
+    const avail = width - (width < 700 ? 20 : 96)
     return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.floor(avail)))
   }
 

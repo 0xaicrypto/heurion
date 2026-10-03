@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Heurion</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 2 104 96'%3E%3Crect x='-6' y='2' width='104' height='96' rx='22' fill='%230F172A'/%3E%3Crect x='6' y='18' width='16' height='66' rx='8' fill='%23F8FAFC'/%3E%3Crect x='60' y='35' width='16' height='49' rx='8' fill='%23F8FAFC'/%3E%3Crect x='18' y='45' width='46' height='16' rx='8' fill='%230EA5E9'/%3E%3Ccircle cx='76' cy='24' r='10' fill='%230EA5E9'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 2 104 96'%3E%3Crect x='-6' y='2' width='104' height='96' fill='%2306110D'/%3E%3Crect x='6' y='18' width='16' height='66' rx='8' fill='%23FFFFFF'/%3E%3Crect x='60' y='35' width='16' height='49' rx='8' fill='%23FFFFFF'/%3E%3Crect x='18' y='45' width='46' height='16' rx='8' fill='%2300FF93'/%3E%3Ccircle cx='76' cy='24' r='10' fill='%2300FF93'/%3E%3C/svg%3E">
+  <meta name="theme-color" content="#06110D">
 </head>
 <body>
 <div class="app" id="app">
@@ -46,6 +47,7 @@
 
   <main class="center">
     <header class="topbar">
+      <button class="icon-btn narrow-only" id="navToggle" aria-label="文档列表" aria-controls="app"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6"/></svg></button>
       <span class="title" id="docTitle" title="点击重命名">未选择文档</span>
       <span class="status" id="syncStatus"></span>
       <div class="menu-wrap">
@@ -56,6 +58,7 @@
           <button id="exportMdBtn" role="menuitem">Markdown<span class="muted">.md</span></button>
         </div>
       </div>
+      <button class="narrow-only side-toggle" id="sideToggle" aria-label="打开对话与评论">AI 对话</button>
     </header>
     <div class="toolbar" id="toolbar" hidden>
       <select id="blockType" title="段落样式">
@@ -148,7 +151,9 @@
     <button id="commentFab" class="primary fab">评论</button>
   </main>
 
+  <div class="scrim" id="scrim"></div>
   <section class="side">
+    <div class="side-head narrow-only"><span class="eyebrow">Heurion AI</span><button class="icon-btn" id="sideClose" aria-label="关闭"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6"/></svg></button></div>
     <div class="tabs">
       <button data-tab="chatPane" class="active">对话</button>
       <button data-tab="commentPane">评论</button>
