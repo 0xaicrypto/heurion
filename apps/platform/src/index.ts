@@ -41,7 +41,7 @@ const claims = new ClaimService(docs, pubmed)
 const renderer = new SlideRenderer(config.renderDir)
 // 参考资料库：本地嵌入服务（apps/embedder）可选，不在时只用关键词检索
 const embedder = config.embeddingUrl ? new HttpEmbedder(config.embeddingUrl) : null
-const kb = new KbService(store, embedder, localOcr(resolve(config.dataDir, 'ocr-cache')))
+const kb = new KbService(store, embedder, localOcr(config.ocrCacheDir))
 kb.resume()
 // 记忆（R3）：相似去重与按相关度注入用同一个嵌入服务，不在时按文本
 const memory = new MemoryService(store, embedder)

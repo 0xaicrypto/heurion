@@ -50,6 +50,8 @@ export const config = {
    */
   sandbox: env('HEURION_SANDBOX', '0') === '1',
   dshHomesDir: resolve(dataDir, 'platform', 'dsh-homes'),
+  /** OCR 语言模型目录（镜像里构建时已下载好；本机开发第一次用时下载）。 */
+  ocrCacheDir: env('HEURION_OCR_CACHE', resolve(dataDir, 'ocr-cache')),
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),
   /** 回合无响应超时：模型 / 工具连续这么久没有任何动静，自动停止该回合，放行队列。 */
   turnIdleTimeoutMs: Number(env('TURN_IDLE_TIMEOUT_MS', String(5 * 60_000))),

@@ -21,6 +21,11 @@ RUN pnpm install --frozen-lockfile --filter @heurion2/platform... \
     && chmod -R a+rX /app \
     && mkdir -p /app/data && chown -R node:node /app/data
 
+# OCR 语言模型（简中 + 英文）构建时下载进镜像：扫描件 OCR 不依赖运行时联网
+RUN mkdir -p /opt/ocr-cache && cd /app/apps/platform \
+    && node -e "import('tesseract.js').then(async ({ createWorker }) => { const w = await createWorker('chi_sim+eng', 1, { cachePath: '/opt/ocr-cache' }); await w.terminate() })" \
+    && ls -la /opt/ocr-cache && chmod -R a+rX /opt/ocr-cache
+
 # AI 代码隔离：平台以 node 运行；每个平台用户的 dsh 及其执行的代码经 sudo + 启动器降到专属 uid
 COPY deploy/sandbox/heurion-sandbox-exec /usr/local/bin/heurion-sandbox-exec
 COPY deploy/sandbox/sudoers /etc/sudoers.d/heurion
@@ -32,6 +37,7 @@ RUN chown root:root /usr/local/bin/heurion-sandbox-exec /usr/local/bin/heurion-e
 # 以 root 启动：入口整理数据目录权限后降到 node 运行平台
 ENV HEURION_DATA_DIR=/app/data \
     HEURION_SANDBOX=1 \
+    HEURION_OCR_CACHE=/opt/ocr-cache \
     PORT=8787
 EXPOSE 8787
 ENTRYPOINT ["/usr/local/bin/heurion-entrypoint"]
