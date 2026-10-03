@@ -57,7 +57,7 @@ export interface RecordRow {
 /** 报告文字：PDF（文字层 / 扫描件 OCR）、图片（OCR）→ 每页文字。 */
 export type ReportPages = (name: string, mime: string, bytes: Uint8Array) => Promise<string[]>
 export interface ProposalRow {
-  id: string; patient_id: string; kind: 'lab' | 'tag' | 'note' | 'update'; payload: Record<string, unknown>; reason: string
+  id: string; patient_id: string; kind: 'lab' | 'tag' | 'note' | 'update' | 'enroll' | 'unenroll'; payload: Record<string, unknown>; reason: string
   turn_id: string | null; status: 'pending' | 'accepted' | 'rejected'; created_by: string; created_at: string; resolved_by: string | null; resolved_at: string | null
 }
 
@@ -141,6 +141,12 @@ class TenantPatientDb {
       CREATE TABLE IF NOT EXISTS break_glass (
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL, user_id TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL, expires_at TEXT NOT NULL
       );
+      -- 研究入组（docs/design/COHORT.md）：患者 ↔ 研究的对应与研究编号放在机构的患者库里，不进平台库
+      CREATE TABLE IF NOT EXISTS enrollments (
+        study_id TEXT NOT NULL, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, subject_id TEXT NOT NULL,
+        status TEXT NOT NULL, criteria TEXT, enrolled_by TEXT NOT NULL, enrolled_at TEXT NOT NULL, withdrawn_at TEXT,
+        PRIMARY KEY (study_id, patient_id), UNIQUE (study_id, subject_id)
+      );
     `)
     // 旧库补列
     const cols = (t: string) => (this.db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>).map(c => c.name)
@@ -148,6 +154,12 @@ class TenantPatientDb {
     if (!labCols.includes('collected_at')) this.db.exec('ALTER TABLE labs ADD COLUMN collected_at TEXT')
     if (!labCols.includes('replaces')) this.db.exec('ALTER TABLE labs ADD COLUMN replaces TEXT')
     if (!cols('records').includes('report_time')) this.db.exec('ALTER TABLE records ADD COLUMN report_time TEXT')
+  }
+
+  /** 研究内的研究编号 S001、S002……（递增，移出的不复用） */
+  nextSubject(studyId: string): string {
+    const row = this.db.prepare("INSERT INTO seq (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1 RETURNING value").get(`subject:${studyId}`) as { value: number }
+    return `S${String(row.value).padStart(3, '0')}`
   }
 
   nextCode(): string {
@@ -280,7 +292,7 @@ export class PatientService {
     const all = (c.db.db.prepare("SELECT * FROM labs WHERE patient_id = ? AND status = 'confirmed' ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at").all(patientId) as Array<Record<string, unknown>>).map(labOf)
     const latest = [...new Map(all.map(l => [l.test_key, l])).values()]
     this.log(c, a, patientId, 'view')
-    return { ...p, access: role, documents: this.documents(c, patientId, a.userId), summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
+    return { ...p, access: role, documents: this.documents(c, patientId, a.userId), studies: this.studiesOf(c, patientId), summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
   }
 
   update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown }): PatientRow {
@@ -619,6 +631,10 @@ export class PatientService {
     if (kind === 'note' && (typeof payload.text !== 'string' || !payload.text.trim())) throw new PatientError('bad_payload', 'note 需要 payload.text')
     const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 300) : ''
     if (!reason) throw new PatientError('reason_required', '请写明依据（来自哪份报告、哪一页）')
+    return this.insertProposal(c, a, patientId, kind, payload, reason)
+  }
+
+  private insertProposal(c: ReturnType<PatientService['ctx']>, a: Actor, patientId: string, kind: ProposalRow['kind'], payload: Record<string, unknown>, reason: string): ProposalRow {
     const id = rid('pp')
     c.db.db.prepare('INSERT INTO proposals (id, patient_id, kind, payload, reason, turn_id, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, patientId, kind, JSON.stringify(payload), reason, a.turnId ?? null, 'pending', a.via === 'ai' ? `ai:${a.userId}` : a.userId, now())
@@ -643,6 +659,12 @@ export class PatientService {
         c.db.db.prepare("UPDATE labs SET source = 'ai' WHERE id = ?").run(lab.id)
       } else if (prop.kind === 'update') {
         this.update(a, patientId, prop.payload)
+      } else if (prop.kind === 'enroll' || prop.kind === 'unenroll') {
+        // 入组 / 移出只能由研究负责人确认（研究归个人；诊疗组的其他成员看得到提议，但不能替别人的研究做决定）
+        const study = this.store.getStudy(String(prop.payload.study_id))
+        if (!study || study.owner !== a.userId) throw new PatientError('forbidden', '只有研究负责人能确认入组 / 移出', 403)
+        if (prop.kind === 'enroll') this.enrollOne(c, a, patientId, study.id, typeof prop.payload.criteria === 'string' ? prop.payload.criteria : null)
+        else this.withdrawOne(c, a, patientId, study.id)
       } else if (prop.kind === 'tag') {
         this.update(a, patientId, { tags: [...new Set([...p.tags, String(prop.payload.tag).trim()])] })
       } else {
@@ -652,6 +674,151 @@ export class PatientService {
     }
     c.db.db.prepare('UPDATE proposals SET status = ?, resolved_by = ?, resolved_at = ? WHERE id = ?').run(accept ? 'accepted' : 'rejected', a.userId, now(), proposalId)
     this.log(c, a, patientId, accept ? 'proposal_accept' : 'proposal_reject', proposalId)
+  }
+
+  // —— 研究入组（docs/design/COHORT.md）——
+  // 研究归个人（平台库），入组关系与研究编号在机构患者库。调用方（research/cohort.ts）先确认研究属于操作者。
+  // 只有诊疗组成员（负责人 / 成员）能把患者入组：机构全员可见、紧急访问都不行。
+
+  /** 机构是否允许 AI 用患者数据（含由患者生成的研究数据集）；不允许时抛错。 */
+  assertAi(a: Actor): void { this.ctx(a) }
+
+  /** 按条件筛选「我在诊疗组里的」在管患者。只返回代号与匹配依据；命中的患者各记一条访问日志。 */
+  screen(a: Actor, studyId: string, criteria: unknown): { criteria: Criteria; total: number; patients: Array<{ patient_id: string; code: string; sex: string | null; age: number | null; tags: string[]; matched: string[]; subject_id: string | null }> } {
+    const c = this.ctx(a)
+    const cr = parseCriteria(criteria)
+    const rows = (c.db.db.prepare("SELECT p.* FROM patients p JOIN care_team t ON t.patient_id = p.id AND t.user_id = ? WHERE p.status = 'active' ORDER BY p.code").all(a.userId) as Array<Record<string, unknown>>).map(patientOf)
+    const year = new Date().getUTCFullYear()
+    const out = []
+    for (const p of rows) {
+      const labs = (c.db.db.prepare("SELECT * FROM labs WHERE patient_id = ? AND status = 'confirmed' ORDER BY collected_on, COALESCE(collected_at, collected_on), created_at").all(p.id) as Array<Record<string, unknown>>).map(labOf)
+      const m = matchCriteria(cr, p, labs, year)
+      if (!m) continue
+      const enrolled = c.db.db.prepare("SELECT subject_id FROM enrollments WHERE study_id = ? AND patient_id = ? AND status = 'active'").get(studyId, p.id) as { subject_id: string } | undefined
+      out.push({ patient_id: p.id, code: p.code, sex: p.sex, age: p.birth_year ? year - p.birth_year : null, tags: p.tags, matched: m, subject_id: enrolled?.subject_id ?? null })
+      this.log(c, a, p.id, 'cohort_screen', `研究 ${studyId}`)
+    }
+    return { criteria: cr, total: out.length, patients: out }
+  }
+
+  /**
+   * 入组。人：直接生效；AI：机构设为需医生确认（review）时每位患者一条「入组」提议，由研究负责人在患者页或研究页确认。
+   * 已入组的跳过；之前移出过的恢复原研究编号。
+   */
+  enroll(a: Actor, studyId: string, patientIds: string[], criteria: unknown = null): { enrolled: Array<{ patient_id: string; subject_id: string }>; proposed: string[]; skipped: Array<{ patient_id: string; reason: string }> } {
+    const res = { enrolled: [] as Array<{ patient_id: string; subject_id: string }>, proposed: [] as string[], skipped: [] as Array<{ patient_id: string; reason: string }> }
+    const crit = criteria ? JSON.stringify(parseCriteria(criteria)) : null
+    for (const pid of [...new Set(patientIds)].slice(0, 500)) {
+      let c: ReturnType<PatientService['ctx']>
+      try { c = this.requireTeam(a, pid).c } catch (err) {
+        if (err instanceof PatientError && (err.code === 'not_found' || err.code === 'forbidden')) { res.skipped.push({ patient_id: pid, reason: err.code === 'forbidden' ? '不在诊疗组里，不能入组' : '患者不存在' }); continue }
+        throw err
+      }
+      const cur = c.db.db.prepare('SELECT subject_id, status FROM enrollments WHERE study_id = ? AND patient_id = ?').get(studyId, pid) as { subject_id: string; status: string } | undefined
+      if (cur?.status === 'active') { res.skipped.push({ patient_id: pid, reason: `已入组（${cur.subject_id}）` }); continue }
+      if (this.aiReview(a, c)) {
+        if (c.db.db.prepare("SELECT 1 FROM proposals WHERE patient_id = ? AND kind = 'enroll' AND status = 'pending' AND json_extract(payload, '$.study_id') = ?").get(pid, studyId)) { res.skipped.push({ patient_id: pid, reason: '已有待确认的入组提议' }); continue }
+        const title = this.store.getStudy(studyId)?.title ?? ''
+        this.insertProposal(c, a, pid, 'enroll', { study_id: studyId, study_title: title, criteria: crit }, `AI 建议入组研究「${title}」`)
+        res.proposed.push(pid)
+        continue
+      }
+      res.enrolled.push({ patient_id: pid, subject_id: this.enrollOne(c, a, pid, studyId, crit) })
+    }
+    return res
+  }
+
+  private enrollOne(c: ReturnType<PatientService['ctx']>, a: Actor, patientId: string, studyId: string, criteria: string | null): string {
+    const cur = c.db.db.prepare('SELECT subject_id, status FROM enrollments WHERE study_id = ? AND patient_id = ?').get(studyId, patientId) as { subject_id: string; status: string } | undefined
+    if (cur?.status === 'active') return cur.subject_id
+    const subject = cur?.subject_id ?? c.db.nextSubject(studyId)
+    c.db.db.prepare(`INSERT INTO enrollments (study_id, patient_id, subject_id, status, criteria, enrolled_by, enrolled_at) VALUES (?, ?, ?, 'active', ?, ?, ?)
+      ON CONFLICT(study_id, patient_id) DO UPDATE SET status = 'active', criteria = excluded.criteria, enrolled_by = excluded.enrolled_by, enrolled_at = excluded.enrolled_at, withdrawn_at = NULL`)
+      .run(studyId, patientId, subject, criteria, a.userId, now())
+    this.log(c, a, patientId, 'enroll', `研究 ${studyId} · ${subject}`)
+    return subject
+  }
+
+  /** 移出研究（研究编号保留不复用；之后再入组恢复同一编号）。AI 在 review 模式下变成一条「移出」提议。 */
+  unenroll(a: Actor, studyId: string, patientId: string): { result: 'withdrawn' | 'proposed' } {
+    const c = this.ctx(a)
+    const cur = c.db.db.prepare("SELECT subject_id FROM enrollments WHERE study_id = ? AND patient_id = ? AND status = 'active'").get(studyId, patientId) as { subject_id: string } | undefined
+    if (!cur) throw new PatientError('not_found', '这位患者不在这个研究里', 404)
+    if (this.aiReview(a, c)) {
+      this.visible(a, patientId)
+      this.insertProposal(c, a, patientId, 'unenroll', { study_id: studyId, study_title: this.store.getStudy(studyId)?.title ?? '', subject_id: cur.subject_id }, `AI 建议把 ${cur.subject_id} 移出研究`)
+      return { result: 'proposed' }
+    }
+    this.withdrawOne(c, a, patientId, studyId)
+    return { result: 'withdrawn' }
+  }
+
+  private withdrawOne(c: ReturnType<PatientService['ctx']>, a: Actor, patientId: string, studyId: string): void {
+    const r = c.db.db.prepare("UPDATE enrollments SET status = 'withdrawn', withdrawn_at = ? WHERE study_id = ? AND patient_id = ? AND status = 'active'").run(now(), studyId, patientId)
+    if (Number(r.changes)) this.log(c, a, patientId, 'unenroll', `研究 ${studyId}`)
+  }
+
+  /** 研究的入组名单（按研究编号）。代号只在操作者仍能看到这位患者时给出。另附待确认的入组 / 移出提议。 */
+  enrollments(a: Actor, studyId: string): { subjects: Array<{ subject_id: string; patient_id: string; code: string | null; sex: string | null; age_at_enroll: number | null; tags: string[]; enrolled_at: string; status: string; withdrawn_at: string | null }>; pending: Array<{ proposal_id: string; patient_id: string; code: string | null; kind: string; reason: string; created_at: string }> } {
+    const c = this.ctx(a)
+    const rows = c.db.db.prepare('SELECT e.*, p.code, p.sex, p.birth_year, p.tags FROM enrollments e JOIN patients p ON p.id = e.patient_id WHERE e.study_id = ? ORDER BY e.subject_id').all(studyId) as Array<Record<string, unknown>>
+    const canSee = (pid: string) => { try { this.visible(a, pid); return true } catch { return false } }
+    const subjects = rows.map(r => ({
+      subject_id: r.subject_id as string, patient_id: r.patient_id as string, code: canSee(r.patient_id as string) ? r.code as string : null, sex: (r.sex as string | null) ?? null,
+      age_at_enroll: r.birth_year ? Number(String(r.enrolled_at).slice(0, 4)) - Number(r.birth_year) : null, tags: JSON.parse((r.tags as string) || '[]') as string[],
+      enrolled_at: r.enrolled_at as string, status: r.status as string, withdrawn_at: (r.withdrawn_at as string | null) ?? null,
+    }))
+    const pending = (c.db.db.prepare("SELECT pr.*, p.code FROM proposals pr JOIN patients p ON p.id = pr.patient_id WHERE pr.status = 'pending' AND pr.kind IN ('enroll', 'unenroll') AND json_extract(pr.payload, '$.study_id') = ? ORDER BY pr.created_at").all(studyId) as Array<Record<string, unknown>>)
+      .filter(r => canSee(r.patient_id as string))
+      .map(r => ({ proposal_id: r.id as string, patient_id: r.patient_id as string, code: r.code as string, kind: r.kind as string, reason: r.reason as string, created_at: r.created_at as string }))
+    return { subjects, pending }
+  }
+
+  /** 患者所在的研究（患者页概况显示）。 */
+  private studiesOf(c: ReturnType<PatientService['ctx']>, patientId: string): Array<{ study_id: string; title: string; subject_id: string; enrolled_at: string }> {
+    return (c.db.db.prepare("SELECT study_id, subject_id, enrolled_at FROM enrollments WHERE patient_id = ? AND status = 'active' ORDER BY enrolled_at").all(patientId) as Array<{ study_id: string; subject_id: string; enrolled_at: string }>)
+      .flatMap(e => { const s = this.store.getStudy(e.study_id); return s ? [{ ...e, title: s.title }] : [] })
+  }
+
+  /**
+   * 研究数据集的快照：入组中的受试者（研究编号、性别、入组时年龄、标签）与所选化验项目的已确认值（标准单位）。
+   * 只含操作者仍在诊疗组里的受试者（其余列在 skipped）。fingerprint 随入组名单、受试者信息、相关化验的变化而变（判断数据集是否过期）。
+   * log=true 时每位受试者记一条访问日志（生成数据集时）。
+   */
+  cohortSnapshot(a: Actor, studyId: string, opts: { tests?: string[]; from?: string | null; to?: string | null; log?: boolean } = {}) {
+    const c = this.ctx(a)
+    const rows = c.db.db.prepare("SELECT e.subject_id, e.enrolled_at, p.* FROM enrollments e JOIN patients p ON p.id = e.patient_id WHERE e.study_id = ? AND e.status = 'active' ORDER BY e.subject_id").all(studyId) as Array<Record<string, unknown>>
+    const keys = opts.tests?.length ? new Set(opts.tests.map(testKey)) : null
+    const subjects: Array<{ subject_id: string; sex: string | null; age_at_enroll: number | null; tags: string[]; enrolled_on: string; labs: LabRow[] }> = []
+    const skipped: string[] = []
+    const fp = createHash('sha256')
+    for (const r of rows) {
+      const pid = r.id as string
+      if (!this.teamRole(c.db, pid, a.userId)) { skipped.push(r.subject_id as string); continue }
+      const where = ["patient_id = ?", "status = 'confirmed'"]
+      const args: string[] = [pid]
+      if (opts.from && DATE.test(opts.from)) { where.push('collected_on >= ?'); args.push(opts.from) }
+      if (opts.to && DATE.test(opts.to)) { where.push('collected_on <= ?'); args.push(opts.to) }
+      let labs = (c.db.db.prepare(`SELECT * FROM labs WHERE ${where.join(' AND ')} ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at`).all(...args) as Array<Record<string, unknown>>).map(labOf)
+      if (keys) labs = labs.filter(l => keys.has(l.test_key))
+      const p = patientOf(r)
+      const s = { subject_id: r.subject_id as string, sex: p.sex, age_at_enroll: p.birth_year ? Number(String(r.enrolled_at).slice(0, 4)) - p.birth_year : null, tags: p.tags, enrolled_on: String(r.enrolled_at).slice(0, 10), labs }
+      subjects.push(s)
+      fp.update(JSON.stringify([s.subject_id, s.sex, p.birth_year, s.tags, labs.map(l => [l.id, l.value_num, l.unit, l.collected_on])]))
+      if (opts.log) this.log(c, a, pid, 'cohort_export', `研究 ${studyId} · ${s.subject_id}`)
+    }
+    fp.update(JSON.stringify(skipped))
+    return { subjects, skipped, fingerprint: fp.digest('hex').slice(0, 24) }
+  }
+
+  /** 研究删除时清掉入组关系与待确认的入组提议（研究编号随研究一起作废）。 */
+  dropStudy(a: Actor, studyId: string): void {
+    let c: ReturnType<PatientService['ctx']>
+    try { c = this.ctx(a) } catch { return }
+    for (const r of c.db.db.prepare("SELECT patient_id FROM enrollments WHERE study_id = ? AND status = 'active'").all(studyId) as Array<{ patient_id: string }>) this.log(c, a, r.patient_id, 'unenroll', `研究 ${studyId} 已删除`)
+    c.db.db.prepare('DELETE FROM enrollments WHERE study_id = ?').run(studyId)
+    c.db.db.prepare("UPDATE proposals SET status = 'rejected', resolved_by = ?, resolved_at = ? WHERE status = 'pending' AND kind IN ('enroll', 'unenroll') AND json_extract(payload, '$.study_id') = ?").run(a.userId, now(), studyId)
+    c.db.db.prepare('DELETE FROM seq WHERE name = ?').run(`subject:${studyId}`)
   }
 
   /** 关掉所有库连接（测试 / 停机）。 */
@@ -699,4 +866,71 @@ function flagOf(l: ReturnType<typeof labInput>): 'H' | 'L' | null {
   if (l.ref_high !== null && l.value_num > l.ref_high) return 'H'
   if (l.ref_low !== null && l.value_num < l.ref_low) return 'L'
   return null
+}
+
+// —— 入组筛选条件 ——
+
+export type LabOp = '>' | '>=' | '<' | '<=' | '='
+export interface LabCriterion { test: string; test_key: string; mode: 'latest' | 'any'; op: LabOp; value: number }
+export interface Criteria {
+  sex: 'M' | 'F' | null; age_min: number | null; age_max: number | null
+  /** 诊断标签包含其中任一（不分大小写、部分匹配） */
+  tags_any: string[]
+  /** 化验条件（都要满足）；用换算到标准单位后的已确认值 */
+  labs: LabCriterion[]
+  /** 报告日期窗口：只看这段时间内的化验；只给窗口时要求窗口内至少有一次化验 */
+  from: string | null; to: string | null
+}
+
+const OPS: LabOp[] = ['>', '>=', '<', '<=', '=']
+export function parseCriteria(v: unknown): Criteria {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const num = (x: unknown) => typeof x === 'number' && Number.isFinite(x) ? x : typeof x === 'string' && x.trim() !== '' && Number.isFinite(Number(x)) ? Number(x) : null
+  const date = (x: unknown) => typeof x === 'string' && DATE.test(x) ? x : null
+  const labs = (Array.isArray(o.labs) ? o.labs : []).slice(0, 10).map(x => {
+    const l = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>
+    const test = typeof l.test === 'string' ? l.test.trim() : ''
+    const op = OPS.includes(l.op as LabOp) ? l.op as LabOp : null
+    const value = num(l.value)
+    if (!test || !op || value === null) throw new PatientError('bad_criteria', '化验条件要有项目、比较符（> >= < <= =）和数值')
+    return { test, test_key: testKey(test), mode: l.mode === 'any' ? 'any' as const : 'latest' as const, op, value }
+  })
+  return {
+    sex: o.sex === 'M' || o.sex === 'F' ? o.sex : null, age_min: num(o.age_min), age_max: num(o.age_max),
+    tags_any: (Array.isArray(o.tags_any) ? o.tags_any : []).filter((t): t is string => typeof t === 'string' && t.trim() !== '').map(t => t.trim()).slice(0, 20),
+    labs, from: date(o.from), to: date(o.to),
+  }
+}
+
+const cmp = (a: number, op: LabOp, b: number) => op === '>' ? a > b : op === '>=' ? a >= b : op === '<' ? a < b : op === '<=' ? a <= b : Math.abs(a - b) < 1e-9
+
+/** 符合条件时返回匹配依据（给医生核对），不符合返回 null。labs：这位患者的已确认化验（按日期升序）。 */
+export function matchCriteria(cr: Criteria, p: PatientRow, labs: LabRow[], year: number): string[] | null {
+  const why: string[] = []
+  if (cr.sex) { if (p.sex !== cr.sex) return null; why.push(cr.sex === 'M' ? '男' : '女') }
+  if (cr.age_min !== null || cr.age_max !== null) {
+    if (!p.birth_year) return null
+    const age = year - p.birth_year
+    if ((cr.age_min !== null && age < cr.age_min) || (cr.age_max !== null && age > cr.age_max)) return null
+    why.push(`${age} 岁`)
+  }
+  if (cr.tags_any.length) {
+    const hit = p.tags.find(t => cr.tags_any.some(q => t.toLowerCase().includes(q.toLowerCase())))
+    if (!hit) return null
+    why.push(`标签「${hit}」`)
+  }
+  const inWin = labs.filter(l => l.collected_on && (!cr.from || l.collected_on >= cr.from) && (!cr.to || l.collected_on <= cr.to))
+  if ((cr.from || cr.to) && !cr.labs.length) {
+    if (!inWin.length) return null
+    why.push(`窗口内 ${inWin.length} 次化验`)
+  }
+  for (const q of cr.labs) {
+    const vals = inWin.filter(l => l.test_key === q.test_key && l.std_value !== null)
+    if (!vals.length) return null
+    const pick = q.mode === 'latest' ? [vals[vals.length - 1]!] : vals
+    const hit = pick.find(l => cmp(l.std_value!, q.op, q.value))
+    if (!hit) return null
+    why.push(`${hit.test_name} ${hit.std_value}${hit.std_unit ? ' ' + hit.std_unit : ''}（${hit.collected_on}${q.mode === 'latest' ? '，最近一次' : ''}）`)
+  }
+  return why
 }

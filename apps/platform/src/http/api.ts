@@ -11,6 +11,7 @@ import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import { TenantError, TenantService } from '../auth/tenants.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
+import { CohortService } from '../research/cohort.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
@@ -67,6 +68,8 @@ export interface ApiDeps {
   patients?: PatientService
   /** 临床研究项目。 */
   studies?: StudyService
+  /** 研究入组与研究数据集（不给时由 studies + patients 组装）。 */
+  cohort?: CohortService
   /** 用户的 AI 工作区（对话里贴的图片放这里，AI 用 read_image 看）。 */
   workspaceDir?: (userId: string) => string
   devUser: string
@@ -126,6 +129,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
     { method: 'POST', re: /^\/api\/datasets$/, action: 'dataset.upload' },
     { method: 'DELETE', re: /^\/api\/studies\/[^/]+$/, action: 'study.delete' },
+    { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort$/, action: 'study.enroll' },
+    { method: 'DELETE', re: /^\/api\/studies\/[^/]+\/cohort\/[^/]+$/, action: 'study.unenroll' },
+    { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort\/dataset$/, action: 'study.cohort_dataset' },
     { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
     { method: 'POST', re: /^\/api\/patients$/, action: 'patient.create' },
     { method: 'DELETE', re: /^\/api\/patients\/[^/]+$/, action: 'patient.delete' },
@@ -158,6 +164,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (user) { const u = actor && accounts.isAdmin(actor) ? store.getUser(user) : undefined; return u ? `用户 ${u.username}` : `用户 ${user}` }
     const project = /^\/api\/projects\/([^/]+)/.exec(path)?.[1]
     if (project) { const p = store.getProject(project); return p && p.owner === actor ? `项目《${p.name}》` : `项目 ${project}` }
+    const study = /^\/api\/studies\/([^/]+)/.exec(path)?.[1]
+    if (study) { const st = store.getStudy(study); return st && st.owner === actor ? `研究《${st.title}》` : `研究 ${study}` }
     return null
   }
   const authFailure = (c: Context, err: unknown) => {
@@ -1027,6 +1035,19 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   /** 归入文档 / 数据集：{kind: doc | dataset, ref_id, role?: protocol | manuscript | slides | other} */
   app.post('/api/studies/:sid/items', async c => { try { st().link(c.get('user'), c.req.param('sid'), await c.req.json()); return c.json({ ok: true }, 201) } catch (err) { return studyFailure(c, err) } })
   app.delete('/api/studies/:sid/items/:kind/:rid', c => { try { st().unlink(c.get('user'), c.req.param('sid'), c.req.param('kind'), c.req.param('rid')); return c.json({ ok: true }) } catch (err) { return studyFailure(c, err) } })
+
+  // —— 研究入组（筛选 → 预览 → 入组；研究数据集）——
+  const cohort = deps.cohort ?? (deps.studies && deps.patients ? new CohortService(deps.studies, deps.patients, deps.datasets ?? null) : null)
+  const co = () => { if (!cohort) throw new StudyError('unavailable', '研究入组需要启用患者模块', 400); return cohort }
+  const cohortFailure = (c: Context, err: unknown) => err instanceof PatientError || err instanceof TenantError ? patientFailure(c, err) : studyFailure(c, err)
+  app.get('/api/studies/:sid/cohort', c => { try { return c.json(co().list(me(c), c.req.param('sid'))) } catch (err) { return cohortFailure(c, err) } })
+  /** 预览：{sex?, age_min?, age_max?, tags_any?, labs?: [{test, mode: latest | any, op, value}], from?, to?} */
+  app.post('/api/studies/:sid/cohort/preview', async c => { try { return c.json(co().preview(me(c), c.req.param('sid'), await c.req.json())) } catch (err) { return cohortFailure(c, err) } })
+  /** 入组：{patient_ids, criteria?} */
+  app.post('/api/studies/:sid/cohort', async c => { try { return c.json(co().enroll(me(c), c.req.param('sid'), await c.req.json()), 201) } catch (err) { return cohortFailure(c, err) } })
+  app.delete('/api/studies/:sid/cohort/:ptid', c => { try { return c.json(co().unenroll(me(c), c.req.param('sid'), c.req.param('ptid'))) } catch (err) { return cohortFailure(c, err) } })
+  /** 生成 / 刷新研究数据集：{shape: wide | long, tests?, from?, to?} */
+  app.post('/api/studies/:sid/cohort/dataset', async c => { try { return c.json(await co().dataset(me(c), c.req.param('sid'), await c.req.json()), 201) } catch (err) { return cohortFailure(c, err) } })
 
   // —— 数据集（实验室数据分析） ——
   const datasetFailure = (c: Context, err: unknown) => {

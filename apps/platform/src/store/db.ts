@@ -124,6 +124,8 @@ export interface DatasetRow {
   /** 用户给列起的标签 {列名: 标签} */
   labels: string
   error: string | null; version: number; created_at: string; updated_at: string
+  /** 平台生成的数据集的来源（JSON；如研究队列快照：研究、条件、生成时间、指纹）；用户上传的为 null */
+  origin: string | null
 }
 
 /** 临床研究项目：方案、数据集、分析、稿件放在一起（文档与数据集经 study_items 归入，各自只属于一个研究）。 */
@@ -469,6 +471,8 @@ export class Store {
     }
     const assetCols = (this.db.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map(c => c.name)
     if (!assetCols.includes('provenance')) this.db.exec('ALTER TABLE assets ADD COLUMN provenance TEXT')
+    const dsCols = (this.db.prepare('PRAGMA table_info(datasets)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!dsCols.includes('origin')) this.db.exec('ALTER TABLE datasets ADD COLUMN origin TEXT')
     const memCols = (this.db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map(c => c.name)
     if (!memCols.includes('use_count')) this.db.exec('ALTER TABLE memories ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0')
     if (!memCols.includes('last_used_at')) this.db.exec('ALTER TABLE memories ADD COLUMN last_used_at TEXT')
@@ -977,11 +981,11 @@ export class Store {
 
   // —— 数据集 ——
 
-  addDataset(d: Pick<DatasetRow, 'owner' | 'name' | 'filename' | 'format' | 'size' | 'sha256'>): DatasetRow {
+  addDataset(d: Pick<DatasetRow, 'owner' | 'name' | 'filename' | 'format' | 'size' | 'sha256'> & { origin?: string | null; version?: number }): DatasetRow {
     const id = 'ds' + randomUUID().replace(/-/g, '').slice(0, 10)
     const t = now()
-    this.db.prepare('INSERT INTO datasets (id, owner, name, filename, format, size, sha256, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, d.owner, d.name, d.filename, d.format, d.size, d.sha256, 'processing', t, t)
+    this.db.prepare('INSERT INTO datasets (id, owner, name, filename, format, size, sha256, status, created_at, updated_at, origin, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, d.owner, d.name, d.filename, d.format, d.size, d.sha256, 'processing', t, t, d.origin ?? null, d.version ?? 1)
     return this.getDataset(id)!
   }
 
@@ -997,7 +1001,7 @@ export class Store {
     return this.db.prepare('SELECT * FROM datasets WHERE owner = ? ORDER BY created_at DESC').all(owner) as unknown as DatasetRow[]
   }
 
-  updateDataset(id: string, patch: Partial<Pick<DatasetRow, 'name' | 'status' | 'rows' | 'cols' | 'profile' | 'labels' | 'error' | 'version'>>): void {
+  updateDataset(id: string, patch: Partial<Pick<DatasetRow, 'name' | 'status' | 'rows' | 'cols' | 'profile' | 'labels' | 'error' | 'version' | 'origin'>>): void {
     const keys = Object.keys(patch) as Array<keyof typeof patch>
     if (keys.length === 0) return
     this.db.prepare(`UPDATE datasets SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map(k => patch[k] as never), now(), id)

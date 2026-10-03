@@ -14,6 +14,7 @@ import { KbService } from './kb/service.ts'
 import { makeIngest } from './datasets/ingest.ts'
 import { DatasetService } from './datasets/service.ts'
 import { StudyService } from './research/service.ts'
+import { CohortService } from './research/cohort.ts'
 import { TenantService } from './auth/tenants.ts'
 import { kekFrom, TenantKeys } from './tenancy/keys.ts'
 import { PatientService } from './tenancy/patients.ts'
@@ -81,6 +82,7 @@ const reportPages = async (name: string, mime: string, bytes: Uint8Array): Promi
 const patients = new PatientService(config.tenantsDir, new TenantService(store, { devMode: config.devMode }), new TenantKeys(store, kekFrom({ kek: config.kek, secret: config.secret })), store,
   { pages: reportPages, complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }) })
 const studies = new StudyService(store, datasets)
+const cohort = new CohortService(studies, patients, datasets)
 const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
@@ -93,6 +95,7 @@ const mcpDeps = {
   datasets,
   patients,
   studies,
+  cohort,
   fulltext,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
@@ -116,7 +119,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, workspaceDir: userId => pool.workspaceDir(userId) })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, workspaceDir: userId => pool.workspaceDir(userId) })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

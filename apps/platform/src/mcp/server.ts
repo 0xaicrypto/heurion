@@ -26,6 +26,7 @@ import { citationOrder, diff, outline, read, ReadError, search } from '../views/
 import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import type { KbService } from '../kb/service.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
+import { CohortService } from '../research/cohort.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
 import { TenantError } from '../auth/tenants.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
@@ -58,6 +59,8 @@ export interface McpDeps {
   patients?: PatientService
   /** 临床研究项目。 */
   studies?: StudyService
+  /** 研究入组与研究数据集（不给时由 studies + patients 组装）。 */
+  cohort?: CohortService
   /** 开放获取全文（可选）。 */
   fulltext?: FullTextClient
 }
@@ -91,6 +94,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 患者（patient_* / report_* / lab_*）：你和医生能做同样的操作（新建、改信息、上传报告、补项改项、确认、关联病例报告、诊疗组）。患者只有代号（P-0001），没有姓名，写作时也只用代号或「患者，男，60 余岁」这样的去标识写法。
   化验只来自上传的报告；只引用已确认的化验值并写明日期。本机构若设为「AI 的修改需医生确认」，你的写入进待确认、确认 / 驳回由医生做——遇到 needs_human_review 就告诉用户去患者页「待确认」审核。
   临床研究（study_*）：一个研究项目把方案、数据集、分析、稿件放在一起；在研究的文档里写作时用 study_read 看方案与已有分析，分析用研究里的数据集（dataset_open），画的图 asset_upload 时带 dataset_ids，就会自动出现在研究的「分析」里。新写方案 / 论文：doc_create → study_link 归入研究。
+  研究入组：study_cohort_preview 按条件筛（先给用户看名单与依据）→ 用户同意后 study_enroll → study_cohort_dataset 生成研究数据集（只有研究编号）→ dataset_open 分析；study_cohort_list 里 stale=true 时先提醒用户刷新。
   写病例报告：doc_create 新建文档 → patient_doc_link 关联到患者（这样它出现在患者页的「病例报告」里，不在文档列表里）→ 依据 patient_read / labs_query 写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
@@ -578,6 +582,13 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     throw err
   }
 
+  /** 由患者生成的研究数据集：机构不允许把患者数据交给外部模型时，AI 也不能用。 */
+  const cohortGuard = (origin: { kind: string } | null) => {
+    if (origin?.kind !== 'cohort') return null
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try { deps.patients.assertAi(aiActor()); return null } catch (err) { return patientFail(err) }
+  }
+
   server.registerTool('dataset_list', {
     description: '列出用户上传的数据集（大样本表格：CSV / Excel / SAS / SPSS / Stata 导入）。只有 status=ready 的能分析。',
     inputSchema: {},
@@ -593,6 +604,8 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
     try {
       const d = deps.datasets.get(claims.u, dataset_id)
+      const blocked = cohortGuard(d.origin)
+      if (blocked) return blocked
       return json({ dataset_id: d.id, name: d.name, rows: d.rows, status: d.status, truncated: d.truncated, columns: d.columns.map(c => ({ ...c, label: d.labels[c.name] ?? c.label })) })
     } catch (err) { return datasetFail(err) }
   })
@@ -604,6 +617,8 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
     try {
       const { dataset, path } = deps.datasets.readyCsv(claims.u, dataset_id)
+      const blocked = cohortGuard(dataset.origin)
+      if (blocked) return blocked
       const dir = join(deps.workspaceDir(claims.u), 'data')
       if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
       const rel = `data/${dataset.id}.csv`
@@ -837,6 +852,46 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (action === 'unlink') svc.unlink(claims.u, study_id, kind, ref_id)
     else svc.link(claims.u, study_id, { kind, ref_id, role })
     return { result: action ?? 'link' }
+  }))
+
+  // —— 研究入组（与界面相同：筛选 → 预览 → 入组；研究数据集）——
+  const cohort = deps.cohort ?? (deps.studies && deps.patients ? new CohortService(deps.studies, deps.patients, deps.datasets ?? null) : null)
+  const co = async (fn: (svc: CohortService) => unknown) => {
+    if (!cohort) return fail('cohort_unavailable', '研究入组需要启用患者模块')
+    try { return json(await fn(cohort)) } catch (err) {
+      if (err instanceof StudyError) return fail(err.code, err.message)
+      if (err instanceof DatasetError) return datasetFail(err)
+      return patientFail(err)
+    }
+  }
+  const criteriaSchema = {
+    sex: z.enum(['M', 'F']).optional(), age_min: z.number().optional(), age_max: z.number().optional(),
+    tags_any: z.array(z.string()).optional().describe('诊断标签包含其中任一（部分匹配）'),
+    labs: z.array(z.object({ test: z.string().describe('项目名或缩写，如 肌酐 / Cr / HbA1c'), mode: z.enum(['latest', 'any']).optional().describe('latest=最近一次（默认），any=任一次'), op: z.enum(['>', '>=', '<', '<=', '=']), value: z.number().describe('标准单位下的阈值（如肌酐 µmol/L、血糖 mmol/L）') })).optional(),
+    from: z.string().optional().describe('化验日期窗口起 YYYY-MM-DD'), to: z.string().optional().describe('化验日期窗口止 YYYY-MM-DD'),
+  }
+  server.registerTool('study_cohort_preview', {
+    description: '在用户诊疗组里的在管患者中按条件筛选，返回匹配人数与名单（代号、匹配依据、是否已入组）。只是预览，不入组。',
+    inputSchema: { study_id: z.string(), ...criteriaSchema },
+  }, async ({ study_id, ...criteria }) => co(svc => svc.preview(aiActor(), study_id, criteria)))
+  server.registerTool('study_enroll', {
+    description: '把患者入组到研究（每人得到研究编号 S001…）。只能入组用户在诊疗组里的患者。本机构设为「AI 的修改需医生确认」时会变成待确认的入组提议（proposed），由研究负责人确认。criteria 填筛选时用的条件（记录入组依据）。',
+    inputSchema: { study_id: z.string(), patient_ids: z.array(z.string()).min(1).max(500), criteria: z.object(criteriaSchema).optional() },
+  }, async ({ study_id, patient_ids, criteria }) => co(svc => svc.enroll(aiActor(), study_id, { patient_ids, criteria })))
+  server.registerTool('study_unenroll', {
+    description: '把一位患者移出研究（研究编号保留不复用）。需医生确认的机构里会变成待确认的移出提议。',
+    inputSchema: { study_id: z.string(), patient_id: z.string() },
+  }, async ({ study_id, patient_id }) => co(svc => svc.unenroll(aiActor(), study_id, patient_id)))
+  server.registerTool('study_cohort_list', {
+    description: '研究的入组名单（研究编号、代号、性别、入组时年龄、标签、状态）、待确认的入组提议、由队列生成的研究数据集（版本、是否已过期 stale）。',
+    inputSchema: { study_id: z.string() },
+  }, async ({ study_id }) => co(svc => svc.list(aiActor(), study_id)))
+  server.registerTool('study_cohort_dataset', {
+    description: '从入组患者生成（或刷新）研究数据集，自动归入研究，之后用 dataset_open 分析。数据集里只有研究编号，没有代号。shape=wide 每人一行（性别、入组时年龄、标签、每个化验项目的基线 / 最近值与日期、次数，标准单位）；long 每次化验一行。tests 不填 = 全部项目；from / to 限定化验日期。数据集过期（入组或化验有变化）时再调用一次生成新版本，旧版本保留。',
+    inputSchema: { study_id: z.string(), shape: z.enum(['wide', 'long']).optional(), tests: z.array(z.string()).optional(), from: z.string().optional(), to: z.string().optional() },
+  }, async ({ study_id, ...opts }) => co(async svc => {
+    const r = await svc.dataset(aiActor(), study_id, opts)
+    return { dataset_id: r.dataset.id, name: r.dataset.name, version: r.dataset.version, rows: r.dataset.rows, cols: r.dataset.cols, status: r.dataset.status, unchanged: r.unchanged, skipped: r.skipped }
   }))
 
   server.registerTool('kb_search', {
