@@ -111,7 +111,13 @@ export class Accounts {
     }
   }
 
-  register(input: { username?: string; password?: string; display_name?: string } & BotFields, ip: string): { user: PublicUser; token: string } {
+  /** 机构停用时成员不能登录、已有令牌失效。 */
+  private tenantActive(u: UserRow): boolean {
+    return !u.tenant_id || this.store.getTenant(u.tenant_id)?.status !== 'suspended'
+  }
+
+  /** 注册：带邀请码时加入邀请方的机构（按邀请的角色），否则得到个人租户。 */
+  register(input: { username?: string; password?: string; display_name?: string; invite?: string } & BotFields, ip: string): { user: PublicUser; token: string } {
     if (this.registerLimit.hit(ip)) throw new AuthError('rate_limited', '注册太频繁，请稍后再试', 429)
     this.checkBot(ip, input)
     const username = (input.username ?? '').trim().normalize('NFKC')
@@ -121,7 +127,15 @@ export class Accounts {
     if (weak) throw new AuthError('weak_password', weak)
     if (this.store.getUserByName(username)) throw new AuthError('username_taken', '这个用户名已被使用', 409)
     const displayName = (input.display_name ?? '').trim().slice(0, 40) || username
-    const user = this.store.createUser({ username, display_name: displayName, password_hash: bcrypt.hashSync(password, BCRYPT_COST) })
+    let tenant: { id: string; role: UserRow['tenant_role'] } | undefined
+    if (input.invite) {
+      const inv = this.store.getInvite(String(input.invite))
+      if (!inv || inv.revoked_at || inv.used_at || Date.parse(inv.expires_at) < Date.now()) throw new AuthError('invite_invalid', '邀请链接无效或已过期，请让管理员重新发一个')
+      if (this.store.getTenant(inv.tenant_id)?.status !== 'active') throw new AuthError('tenant_suspended', '这个机构已停用', 403)
+      tenant = { id: inv.tenant_id, role: inv.role }
+    }
+    const user = this.store.createUser({ username, display_name: displayName, password_hash: bcrypt.hashSync(password, BCRYPT_COST), tenant })
+    if (input.invite && tenant) this.store.useInvite(String(input.invite), user.id)
     this.store.updateUser(user.id, { touchLogin: true })
     return { user: publicUser(this.store.getUser(user.id)!), token: this.tokenFor(user) }
   }
@@ -139,6 +153,7 @@ export class Accounts {
       throw new AuthError('bad_credentials', '用户名或密码不对', 401)
     }
     if (user.status !== 'active') throw new AuthError('disabled', '账户已停用，请联系管理员', 403)
+    if (!this.tenantActive(user)) throw new AuthError('tenant_suspended', '所在机构已停用，请联系平台', 403)
     this.failureLimit.clear(failKey)
     this.store.updateUser(user.id, { touchLogin: true })
     return { user: publicUser(this.store.getUser(user.id)!), token: this.tokenFor(user) }
@@ -151,7 +166,7 @@ export class Accounts {
       const claims = verifyToken(this.opts.secret, token, 'web')
       if (!claims) return null
       const user = this.store.getUser(claims.u)
-      if (!user || user.status !== 'active' || user.token_version !== (claims.v ?? -1)) return null
+      if (!user || user.status !== 'active' || user.token_version !== (claims.v ?? -1) || !this.tenantActive(user)) return null
       return user.id
     }
     return this.opts.devMode ? devUserFor(token, this.opts.devToken, this.opts.devUser) : null

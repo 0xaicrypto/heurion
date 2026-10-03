@@ -8,6 +8,7 @@ import type { SearchIndex } from '../model/search-index.ts'
 import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
 import { DatasetError, type DatasetService } from '../datasets/service.ts'
+import { TenantError, TenantService } from '../auth/tenants.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
@@ -69,6 +70,11 @@ export interface ApiDeps {
 export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const { docs, ops, turns } = deps
   const store = docs.store
+  const tenants = new TenantService(store, { devMode: deps.devMode })
+  const tenantFailure = (c: Context, err: unknown) => {
+    if (err instanceof TenantError) return c.json({ error: err.message, code: err.code }, err.status)
+    throw err
+  }
   const app = new Hono<{ Variables: { user: string } }>()
   // 健康检查（部署脚本、容器 healthcheck、反向代理用）：数据库可读即健康；嵌入服务状态只报告不影响结果
   app.get('/healthz', async c => {
@@ -110,6 +116,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'GET', re: /^\/api\/memory-export$/, action: 'memory.export' },
     { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
     { method: 'POST', re: /^\/api\/datasets$/, action: 'dataset.upload' },
+    { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
+    { method: 'PATCH', re: /^\/api\/tenant\/members\/[^/]+$/, action: 'tenant.member_update' },
+    { method: 'POST', re: /^\/api\/tenant\/invites$/, action: 'tenant.invite' },
+    { method: 'DELETE', re: /^\/api\/tenant\/invites\/[^/]+$/, action: 'tenant.invite_revoke' },
+    { method: 'POST', re: /^\/api\/platform\/tenants$/, action: 'platform.tenant_create' },
+    { method: 'PATCH', re: /^\/api\/platform\/tenants\/[^/]+$/, action: 'platform.tenant_status' },
     { method: 'POST', re: /^\/api\/datasets\/[^/]+\/phi$/, action: 'dataset.phi_resolve' },
     { method: 'DELETE', re: /^\/api\/datasets\/[^/]+$/, action: 'dataset.delete' },
     { method: 'PATCH', re: /^\/api\/admin\/users\/[^/]+$/, action: 'admin.user_update' },
@@ -121,15 +133,16 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/me\/email$/, action: 'account.bind_email' },
   ]
   /** 审计目标：文档记「文档 id《标题》」，资料记文件名，用户记用户名。 */
-  const auditTarget = (path: string): string | null => {
+  // 只有操作者自己的资源才记标题：越权尝试（别人的 id）只记 id——否则别的机构的标题会进到操作者所在机构的审计里
+  const auditTarget = (path: string, actor: string | null): string | null => {
     const doc = /^\/api\/docs\/([^/]+)/.exec(path)?.[1]
-    if (doc) { const d = store.getDoc(doc); return d ? `文档 ${doc}《${d.title}》` : `文档 ${doc}` }
+    if (doc) { const d = store.getDoc(doc); return d && d.owner === actor ? `文档 ${doc}《${d.title}》` : `文档 ${doc}` }
     const kb = /^\/api\/kb\/([^/]+)/.exec(path)?.[1]
-    if (kb) { const f = store.getKbFile(kb); return f ? `资料 ${kb}《${f.name}》` : `资料 ${kb}` }
+    if (kb) { const f = store.getKbFile(kb); return f && f.owner === actor ? `资料 ${kb}《${f.name}》` : `资料 ${kb}` }
     const user = /^\/api\/admin\/users\/([^/]+)/.exec(path)?.[1]
-    if (user) { const u = store.getUser(user); return u ? `用户 ${u.username}` : `用户 ${user}` }
+    if (user) { const u = actor && accounts.isAdmin(actor) ? store.getUser(user) : undefined; return u ? `用户 ${u.username}` : `用户 ${user}` }
     const project = /^\/api\/projects\/([^/]+)/.exec(path)?.[1]
-    if (project) { const p = store.getProject(project); return p ? `项目《${p.name}》` : `项目 ${project}` }
+    if (project) { const p = store.getProject(project); return p && p.owner === actor ? `项目《${p.name}》` : `项目 ${project}` }
     return null
   }
   const authFailure = (c: Context, err: unknown) => {
@@ -143,6 +156,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.get('/api/auth/challenge', c => {
     c.header('Cache-Control', 'no-store')
     return c.json(accounts.bots.issue(clientIp(c)))
+  })
+  /** 邀请链接：注册页显示「加入 XX」。 */
+  app.get('/api/invites/:code', c => {
+    try { return c.json(tenants.checkInvite(c.req.param('code'))) } catch (err) { return tenantFailure(c, err) }
   })
   app.post('/api/auth/register', async c => {
     const body = await c.req.json().catch(() => ({})) as { username?: string }
@@ -192,12 +209,60 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     c.set('user', user)
     // 审计：按「方法 + 路径」记敏感操作（导出、删除、管理员操作……），目标的标题在操作前取（彻底删除后就查不到了）
     const rule = AUDITED.find(r => r.method === c.req.method && r.re.test(c.req.path))
-    const target = rule ? auditTarget(c.req.path) : null
+    const target = rule ? auditTarget(c.req.path, c.get('user') ?? null) : null
     await next()
     if (rule) audit(c, rule.action, { target, status: c.res.status })
   })
 
-  app.get('/api/me', c => c.json({ ...accounts.me(c.get('user')), dev_mode: deps.devMode }))
+  app.get('/api/me', c => {
+    let tenant = null
+    try { tenant = tenants.view(c.get('user')) } catch { /* 没有机构的账户（不应出现） */ }
+    return c.json({ ...accounts.me(c.get('user')), dev_mode: deps.devMode, tenant })
+  })
+
+  // —— 机构（租户）：机构管理员管成员、邀请、设置、本机构审计 ——
+  app.get('/api/tenant', c => {
+    try { return c.json(tenants.view(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.patch('/api/tenant', async c => {
+    try { return c.json(tenants.update(c.get('user'), await c.req.json())) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.get('/api/tenant/members', c => {
+    try { return c.json(tenants.members(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.patch('/api/tenant/members/:uid', async c => {
+    try { return c.json(tenants.setMember(c.get('user'), c.req.param('uid'), await c.req.json())) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.get('/api/tenant/invites', c => {
+    try { return c.json(tenants.invites(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.post('/api/tenant/invites', async c => {
+    try { return c.json(tenants.invite(c.get('user'), await c.req.json()), 201) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.delete('/api/tenant/invites/:code', c => {
+    try { tenants.revokeInvite(c.get('user'), c.req.param('code')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.get('/api/tenant/audit', c => {
+    try {
+      const t = tenants.of(c.get('user'))
+      if (tenants.roleOf(c.get('user')) !== 'admin') return c.json({ error: '只有机构管理员能看审计' }, 403)
+      const actorName = c.req.query('actor')?.trim()
+      const actor = actorName ? store.getUserByName(actorName)?.id ?? actorName : undefined
+      const rows = store.listAudit({ tenant: t.id, actor, action: c.req.query('action') || undefined, before: Number(c.req.query('before')) || undefined, limit: Number(c.req.query('limit')) || 100 })
+      return c.json(rows.map(r => ({ ...r, actor_name: r.actor ? store.getUser(r.actor)?.username ?? r.actor : null })))
+    } catch (err) { return tenantFailure(c, err) }
+  })
+
+  // —— 平台运营：机构列表、新建机构（邀请首位管理员）、停用 / 恢复 ——
+  app.get('/api/platform/tenants', c => {
+    try { return c.json(tenants.listAll(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.post('/api/platform/tenants', async c => {
+    try { return c.json(tenants.createOrg(c.get('user'), await c.req.json()), 201) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.patch('/api/platform/tenants/:tid', async c => {
+    try { tenants.setStatus(c.get('user'), c.req.param('tid'), (await c.req.json<{ status?: string }>()).status); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
+  })
   app.patch('/api/me', async c => {
     try {
       return c.json(accounts.updateProfile(c.get('user'), await c.req.json()))

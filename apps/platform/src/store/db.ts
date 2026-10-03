@@ -30,6 +30,23 @@ export interface UserRow {
   imported_from: string | null
   /** 已验证的邮箱（找回密码用）；未绑定为 null。 */
   email: string | null
+  /** 所属租户（机构）；一个用户只属于一个租户。 */
+  tenant_id: string | null
+  /** 在租户里的角色：admin 机构管理员 / member 成员。role=admin 是平台运营（与租户角色无关）。 */
+  tenant_role: 'admin' | 'member'
+}
+
+/** 租户（机构）：医院、科室、课题组；个人注册的用户各有一个个人租户。设计见 docs/design/TENANCY.md。 */
+export interface TenantRow {
+  id: string; name: string; kind: 'personal' | 'org'; status: 'active' | 'suspended'
+  /** 机构设置（JSON）：见 TenantSettings */
+  settings: string
+  created_at: string; created_by: string | null
+}
+
+export interface TenantInviteRow {
+  code: string; tenant_id: string; role: 'admin' | 'member'; email: string | null; created_by: string
+  created_at: string; expires_at: string; used_by: string | null; used_at: string | null; revoked_at: string | null
 }
 
 export interface DocRow {
@@ -392,6 +409,14 @@ export class Store {
       CREATE INDEX IF NOT EXISTS memory_changes_owner ON memory_changes (owner, status);
       CREATE TABLE IF NOT EXISTS user_settings (user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
       CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+        settings TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, created_by TEXT
+      );
+      CREATE TABLE IF NOT EXISTS tenant_invites (
+        code TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, role TEXT NOT NULL, email TEXT, created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_by TEXT, used_at TEXT, revoked_at TEXT
+      );
       CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT, action TEXT NOT NULL, target TEXT, detail TEXT, ip TEXT, status INTEGER
       );
@@ -411,6 +436,16 @@ export class Store {
     if (!docCols.includes('deleted_at')) this.db.exec('ALTER TABLE docs ADD COLUMN deleted_at TEXT')
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
+    if (!userCols.includes('tenant_id')) this.db.exec('ALTER TABLE users ADD COLUMN tenant_id TEXT')
+    if (!userCols.includes('tenant_role')) this.db.exec("ALTER TABLE users ADD COLUMN tenant_role TEXT NOT NULL DEFAULT 'member'")
+    const auditCols = (this.db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!auditCols.includes('tenant_id')) this.db.exec('ALTER TABLE audit_events ADD COLUMN tenant_id TEXT')
+    this.db.exec('CREATE INDEX IF NOT EXISTS users_tenant ON users (tenant_id)')
+    // 租户上线前的用户：各自一个个人租户，本人为机构管理员
+    for (const u of this.db.prepare('SELECT id, display_name FROM users WHERE tenant_id IS NULL').all() as Array<{ id: string; display_name: string }>) {
+      const t = this.createTenant({ name: `${u.display_name}（个人）`, kind: 'personal', created_by: u.id })
+      this.db.prepare("UPDATE users SET tenant_id = ?, tenant_role = 'admin' WHERE id = ?").run(t.id, u.id)
+    }
     const assetCols = (this.db.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map(c => c.name)
     if (!assetCols.includes('provenance')) this.db.exec('ALTER TABLE assets ADD COLUMN provenance TEXT')
     const memCols = (this.db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map(c => c.name)
@@ -436,13 +471,80 @@ export class Store {
   // —— 用户 ——
 
   /** 用户名比较不区分大小写（username_key）。第一个用户自动成为管理员。 */
-  createUser(input: { username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null; email?: string | null }): UserRow {
+  /** 新用户：tenant 给定时加入该租户，否则建一个个人租户（本人为机构管理员）。 */
+  createUser(input: { username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null; email?: string | null; tenant?: { id: string; role: UserRow['tenant_role'] } }): UserRow {
     const id = 'u' + randomUUID().replace(/-/g, '').slice(0, 15)
     const role = input.role ?? (this.countUsers() === 0 ? 'admin' : 'user')
-    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from, email)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null, input.email ?? null)
+    const tenant = input.tenant ?? { id: this.createTenant({ name: `${input.display_name}（个人）`, kind: 'personal', created_by: id }).id, role: 'admin' as const }
+    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from, email, tenant_id, tenant_role)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null, input.email ?? null, tenant.id, tenant.role)
     return this.getUser(id)!
+  }
+
+  // —— 租户（机构） ——
+
+  createTenant(input: { name: string; kind: TenantRow['kind']; created_by?: string | null; settings?: object; id?: string }): TenantRow {
+    const id = input.id ?? 't' + randomUUID().replace(/-/g, '').slice(0, 11)
+    this.db.prepare('INSERT INTO tenants (id, name, kind, status, settings, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, input.name, input.kind, 'active', JSON.stringify(input.settings ?? {}), now(), input.created_by ?? null)
+    return this.getTenant(id)!
+  }
+
+  getTenant(id: string): TenantRow | undefined {
+    return this.db.prepare('SELECT * FROM tenants WHERE id = ?').get(id) as unknown as TenantRow | undefined
+  }
+
+  listTenants(): Array<TenantRow & { members: number; admins: number; docs: number }> {
+    return this.db.prepare(`SELECT t.*,
+        (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id) AS members,
+        (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id AND u.tenant_role = 'admin') AS admins,
+        (SELECT COUNT(*) FROM docs d JOIN users u ON u.id = d.owner WHERE u.tenant_id = t.id) AS docs
+      FROM tenants t ORDER BY t.kind DESC, t.created_at`).all() as unknown as Array<TenantRow & { members: number; admins: number; docs: number }>
+  }
+
+  updateTenant(id: string, patch: Partial<Pick<TenantRow, 'name' | 'status' | 'settings' | 'kind'>>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    if (keys.length) this.db.prepare(`UPDATE tenants SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string), id)
+  }
+
+  tenantMembers(tenantId: string): Array<UserRow & { doc_count: number }> {
+    return this.db.prepare('SELECT u.*, (SELECT COUNT(*) FROM docs d WHERE d.owner = u.id) AS doc_count FROM users u WHERE u.tenant_id = ? ORDER BY u.created_at')
+      .all(tenantId) as unknown as Array<UserRow & { doc_count: number }>
+  }
+
+  setTenantRole(userId: string, role: UserRow['tenant_role']): void {
+    this.db.prepare('UPDATE users SET tenant_role = ? WHERE id = ?').run(role, userId)
+  }
+
+  /** 把用户移到另一个租户（平台运营把已有账号加进机构时用；个人数据随人走）。 */
+  moveUserToTenant(userId: string, tenantId: string, role: UserRow['tenant_role']): void {
+    this.db.prepare('UPDATE users SET tenant_id = ?, tenant_role = ? WHERE id = ?').run(tenantId, role, userId)
+  }
+
+  addInvite(input: Pick<TenantInviteRow, 'tenant_id' | 'role' | 'email' | 'created_by'> & { days: number }): TenantInviteRow {
+    const code = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '').slice(0, 8)
+    const t = now()
+    this.db.prepare('INSERT INTO tenant_invites (code, tenant_id, role, email, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(code, input.tenant_id, input.role, input.email, input.created_by, t, new Date(Date.now() + input.days * 86_400_000).toISOString())
+    return this.getInvite(code)!
+  }
+
+  getInvite(code: string): TenantInviteRow | undefined {
+    return this.db.prepare('SELECT * FROM tenant_invites WHERE code = ?').get(code) as unknown as TenantInviteRow | undefined
+  }
+
+  listInvites(tenantId: string): TenantInviteRow[] {
+    return this.db.prepare('SELECT * FROM tenant_invites WHERE tenant_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC')
+      .all(tenantId, now()) as unknown as TenantInviteRow[]
+  }
+
+  useInvite(code: string, userId: string): void {
+    this.db.prepare('UPDATE tenant_invites SET used_by = ?, used_at = ? WHERE code = ?').run(userId, now(), code)
+  }
+
+  revokeInvite(code: string): void {
+    this.db.prepare('UPDATE tenant_invites SET revoked_at = ? WHERE code = ?').run(now(), code)
   }
 
   getUser(id: string): UserRow | undefined {
@@ -675,16 +777,19 @@ export class Store {
 
   // —— 审计日志（M2） ——
 
-  addAudit(e: { actor: string | null; action: string; target?: string | null; detail?: string | null; ip?: string | null; status?: number | null }): void {
-    this.db.prepare('INSERT INTO audit_events (at, actor, action, target, detail, ip, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(now(), e.actor, e.action, e.target ?? null, e.detail ?? null, e.ip ?? null, e.status ?? null)
+  addAudit(e: { actor: string | null; action: string; target?: string | null; detail?: string | null; ip?: string | null; status?: number | null; tenant_id?: string | null }): void {
+    // 租户：显式给的，否则取操作者所在的租户（机构管理员只看本机构的审计）
+    const tenant = e.tenant_id !== undefined ? e.tenant_id : e.actor ? this.getUser(e.actor)?.tenant_id ?? null : null
+    this.db.prepare('INSERT INTO audit_events (at, actor, action, target, detail, ip, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(now(), e.actor, e.action, e.target ?? null, e.detail ?? null, e.ip ?? null, e.status ?? null, tenant)
   }
 
   /** 最新在前；before = 上一页最后一条的 id。 */
-  listAudit(f: { actor?: string; action?: string; before?: number; limit?: number } = {}): Array<{ id: number; at: string; actor: string | null; action: string; target: string | null; detail: string | null; ip: string | null; status: number | null }> {
+  listAudit(f: { actor?: string; action?: string; before?: number; limit?: number; tenant?: string } = {}): Array<{ id: number; at: string; actor: string | null; action: string; target: string | null; detail: string | null; ip: string | null; status: number | null }> {
     const where: string[] = []
     const args: Array<string | number> = []
     if (f.actor) { where.push('actor = ?'); args.push(f.actor) }
+    if (f.tenant) { where.push('tenant_id = ?'); args.push(f.tenant) }
     if (f.action) { where.push('action LIKE ?'); args.push(`${f.action}%`) }
     if (f.before) { where.push('id < ?'); args.push(f.before) }
     return this.db.prepare(`SELECT id, at, actor, action, target, detail, ip, status FROM audit_events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`)
