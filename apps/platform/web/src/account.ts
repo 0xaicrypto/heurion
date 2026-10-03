@@ -324,7 +324,37 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
 }
 
 async function openAdmin(me: Me, api: <T = any>(path: string, opts?: RequestInit) => Promise<T>, notify: (msg: string, error?: boolean) => void): Promise<void> {
-  const dlg = openDialog('用户管理', '<div id="adminSettings" class="admin-settings"></div><div id="adminUsers" class="muted">加载中…</div>')
+  const dlg = openDialog('用户管理', '<div id="adminSettings" class="admin-settings"></div><div id="adminUsers" class="muted">加载中…</div><div class="audit"><div class="row"><span class="eyebrow">审计日志</span><span class="grow"></span><input id="auditActor" type="search" placeholder="按用户名筛选" autocomplete="off"><select id="auditAction"><option value="">全部操作</option><option value="auth.">登录与账户</option><option value="doc.">文档（导出、删除）</option><option value="kb.">参考资料</option><option value="memory.">记忆</option><option value="admin.">管理员操作</option></select></div><div id="auditList" class="muted">加载中…</div><button id="auditMore" hidden>更早的记录</button></div>')
+  // 审计日志：谁、什么时候、从哪里、对什么做了什么
+  const AUDIT_LABEL: Record<string, string> = {
+    'auth.login': '登录', 'auth.login_failed': '登录失败', 'auth.register': '注册', 'auth.register_failed': '注册失败',
+    'auth.reset_password': '找回密码', 'auth.reset_password_failed': '找回密码失败', 'auth.logout_everywhere': '退出所有设备',
+    'account.update': '修改个人资料', 'account.bind_email': '绑定邮箱',
+    'doc.export': '导出文档', 'doc.trash': '移到回收站', 'doc.purge': '彻底删除文档', 'doc.restore': '恢复文档', 'project.delete': '删除项目',
+    'kb.download': '下载资料原文', 'kb.delete': '删除资料', 'memory.clear': '清空记忆', 'memory.export': '导出记忆', 'memory.import': '导入记忆',
+    'admin.user_update': '修改用户', 'admin.user_reset_password': '重置用户密码', 'admin.user_logout': '强制下线', 'admin.settings': '修改实例设置',
+  }
+  let auditRows: any[] = []
+  const loadAudit = async (more = false) => {
+    const q = new URLSearchParams()
+    const actor = (dlg.querySelector('#auditActor') as HTMLInputElement).value.trim()
+    const action = (dlg.querySelector('#auditAction') as HTMLSelectElement).value
+    if (actor) q.set('actor', actor)
+    if (action) q.set('action', action)
+    if (more && auditRows.length) q.set('before', String(auditRows.at(-1).id))
+    const rows: any[] = await api(`/api/admin/audit?${q}`)
+    auditRows = more ? [...auditRows, ...rows] : rows
+    const box = dlg.querySelector('#auditList')!
+    box.className = auditRows.length ? '' : 'muted'
+    box.innerHTML = auditRows.length === 0 ? '没有记录' : `<table class="users audit-table"><thead><tr><th>时间</th><th>用户</th><th>操作</th><th>对象</th><th>来源 IP</th></tr></thead><tbody>${auditRows.map(r =>
+      `<tr class="${r.status >= 400 || /failed/.test(r.action) ? 'audit-failed' : ''}"><td class="muted">${new Date(r.at).toLocaleString('zh-CN', { hour12: false })}</td><td>${esc(r.actor_name ?? '—')}</td><td>${esc(AUDIT_LABEL[r.action] ?? r.action)}${r.status >= 400 ? ` <span class="muted">(${r.status})</span>` : ''}</td><td class="muted">${esc(r.target ?? r.detail ?? '')}</td><td class="muted">${esc(r.ip ?? '')}</td></tr>`).join('')}</tbody></table>`
+    ;(dlg.querySelector('#auditMore') as HTMLElement).hidden = rows.length < 100
+  }
+  void loadAudit().catch(err => notify((err as Error).message, true))
+  let auditTimer: ReturnType<typeof setTimeout> | undefined
+  dlg.querySelector('#auditActor')!.addEventListener('input', () => { clearTimeout(auditTimer); auditTimer = setTimeout(() => void loadAudit(), 300) })
+  dlg.querySelector('#auditAction')!.addEventListener('change', e => { e.stopPropagation(); void loadAudit() })
+  ;(dlg.querySelector('#auditMore') as HTMLButtonElement).onclick = () => void loadAudit(true)
   // 实例设置：记忆总开关（停用会删除所有用户的记忆，页内二次确认）
   const renderSettings = async () => {
     const st = await api<{ memory_enabled: boolean }>('/api/admin/settings')

@@ -75,8 +75,53 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const header = c.req.header('authorization')
     return header?.startsWith('Bearer ') ? header.slice(7) : c.req.query('token')
   }
+  /**
+   * 客户端 IP：生产里请求都经 Caddy 转发，直连方是内网 / 本机地址时取 Caddy 写的 X-Real-IP
+   * （否则所有人共用一个 IP——登录限流变成全站共用、审计记不到真实来源）。直连公网地址时不信任这个头。
+   */
   const clientIp = (c: Context) => {
-    try { return getConnInfo(c).remote.address ?? 'unknown' } catch { return 'unknown' }
+    let remote = 'unknown'
+    try { remote = getConnInfo(c).remote.address ?? 'unknown' } catch { /* 测试环境没有连接信息 */ }
+    const forwarded = c.req.header('x-real-ip')?.trim()
+    const viaProxy = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|::ffff:(127|10|192\.168|172\.(1[6-9]|2\d|3[01]))\.|fc|fd)/i.test(remote)
+    return forwarded && viaProxy ? forwarded : remote
+  }
+  /** 审计：谁、什么时候、从哪里、对什么做了什么（M2；管理员在「用户管理 → 审计日志」查看）。 */
+  const audit = (c: Context, action: string, e: { actor?: string | null; target?: string | null; detail?: string | null; status?: number } = {}) => {
+    try {
+      store.addAudit({ actor: e.actor !== undefined ? e.actor : (c.get('user') as string | undefined) ?? null, action, target: e.target ?? null, detail: e.detail ?? null, ip: clientIp(c), status: e.status ?? null })
+    } catch (err) { console.error('[audit]', err) }
+  }
+  const AUDITED: Array<{ method: string; re: RegExp; action: string }> = [
+    { method: 'GET', re: /^\/api\/docs\/[^/]+\/export\.(docx|pptx|md)$/, action: 'doc.export' },
+    { method: 'DELETE', re: /^\/api\/docs\/[^/]+$/, action: 'doc.trash' },
+    { method: 'DELETE', re: /^\/api\/docs\/[^/]+\/purge$/, action: 'doc.purge' },
+    { method: 'POST', re: /^\/api\/docs\/[^/]+\/restore$/, action: 'doc.restore' },
+    { method: 'DELETE', re: /^\/api\/projects\/[^/]+$/, action: 'project.delete' },
+    { method: 'GET', re: /^\/api\/kb\/[^/]+\/file$/, action: 'kb.download' },
+    { method: 'DELETE', re: /^\/api\/kb\/[^/]+$/, action: 'kb.delete' },
+    { method: 'DELETE', re: /^\/api\/memory$/, action: 'memory.clear' },
+    { method: 'GET', re: /^\/api\/memory-export$/, action: 'memory.export' },
+    { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
+    { method: 'PATCH', re: /^\/api\/admin\/users\/[^/]+$/, action: 'admin.user_update' },
+    { method: 'POST', re: /^\/api\/admin\/users\/[^/]+\/reset-password$/, action: 'admin.user_reset_password' },
+    { method: 'POST', re: /^\/api\/admin\/users\/[^/]+\/logout$/, action: 'admin.user_logout' },
+    { method: 'PUT', re: /^\/api\/admin\/settings$/, action: 'admin.settings' },
+    { method: 'POST', re: /^\/api\/auth\/logout-everywhere$/, action: 'auth.logout_everywhere' },
+    { method: 'PATCH', re: /^\/api\/me$/, action: 'account.update' },
+    { method: 'POST', re: /^\/api\/me\/email$/, action: 'account.bind_email' },
+  ]
+  /** 审计目标：文档记「文档 id《标题》」，资料记文件名，用户记用户名。 */
+  const auditTarget = (path: string): string | null => {
+    const doc = /^\/api\/docs\/([^/]+)/.exec(path)?.[1]
+    if (doc) { const d = store.getDoc(doc); return d ? `文档 ${doc}《${d.title}》` : `文档 ${doc}` }
+    const kb = /^\/api\/kb\/([^/]+)/.exec(path)?.[1]
+    if (kb) { const f = store.getKbFile(kb); return f ? `资料 ${kb}《${f.name}》` : `资料 ${kb}` }
+    const user = /^\/api\/admin\/users\/([^/]+)/.exec(path)?.[1]
+    if (user) { const u = store.getUser(user); return u ? `用户 ${u.username}` : `用户 ${user}` }
+    const project = /^\/api\/projects\/([^/]+)/.exec(path)?.[1]
+    if (project) { const p = store.getProject(project); return p ? `项目《${p.name}》` : `项目 ${project}` }
+    return null
   }
   const authFailure = (c: Context, err: unknown) => {
     if (err instanceof AuthError) return c.json({ error: err.message, code: err.code }, err.status)
@@ -91,9 +136,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json(accounts.bots.issue(clientIp(c)))
   })
   app.post('/api/auth/register', async c => {
+    const body = await c.req.json().catch(() => ({})) as { username?: string }
     try {
-      return c.json(accounts.register(await c.req.json(), clientIp(c)), 201)
-    } catch (err) { return authFailure(c, err) }
+      const r = accounts.register(body as never, clientIp(c))
+      audit(c, 'auth.register', { actor: r.user.id, detail: `用户名 ${body.username ?? ''}`, status: 201 })
+      return c.json(r, 201)
+    } catch (err) {
+      if (err instanceof AuthError) audit(c, 'auth.register_failed', { actor: null, detail: `用户名 ${String(body.username ?? '').slice(0, 64)}：${err.code}`, status: err.status })
+      return authFailure(c, err)
+    }
   })
   // 找回密码：发验证码（不暴露邮箱是否注册）→ 验证码 + 新密码
   app.post('/api/auth/password-code', async c => {
@@ -102,14 +153,27 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return authFailure(c, err) }
   })
   app.post('/api/auth/reset-password', async c => {
+    const body = await c.req.json().catch(() => ({})) as { email?: string }
     try {
-      return c.json(accounts.resetPassword(await c.req.json()))
-    } catch (err) { return authFailure(c, err) }
+      const r = accounts.resetPassword(body as never) as { user?: { id: string } }
+      audit(c, 'auth.reset_password', { actor: r.user?.id ?? null, detail: `邮箱 ${String(body.email ?? '').slice(0, 120)}`, status: 200 })
+      return c.json(r)
+    } catch (err) {
+      if (err instanceof AuthError) audit(c, 'auth.reset_password_failed', { actor: null, detail: `邮箱 ${String(body.email ?? '').slice(0, 120)}：${err.code}`, status: err.status })
+      return authFailure(c, err)
+    }
   })
   app.post('/api/auth/login', async c => {
+    const body = await c.req.json().catch(() => ({})) as { username?: string }
     try {
-      return c.json(accounts.login(await c.req.json(), clientIp(c)))
-    } catch (err) { return authFailure(c, err) }
+      const r = accounts.login(body as never, clientIp(c))
+      audit(c, 'auth.login', { actor: r.user.id, status: 200 })
+      return c.json(r)
+    } catch (err) {
+      // 失败的登录记用户名（不记密码），便于发现撞库
+      if (err instanceof AuthError) audit(c, 'auth.login_failed', { actor: null, detail: `用户名 ${String(body.username ?? '').slice(0, 64)}：${err.code}`, status: err.status })
+      return authFailure(c, err)
+    }
   })
 
   // 鉴权：账户令牌（开发模式下也接受开发令牌，见 auth/accounts.ts）。EventSource / <img> 用 ?token=。
@@ -117,7 +181,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const user = accounts.userFor(requestToken(c))
     if (!user) return c.json({ error: '请先登录', code: 'unauthorized' }, 401)
     c.set('user', user)
+    // 审计：按「方法 + 路径」记敏感操作（导出、删除、管理员操作……），目标的标题在操作前取（彻底删除后就查不到了）
+    const rule = AUDITED.find(r => r.method === c.req.method && r.re.test(c.req.path))
+    const target = rule ? auditTarget(c.req.path) : null
     await next()
+    if (rule) audit(c, rule.action, { target, status: c.res.status })
   })
 
   app.get('/api/me', c => c.json({ ...accounts.me(c.get('user')), dev_mode: deps.devMode }))
@@ -169,6 +237,16 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       accounts.adminLogout(c.req.param('uid'))
       return c.json({ ok: true })
     } catch (err) { return authFailure(c, err) }
+  })
+
+  // 管理员：审计日志（最新在前，可按操作者 / 操作类型筛选，按 before 翻页）
+  app.get('/api/admin/audit', c => {
+    const actorName = c.req.query('actor')?.trim()
+    const actor = actorName ? store.getUserByName(actorName)?.id ?? actorName : undefined
+    const rows = store.listAudit({ actor, action: c.req.query('action') || undefined, before: Number(c.req.query('before')) || undefined, limit: Number(c.req.query('limit')) || 100 })
+    const names = new Map<string, string>()
+    const nameOf = (id: string | null) => { if (!id) return null; if (!names.has(id)) names.set(id, store.getUser(id)?.username ?? id); return names.get(id)! }
+    return c.json(rows.map(r => ({ ...r, actor_name: nameOf(r.actor) })))
   })
 
   // 管理员：本实例停用记忆（同时删除所有用户的记忆）

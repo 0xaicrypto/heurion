@@ -560,3 +560,13 @@ button.block { width: 100%; padding: 10px 12px; }
   .fab { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); right: 16px; }
   .tabs button { padding: 12px 0 10px; }
 }
+
+/* 审计日志（用户管理里） */
+.audit { border-top: 1px solid var(--line); padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+.audit input[type=search] { width: 180px; padding: 5px 10px; font-size: 12px; }
+.audit select { font-size: 12px; }
+.audit-table td { font-size: 12px; padding: 7px 8px; }
+.audit-table tr.audit-failed td:nth-child(3) { color: var(--danger); }
+#auditMore { align-self: center; font-size: 12px; }
+@media (max-width: 900px) { .audit-table th:nth-child(5), .audit-table td:nth-child(5) { display: none; } .audit input[type=search] { width: 120px; } }
+

@@ -42,7 +42,8 @@ function env() {
     return (await r.json()) as { token: string; user: { id: string } }
   }
   const settle = async () => { await new Promise(r => setTimeout(r, 5)); search.flush() }
-  return { store, docs, call, register, settle, search }
+  const pow = async () => solveChallenge((await (await app.request('/api/auth/challenge')).json()) as Challenge)
+  return { store, docs, call, register, settle, search, pow }
 }
 
 describe('健康检查', () => {
@@ -172,6 +173,30 @@ describe('记忆 API', () => {
     expect(imp.added).toBe(1)
     expect((await t.call('GET', '/api/memory', a.token)).data.items.map((x: any) => x.status).sort()).toEqual(['active', 'proposed'])
     expect((await t.call('DELETE', '/api/memory', a.token)).data.deleted).toBe(2)
+  })
+})
+
+describe('审计日志', () => {
+  it('记录登录（含失败）、导出、彻底删除（删除前的标题）；只有管理员能看', async () => {
+    const t = env()
+    const admin = await t.register('auditadmin') // 第一个注册的是管理员
+    const user = await t.register('auditor')
+    const login = async (password: string) => t.call('POST', '/api/auth/login', '', { username: 'auditor', password, pow: await t.pow() })
+    expect((await login('wrong-password')).status).toBe(401)
+    expect((await login('secret123')).status).toBe(200)
+    const doc = (await t.call('POST', '/api/docs', user.token, { title: '病例讨论', markdown: '# x' })).data
+    expect((await t.call('GET', `/api/docs/${doc.id}/export.md`, user.token)).status).toBe(200)
+    await t.call('DELETE', `/api/docs/${doc.id}`, user.token)
+    await t.call('DELETE', `/api/docs/${doc.id}/purge`, user.token)
+    expect((await t.call('GET', '/api/admin/audit', user.token)).status).toBe(403)
+    const rows = (await t.call('GET', '/api/admin/audit', admin.token)).data as any[]
+    const actions = rows.map(r => r.action)
+    expect(actions).toEqual(expect.arrayContaining(['auth.register', 'auth.login_failed', 'auth.login', 'doc.export', 'doc.trash', 'doc.purge']))
+    expect(rows.find(r => r.action === 'auth.login_failed').detail).toContain('auditor')
+    expect(rows.find(r => r.action === 'doc.purge')).toMatchObject({ actor_name: 'auditor', target: expect.stringContaining('《病例讨论》') })
+    expect(rows.find(r => r.action === 'doc.export').target).toContain('《病例讨论》')
+    const onlyDocs = (await t.call('GET', '/api/admin/audit?action=doc.&actor=auditor', admin.token)).data as any[]
+    expect(onlyDocs.every((r: any) => r.action.startsWith('doc.') && r.actor_name === 'auditor')).toBe(true)
   })
 })
 

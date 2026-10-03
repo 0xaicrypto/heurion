@@ -331,6 +331,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS memory_events_memory ON memory_events (memory_id, at);
       CREATE TABLE IF NOT EXISTS user_settings (user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
       CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT, action TEXT NOT NULL, target TEXT, detail TEXT, ip TEXT, status INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS audit_events_at ON audit_events (at);
       CREATE TABLE IF NOT EXISTS sandbox_uids (user_id TEXT PRIMARY KEY, uid INTEGER NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, role TEXT NOT NULL,
@@ -601,6 +605,29 @@ export class Store {
 
   setAppSetting(key: string, value: string): void {
     this.db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value)
+  }
+
+  // —— 审计日志（M2） ——
+
+  addAudit(e: { actor: string | null; action: string; target?: string | null; detail?: string | null; ip?: string | null; status?: number | null }): void {
+    this.db.prepare('INSERT INTO audit_events (at, actor, action, target, detail, ip, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(now(), e.actor, e.action, e.target ?? null, e.detail ?? null, e.ip ?? null, e.status ?? null)
+  }
+
+  /** 最新在前；before = 上一页最后一条的 id。 */
+  listAudit(f: { actor?: string; action?: string; before?: number; limit?: number } = {}): Array<{ id: number; at: string; actor: string | null; action: string; target: string | null; detail: string | null; ip: string | null; status: number | null }> {
+    const where: string[] = []
+    const args: Array<string | number> = []
+    if (f.actor) { where.push('actor = ?'); args.push(f.actor) }
+    if (f.action) { where.push('action LIKE ?'); args.push(`${f.action}%`) }
+    if (f.before) { where.push('id < ?'); args.push(f.before) }
+    return this.db.prepare(`SELECT id, at, actor, action, target, detail, ip, status FROM audit_events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`)
+      .all(...args, Math.min(f.limit ?? 100, 500)) as never
+  }
+
+  /** 保留期之外的审计记录删除，返回删了几条。 */
+  purgeAudit(days: number): number {
+    return Number(this.db.prepare('DELETE FROM audit_events WHERE at < ?').run(new Date(Date.now() - days * 86400_000).toISOString()).changes)
   }
 
   /** AI 代码隔离：平台用户 → 专属 Linux uid（20000 起，分配后不变）。 */

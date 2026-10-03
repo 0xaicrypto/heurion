@@ -64,7 +64,8 @@ const search = new SearchIndex(docs)
 const indexed = search.backfill()
 if (indexed) console.log(`全文索引：补齐 ${indexed} 份文档`)
 // 回收站：30 天后自动彻底删除（启动时一次，之后每 12 小时）
-const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } }
+// 审计日志保留 365 天
+const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } store.purgeAudit(365) }
 purge()
 setInterval(purge, 12 * 3600_000).unref()
 const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory })
