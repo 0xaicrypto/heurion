@@ -42,7 +42,7 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
   const dlg = () => document.getElementById('dialog')!
   const isOpen = () => !dlg().hidden && !!dlg().querySelector('[aria-label="数据"]')
 
-  async function upload(files: FileList | File[]): Promise<void> {
+  async function upload(files: FileList | File[]): Promise<Dataset[]> {
     const form = new FormData()
     for (const f of Array.from(files)) form.append('file', f)
     const res = await api<Array<Dataset & { duplicate?: boolean; error?: string }>>('/api/datasets', { method: 'POST', body: form })
@@ -50,6 +50,7 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
     const failed = res.filter(r => r.error)
     if (failed.length) notice(failed.map(r => `${r.filename}：${r.error}`).join('；'), true)
     else if (res.some(r => r.duplicate)) notice('这份文件已经上传过了')
+    return res.filter(r => r.id && !r.error)
   }
 
   // —— 列表 ——
@@ -254,6 +255,10 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
 
   return {
     openList,
+    /** 研究页上传数据集（返回上传成功的，含重复的已有数据集） */
+    upload,
+    /** 打开数据集详情（变量、身份信息处理、预览） */
+    openDetail,
     /** 文档里的图是否由分析生成（编辑器给图加「来自分析」标记用）。 */
     hasProvenance: async (assetId: string) => Boolean(await provenance(assetId)),
     showProvenance,

@@ -1,30 +1,197 @@
 /**
- * 临床研究（工作空间）：研究项目把方案、数据集、分析、稿件放在一起；入组患者（从患者库筛选）是第三期。
- * 这一版：开始页与研究列表（研究项目的增删改见后续提交）。
+ * 临床研究（工作空间）：研究项目列表与研究页——研究方案、数据集、分析（用研究数据集画的图，自动汇总）、稿件；入组患者是下一期。
+ * 新建方案 / 论文 / 幻灯片：新建文档并归入研究，打开后把建议的指令填进对话框（由人改好再发送）。
  */
+import { askConfirm } from './dialogs.ts'
+
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 type Notice = (msg: string, error?: boolean) => void
 
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+interface StudyLite { id: string; title: string; design: string | null; status: 'planning' | 'ongoing' | 'completed'; docs: number; datasets: number }
+interface Study {
+  id: string; title: string; design: string | null; status: StudyLite['status']; summary: string | null; design_label: string | null; status_label: string; updated_at: string
+  docs: Array<{ doc_id: string; title: string; kind: 'doc' | 'deck'; role: string; updated_at: string }>
+  datasets: Array<{ dataset_id: string; name: string; format: string; rows: number; cols: number; status: string }>
+  analyses: Array<{ asset_id: string; name: string; created_at: string; datasets: string[]; has_code: boolean }>
+}
 
-export function initResearch(api: Api, _notice: Notice) {
+export interface ResearchHooks {
+  openDoc(id: string): Promise<void>
+  /** 离开当前文档（研究页占用中间区域时） */
+  leaveDoc(): void
+  prefillChat(text: string): void
+  goSpace(space: 'research'): void
+  token(): string
+  datasets: { upload(files: File[]): Promise<Array<{ id: string }>>; openDetail(id: string): Promise<void>; showProvenance(assetId: string): Promise<void> }
+}
+
+const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+const DESIGNS: Record<string, string> = { retrospective_cohort: '回顾性队列', prospective_cohort: '前瞻性队列', rct: '随机对照试验', case_control: '病例对照', cross_sectional: '横断面', other: '其他' }
+const STATUS: Record<string, string> = { planning: '筹备中', ongoing: '进行中', completed: '已完成' }
+const ROLES: Record<string, string> = { protocol: '研究方案', manuscript: '论文', slides: '幻灯片', other: '其他文档' }
+const date = (iso: string) => new Date(iso).toLocaleDateString('zh-CN')
+
+export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
   const $ = (id: string) => document.getElementById(id)!
-  let list: Array<{ id: string; title: string; design: string | null; status: string }> = []
+  let list: StudyLite[] = []
+  let current: string | null = null
+  let poll: ReturnType<typeof setTimeout> | null = null
+
+  // —— 左栏 ——
 
   async function loadList(): Promise<void> {
-    try { list = await api('/api/studies') } catch { list = [] }
-    $('studyList').innerHTML = list.map(s => `<li data-study="${s.id}" title="${esc(s.title)}"><span class="label">${esc(s.title)}</span></li>`).join('')
-      + (list.length === 0 ? '<li class="nav-empty">还没有研究项目。</li>' : '')
+    try { list = await api<StudyLite[]>('/api/studies') } catch { list = [] }
+    renderList()
+  }
+
+  function renderList(): void {
+    const q = ($('docSearch') as HTMLInputElement).value.trim().toLowerCase()
+    const shown = list.filter(s => !q || s.title.toLowerCase().includes(q))
+    $('studyList').innerHTML = shown.map(s => `<li data-study="${s.id}" class="hit${s.id === current ? ' active' : ''}" title="${esc(s.title)}">
+        <span class="hit-text"><span class="label">${esc(s.title)}</span><span class="snippet">${[s.design ? DESIGNS[s.design] : '', STATUS[s.status], `${s.datasets} 个数据集`].filter(Boolean).join(' · ')}</span></span></li>`).join('')
+      + (list.length === 0 ? '<li class="nav-empty">还没有研究项目。点「＋ 新建研究」。</li>' : shown.length === 0 ? `<li class="nav-empty">没有找到「${esc(q)}」</li>` : '')
+  }
+
+  /** 新建研究：名称、设计、简介（一个小表单）。 */
+  function createDialog(): void {
+    const dlg = $('dialog')
+    dlg.innerHTML = `<div class="dialog-card small" role="dialog" aria-modal="true" aria-label="新建研究">
+      <div class="dialog-head"><h2>新建研究</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
+      <form class="dialog-body form" id="studyForm">
+        <label>研究名称<input type="text" name="title" required maxlength="120" placeholder="例如：SGLT2 抑制剂与 CKD3 患者 eGFR 下降"></label>
+        <label>研究设计<select name="design"><option value="">（暂不确定）</option>${Object.entries(DESIGNS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+        <label>简介（可选）<textarea name="summary" rows="3" placeholder="研究问题、人群、主要终点"></textarea></label>
+        <div class="row end"><button type="button" data-close>取消</button><button class="primary">创建</button></div>
+      </form></div>`
+    dlg.hidden = false
+    dlg.querySelector<HTMLInputElement>('input[name=title]')!.focus()
+    dlg.onclick = e => { if (e.target === dlg || (e.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
+    dlg.onchange = null
+    dlg.querySelector<HTMLFormElement>('#studyForm')!.onsubmit = async e => {
+      e.preventDefault()
+      const f = new FormData(e.target as HTMLFormElement)
+      try {
+        const s = await api<{ id: string }>('/api/studies', { method: 'POST', body: JSON.stringify({ title: f.get('title'), design: f.get('design') || null, summary: f.get('summary') }) })
+        dlg.hidden = true; dlg.innerHTML = ''
+        await loadList()
+        await openStudy(s.id)
+      } catch (err) { notice((err as Error).message, true) }
+    }
+  }
+
+  // —— 研究页 ——
+
+  async function openStudy(id: string): Promise<void> {
+    // 从研究里的文档回来、或在文档里点研究：先关掉文档（AI 栏收起，顶栏不再显示文档的东西）
+    if (!$('page').classList.contains('study-page')) hooks.leaveDoc()
+    current = id
+    if (poll) { clearTimeout(poll); poll = null }
+    let s: Study
+    try { s = await api<Study>(`/api/studies/${id}`) } catch (err) { notice((err as Error).message, true); current = null; return }
+    const page = $('page')
+    page.className = 'page study-page'
+    $('docTitle').textContent = s.title
+    renderList()
+    const docsOf = (roles: string[]) => s.docs.filter(d => roles.includes(d.role))
+    const docRow = (d: Study['docs'][number]) => `<li class="rs-item" data-opendoc="${d.doc_id}"><span class="rs-kind">${d.kind === 'deck' ? '幻灯片' : ROLES[d.role] ?? '文档'}</span><b>${esc(d.title)}</b><span class="muted small">更新于 ${date(d.updated_at)}</span>
+        <button class="quiet small-btn" data-unlink="doc:${d.doc_id}" title="移出研究（文档回到写作的文档列表）">移出</button></li>`
+    const protocols = docsOf(['protocol'])
+    const manuscripts = docsOf(['manuscript', 'slides', 'other'])
+    page.innerHTML = `
+      <div class="rs-head">
+        <input class="rs-title" id="rsTitle" value="${esc(s.title)}" aria-label="研究名称">
+        <div class="row">
+          <select id="rsDesign" aria-label="研究设计"><option value="">研究设计（未定）</option>${Object.entries(DESIGNS).map(([k, v]) => `<option value="${k}"${s.design === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+          <select id="rsStatus" aria-label="状态">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${s.status === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+          <span class="grow"></span>
+          <div class="menu-wrap"><button data-act="more" aria-haspopup="menu">更多 ▾</button>
+            <div class="dropdown" id="rsMore" hidden><button data-act="attach">归入已有文档…</button><button data-act="delete" class="danger-text">删除研究项目</button></div></div>
+        </div>
+        <textarea id="rsSummary" rows="2" placeholder="简介：研究问题、人群、暴露 / 干预、主要终点">${esc(s.summary ?? '')}</textarea>
+      </div>
+      <div class="rs-grid">
+        <section class="rs-card">
+          <div class="rs-card-head"><h3>研究方案</h3><button class="small-btn" data-new="protocol">＋ 新建方案</button></div>
+          ${protocols.length ? `<ul class="rs-list">${protocols.map(docRow).join('')}</ul>` : '<p class="muted small">还没有研究方案。AI 可以依据你的研究问题起草：设计、纳入排除标准、终点、样本量、统计计划。</p>'}
+        </section>
+        <section class="rs-card">
+          <div class="rs-card-head"><h3>数据集</h3><button class="small-btn" data-act="upload">＋ 上传数据</button><input type="file" id="rsUpload" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.xpt,.sas7bdat,.sav,.zsav,.dta" multiple hidden></div>
+          ${s.datasets.length ? `<ul class="rs-list">${s.datasets.map(d => `<li class="rs-item" data-dataset="${d.dataset_id}"><span class="rs-kind">${esc(d.format)}</span><b>${esc(d.name)}</b>
+            <span class="muted small">${d.status === 'ready' ? `${d.rows.toLocaleString()} 行 × ${d.cols} 列` : d.status === 'review' ? '<span class="flag-L">待处理身份信息</span>' : d.status === 'failed' ? '<span class="flag-H">导入失败</span>' : '处理中…'}</span>
+            <button class="quiet small-btn" data-unlink="dataset:${d.dataset_id}" title="移出研究（数据集仍在「全部数据集」里）">移出</button></li>`).join('')}</ul>`
+            : '<p class="muted small">上传 CSV、Excel、SAS、SPSS、Stata。在这个研究的文档里和 AI 对话时，会自动带上这些数据集。</p>'}
+        </section>
+        <section class="rs-card wide">
+          <div class="rs-card-head"><h3>分析</h3><span class="muted small">用本研究数据集画的图，点开看代码与数据来源</span></div>
+          ${s.analyses.length ? `<div class="rs-analyses">${s.analyses.map(a => `<button class="rs-fig" data-fig="${a.asset_id}" title="${esc(a.name)}"><img src="/api/assets/${a.asset_id}?token=${encodeURIComponent(hooks.token())}" alt="${esc(a.name)}"><span>${esc(a.name.split('/').pop())}<br><span class="muted">${esc(a.datasets.join('、'))} · ${date(a.created_at)}</span></span></button>`).join('')}</div>`
+            : '<p class="muted small">还没有分析。打开论文或新建一份文档，在对话里让 AI 用研究数据做 Table 1、生存曲线、回归，画的图会出现在这里。</p>'}
+        </section>
+        <section class="rs-card wide">
+          <div class="rs-card-head"><h3>稿件</h3><button class="small-btn" data-new="manuscript">＋ 新建论文</button><button class="small-btn" data-new="slides">＋ 新建幻灯片</button></div>
+          ${manuscripts.length ? `<ul class="rs-list">${manuscripts.map(docRow).join('')}</ul>` : '<p class="muted small">论文、组会汇报幻灯片。写作时可以直接引用上面的分析结果。</p>'}
+        </section>
+        <section class="rs-card wide rs-soon">
+          <div class="rs-card-head"><h3>入组患者</h3><span class="pill off">下一期</span></div>
+          <p class="muted small">按纳入排除条件从患者库筛选入组，自动生成去标识的研究数据集。</p>
+        </section>
+      </div>`
+    // 数据集还在处理：隔几秒刷新
+    if (s.datasets.some(d => d.status === 'processing')) poll = setTimeout(() => { if (current === id) void openStudy(id) }, 2500)
+  }
+
+  const PROMPTS: Record<string, (t: string) => string> = {
+    protocol: t => `请为研究「${t}」起草一份研究方案：研究背景与目的、研究设计、研究人群（纳入与排除标准）、暴露 / 干预与对照、主要与次要终点、样本量估计、统计分析计划、伦理与数据管理。不确定的地方标「待定」，不要编造文献。`,
+    manuscript: t => `请依据研究「${t}」的方案和已有分析，起草论文的方法与结果部分：结果段落只引用实际算出的数字，需要时用研究数据集补做分析（Table 1、主要终点分析）。`,
+    slides: t => `请依据研究「${t}」做一份组会汇报幻灯片（6–8 页）：研究问题、设计、人群、主要结果（用已有分析的图）、局限与下一步。`,
+  }
+
+  async function newDoc(role: 'protocol' | 'manuscript' | 'slides', s: { id: string; title: string }): Promise<void> {
+    try {
+      const kind = role === 'slides' ? 'deck' : 'doc'
+      const doc = await api<{ id: string }>('/api/docs', { method: 'POST', body: JSON.stringify({ title: `${s.title} · ${ROLES[role]}`, kind }) })
+      await api(`/api/studies/${s.id}/items`, { method: 'POST', body: JSON.stringify({ kind: 'doc', ref_id: doc.id, role }) })
+      current = null
+      await hooks.openDoc(doc.id)
+      hooks.prefillChat(PROMPTS[role]!(s.title))
+      notice('已新建并归入研究。对话框里填好了建议的指令，可以修改后点「发送」')
+    } catch (err) { notice((err as Error).message, true) }
+  }
+
+  async function attachExisting(s: { id: string }): Promise<void> {
+    const docs = await api<Array<{ id: string; title: string; kind: string }>>('/api/docs')
+    const dlg = $('dialog')
+    dlg.innerHTML = `<div class="dialog-card small" role="dialog" aria-modal="true" aria-label="归入已有文档">
+      <div class="dialog-head"><h2>归入已有文档</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
+      <form class="dialog-body form" id="attachForm">
+        ${docs.length ? `<label>文档<select name="doc">${docs.map(d => `<option value="${d.id}">${esc(d.title)}${d.kind === 'deck' ? '（幻灯片）' : ''}</option>`).join('')}</select></label>
+        <label>作为<select name="role">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+        <div class="muted small">归入后这份文档在研究里，不再出现在写作的文档列表；随时可以移出。</div>
+        <div class="row end"><button type="button" data-close>取消</button><button class="primary">归入</button></div>` : '<div class="muted">写作里没有可归入的文档。</div>'}
+      </form></div>`
+    dlg.hidden = false
+    dlg.onclick = e => { if (e.target === dlg || (e.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
+    dlg.onchange = null
+    const form = dlg.querySelector<HTMLFormElement>('#attachForm')!
+    form.onsubmit = async e => {
+      e.preventDefault()
+      const f = new FormData(form)
+      try {
+        await api(`/api/studies/${s.id}/items`, { method: 'POST', body: JSON.stringify({ kind: 'doc', ref_id: f.get('doc'), role: f.get('role') }) })
+        dlg.hidden = true; dlg.innerHTML = ''
+        notice('已归入研究'); void openStudy(s.id); void loadList()
+      } catch (err) { notice((err as Error).message, true) }
+    }
   }
 
   function showWelcome(): void {
+    current = null
     const page = $('page')
     page.className = 'page study-page rs-welcome'
     $('docTitle').textContent = '临床研究'
     page.innerHTML = `<div class="pt-welcome-body">
       <span class="pt-code big">STUDY</span>
       <h1>${list.length ? '选择一个研究项目' : '新建第一个研究项目'}</h1>
-      <p class="muted">一个研究项目把方案、数据、分析和稿件放在一起：AI 分析时自动用这个研究的数据集，写论文时能直接引用分析结果。</p>
+      <p class="muted">一个研究项目把方案、数据、分析和稿件放在一起：在研究的文档里，AI 会自动用这个研究的数据集，写论文时能直接引用分析结果。</p>
       <ol class="pt-steps">
         <li><b>研究方案</b><span>研究设计、纳入排除标准、终点，AI 可以帮你起草与完善。</span></li>
         <li><b>数据集</b><span>上传 CSV、Excel、SAS、SPSS、Stata；身份信息的列处理后才能分析。</span></li>
@@ -32,14 +199,86 @@ export function initResearch(api: Api, _notice: Notice) {
         <li><b>稿件</b><span>论文、组会汇报幻灯片，写作时直接引用分析结果。</span></li>
         <li><b>入组患者</b><span>从患者库按条件筛选入组（下一期）。</span></li>
       </ol>
+      <div class="row"><button class="primary" data-rw="new">＋ 新建研究</button>${list[0] ? `<button data-rw="open">打开「${esc(list[0].title)}」</button>` : ''}</div>
     </div>`
   }
+
+  // —— 事件 ——
+
+  $('page').addEventListener('click', async e => {
+    const page = $('page')
+    const t = e.target as HTMLElement
+    if (page.classList.contains('rs-welcome')) {
+      const b = t.closest<HTMLElement>('[data-rw]')
+      if (b?.dataset.rw === 'new') createDialog()
+      else if (b && list[0]) void openStudy(list[0].id)
+      return
+    }
+    if (!current || !page.classList.contains('study-page')) return
+    const id = current
+    const s = { id, title: ($('rsTitle') as HTMLInputElement | null)?.value ?? '' }
+    const unlink = t.closest<HTMLElement>('[data-unlink]')?.dataset.unlink
+    if (unlink) {
+      e.stopPropagation()
+      const [kind, ref] = unlink.split(':')
+      try { await api(`/api/studies/${id}/items/${kind}/${ref}`, { method: 'DELETE' }); notice(kind === 'doc' ? '已移出，文档回到写作的文档列表' : '已移出研究'); void openStudy(id); void loadList() }
+      catch (err) { notice((err as Error).message, true) }
+      return
+    }
+    const open = t.closest<HTMLElement>('[data-opendoc]')?.dataset.opendoc
+    if (open) { current = null; await hooks.openDoc(open); return }
+    const ds = t.closest<HTMLElement>('[data-dataset]')?.dataset.dataset
+    if (ds) { await hooks.datasets.openDetail(ds); return }
+    const fig = t.closest<HTMLElement>('[data-fig]')?.dataset.fig
+    if (fig) { await hooks.datasets.showProvenance(fig); return }
+    const nd = t.closest<HTMLElement>('[data-new]')?.dataset.new
+    if (nd) { await newDoc(nd as 'protocol' | 'manuscript' | 'slides', s); return }
+    const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
+    if (act === 'more') { $('rsMore').hidden = !$('rsMore').hidden; return }
+    if (act === 'upload') { ($('rsUpload') as HTMLInputElement).click(); return }
+    if (act === 'attach') { $('rsMore').hidden = true; await attachExisting(s); return }
+    if (act === 'delete') {
+      $('rsMore').hidden = true
+      if (await askConfirm({ title: '删除研究项目', message: `删除「${s.title}」？只删除这个研究项目：里面的文档回到写作的文档列表，数据集仍在「全部数据集」里。`, confirm: '删除', danger: true })) {
+        await api(`/api/studies/${id}`, { method: 'DELETE' }); await loadList(); showWelcome()
+      }
+    }
+  })
+
+  $('page').addEventListener('change', async e => {
+    if (!current || !$('page').classList.contains('study-page')) return
+    const el = e.target as HTMLInputElement | HTMLSelectElement
+    const id = current
+    if (el.id === 'rsUpload') {
+      const files = Array.from((el as HTMLInputElement).files ?? [])
+      ;(el as HTMLInputElement).value = ''
+      const done = await hooks.datasets.upload(files)
+      for (const d of done) await api(`/api/studies/${id}/items`, { method: 'POST', body: JSON.stringify({ kind: 'dataset', ref_id: d.id }) }).catch(err => notice((err as Error).message, true))
+      if (done.length) notice('已上传并归入研究，正在处理；有身份信息的列时，点开数据集处理')
+      void openStudy(id); void loadList()
+      return
+    }
+    const patch = el.id === 'rsTitle' ? { title: el.value } : el.id === 'rsDesign' ? { design: el.value || null } : el.id === 'rsStatus' ? { status: el.value } : el.id === 'rsSummary' ? { summary: el.value } : null
+    if (!patch) return
+    try { await api(`/api/studies/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); if ('title' in patch) $('docTitle').textContent = el.value; void loadList() }
+    catch (err) { notice((err as Error).message, true) }
+  })
+
+  $('studyList').onclick = e => {
+    const li = (e.target as HTMLElement).closest<HTMLElement>('li[data-study]')
+    if (li) void openStudy(li.dataset.study!)
+  }
+  $('newStudy').onclick = () => createDialog()
+  $('docSearch').addEventListener('input', () => { if (!$('studyList').hidden) renderList() })
 
   return {
     async enter(idle: boolean): Promise<void> {
       await loadList()
+      if (idle && current && $('page').classList.contains('study-page') && !$('page').classList.contains('rs-welcome')) return
       if (idle) showWelcome()
     },
-    leave(): void { /* 研究页离开时无状态需要清理（研究页面见后续提交） */ },
+    leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } },
+    /** 从研究里的文档回到研究页 */
+    async open(id: string): Promise<void> { hooks.goSpace('research'); await openStudy(id) },
   }
 }

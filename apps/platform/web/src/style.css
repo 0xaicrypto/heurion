@@ -610,6 +610,31 @@ button.block { width: 100%; padding: 10px 12px; }
 .pt-edit tr.pt-unverified td { background: var(--warn-soft); }
 @media (max-width: 900px) { .pt-review { grid-template-columns: 1fr; } .pt-review-file iframe { height: 360px; } }
 
+/* —— 临床研究 —— */
+.page.study-page:not(.rs-welcome) { max-width: 1160px; padding: 28px 8px 120px; }
+.rs-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.rs-title { font: inherit; font-size: 26px; font-weight: 500; border: 1px solid transparent; background: transparent; color: var(--text); padding: 2px 6px; margin-left: -7px; }
+.rs-title:hover, .rs-title:focus { border-color: var(--line-strong); outline: none; }
+.rs-head select { font-size: 12.5px; padding: 4px 8px; }
+.rs-head textarea { min-height: 52px; font-size: 13.5px; }
+.rs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.rs-card { border: 1px solid var(--line); background: var(--panel); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.rs-card.wide { grid-column: 1 / -1; }
+.rs-card-head { display: flex; align-items: center; gap: 8px; }
+.rs-card-head h3 { margin: 0; font-size: 15px; font-weight: 500; flex: 1; display: flex; align-items: center; gap: 8px; }
+.rs-card-head h3::before { content: ''; width: 3px; height: 14px; background: var(--mint); }
+.rs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.rs-item { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-top: 1px solid var(--line); cursor: pointer; }
+.rs-item:first-child { border-top: 0; }
+.rs-item:hover { background: var(--hover); }
+.rs-item b { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rs-kind { font-size: 11px; color: var(--mint-text); border: 1px solid var(--green-line); padding: 0 6px; flex: none; }
+.rs-analyses { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.rs-fig { display: flex; flex-direction: column; gap: 6px; padding: 8px; text-align: left; font-size: 12px; }
+.rs-fig img { width: 100%; height: 120px; object-fit: contain; background: #fff; }
+.rs-soon { opacity: .7; border-style: dashed; }
+@media (max-width: 900px) { .rs-grid { grid-template-columns: 1fr; } }
+
 /* —— 数据（数据集） —— */
 .kb-status.review { color: var(--warn); border-color: rgba(245, 181, 68, .45); }
 .ds-detail { width: min(1080px, 100%); }

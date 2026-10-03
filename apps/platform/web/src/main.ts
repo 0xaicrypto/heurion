@@ -197,18 +197,27 @@ let ME: Me | null = null
 const patientsUi = initPatients(api, (m, e) => showNotice(m, e), {
   leaveDoc: () => leaveDoc(),
   openDoc: id => open(id),
-  prefillChat: text => {
-    switchTab('chatPane')
-    const input = $<HTMLTextAreaElement>('chatInput')
-    input.value = text
-    input.focus()
-    input.setSelectionRange(input.value.length, input.value.length)
-  },
+  prefillChat: text => prefillChat(text),
   goSpace: space => spaces.set(space),
   tenantId: () => ME?.tenant?.id ?? null,
   token: () => TOKEN,
 })
-const researchUi = initResearch(api, (m, e) => showNotice(m, e))
+/** 把建议的指令填进对话框（不发送，由人改好再发） */
+function prefillChat(text: string): void {
+  switchTab('chatPane')
+  const input = $<HTMLTextAreaElement>('chatInput')
+  input.value = text
+  input.focus()
+  input.setSelectionRange(input.value.length, input.value.length)
+}
+const researchUi = initResearch(api, (m, e) => showNotice(m, e), {
+  openDoc: id => open(id),
+  leaveDoc: () => leaveDoc(),
+  prefillChat: text => prefillChat(text),
+  goSpace: space => spaces.set(space),
+  token: () => TOKEN,
+  datasets: { upload: files => datasets.upload(files), openDetail: id => datasets.openDetail(id), showProvenance: id => datasets.showProvenance(id) },
+})
 // 左侧图标栏：写作 / 患者 / 临床研究
 const spaces = initSpaces({
   write: { title: '写作', label: '文档', actions: 'docActions', list: 'docList', placeholder: '搜索文档（标题与正文）',
@@ -335,6 +344,7 @@ async function open(docId: string): Promise<void> {
   $('app').classList.remove('no-doc')
   refImportHtml = ''
   patientsUi.leave()
+  researchUi.leave()
   close()
   hideTurnBanner()
   turnUi = null
@@ -386,11 +396,15 @@ async function open(docId: string): Promise<void> {
   }
   // 属于患者的文档（病例报告等）：顶栏显示归属，点击回到患者页
   const ctx = (() => { try { return meta.context ? JSON.parse(meta.context) : null } catch { return null } })()
-  $('docContext').hidden = ctx?.kind !== 'patient'
+  // 属于研究的文档（方案、论文、幻灯片）：同样显示归属、能回到研究页
+  $('docContext').hidden = ctx?.kind !== 'patient' && ctx?.kind !== 'study'
   docPatient = ctx?.kind === 'patient' ? ctx.patient_id : null
   if (ctx?.kind === 'patient') {
     $('docContext').textContent = `← ${ctx.code} · ${({ case_report: '病例报告', followup: '随访小结', discussion: '病例讨论' } as Record<string, string>)[ctx.doc_kind] ?? '患者文档'}`
     $('docContext').onclick = () => void patientsUi.open(ctx.patient_id)
+  } else if (ctx?.kind === 'study') {
+    $('docContext').textContent = `← ${ctx.title} · ${({ protocol: '研究方案', manuscript: '论文', slides: '幻灯片' } as Record<string, string>)[ctx.role] ?? '研究文档'}`
+    $('docContext').onclick = () => void researchUi.open(ctx.study_id)
   }
   $('toolbar').hidden = meta.kind === 'deck'
   $('deckToolbar').hidden = meta.kind !== 'deck'

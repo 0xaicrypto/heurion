@@ -73,6 +73,7 @@ const IMAGE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image
 const MAX_ASSET = 10 * 1024 * 1024
 
 const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读写，不要用 python 或 shell 改文档文件。
+和用户沟通一律用简体中文：过程说明、回复、提问都用中文（代码、变量名、命令照常）。
 工作流程：doc_outline 看结构 → doc_read 读相关章节（拿到块 id 与 rev）→ doc_edit 一次提交一批操作（base_rev 用读到的 rev）。
 - 小改动优先 replace_text：find 写块内原文（不能跨块），只改变化的字，格式、引用、评论锚点保留；失配时按返回的 near / matches 修正后重试。整段重写用 replace_block；新增用 insert_after / insert_before。
 - 内容格式是 markdown：标题 #、列表 -、表格 GFM、粗体 **、上标 <sup>、图片 ![说明](asset:<asset_id>)。
