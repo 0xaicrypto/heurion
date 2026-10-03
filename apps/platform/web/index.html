@@ -26,8 +26,12 @@
       </div>
       <input id="uploadInput" type="file" accept=".docx,.pptx" hidden>
     </div>
+    <div class="nav-switch" role="tablist" aria-label="切换文档 / 患者">
+      <button id="navDocs" class="on" role="tab" aria-selected="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.5L12.75 5v9.25H4z M9.5 1.75V5h3.25" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>文档</button>
+      <button id="navPatients" role="tab" aria-selected="false" title="患者：上传化验单、看趋势、写病例报告（只用代号）"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.25" r="2.75" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.75 14.25c.6-2.9 2.7-4.5 5.25-4.5s4.65 1.6 5.25 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>患者</button>
+    </div>
     <div class="nav-search"><input type="search" id="docSearch" placeholder="搜索文档（标题与正文）" autocomplete="off"></div>
-    <div class="nav-label"><span class="nav-tabs"><button id="navDocs" class="on">文档</button><button id="navPatients" title="患者：上传化验单、看趋势、写病例报告（只用代号）">患者</button></span>
+    <div class="nav-label"><span id="navLabel">文档</span>
       <button class="nav-add" id="newProject" title="新建项目（文件夹）">＋项目</button><button class="nav-add" id="newPatient" title="新建患者（只有代号，不填姓名）" hidden>＋患者</button></div>
     <ul class="doclist" id="docList"></ul>
     <ul class="doclist" id="patientList" hidden></ul>

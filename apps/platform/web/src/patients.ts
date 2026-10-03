@@ -353,6 +353,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   const setMode = (mode: 'docs' | 'patients') => {
     $('navDocs').classList.toggle('on', mode === 'docs')
     $('navPatients').classList.toggle('on', mode === 'patients')
+    $('navDocs').setAttribute('aria-selected', String(mode === 'docs'))
+    $('navPatients').setAttribute('aria-selected', String(mode === 'patients'))
+    $('navLabel').textContent = mode === 'docs' ? '文档' : '患者'
     $('docList').hidden = mode !== 'docs'
     $('patientList').hidden = mode !== 'patients'
     $('newProject').hidden = mode !== 'docs'
@@ -377,6 +380,6 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     /** 打开文档时：患者页失效 */
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
     /** 机构没开患者模块时隐藏页签 */
-    setEnabled(on: boolean): void { $('navPatients').hidden = !on; if (!on) setMode('docs') },
+    setEnabled(on: boolean): void { $('navPatients').closest<HTMLElement>('.nav-switch')!.hidden = !on; if (!on) setMode('docs') },
   }
 }

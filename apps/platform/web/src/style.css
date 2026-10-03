@@ -501,10 +501,14 @@ button.block { width: 100%; padding: 10px 12px; }
 .kb-picker-empty { padding: 6px 10px; }
 
 /* —— 患者 —— */
-.nav-tabs { display: inline-flex; gap: 2px; }
-.nav-tabs button { border: 0; background: transparent; padding: 0 6px 2px 0; font-size: 10.5px; letter-spacing: .18em; color: var(--faint); border-bottom: 1px solid transparent; }
-.nav-tabs button.on { color: var(--text); border-bottom-color: var(--mint); }
-.nav-tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
+.nav-switch { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 16px 0; border: 1px solid var(--line-strong); }
+.nav-switch button { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 0 7px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 14px; font-weight: 500; }
+.nav-switch button + button { border-left: 1px solid var(--line-strong); }
+.nav-switch button svg { width: 16px; height: 16px; flex: none; }
+.nav-switch button:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: transparent; border-bottom-color: transparent; }
+.nav-switch button.on { background: var(--teal); color: var(--text); border-bottom-color: var(--mint); }
+.nav-switch button.on svg { color: var(--mint-text); }
+.nav-switch button + button.on, .nav-switch button.on + button { border-left: 1px solid var(--line-strong); }
 .pt-code { font-family: var(--mono); font-size: 12px; color: var(--mint-text); flex: none; }
 .pt-code.big { font-size: 22px; }
 .pt-glass-row { padding-top: 10px; }
