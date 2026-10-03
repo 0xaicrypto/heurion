@@ -321,8 +321,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.body(new Uint8Array(f.bytes), 200, { 'Content-Type': f.mime, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'Cache-Control': 'no-store' })
     } catch (err) { return patientFailure(c, err) }
   })
+  /** 关联文档（「写病例报告」新建的文档关联到患者，患者页列出历次报告）。 */
+  app.post('/api/patients/:ptid/docs', async c => {
+    try {
+      const body = await c.req.json<{ doc_id?: string; kind?: string }>()
+      pt(c).linkDoc(me(c), c.req.param('ptid'), String(body.doc_id ?? ''), body.kind)
+      return c.json({ ok: true }, 201)
+    } catch (err) { return patientFailure(c, err) }
+  })
+  app.delete('/api/patients/:ptid/docs/:id', c => { try { pt(c).unlinkDoc(me(c), c.req.param('ptid'), c.req.param('id')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
   app.patch('/api/patients/:ptid/labs/:lid', async c => {
     try { return c.json(pt(c).editLab(me(c), c.req.param('ptid'), c.req.param('lid'), await c.req.json())) } catch (err) { return patientFailure(c, err) }
+  })
+  /** 审核时对照原件补一项化验（挂在这份报告上）。 */
+  app.post('/api/patients/:ptid/records/:rcid/labs', async c => {
+    try { return c.json(pt(c).addRecordLab(me(c), c.req.param('ptid'), c.req.param('rcid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) }
   })
   /** 确认 / 驳回一份报告（确认时一并确认它的待确认化验；报告没有日期时要带 report_date）。 */
   app.post('/api/patients/:ptid/records/:rcid/:action{confirm|reject}', async c => {

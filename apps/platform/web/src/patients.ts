@@ -22,6 +22,7 @@ interface RecordRow {
 }
 interface Detail extends Patient {
   access: 'owner' | 'member' | 'tenant' | 'break_glass'; summary: string | null
+  documents: Array<{ doc_id: string; kind: string; title: string; author: string; linked_at: string; updated_at: string; can_open: boolean }>
   care_team: Array<{ user_id: string; role: string; name: string }>; records: RecordRow[]; latest_labs: Lab[]
   pending_proposals: Array<{ id: string; kind: string; payload: Record<string, unknown>; reason: string; created_at: string }>
 }
@@ -44,7 +45,7 @@ const ref = (l: Lab) => l.ref_low !== null || l.ref_high !== null ? `${l.ref_low
 export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   let list: Patient[] = []
   let current: string | null = null
-  let tab: 'overview' | 'labs' | 'records' | 'review' = 'overview'
+  let tab: 'overview' | 'labs' | 'records' | 'docs' | 'review' = 'overview'
   let poll: ReturnType<typeof setTimeout> | null = null
   const $ = (id: string) => document.getElementById(id)!
 
@@ -133,14 +134,14 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           ${d.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('')}${canEdit ? '<button class="quiet small-btn" data-act="tags">编辑</button>' : ''}</div>
         ${d.access === 'break_glass' ? '<div class="notice">紧急访问（只读，24 小时内有效，已记入访问日志）</div>' : d.access === 'tenant' ? '<div class="muted small">机构设置为全员可见：你可以查看，修改需要加入诊疗组</div>' : ''}
         <div class="row pt-actions">
-          ${canEdit ? `<button class="primary" data-act="upload">上传报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden><button data-act="addlab">录入化验</button>` : ''}
+          ${canEdit ? `<button class="primary" data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
           <button data-act="report" title="新建一份文档，让 AI 依据这位患者的已确认数据写病例报告">写病例报告</button>
           ${d.access === 'owner' ? '<button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button class="danger" data-act="delete">删除</button>' : ''}
         </div>
         ${pendingCount ? `<div class="banner pt-pending"><span class="dot"></span>${d.records.filter(r => r.status === 'pending').length} 份报告、${d.pending_proposals.length} 条 AI 提议待确认<button data-tab="review">去审核</button></div>` : ''}
       </div>
-      <div class="tabs pt-tabs">${(['overview', 'labs', 'records', 'review'] as const).map(t => `<button data-tab="${t}" class="${t === tab ? 'active' : ''}">${{ overview: '概览', labs: '化验', records: '报告', review: `待确认${pendingCount ? ` (${pendingCount})` : ''}` }[t]}</button>`).join('')}</div>
-      <div class="pt-body">${tab === 'overview' ? overview(d, canEdit) : tab === 'labs' ? labsView(confirmedLabs) : tab === 'records' ? recordsView(d) : reviewView(d, pendingLabs, canEdit)}</div>`
+      <div class="tabs pt-tabs">${(['overview', 'labs', 'records', 'docs', 'review'] as const).map(t => `<button data-tab="${t}" class="${t === tab ? 'active' : ''}">${{ overview: '概览', labs: '化验', records: '原始报告', docs: `病例报告${d.documents.length ? ` (${d.documents.length})` : ''}`, review: `待确认${pendingCount ? ` (${pendingCount})` : ''}` }[t]}</button>`).join('')}</div>
+      <div class="pt-body">${tab === 'overview' ? overview(d, canEdit) : tab === 'labs' ? labsView(confirmedLabs) : tab === 'records' ? recordsView(d) : tab === 'docs' ? docsView(d) : reviewView(d, pendingLabs, canEdit)}</div>`
     // 还在提取的报告：隔几秒刷新
     if (d.records.some(r => r.extraction === 'queued' || r.extraction === 'running')) poll = setTimeout(() => { if (current === id) void openPatient(id, true) }, 3000)
   }
@@ -148,7 +149,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   function overview(d: Detail, canEdit: boolean): string {
     return `<section><h3 class="mem-h">摘要</h3>
         ${canEdit ? `<textarea id="ptSummary" rows="4" placeholder="病史要点、用药、随访计划（只用代号，不写姓名）">${esc(d.summary ?? '')}</textarea>` : `<div class="pt-summary">${esc(d.summary ?? '（无）')}</div>`}</section>
-      <section><h3 class="mem-h">最近化验</h3>${d.latest_labs.length === 0 ? '<div class="muted">还没有已确认的化验。上传化验单后在「待确认」里审核。</div>' : `<table class="users pt-labs">
+      <section><h3 class="mem-h">最近化验</h3>${d.latest_labs.length === 0 ? '<div class="muted">还没有已确认的化验。点「上传化验单 / 报告」，自动提取后在「待确认」里审核。</div>' : `<table class="users pt-labs">
         <thead><tr><th>项目</th><th>结果</th><th>参考范围</th><th>日期</th></tr></thead><tbody>
         ${d.latest_labs.map(l => `<tr data-trend="${esc(l.test_key)}"><td>${esc(l.test_name)}</td><td class="flag-${l.flag ?? 'n'}">${esc(value(l))} ${esc(l.unit ?? '')}${l.flag === 'H' ? ' ↑' : l.flag === 'L' ? ' ↓' : ''}</td><td class="muted">${esc(ref(l))}</td><td class="muted">${esc(l.collected_on ?? '')}</td></tr>`).join('')}
         </tbody></table><div class="muted small">点一行看趋势。</div>`}</section>
@@ -168,8 +169,18 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       <div class="muted small">只显示已确认的化验，最近 12 次。点一行看趋势。</div><div id="ptTrend"></div>`
   }
 
+  /** 病例报告历史：「写病例报告」新建的文档都关联在这里，新的在前。 */
+  function docsView(d: Detail): string {
+    const KINDS: Record<string, string> = { case_report: '病例报告', followup: '随访小结', discussion: '病例讨论', other: '文档' }
+    return `<div class="row"><span class="muted small">依据这位患者已确认的数据写的报告都保存在这里；每份报告在文档里也有自己的版本历史。</span><span class="grow"></span><button class="primary" data-act="report">写新的病例报告</button></div>
+      ${d.documents.length === 0 ? '<div class="muted pt-empty">还没有病例报告。</div>' : `<table class="users"><thead><tr><th>标题</th><th>类型</th><th>作者</th><th>创建</th><th>最近修改</th><th></th></tr></thead><tbody>
+      ${d.documents.map(x => `<tr><td><b>${esc(x.title)}</b></td><td>${esc(KINDS[x.kind] ?? x.kind)}</td><td>${esc(x.author)}</td>
+        <td class="muted">${new Date(x.linked_at).toLocaleString('zh-CN', { hour12: false })}</td><td class="muted">${new Date(x.updated_at).toLocaleString('zh-CN', { hour12: false })}</td>
+        <td class="actions">${x.can_open ? `<button data-opendoc="${x.doc_id}">打开</button>` : '<span class="muted small">只有作者能打开</span>'}</td></tr>`).join('')}</tbody></table>`}`
+  }
+
   function recordsView(d: Detail): string {
-    if (d.records.length === 0) return '<div class="muted">还没有报告。</div>'
+    if (d.records.length === 0) return '<div class="muted">还没有上传原始报告。点「上传化验单 / 报告」。</div>'
     const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回' }
     const EXTRACT: Record<string, string> = { queued: '排队提取', running: '提取中…', done: '', failed: '提取失败', skipped: '' }
     return `<table class="users"><thead><tr><th>报告日期</th><th>类型</th><th>标题</th><th>状态</th><th></th></tr></thead><tbody>
@@ -197,7 +208,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               <td><input data-f="test_name" value="${esc(l.test_name)}" ${canEdit ? '' : 'disabled'}></td><td><input data-f="value" value="${esc(value(l))}" ${canEdit ? '' : 'disabled'}></td>
               <td><input data-f="unit" value="${esc(l.unit ?? '')}" ${canEdit ? '' : 'disabled'}></td><td><input data-f="ref_low" value="${esc(l.ref_low ?? '')}" ${canEdit ? '' : 'disabled'}></td>
               <td><input data-f="ref_high" value="${esc(l.ref_high ?? '')}" ${canEdit ? '' : 'disabled'}></td><td class="muted">${l.locator?.page ?? ''}${l.locator?.verified === false ? ' <span title="原文里没找到这个数，请对照原件">⚠</span>' : ''}</td>
-              <td>${canEdit ? '<button class="quiet small-btn" data-labx="reject" title="删除这一项">✕</button>' : ''}</td></tr>`).join('')}</tbody></table>` : busy ? '' : '<div class="muted small">没有提取到化验项，可以「录入化验」手工补。</div>'}
+              <td>${canEdit ? '<button class="quiet small-btn" data-labx="reject" title="删除这一项">✕</button>' : ''}</td></tr>`).join('')}</tbody></table>` : busy ? '' : '<div class="muted small">没有提取到化验项。</div>'}
+          ${canEdit && !busy ? '<button class="quiet small-btn" data-recx="addrow" title="自动提取漏了某项，或不能自动提取时：对照左边的原件补上">＋ 对照原件补一项</button>' : ''}
           ${canEdit && !busy ? '<div class="row end"><button class="danger" data-recx="reject">驳回整份</button><button class="primary" data-recx="confirm">确认这份报告</button></div>' : ''}
         </div></div>`
     }).join('')
@@ -234,14 +246,15 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
   async function writeReport(d: Patient): Promise<void> {
     try {
-      const doc = await api<{ id: string }>('/api/docs', { method: 'POST', body: JSON.stringify({ title: `${d.code} 病例报告` }) })
+      const doc = await api<{ id: string }>('/api/docs', { method: 'POST', body: JSON.stringify({ title: `${d.code} 病例报告 ${new Date().toLocaleDateString('sv-SE')}` }) })
+      await api(`/api/patients/${d.id}/docs`, { method: 'POST', body: JSON.stringify({ doc_id: doc.id, kind: 'case_report' }) })
       current = null
       await hooks.openDoc(doc.id)
       await api(`/api/docs/${doc.id}/chat?async=1`, { method: 'POST', body: JSON.stringify({
         message: `请依据患者 ${d.code} 的已确认数据写一份病例报告（参考 CARE 指南：病史、检查、诊断、治疗与随访、讨论）。化验值写明日期并标出异常；只用代号或去标识写法，不写姓名；数据里没有的内容留「待补充」，不要编造。需要时画关键化验的趋势图。`,
         patients: [d.id],
       }) })
-      notice('已新建文档，AI 正在起草')
+      notice('已新建文档并关联到患者（患者页「病例报告」里可以找到），AI 正在起草')
     } catch (err) { notice((err as Error).message, true) }
   }
 
@@ -257,6 +270,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const trend = t.closest<HTMLElement>('tr[data-trend]')
     if (trend) { void showTrend(trend.dataset.trend!, trend.closest('table')!); return }
     if (t.closest('[data-trend-close]')) { document.getElementById('ptTrendBox')?.remove(); return }
+    const opendoc = t.closest<HTMLElement>('[data-opendoc]')
+    if (opendoc) { current = null; await hooks.openDoc(opendoc.dataset.opendoc!); return }
     const file = t.closest<HTMLElement>('[data-file]')
     if (file) { window.open(`/api/patients/${id}/files/${file.dataset.file}?token=${encodeURIComponent(hooks.token())}`, '_blank'); return }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
@@ -269,13 +284,6 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         if (v !== null) { await api(`/api/patients/${id}`, { method: 'PATCH', body: JSON.stringify({ tags: v.split(/[,，、;；]/).map(x => x.trim()).filter(Boolean) }) }); await loadList(); void openPatient(id, true) }
       } else if (act === 'upload') {
         (document.getElementById('ptUpload') as HTMLInputElement).click()
-      } else if (act === 'addlab') {
-        const line = await askText({ title: '录入化验', label: '项目 结果 单位 日期（空格分开）', placeholder: '肌酐 141 µmol/L 2025-09-01', confirm: '录入', hint: '参考范围可以写在最后，例如：肌酐 141 µmol/L 2025-09-01 57-111' })
-        if (!line) return
-        const m = /^(\S+)\s+(\S+)\s+(\S+)?\s*(\d{4}-\d{2}-\d{2})(?:\s+(-?[\d.]+)\s*[-–~]\s*(-?[\d.]+))?/.exec(line.trim())
-        if (!m) { notice('格式：项目 结果 单位 日期，例如「肌酐 141 µmol/L 2025-09-01」', true); return }
-        await api(`/api/patients/${id}/labs`, { method: 'POST', body: JSON.stringify({ test_name: m[1], value: m[2], unit: m[3] ?? null, collected_on: m[4], ref_low: m[5] ?? null, ref_high: m[6] ?? null }) })
-        notice('已录入'); void openPatient(id, true)
       } else if (act === 'report') {
         await writeReport(d)
       } else if (act === 'team') {
@@ -292,7 +300,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         notice('诊疗组已更新'); void openPatient(id, true)
       } else if (act === 'log') {
         const rows = await api<any[]>(`/api/patients/${id}/access-log`)
-        const ACTION: Record<string, string> = { create: '新建', view: '查看', update: '修改', labs_read: '读化验', lab_add: '录入化验', lab_confirm: '确认化验', lab_reject: '删除化验', lab_edit: '修改化验', file_upload: '上传报告', file_download: '查看原件', record_confirm: '确认报告', record_reject: '驳回报告', propose: '提议', proposal_accept: '采纳提议', proposal_reject: '不采纳提议', team_add: '加入诊疗组', team_remove: '移出诊疗组', break_glass: '紧急访问', delete: '删除' }
+        const ACTION: Record<string, string> = { create: '新建', view: '查看', update: '修改', labs_read: '读化验', lab_add: '补录化验项', doc_link: '关联报告', doc_unlink: '取消关联', lab_confirm: '确认化验', lab_reject: '删除化验', lab_edit: '修改化验', file_upload: '上传报告', file_download: '查看原件', record_confirm: '确认报告', record_reject: '驳回报告', propose: '提议', proposal_accept: '采纳提议', proposal_reject: '不采纳提议', team_add: '加入诊疗组', team_remove: '移出诊疗组', break_glass: '紧急访问', delete: '删除' }
         const dlg = document.getElementById('dialog')!
         dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="访问记录"><div class="dialog-head"><h2>${esc(d.code)} 访问记录</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
           <div class="dialog-body"><table class="users audit-table"><thead><tr><th>时间</th><th>谁</th><th>操作</th><th>说明</th></tr></thead><tbody>
@@ -307,6 +315,15 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       // 审核
       const recBox = t.closest<HTMLElement>('[data-rec]')
       const recx = t.closest<HTMLElement>('[data-recx]')?.dataset.recx
+      if (recBox && recx === 'addrow') {
+        const line = await askText({ title: '对照原件补一项', label: '项目 结果 单位 参考范围（空格分开，单位和参考范围可省略）', placeholder: '肌酐 168 µmol/L 57-111', confirm: '添加', hint: '日期取这份报告的日期。添加后和自动提取的项一样，确认整份报告时一起生效。' })
+        if (!line) return
+        const m = /^(\S+)\s+(\S+)(?:\s+(\S+))?(?:\s+(-?[\d.]+)\s*[-–~]\s*(-?[\d.]+))?\s*$/.exec(line.trim())
+        if (!m) { notice('格式：项目 结果 单位 参考范围，例如「肌酐 168 µmol/L 57-111」', true); return }
+        await api(`/api/patients/${id}/records/${recBox.dataset.rec}/labs`, { method: 'POST', body: JSON.stringify({ test_name: m[1], value: m[2], unit: m[3] ?? null, ref_low: m[4] ?? null, ref_high: m[5] ?? null }) })
+        void openPatient(id, true)
+        return
+      }
       if (recBox && recx) {
         const date = (recBox.querySelector('.pt-date') as HTMLInputElement | null)?.value || undefined
         await api(`/api/patients/${id}/records/${recBox.dataset.rec}/${recx}`, { method: 'POST', body: JSON.stringify({ report_date: date }) })

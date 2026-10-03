@@ -637,6 +637,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
         records: p.records.map(r => ({ kind: r.kind, title: r.title, report_date: r.report_date, status: r.status })),
         latest_labs: p.latest_labs.map(l => ({ test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref: l.ref_low !== null || l.ref_high !== null ? `${l.ref_low ?? ''}–${l.ref_high ?? ''}` : l.ref_text, date: l.collected_on })),
         pending_proposals: p.pending_proposals.length,
+        previous_reports: p.documents.map(d => ({ title: d.title, kind: d.kind, updated_at: d.updated_at })),
       })
     } catch (err) { return patientFail(err) }
   })

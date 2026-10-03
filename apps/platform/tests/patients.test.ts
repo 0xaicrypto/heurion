@@ -221,14 +221,18 @@ describe('患者：报告自动提取', () => {
     expect(t.svc.labs(a, p.id)[0]!.collected_on).toBe('2025-08-30')
   })
 
-  it('机构关闭「交给外部模型」：不提取、不发给模型，改手工录入', async () => {
+  it('机构关闭「交给外部模型」：不提取、不发给模型，在审核里对照原件补项', async () => {
     const t = withExtractor(good)
     t.tenants.update(t.u.adminA, { settings: { external_model_for_patients: false } })
     const a = t.as(t.u.drA)
     const p = t.svc.create(a, {})
     const up = t.svc.addFile(a, p.id, { name: 'x.pdf', mime: 'application/pdf', bytes: Buffer.from('pdf') })
     await t.svc.idle()
-    expect([up.record.extraction, up.record.extraction_note]).toEqual(['skipped', '本机构设置为患者数据不交给外部模型，请手工录入'])
+    expect(up.record.extraction).toBe('skipped')
+    expect(up.record.extraction_note).toContain('不交给外部模型')
+    // 不能自动提取时：审核里对照原件补项（挂在这份报告上、待确认）
+    const lab = t.svc.addRecordLab(a, p.id, up.record.id, { test_name: '肌酐(Cr)', value: '168', unit: 'µmol/L', ref_low: 57, ref_high: 111 })
+    expect([lab.record_id, lab.status, lab.test_key, lab.flag]).toEqual([up.record.id, 'pending', 'creatinine', 'H'])
     expect(t.sent).toEqual([])
   })
 })

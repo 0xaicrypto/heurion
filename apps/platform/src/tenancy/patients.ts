@@ -120,6 +120,10 @@ class TenantPatientDb {
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, kind TEXT NOT NULL, payload TEXT NOT NULL, reason TEXT NOT NULL,
         turn_id TEXT, status TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, resolved_by TEXT, resolved_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS patient_docs (
+        patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, doc_id TEXT NOT NULL, kind TEXT NOT NULL,
+        created_by TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (patient_id, doc_id)
+      );
       CREATE TABLE IF NOT EXISTS access_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, user_id TEXT NOT NULL, patient_id TEXT NOT NULL, action TEXT NOT NULL, via TEXT NOT NULL, detail TEXT
       );
@@ -244,7 +248,7 @@ export class PatientService {
     const latest = (c.db.db.prepare(`SELECT l.* FROM labs l WHERE l.patient_id = ? AND l.status = 'confirmed' AND l.collected_on = (
         SELECT MAX(collected_on) FROM labs WHERE patient_id = l.patient_id AND test_key = l.test_key AND status = 'confirmed') ORDER BY l.test_key`).all(patientId) as Array<Record<string, unknown>>).map(labOf)
     this.log(c, a, patientId, 'view')
-    return { ...p, access: role, summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
+    return { ...p, access: role, documents: this.documents(c, patientId, a.userId), summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
   }
 
   update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown }): PatientRow {
@@ -390,7 +394,7 @@ export class PatientService {
     const canExtract = Boolean(this.extractor?.complete) && c.settings.external_model_for_patients
     c.db.db.prepare('INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, extraction, extraction_note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(recId, patientId, kind, (input.title ?? '').trim().slice(0, 120) || '未命名报告', input.report_date && DATE.test(input.report_date) ? input.report_date : null, fid, 'pending',
-        canExtract ? 'queued' : 'skipped', canExtract ? null : this.extractor?.complete ? '本机构设置为患者数据不交给外部模型，请手工录入' : '没有配置模型，请手工录入', a.userId, now())
+        canExtract ? 'queued' : 'skipped', canExtract ? null : this.extractor?.complete ? '本机构设置为患者数据不交给外部模型，不能自动提取：请在审核里对照原件逐项添加' : '没有配置模型，不能自动提取：请在审核里对照原件逐项添加', a.userId, now())
     this.log(c, a, patientId, 'file_upload', fid)
     if (canExtract) {
       const tenantId = c.tenantId
@@ -420,7 +424,7 @@ export class PatientService {
       const name = this.keys.decryptText(tenantId, f.name_enc)!
       const bytes = this.keys.decrypt(tenantId, readFileSync(join(db.files, rec.file_id)))
       const pages = await this.extractor.pages(name, f.mime, bytes)
-      if (pages.join('').trim().length < 20) { set('skipped', '没有识别出文字，请手工录入'); return }
+      if (pages.join('').trim().length < 20) { set('skipped', '没有识别出文字（照片不清楚？可以重新拍一张清晰的上传），或在审核里对照原件逐项添加'); return }
       db.db.prepare('UPDATE records SET text_enc = ? WHERE id = ?').run(this.keys.encryptText(tenantId, pages.join('\f')), recordId)
       const r = await extractReport(pages, this.extractor.complete)
       const date = rec.report_date ?? r.report_date
@@ -437,8 +441,23 @@ export class PatientService {
       const unverified = r.labs.filter(l => !l.verified).length
       set('done', [r.labs.length ? `提取到 ${r.labs.length} 项化验` : '没有提取到化验项', unverified ? `${unverified} 项在原文里没找到对应数字，请重点核对` : '', date ? '' : '报告上没找到日期，确认时请补填'].filter(Boolean).join('；'))
     } catch (err) {
-      set('failed', `自动提取失败：${(err as Error).message.slice(0, 120)}，请手工录入`)
+      set('failed', `自动提取失败：${(err as Error).message.slice(0, 120)}。可以在审核里对照原件逐项添加`)
     }
+  }
+
+  /** 审核时对照原件补一项（自动提取漏了，或不能自动提取时）：挂在这份报告上，日期取报告日期，待确认。 */
+  addRecordLab(a: Actor, patientId: string, recordId: string, input: Record<string, unknown>): LabRow {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能直接写化验，请用 patient_record_propose 提议', 403)
+    const { c } = this.requireTeam(a, patientId)
+    const rec = c.db.db.prepare("SELECT * FROM records WHERE id = ? AND patient_id = ? AND status = 'pending'").get(recordId, patientId) as RecordRow | undefined
+    if (!rec) throw new PatientError('not_found', '没有待确认的这份报告', 404)
+    const lab = labInput({ ...input, collected_on: rec.report_date ?? '1900-01-01' })
+    const id = rid('lb')
+    c.db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, status, source, locator, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', NULL, ?, ?)`).run(id, patientId, recordId, testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit,
+      lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), rec.report_date, a.userId, now())
+    this.log(c, a, patientId, 'lab_add', lab.test_name)
+    return labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(id) as Record<string, unknown>)
   }
 
   /** 确认 / 驳回一份报告：确认时一并确认它的待确认化验（报告没有日期时必须补填）。 */
@@ -475,6 +494,36 @@ export class PatientService {
       .run(testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit, lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), input.collected_on ? lab.collected_on : (cur.collected_on as string | null), labId)
     this.log(c, a, patientId, 'lab_edit', labId)
     return labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(labId) as Record<string, unknown>)
+  }
+
+  // —— 关联文档（病例报告、随访小结……）——
+
+  /** 把一份文档关联到患者（只能关联自己的文档；文档仍在作者自己的文档库里）。 */
+  linkDoc(a: Actor, patientId: string, docId: string, kind: unknown = 'case_report'): void {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能关联文档', 403)
+    const { c } = this.requireTeam(a, patientId)
+    const doc = this.store.getDoc(docId)
+    if (!doc || doc.owner !== a.userId || doc.deleted_at) throw new PatientError('not_found', '文档不存在', 404)
+    const k = kind === 'followup' || kind === 'discussion' || kind === 'other' ? kind : 'case_report'
+    c.db.db.prepare('INSERT OR IGNORE INTO patient_docs (patient_id, doc_id, kind, created_by, created_at) VALUES (?, ?, ?, ?, ?)').run(patientId, docId, k, a.userId, now())
+    this.log(c, a, patientId, 'doc_link', docId)
+  }
+
+  unlinkDoc(a: Actor, patientId: string, docId: string): void {
+    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能取消关联', 403)
+    const { c } = this.requireTeam(a, patientId)
+    c.db.db.prepare('DELETE FROM patient_docs WHERE patient_id = ? AND doc_id = ? AND created_by = ?').run(patientId, docId, a.userId)
+    this.log(c, a, patientId, 'doc_unlink', docId)
+  }
+
+  /** 关联的文档（新的在前）；已删除的不列。作者以外的人能看到有这份报告，但只有作者能打开（文档共享是以后的事）。 */
+  private documents(c: ReturnType<PatientService['ctx']>, patientId: string, viewer: string) {
+    return (c.db.db.prepare('SELECT doc_id, kind, created_by, created_at FROM patient_docs WHERE patient_id = ? ORDER BY created_at DESC').all(patientId) as Array<{ doc_id: string; kind: string; created_by: string; created_at: string }>)
+      .flatMap(r => {
+        const d = this.store.getDoc(r.doc_id)
+        if (!d || d.deleted_at) return []
+        return [{ doc_id: r.doc_id, kind: r.kind, title: d.title, author: this.store.getUser(r.created_by)?.display_name ?? r.created_by, linked_at: r.created_at, updated_at: d.updated_at, can_open: d.owner === viewer }]
+      })
   }
 
   // —— AI 提议 ——
