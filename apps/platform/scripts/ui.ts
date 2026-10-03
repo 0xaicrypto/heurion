@@ -463,6 +463,17 @@ await page.click('#dialog [data-close]')
 await api(`/api/projects/${kbProj.id}`, { method: 'DELETE' })
 if (kbRow) await api(`/api/kb/${kbRow.id}`, { method: 'DELETE' })
 
+// —— 参考文献导入（引用页） ——
+await page.click(`#docList li[data-id="${doc.id}"]`)
+await page.waitForSelector('#sendBtn:not([disabled])')
+await page.click('.tabs button[data-tab="citePane"]')
+await page.waitForSelector('#refImportBtn')
+await page.setInputFiles('#refImportInput', { name: 'refs.txt', mimeType: 'text/plain', buffer: Buffer.from('10.1056/NEJMoa2307563\n10.9999/not-a-real-doi\n') })
+await page.waitForSelector('#refImportResult :text("新登记")', { timeout: 30000 }).catch(() => {})
+const refResult = await page.locator('#refImportResult').innerText().catch(() => '')
+ok('引用页导入参考文献：登记可核实的、列出查不到的', /新登记 [01] 条/.test(refResult) && refResult.includes('跳过 1 条'), refResult.replace(/\s+/g, ' ').slice(0, 80))
+await page.click('.tabs button[data-tab="chatPane"]')
+
 // —— 记忆：导入进待确认 → 采纳；手动添加；不用记忆开关随消息发送 ——
 await api('/api/memory', { method: 'DELETE' })
 await api('/api/memory-import', { method: 'POST', body: JSON.stringify({ items: [{ content: 'UI 测试：数值保留两位小数', kind: 'preference' }, { content: '住院号：123456' }] }) })

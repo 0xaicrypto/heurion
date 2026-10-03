@@ -184,6 +184,17 @@ describe('论断核对', () => {
   })
 })
 
+describe('参考文献导入（AI 与网页同一操作）', () => {
+  it('import_references 登记可核实的条目、报告查不到的；之后 list_citations 能拿到 cite_id', async () => {
+    const t = await connect('占位。')
+    const r = await t.call('import_references', { doc_id: t.docId, text: 'TY  - JOUR\nTI  - SELECT\nDO  - 10.1056/NEJMoa2307563\nER  - \n\nTY  - JOUR\nTI  - 假的\nDO  - 10.404/none\nER  - \n' })
+    expect([r.body.added, r.body.skipped.length]).toEqual([1, 1])
+    const list = await t.call('list_citations', { doc_id: t.docId })
+    expect(list.body[0]).toMatchObject({ doi: '10.1056/nejmoa2307563', number: null })
+    expect(JSON.parse((await t.call('import_references', { doc_id: t.docId, text: '没有任何文献' })).text).code).toBe('no_references')
+  })
+})
+
 describe('论断核对 v3（C2 评测后）', () => {
   it('没有可核对证据的「无法判断」只记录不挂评论；有证据的不支持照常挂评论', async () => {
     const t = await connect('占位。')

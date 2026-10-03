@@ -19,6 +19,8 @@ import { newDeckContent } from '../ops/deck.ts'
 import { readFileSync } from 'node:fs'
 import type { SlideRenderer } from '../render/slides.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
+import { importReferences, parseReferences } from '../literature/import-refs.ts'
+import type { PubMedClient } from '../literature/pubmed.ts'
 import { formatAma, normalizeDoi } from '../literature/format.ts'
 import { bindAssets, DocxImportError, importDocx } from '../convert/docx-import.ts'
 import { AnchorError, attachComment, locate, threadMarks } from '../model/anchors.ts'
@@ -40,6 +42,8 @@ export interface ApiDeps {
   turns: TurnService
   postcheck: PostCheck
   crossref: CrossrefClient
+  /** 参考文献导入时给只有 PMID 的条目补 DOI（可选）。 */
+  pubmed?: PubMedClient
   renderer: SlideRenderer
   accounts: Accounts
   /** 开发模式：允许把开发用户的数据转给正式账户。 */
@@ -540,6 +544,19 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       if (err instanceof OpError) return c.json(err.toJSON(), 409)
       throw err
     }
+  })
+
+  /** 批量导入参考文献（RIS / BibTeX / PubMed / EndNote XML / DOI 列表）到登记表；与 MCP import_references 同一实现。 */
+  app.post('/api/docs/:id/citations/import', async c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const { text } = await c.req.json<{ text?: string }>()
+    if (!text?.trim()) return c.json({ error: '没有内容' }, 400)
+    if (text.length > 5_000_000) return c.json({ error: '文件太大（最多 5MB）' }, 413)
+    const refs = parseReferences(text)
+    if (refs.length === 0) return c.json({ error: '没有识别出文献（支持 RIS、BibTeX、PubMed、EndNote XML，或每行一个 DOI / PMID）' }, 400)
+    const pubmed = deps.pubmed ?? ({ summaries: async () => [] } as unknown as PubMedClient)
+    return c.json(await importReferences({ store, crossref: deps.crossref, pubmed }, row.id, refs))
   })
 
   /** 用户按 DOI 登记引用（Crossref 核实），返回 cite_id，编辑器在光标处插入引用。 */

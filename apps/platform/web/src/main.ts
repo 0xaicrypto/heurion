@@ -271,6 +271,7 @@ $('page').addEventListener('click', async e => {
 })
 
 async function open(docId: string): Promise<void> {
+  refImportHtml = ''
   close()
   hideTurnBanner()
   turnUi = null
@@ -1188,6 +1189,9 @@ $('versions').onclick = async e => {
 
 const VERDICT: Record<string, string> = { supported: '支持', unsupported: '不支持', unclear: '无法判断', missing_citation: '缺出处' }
 
+/** 最近一次导入参考文献的结果（重绘引用页时保留）。 */
+let refImportHtml = ''
+
 function renderCites(): void {
   const list: any[] = detail?.citations ?? []
   const checks: any[] = detail?.claim_checks ?? []
@@ -1199,8 +1203,29 @@ function renderCites(): void {
   $('cites').innerHTML = `<div class="card"><div class="row"><b>论断核对</b><span class="grow"></span><button id="verifyBtn" class="ai">核对全部论断</button></div>
       <div class="muted" style="margin:4px 0">对照所引文献的 PubMed 摘要逐句核对；有问题的句子会挂一条 AI 评论，不会自动改写。</div>
       <div>${summary}</div>${flagged}</div>` +
+    `<div class="card"><div class="row"><b>参考文献</b><span class="grow"></span><button id="refImportBtn" title="从 Zotero / EndNote / Mendeley / PubMed 导出的文件，或每行一个 DOI / PMID">导入参考文献</button>
+      <input type="file" id="refImportInput" accept=".ris,.bib,.nbib,.txt,.xml,.enw" hidden></div>
+      <div class="muted" style="margin:4px 0">导入后登记在这里（未使用），你和 AI 都能直接引用；每条按 DOI 核实，查不到的会列出来。</div><div id="refImportResult">${refImportHtml}</div></div>` +
     (list.length === 0 ? '<div class="muted">AI 通过文献检索登记的引用会显示在这里</div>' : list.map(c =>
       `<div class="card"><b>${c.number ? `[${c.number}]` : '未使用'}</b> ${esc(c.formatted)} <a href="${esc(c.url || `https://doi.org/${c.doi}`)}" target="_blank" rel="noopener">原文</a></div>`).join(''))
+  $('refImportBtn').onclick = () => $('refImportInput').click()
+  $<HTMLInputElement>('refImportInput').onchange = async e => {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file || !session) return
+    const box = $('refImportResult')
+    box.innerHTML = '<div class="muted">正在逐条核实……</div>'
+    try {
+      const r = await api<{ added: Array<{ formatted: string }>; already: number; skipped: Array<{ label: string; reason: string }> }>(`/api/docs/${session.docId}/citations/import`, { method: 'POST', body: JSON.stringify({ text: await file.text() }) })
+      refImportHtml = `<div>新登记 ${r.added.length} 条${r.already ? `，已有 ${r.already} 条` : ''}${r.skipped.length ? `，跳过 ${r.skipped.length} 条` : ''}</div>` +
+        (r.skipped.length ? `<details><summary class="muted">跳过的条目</summary>${r.skipped.slice(0, 50).map(x => `<div class="muted small">${esc(x.label.slice(0, 80))} — ${esc(x.reason)}</div>`).join('')}</details>` : '')
+      box.innerHTML = refImportHtml
+      await refresh(false)
+    } catch (err) {
+      box.innerHTML = `<div class="form-error">${esc((err as Error).message)}</div>`
+    }
+  }
   $('verifyBtn').onclick = async () => {
     if (!session) return
     try {

@@ -15,6 +15,7 @@ import { deckOutline, deckRead, slideRead } from '../views/deck.ts'
 import { checkLayout } from '../views/layout.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
 import { formatAma, normalizeDoi } from '../literature/format.ts'
+import { importReferences, parseReferences } from '../literature/import-refs.ts'
 import type { PubMedClient } from '../literature/pubmed.ts'
 import { locate, threadMarks } from '../model/anchors.ts'
 import type { Documents } from '../model/runtime.ts'
@@ -431,6 +432,21 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (!article) return fail('doi_not_found', `DOI ${normalizeDoi(doi)} 在 Crossref 查不到，不能作为引用`, { hint: '用 pubmed_search 找到真实文献的 DOI。' })
     const row = store.upsertCitation({ doc_id, doi: article.doi!, pmid: pmid ?? null, formatted: formatAma(article), url: `https://doi.org/${article.doi}` })
     return json({ cite_id: row.id, marker: `[@c:${row.id}]`, formatted: row.formatted })
+  })
+
+  server.registerTool('import_references', {
+    description:
+      '把一份文献列表批量登记到文档的引用登记表（RIS / BibTeX / PubMed MEDLINE / EndNote XML，或每行一个 DOI / PMID）。' +
+      '每条按 DOI 经 Crossref 核实（只有 PMID 的经 PubMed 补 DOI），查不到的跳过并报告。登记后用 list_citations 拿 cite_id 引用。' +
+      '用户给了参考文献列表（粘贴或在工作区里的文件内容）时用；与网页「导入参考文献」同一个操作。',
+    inputSchema: { doc_id: z.string(), text: z.string().min(1).max(5_000_000).describe('文献列表原文') },
+  }, async ({ doc_id, text }) => {
+    const denied = ctx.check(doc_id, 'write')
+    if (denied) return denied
+    const refs = parseReferences(text)
+    if (refs.length === 0) return fail('no_references', '没有识别出文献', { hint: '支持 RIS、BibTeX、PubMed MEDLINE、EndNote XML，或每行一个 DOI / PMID。' })
+    const r = await importReferences({ store, crossref: deps.crossref, pubmed: deps.pubmed }, doc_id, refs)
+    return json({ added: r.added.length, already: r.already, skipped: r.skipped, sample: r.added.slice(0, 5) })
   })
 
   server.registerTool('list_citations', {
