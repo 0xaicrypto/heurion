@@ -122,6 +122,35 @@ describe('图表：新建、导入、改数据（人与 AI 同一套操作）', 
     expect(strFromU8(unzipSync(files[`ppt/embeddings/${book}`]!)['xl/worksheets/sheet1.xml']!)).toContain('<c r="C4"><v>5.1</v></c>')
   })
 
+  it('chart_set_type：平台建的图表就地换类型；导入的图表换新 id 按新图表导出；饼图要单系列', () => {
+    const t0 = newDeck()
+    const sid = t0.docs.get(t0.docId).child(0).attrs.id as string
+    t0.edit([{ op: 'add_chart', slide_id: sid, type: 'column', x: 60, y: 120, w: 600, h: 320, categories: ['MACE', '心衰住院'], series: [{ name: 'A', values: [1, 2] }, { name: 'B', values: [3, 4] }] }])
+    const own = t0.chartShape().attrs.id as string
+    t0.edit([{ op: 'chart_set_type', shape_id: own, type: 'line' }])
+    expect(t0.chartShape().attrs).toMatchObject({ id: own, chart: { type: 'line' } })
+    const lineXml = Object.entries(unzipSync(t0.exportNow().bytes)).filter(([f]) => /^ppt\/charts\/chart\d+\.xml$/.test(f)).map(([, b]) => strFromU8(b)).join('')
+    expect(lineXml).toContain('<c:lineChart>')
+    expect(() => t0.edit([{ op: 'chart_set_type', shape_id: own, type: 'pie' }])).toThrow(OpError)
+
+    // 导入的图表：换类型后 id 变、不再沿用原部件；导出里多一个新图表部件（折线），页上只剩新图表
+    const bytes = t0.exportNow().bytes
+    const imported = importPptx(bytes)
+    const t = deckOf(imported.doc, bytes, imported.src)
+    const old = t.chartShape()
+    t.edit([{ op: 'chart_set_data', shape_id: old.attrs.id, series: [{ name: 'A', values: [5, 6] }] }, { op: 'chart_set_type', shape_id: old.attrs.id, type: 'pie' }])
+    const fresh = t.chartShape()
+    expect(fresh.attrs.id).not.toBe(old.attrs.id)
+    expect([fresh.attrs.chart_part, fresh.attrs.chart.type, fresh.attrs.chart.series.length]).toEqual([null, 'pie', 1])
+    const files = unzipSync(t.exportNow(1).bytes)
+    const slideXml = strFromU8(files['ppt/slides/slide1.xml']!)
+    expect((slideXml.match(/<a:graphicData uri="http:\/\/schemas\.openxmlformats\.org\/drawingml\/2006\/chart"/g) ?? []).length).toBe(1)
+    const reimported = importPptx(t.exportNow(1).bytes)
+    let back: any = null
+    reimported.doc.descendants(n => { if (!back && n.attrs.kind === 'chart') back = n; return !back })
+    expect(back.attrs.chart).toMatchObject({ type: 'pie', categories: ['MACE', '心衰住院'], series: [{ name: 'A', values: [5, 6] }] })
+  })
+
   it('无效数据、不是图表的形状给出可操作的错误', () => {
     const t = newDeck()
     const sid = t.docs.get(t.docId).child(0).attrs.id as string

@@ -94,6 +94,11 @@ export const DeckOp = z.discriminatedUnion('op', [
     title: z.string().optional().describe('图表标题；空串去掉标题；缺省不变'),
   }).describe('改图表数据（导出时同时更新图表缓存与内嵌工作簿，PowerPoint「编辑数据」看到的就是新数据）'),
   z.object({
+    op: z.literal('chart_set_type'),
+    shape_id: z.string(),
+    type: z.enum(['column', 'bar', 'line', 'pie', 'area', 'doughnut']),
+  }).describe('换图表类型（数据不变；饼图 / 圆环图只能一个系列。导入的图表换类型后按新图表导出、形状 id 会变，原文件里的图表样式不保留）'),
+  z.object({
     op: z.literal('add_chart'),
     slide_id: z.string(),
     type: z.enum(['column', 'bar', 'line', 'pie', 'area', 'doughnut']).describe('柱状 / 条形 / 折线 / 饼 / 面积 / 圆环'),
@@ -524,6 +529,25 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
       if (bad) throw new OpError('invalid_chart', bad)
       tr.setNodeMarkup(hit.pos, undefined, { ...hit.node.attrs, chart: data, description: `图表：${data.title || hit.node.attrs.name}` })
       return [op.shape_id]
+    }
+    case 'chart_set_type': {
+      const hit = find(tr, op.shape_id, 'shape')
+      const old = hit.node.attrs.chart as ChartData | null
+      if (hit.node.attrs.kind !== 'chart') throw new OpError('invalid_structure', `${op.shape_id} 不是图表`)
+      if (!old) throw new OpError('node_not_editable', `图表 ${op.shape_id} 的数据读不出来，不能换类型`, { hint: '可以删掉它，用 add_chart 重建。' })
+      if (old.type === op.type) return [op.shape_id]
+      const data: ChartData = { ...old, type: op.type }
+      const bad = checkChartData(data)
+      if (bad) throw new OpError('invalid_chart', bad, op.type === 'pie' || op.type === 'doughnut' ? { hint: '饼图 / 圆环图只能有一个系列：先用 chart_set_data 留下一个系列再换类型。' } : {})
+      const attrs = { ...hit.node.attrs, chart: data }
+      if (!hit.node.attrs.chart_part) {
+        tr.setNodeMarkup(hit.pos, undefined, attrs)
+        return [op.shape_id]
+      }
+      // 导入的图表：原图表部件绑定原类型，换类型就按新图表导出——换一个新 id（不再沿用原文件里的形状与图表部件）
+      const fresh = assignIds(deckSchema.node('shape', { ...attrs, id: null, chart_part: null }), ctx.taken)
+      tr.replaceWith(hit.pos, hit.pos + hit.node.nodeSize, fresh)
+      return [fresh.attrs.id as string]
     }
     case 'add_chart': {
       const hit = find(tr, op.slide_id, 'slide')

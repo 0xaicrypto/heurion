@@ -295,6 +295,13 @@ await wait(1000)
 const charts = (await deckModel()).content.flatMap((sl: any) => (sl.content ?? []).filter((c: any) => c.attrs?.kind === 'chart'))
 const chartData = charts.at(-1)?.attrs.chart
 ok('双击图表编辑数据（chart_set_data）', chartData?.series?.[0]?.values?.[0] === 9.9 && chartData?.categories?.length === 4 && chartData?.series?.[1]?.values?.[3] === 5, JSON.stringify(chartData?.series))
+await page.locator('.slide .shape-chart').last().dblclick()
+await page.waitForSelector('.chart-dialog #chartType')
+await page.selectOption('.chart-dialog #chartType', 'line')
+await page.click('#chartOk')
+await wait(1000)
+const lineChart = (await deckModel()).content.flatMap((sl: any) => (sl.content ?? []).filter((c: any) => c.attrs?.kind === 'chart')).at(-1)
+ok('数据表里换图表类型（chart_set_type）', lineChart?.attrs.chart?.type === 'line' && await page.locator('.slide .shape-chart .chart-svg path').count() > 0)
 // 选中图表 → 工具条「编辑数据」→ 改标题、加系列 → 回车保存
 await page.locator('.slide .shape-chart').last().click()
 await page.click('[data-dk="chart-data"]')

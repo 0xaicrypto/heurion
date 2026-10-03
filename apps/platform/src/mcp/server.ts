@@ -292,6 +292,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       'table_insert_rows {shape_id, at, rows?} / table_delete_rows {shape_id, at, count?} / table_insert_cols {shape_id, at, cells?} / table_delete_cols {shape_id, at, count?}（新行列沿用相邻格式）；' +
       'chart_set_data {shape_id, categories?, series:[{name, values}], title?}（改图表数据，slide_read 里能读到原数据；导出同时更新内嵌工作簿）；' +
       'add_chart {slide_id, type: column|bar|line|pie|area|doughnut, x, y, w, h, title?, categories, series}（原生图表，颜色取主题）；' +
+      'chart_set_type {shape_id, type}（换图表类型，数据不变；饼图 / 圆环图只能一个系列；导入的图表换类型后形状 id 会变，以返回的为准）；' +
       'align_shapes {shape_ids, align: left|center|right|top|middle|bottom, to?: selection|slide}；distribute_shapes {shape_ids（≥3）, direction: horizontal|vertical}（对齐与等距，不必自己算坐标）；' +
       'apply_theme {theme, slide_ids?}（整套配色：背景、标题与正文颜色、强调色；之后新加的页沿用）；' +
       'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。' +

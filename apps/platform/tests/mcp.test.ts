@@ -362,5 +362,12 @@ describe('图表（AI 与画布同一套操作）', () => {
     expect((await t.call('slide_read', { doc_id: deckId, slide_id: slideId })).text).toContain('系列「安慰剂」：8 | 3.7')
     const bad = await t.call('deck_edit', { doc_id: deckId, base_rev: edit.body.rev, ops: [{ op: 'chart_set_data', shape_id: chartId, series: [{ name: 'x', values: [1] }] }] })
     expect([bad.isError, bad.body.code]).toEqual([true, 'invalid_chart'])
+    // 换类型：折线可以；饼图要单系列，给出可操作的提示
+    const line = await t.call('deck_edit', { doc_id: deckId, base_rev: edit.body.rev, ops: [{ op: 'chart_set_type', shape_id: chartId, type: 'line' }] })
+    expect(line.isError).toBe(false)
+    expect((await t.call('slide_read', { doc_id: deckId, slide_id: slideId })).text).toContain('折线图「主要终点」')
+    const pie = await t.call('deck_edit', { doc_id: deckId, base_rev: line.body.rev, ops: [{ op: 'chart_set_type', shape_id: chartId, type: 'pie' }] })
+    expect([pie.isError, pie.body.code]).toEqual([true, 'invalid_chart'])
+    expect(pie.body.hint).toContain('一个系列')
   })
 })

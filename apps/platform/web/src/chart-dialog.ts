@@ -11,13 +11,14 @@ export const EDITABLE_CHART_TYPES = ['column', 'bar', 'line', 'pie', 'area', 'do
 
 const TYPE_LABEL: Record<string, string> = { column: '柱状图', bar: '条形图', line: '折线图', pie: '饼图', area: '面积图', doughnut: '圆环图' }
 
-export function editChartData(chart: ChartData): Promise<Omit<ChartData, 'type' | 'colors'> | null> {
+export function editChartData(chart: ChartData): Promise<Omit<ChartData, 'colors'> | null> {
   return new Promise(resolve => {
-    const round = chart.type === 'pie' || chart.type === 'doughnut'
+    let type = chart.type
+    const isRound = () => type === 'pie' || type === 'doughnut'
     let categories = [...chart.categories]
     let series = chart.series.map(s => ({ name: s.name, values: [...s.values] }))
     let title = chart.title ?? ''
-    let result: Omit<ChartData, 'type' | 'colors'> | null = null
+    let result: Omit<ChartData, 'colors'> | null = null
     const dlg = document.getElementById('dialog')!
     const close = () => { dlg.hidden = true; dlg.innerHTML = ''; document.removeEventListener('keydown', onKey); resolve(result) }
     const onKey = (e: KeyboardEvent) => {
@@ -40,10 +41,12 @@ export function editChartData(chart: ChartData): Promise<Omit<ChartData, 'type' 
     }
 
     const render = () => {
+      const round = isRound()
       dlg.innerHTML = `<div class="dialog-card chart-dialog" role="dialog" aria-modal="true" aria-label="编辑图表数据">
-        <div class="dialog-head"><h2>编辑图表数据 · ${esc(TYPE_LABEL[chart.type] ?? chart.type)}</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
+        <div class="dialog-head"><h2>编辑图表数据</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
         <div class="dialog-body">
-          <label class="chart-title">标题<input type="text" id="chartTitle" value="${esc(title)}" placeholder="（无标题）"></label>
+          <div class="row chart-meta"><label class="chart-title">标题<input type="text" id="chartTitle" value="${esc(title)}" placeholder="（无标题）"></label>
+            <label>类型<select id="chartType">${EDITABLE_CHART_TYPES.map(t => `<option value="${t}"${t === type ? ' selected' : ''}>${TYPE_LABEL[t]}</option>`).join('')}</select></label></div>
           <div class="chart-grid-wrap"><table class="chart-grid">
             <thead><tr><th>类别</th>${series.map((s, si) => `<th><input data-ser="${si}" value="${esc(s.name)}" aria-label="系列名">${!round && series.length > 1 ? `<button class="quiet" data-del-ser="${si}" title="删除这个系列">×</button>` : ''}</th>`).join('')}${round ? '' : '<th><button data-add-ser title="加一个系列">＋系列</button></th>'}</tr></thead>
             <tbody>${categories.map((c, ci) => `<tr><td><input data-cat="${ci}" value="${esc(c)}" aria-label="类别"></td>${series.map((s, si) => `<td><input data-v="${si},${ci}" value="${s.values[ci] ?? ''}" inputmode="decimal" aria-label="数值"></td>`).join('')}${categories.length > 1 ? `<td><button class="quiet" data-del-cat="${ci}" title="删除这一行">×</button></td>` : ''}</tr>`).join('')}</tbody>
@@ -52,6 +55,7 @@ export function editChartData(chart: ChartData): Promise<Omit<ChartData, 'type' 
           <div class="row end"><button data-close>取消</button><button class="primary" id="chartOk">保存</button></div>
         </div></div>`
       dlg.hidden = false
+      dlg.querySelector<HTMLSelectElement>('#chartType')!.onchange = e => { collect(); type = (e.target as HTMLSelectElement).value as ChartData['type']; render() }
     }
 
     dlg.onclick = e => {
@@ -67,7 +71,8 @@ export function editChartData(chart: ChartData): Promise<Omit<ChartData, 'type' 
       if (b.id === 'chartOk') {
         const bad = series.flatMap(s => s.values).some(v => v !== null && !Number.isFinite(v))
         if (bad) { dlg.querySelector('#chartError')!.textContent = '数值要是数字（留空表示没有数据）'; return }
-        result = { title: title.trim(), categories, series }
+        if (isRound() && series.length > 1) { dlg.querySelector('#chartError')!.textContent = '饼图 / 圆环图只能有一个系列，请先删掉多余的系列'; return }
+        result = { type, title: title.trim(), categories, series }
         close()
       }
     }

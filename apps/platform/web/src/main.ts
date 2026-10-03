@@ -548,7 +548,12 @@ $('chartMenu').onclick = async e => {
 async function editChart(deck: DeckView, shapeId: string, chart: ChartData): Promise<void> {
   if (!EDITABLE_CHART_TYPES.includes(chart.type)) { showNotice('这种图表（散点 / 雷达等）暂不支持在这里改数据，可在 PowerPoint 里改，或删掉后用「＋图表」重建'); return }
   const next = await editChartData(chart)
-  if (next) await deck.edit([{ op: 'chart_set_data', shape_id: shapeId, ...next }])
+  if (!next) return
+  const { type, ...data } = next
+  // 先改数据（用原 id），再换类型（导入的图表换类型后 id 会变）——同一批，原子提交
+  const ops: Array<Record<string, unknown>> = [{ op: 'chart_set_data', shape_id: shapeId, ...data }]
+  if (type !== chart.type) ops.push({ op: 'chart_set_type', shape_id: shapeId, type })
+  await deck.edit(ops)
 }
 
 $('deckImageInput').onchange = async () => {
