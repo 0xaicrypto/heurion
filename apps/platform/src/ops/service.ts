@@ -14,6 +14,7 @@ import { readLayouts } from '../convert/pptx-layouts.ts'
 import { isPlatformPackage } from '../convert/pptx-template.ts'
 import { templateLayouts } from '../model/deck-templates.ts'
 import { DEFAULT_THEME } from '../model/deck-themes.ts'
+import { themePhoto } from '../model/theme-photos.ts'
 
 type DeckInfo = ReturnType<typeof readLayouts> & { platform: boolean }
 
@@ -82,6 +83,8 @@ export class OpService {
         ...this.deckContextInfo(batch.doc_id),
         // 插图只能用文档所有者自己的资产
         asset: id => {
+          const builtin = themePhoto(id)
+          if (builtin) return builtin
           const a = store.getAsset(id)
           const bytes = a && a.owner === row.owner ? store.getAssetBytes(id) : null
           return a && bytes ? { mime: a.mime, bytes } : null

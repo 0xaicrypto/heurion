@@ -42,6 +42,9 @@ import { commentPrompt, wantsAi, type TurnBusEvent, type TurnOptions, type TurnS
 import { citationOrder, diff, read } from '../views/read.ts'
 import { deckRead } from '../views/deck.ts'
 import { exportMarkdown, renderHtml } from '../views/render.ts'
+import { themePhoto } from '../model/theme-photos.ts'
+import type { ImageService } from '../images/service.ts'
+import { UnsplashError } from '../images/unsplash.ts'
 
 export interface ApiDeps {
   docs: Documents
@@ -72,6 +75,8 @@ export interface ApiDeps {
   cohort?: CohortService
   /** 用户的 AI 工作区（对话里贴的图片放这里，AI 用 read_image 看）。 */
   workspaceDir?: (userId: string) => string
+  /** Unsplash 图库（幻灯片搜图插图）；服务器没配 key 时 configured=false。 */
+  images?: ImageService
   devUser: string
 }
 
@@ -119,6 +124,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const AUDITED: Array<{ method: string; re: RegExp; action: string }> = [
     { method: 'GET', re: /^\/api\/docs\/[^/]+\/export\.(docx|pptx|md)$/, action: 'doc.export' },
     { method: 'DELETE', re: /^\/api\/docs\/[^/]+$/, action: 'doc.trash' },
+    { method: 'POST', re: /^\/api\/docs\/[^/]+\/slides\/[^/]+\/photo$/, action: 'deck.add_photo' },
     { method: 'DELETE', re: /^\/api\/docs\/[^/]+\/purge$/, action: 'doc.purge' },
     { method: 'POST', re: /^\/api\/docs\/[^/]+\/restore$/, action: 'doc.restore' },
     { method: 'DELETE', re: /^\/api\/projects\/[^/]+$/, action: 'project.delete' },
@@ -1154,6 +1160,25 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   // —— 资产 ——
 
+  // —— 图库（Unsplash）：搜索、插入幻灯片（与 MCP image_search / slide_add_photo 同一个服务） ——
+  const imageFailure = (c: Context, err: unknown) => {
+    if (err instanceof UnsplashError) return c.json({ error: err.message, code: err.code }, err.status)
+    throw err
+  }
+  app.get('/api/images', c => c.json({ configured: deps.images?.configured ?? false, source: 'unsplash' }))
+  app.get('/api/images/search', async c => {
+    if (!deps.images?.configured) return c.json({ error: '图库未配置', code: 'unsplash_unconfigured' }, 503)
+    try { return c.json(await deps.images.search(c.req.query('q') ?? '', Number(c.req.query('page') ?? 1) || 1)) } catch (err) { return imageFailure(c, err) }
+  })
+  app.post('/api/docs/:id/slides/:slide/photo', async c => {
+    if (!deps.images?.configured) return c.json({ error: '图库未配置', code: 'unsplash_unconfigured' }, 503)
+    const body = await c.req.json<{ photo_id?: string; x?: number; y?: number; w?: number }>().catch(() => ({} as { photo_id?: string }))
+    if (typeof body.photo_id !== 'string') return c.json({ error: '缺少 photo_id' }, 400)
+    try {
+      return c.json(await deps.images.addToSlide(c.get('user'), { doc_id: c.req.param('id'), slide_id: c.req.param('slide'), photo_id: body.photo_id }, { actor: 'user', turnId: null }), 201)
+    } catch (err) { return err instanceof OpError ? c.json(err.toJSON(), 409) : imageFailure(c, err) }
+  })
+
   /** 用户在编辑器里插图：上传图片为资产（导出 docx 支持 png / jpeg / gif）。 */
   app.post('/api/docs/:id/assets', async c => {
     const row = owned(c)
@@ -1173,6 +1198,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json(store.getAssetProvenance(asset.id))
   })
   app.get('/api/assets/:id', c => {
+    // 带图模板的内置照片（公开授权，任何登录用户可取）
+    const builtin = themePhoto(c.req.param('id'))
+    if (builtin) return c.body(Buffer.from(builtin.bytes), 200, { 'Content-Type': builtin.mime, 'Cache-Control': 'public, max-age=86400' })
     const asset = store.getAsset(c.req.param('id'))
     if (!asset || asset.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
     return c.body(Buffer.from(store.getAssetBytes(asset.id)!), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' })

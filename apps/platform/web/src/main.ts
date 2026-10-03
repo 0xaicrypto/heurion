@@ -18,6 +18,7 @@ import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 import { applyTheme, mountThemeSwitch } from './theme.ts'
 import { photoFigure } from './photos.ts'
+import { openPhotoSearch, photoSearchEnabled } from './unsplash.ts'
 
 const TOKEN = storedToken()
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
@@ -643,7 +644,23 @@ document.addEventListener('click', e => {
   if ((e.target as HTMLElement).closest('.menu-wrap')) return
   $('arrangeMenu').hidden = true
   $('chartMenu').hidden = true
+  $('imageMenu').hidden = true
 })
+
+/** 插入图片：上传，或（服务器配了图库时）从 Unsplash 搜索。与 AI 的 add_image / slide_add_photo 同一套。 */
+$('imageMenu').onclick = e => {
+  const b = (e.target as HTMLElement).closest('[data-image-src]') as HTMLElement | null
+  if (!b) return
+  $('imageMenu').hidden = true
+  if (b.dataset.imageSrc === 'upload') { $('deckImageInput').click(); return }
+  openPhotoSearch({
+    api, notice: showNotice,
+    target: () => {
+      const slide = session?.deck?.selection()?.slide ?? session?.deck?.currentSlide()
+      return session && slide ? { docId: session.docId, slideId: slide.attrs!.id as string } : null
+    },
+  })
+}
 
 /** 插入图表：示例数据（饼 / 圆环只有一个系列），之后双击或「编辑数据」改。与 AI 同一个 add_chart。 */
 $('chartMenu').onclick = async e => {
@@ -726,7 +743,15 @@ $('deckToolbar').onclick = async e => {
     case 'bg': { const c = await pickColor(btn, theme, false); if (c) await deck.edit([{ op: 'set_background', slide_id: slide.attrs!.id, color: c }]); break }
     case 'textbox': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '新文本框', x: Math.round(W / 2 - 200), y: Math.round(H / 2 - 30), w: 400, h: 60, color: 'body' }]); break
     case 'block': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '', x: Math.round(W / 2 - 150), y: Math.round(H / 2 - 60), w: 300, h: 120, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF' }]); break
-    case 'image': $('deckImageInput').click(); break
+    case 'image': {
+      // 没配图库：直接上传；配了：弹出「上传 / 从 Unsplash 搜索」
+      if (!await photoSearchEnabled(api)) { $('deckImageInput').click(); break }
+      const menu = $('imageMenu')
+      const r = btn.getBoundingClientRect()
+      Object.assign(menu.style, { position: 'fixed', left: `${r.left}px`, top: `${r.bottom + 6}px`, right: 'auto' })
+      menu.hidden = !menu.hidden
+      break
+    }
     case 'chart': {
       const menu = $('chartMenu')
       const r = btn.getBoundingClientRect()

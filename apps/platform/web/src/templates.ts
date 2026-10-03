@@ -5,8 +5,8 @@
  */
 
 interface Ph { role: string; type: string; box: [number, number, number, number]; size: number; bold: boolean; color: string; align: 'l' | 'ctr' }
-interface Layout { key: string; name: string; hint: string; placeholders: Ph[]; decorations: Array<{ box: [number, number, number, number]; fill: string; geom: string }> }
-export interface Template { key: string; label: string; description: string; tags: string[]; bg: string; body: string; muted: string; serif?: boolean; layouts: Layout[] }
+interface Layout { key: string; name: string; hint: string; placeholders: Ph[]; decorations: Array<{ box: [number, number, number, number]; fill: string; geom: string; image?: string }> }
+export interface Template { key: string; label: string; description: string; tags: string[]; bg: string; body: string; muted: string; serif?: boolean; layouts: Layout[]; photo?: string; credit?: { photographer: string; photo_url: string } | null }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 
@@ -35,6 +35,8 @@ export function layoutSvg(t: Template, layoutKey: string): string {
   const parts = [`<rect width="960" height="540" fill="#${t.bg}"/>`]
   for (const d of l.decorations) {
     const [x, y, w, h] = d.box
+    // 带图模板的照片（内置、公开）：按框裁切铺满
+    if (d.image) { parts.push(`<image href="/theme-photos/${esc(d.image)}.jpg" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>`); continue }
     parts.push(d.geom === 'ellipse'
       ? `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}" fill="#${d.fill}"/>`
       : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${d.geom === 'roundRect' ? Math.min(w, h) * 0.16 : 0}" fill="#${d.fill}"/>`)
@@ -85,7 +87,7 @@ export async function pickTemplate(api: (path: string) => Promise<any>, opts: { 
       <button class="tpl-card${t.key === opts.current ? ' on' : ''}" data-tpl="${esc(t.key)}" aria-pressed="${t.key === opts.current}">
         <span class="tpl-cover">${layoutSvg(t, 'cover')}</span>
         <span class="tpl-strip">${['content', 'two_col', 'big_number'].map(k => `<span>${layoutSvg(t, k)}</span>`).join('')}</span>
-        <span class="tpl-meta"><b>${esc(t.label)}${t.key === opts.current ? '<em>当前</em>' : ''}</b><span>${esc(t.description)}</span><span class="tpl-tags">${t.tags.map(x => `<i>${esc(x)}</i>`).join('')}</span></span>
+        <span class="tpl-meta"><b>${esc(t.label)}${t.key === opts.current ? '<em>当前</em>' : ''}</b><span>${esc(t.description)}</span><span class="tpl-tags">${t.tags.map(x => `<i>${esc(x)}</i>`).join('')}</span>${t.credit ? `<span class="tpl-credit">照片：${esc(t.credit.photographer)} · Unsplash</span>` : ''}</span>
       </button>`).join('')}</div></div></div>`)
   el.querySelector<HTMLElement>('.tpl-grid')!.onclick = e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-tpl]')

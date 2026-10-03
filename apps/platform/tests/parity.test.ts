@@ -55,7 +55,14 @@ const STUDY_PARITY: Record<string, string> = {
   'DELETE /api/studies/:sid/cohort/:ptid': 'study_unenroll',
   'POST /api/studies/:sid/cohort/dataset': 'study_cohort_dataset',
 }
+/** 图库：界面「图片 ▾ → 从 Unsplash 搜索」与 AI 同一个服务。 */
+const IMAGE_PARITY: Record<string, string> = {
+  'GET /api/images/search': 'image_search',
+  'POST /api/docs/:id/slides/:slide/photo': 'slide_add_photo',
+}
+
 const NOT_FOR_AI: Record<string, string> = {
+  'GET /api/images': '界面用来决定是否显示搜图入口；AI 从 image_search 返回的 unsplash_unconfigured 得知图库没配置',
   'DELETE /api/patients/:ptid': '删除患者不可恢复（与文档一致，AI 没有删除工具）',
   'POST /api/patients/:ptid/break-glass': '紧急访问由机构管理员以个人名义承担，理由须本人填写',
   'GET /api/patients-directory': '只用于紧急访问时选代号',
@@ -71,8 +78,8 @@ describe('人机对等：患者与临床研究', () => {
       docs, ops: new OpService(docs), turns: new TurnService(docs, {} as HarnessPool, new TurnRegistry()), postcheck: new PostCheck(docs), crossref: {} as CrossrefClient,
       renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'par-'))), accounts: new Accounts(store, { secret: 's', devMode: false, devToken: 'd', devUser: 'd' }), devMode: false, devUser: 'd',
     })
-    const routes = [...new Set(app.routes.filter(r => /^\/api\/(patients|studies)/.test(r.path) && r.method !== 'ALL').map(r => `${r.method} ${r.path}`))]
-    const MAP = { ...PATIENT_PARITY, ...STUDY_PARITY }
+    const routes = [...new Set(app.routes.filter(r => (/^\/api\/(patients|studies|images)/.test(r.path) || /\/photo$/.test(r.path)) && r.method !== 'ALL').map(r => `${r.method} ${r.path}`))]
+    const MAP = { ...PATIENT_PARITY, ...STUDY_PARITY, ...IMAGE_PARITY }
     expect(routes.filter(r => !MAP[r] && !NOT_FOR_AI[r]), '新的患者 / 研究接口要登记对应的 MCP 工具，或在 NOT_FOR_AI 里写明理由').toEqual([])
 
     const claims = verifyToken('s', issueToken('s', { u: 'u1', d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 60 }), 'mcp')!
@@ -85,6 +92,6 @@ describe('人机对等：患者与临床研究', () => {
     const client = new Client({ name: 'par', version: '0' })
     await client.connect(b)
     const tools = new Set((await client.listTools()).tools.map(t => t.name))
-    expect([...new Set([...Object.values(PATIENT_PARITY), ...Object.values(STUDY_PARITY)])].filter(t => !tools.has(t)), '登记的工具要真的存在').toEqual([])
+    expect([...new Set([...Object.values(PATIENT_PARITY), ...Object.values(STUDY_PARITY), ...Object.values(IMAGE_PARITY)])].filter(t => !tools.has(t)), '登记的工具要真的存在').toEqual([])
   })
 })

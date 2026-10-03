@@ -34,6 +34,8 @@ export const config = {
   model: env('DSH_MODEL', 'deepseek-flash'),
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
   ncbiApiKey: process.env.NCBI_API_KEY ?? '',
+  /** Unsplash 图库（幻灯片搜图、插图）；不设则界面隐藏入口、接口返回「未配置」。 */
+  unsplashAccessKey: process.env.UNSPLASH_ACCESS_KEY ?? '',
   contactEmail: process.env.CONTACT_EMAIL ?? '',
   /** dsh 进程回连平台 MCP 的地址。 */
   mcpUrl: env('HEURION_MCP_URL', `http://127.0.0.1:${port}/mcp`),
