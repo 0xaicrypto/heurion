@@ -36,6 +36,9 @@ export const config = {
   contactEmail: process.env.CONTACT_EMAIL ?? '',
   /** dsh 进程回连平台 MCP 的地址。 */
   mcpUrl: env('HEURION_MCP_URL', `http://127.0.0.1:${port}/mcp`),
+  /** dsh 调模型走平台代理（真实 key 不进 dsh）：dsh 用的地址与代理转发的上游。 */
+  llmProxyUrl: env('HEURION_LLM_URL', `http://127.0.0.1:${port}/llm/v1`),
+  llmUpstream: env('DEEPSEEK_UPSTREAM_URL', 'https://api.deepseek.com/anthropic/v1'),
   /** 验证码邮件（找回密码、绑定邮箱），同 1.0：Resend。未配置时开发环境把验证码打到日志。 */
   resendApiKey: process.env.RESEND_API_KEY ?? '',
   emailFrom: process.env.EMAIL_FROM ?? '',

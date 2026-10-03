@@ -129,6 +129,7 @@ jobs:
           curl -fsS https://heurion.org/ | grep -q 'id="page"'
           # MCP 不对外
           [ "$(curl -s -o /dev/null -w '%{http_code}' https://heurion.org/mcp)" = "404" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST https://heurion.org/llm/v1/messages)" = "404" ]
       - name: 清 Cloudflare 缓存
         env:
           CF_TOKEN: ${{ secrets.CF_API_TOKEN }}

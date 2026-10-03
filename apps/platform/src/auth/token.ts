@@ -6,7 +6,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
  * 格式：`h1.<base64url(json)>.<hmac>`。
  */
 
-export type Audience = 'mcp' | 'web'
+/** mcp：dsh 回连平台 MCP；web：浏览器；llm：dsh 经平台代理调用模型（真实 API key 不进 dsh）。 */
+export type Audience = 'mcp' | 'web' | 'llm'
 export type Permission = 'read' | 'write'
 
 export interface TokenClaims {

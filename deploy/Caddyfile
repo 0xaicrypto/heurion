@@ -10,9 +10,9 @@
 		max_size 60MB
 	}
 
-	# MCP 只给容器里的 dsh 用（走 127.0.0.1），不对外
-	@mcp path /mcp /mcp/*
-	respond @mcp 404
+	# MCP 与模型代理只给容器里的 dsh 用（走 127.0.0.1），不对外
+	@internal path /mcp /mcp/* /llm /llm/*
+	respond @internal 404
 
 	# 平台：页面、REST、SSE（回合事件、文档变更推送）、协同 WebSocket（/collab）、MCP
 	reverse_proxy heurion2:8787 {

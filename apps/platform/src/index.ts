@@ -16,6 +16,7 @@ import { attachCollab } from './collab/gateway.ts'
 import { PostCheck } from './collab/postcheck.ts'
 import { config } from './config.ts'
 import { HarnessPool } from './harness/pool.ts'
+import { handleLlmProxy, LLM_PREFIX } from './harness/llm-proxy.ts'
 import { buildApi } from './http/api.ts'
 import { CrossrefClient } from './literature/crossref.ts'
 import { PubMedClient } from './literature/pubmed.ts'
@@ -80,6 +81,13 @@ const api = getRequestListener(app.fetch)
 
 // /mcp 用 Node 原生 req/res（MCP SDK transport 需要），其余交给 Hono
 const server = createServer((req, res) => {
+  if (req.url?.startsWith(LLM_PREFIX + '/')) {
+    handleLlmProxy({ secret: config.secret, upstream: config.llmUpstream, apiKey: config.deepseekApiKey, isLive: (u, s) => pool.isLive(u, s) }, req, res).catch(err => {
+      console.error('[llm-proxy]', err)
+      if (!res.headersSent) res.writeHead(502).end()
+    })
+    return
+  }
   if (req.url?.startsWith('/mcp')) {
     handleMcp(mcpDeps, req, res).catch(err => {
       console.error('[mcp]', err)

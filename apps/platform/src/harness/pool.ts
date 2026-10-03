@@ -41,7 +41,9 @@ export class HarnessPool {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: process.env.HOME ?? this.config.dshHome,
       LANG: process.env.LANG ?? 'C.UTF-8',
-      DEEPSEEK_API_KEY: this.config.deepseekApiKey,
+      // 模型调用经平台代理：这里给的是每用户、绑定进程代号的代理令牌，不是真实 API key
+      DEEPSEEK_API_KEY: issueToken(this.config.secret, { u: userId, d: [], p: [], aud: 'llm', ttlSeconds: 24 * 3600, s: generation }),
+      DEEPSEEK_BASE_URL: this.config.llmProxyUrl,
       HEURION_MCP_URL: this.config.mcpUrl,
       // MCP 令牌比进程的最长空闲时间长；进程回收后重新签发
       HEURION_MCP_TOKEN: issueToken(this.config.secret, { u: userId, d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 24 * 3600, s: generation }),
