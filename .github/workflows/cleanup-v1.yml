@@ -34,5 +34,12 @@ jobs:
           WORKER_USER: ${{ secrets.WORKER_VPS_USER || secrets.VPS_USER }}
         run: |
           [ -n "$WORKER_HOST" ] || { echo "没有 WORKER_VPS_HOST，跳过"; exit 0; }
-          ssh -o StrictHostKeyChecking=no "$WORKER_USER@$WORKER_HOST" \
-            "cd /opt/heurion-worker 2>/dev/null && docker compose -f docker-compose.worker.yml down || docker rm -f \$(docker ps -aq --filter name=heurion-worker) 2>/dev/null || true"
+          # compose 文件里的镜像标签变量必须有值，否则 down 直接报错（2026-10-03 第一次运行就卡在这）；
+          # 最后列出剩下的容器，结果可核对
+          ssh -o StrictHostKeyChecking=no "$WORKER_USER@$WORKER_HOST" '
+            set -u
+            if [ -f /opt/heurion-worker/docker-compose.worker.yml ]; then
+              cd /opt/heurion-worker && WORKER_IMAGE_TAG=none docker compose -f docker-compose.worker.yml down --remove-orphans || echo "compose down 失败，改为逐个删除"
+            fi
+            ids=$(docker ps -aq --filter name=heurion-worker); [ -z "$ids" ] || docker rm -f $ids
+            echo "== worker 上剩下的容器："; docker ps -a --format "{{.Names}}\t{{.Status}}"
