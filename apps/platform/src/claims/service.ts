@@ -13,13 +13,38 @@ import { extractClaims, type Claim } from './extract.ts'
  */
 
 const PAGE = 8
-const ABSTRACT_MAX = 1800
+/** 给模型的摘要上限（C2 评测：1800 字时六成摘要的结果 / 结论段被截掉，数字类召回低 16 个百分点）。 */
+export const ABSTRACT_MAX = 4000
+
+/** 超长摘要截断时优先保留结果与结论段（数字和结论在那里），前面的背景 / 方法按剩余长度保留。 */
+export function fitAbstract(abstract: string, max = ABSTRACT_MAX): string {
+  if (abstract.length <= max) return abstract
+  const m = /\b(RESULTS?|FINDINGS)\b\s*[:：]?/.exec(abstract) ?? /\bCONCLUSIONS?\b\s*[:：]?/.exec(abstract)
+  if (!m || m.index === 0) return abstract.slice(0, max)
+  const tail = abstract.slice(m.index)
+  if (tail.length >= max - 200) return tail.slice(0, max)
+  return `${abstract.slice(0, max - tail.length - 3).trimEnd()} … ${tail}`
+}
+
+/**
+ * 论断核对的判定标准（verifyPrompt 与 C2 评测共用，改这里两边一起变）。
+ * v3（2026-10-03，按 C2 评测）：理由里指出不符就必须判不支持；没有可核对的证据单独标出，不逐句挂评论；理由用中文。
+ */
+export const CLAIM_CRITERIA =
+  '逐条只依据所引文献的摘要判断，不凭记忆补充：' +
+  'supported = 摘要支持该句的说法与数字；' +
+  'unsupported = 摘要与该句矛盾，或数字、结论、人群、药物 / 干预、效应方向任何一处对不上——只要你的理由里指出了某处不符，结论就必须是 unsupported，不能是 unclear；' +
+  'unclear = 摘要涉及该句的内容，但信息不足以确认或否定。' +
+  '没有摘要，或摘要根本没涉及该句说的内容时，判 unclear 并标 no_evidence=true（这类不会逐句挂评论，只在总结里汇总）。' +
+  'reason 用中文，一两句话写明依据（引用摘要里的关键数字或结论）。'
 
 export interface ClaimEvidence {
   claim_id: string
   node_id: string
   sentence: string
   citations: Array<{ cite_id: string; number: number | null; reference: string; abstract: string | null }>
+  /** 所引文献都没有可用摘要：没有可核对的证据。 */
+  no_abstract?: true
   last_verdict?: ClaimVerdict
 }
 
@@ -61,10 +86,11 @@ export class ClaimService {
         const row = cites.get(id)
         if (!row) continue
         const abstract = await this.abstractFor(row.doi, row.pmid)
-        citations.push({ cite_id: id, number: order.includes(id) ? order.indexOf(id) + 1 : null, reference: row.formatted, abstract: abstract ? abstract.slice(0, ABSTRACT_MAX) : null })
+        citations.push({ cite_id: id, number: order.includes(id) ? order.indexOf(id) + 1 : null, reference: row.formatted, abstract: abstract ? fitAbstract(abstract) : null })
       }
       const last = store.getClaimCheck(docId, c.claim_id)?.verdict
-      out.push({ claim_id: c.claim_id, node_id: c.node_id, sentence: c.sentence, citations, ...(last ? { last_verdict: last } : {}) })
+      const noAbstract = citations.every(x => !x.abstract)
+      out.push({ claim_id: c.claim_id, node_id: c.node_id, sentence: c.sentence, citations, ...(noAbstract ? { no_abstract: true as const } : {}), ...(last ? { last_verdict: last } : {}) })
     }
     const next = cursor + PAGE < claims.length ? cursor + PAGE : null
     return {
@@ -78,13 +104,16 @@ export class ClaimService {
 
   /**
    * 记录核对结果；不支持 / 无法判断 / 缺出处 → 在该句挂 AI 评论（同一句同一结论不重复挂）。
-   * 返回每条的处理结果。
+   * 没有可核对证据的「无法判断」（no_evidence，或所引文献都没有摘要）只记录、不挂评论（C2：否则八成正确的句子被挂评论），
+   * 状态为 no_evidence，由回合总结汇总。返回每条的处理结果。
    */
-  report(docId: string, results: Array<{ claim_id: string; verdict: ClaimVerdict; reason: string }>): Array<{ claim_id: string; status: 'recorded' | 'commented' | 'unchanged' | 'stale'; comment_id?: string }> {
+  report(docId: string, results: Array<{ claim_id: string; verdict: ClaimVerdict; reason: string; no_evidence?: boolean }>): Array<{ claim_id: string; status: 'recorded' | 'commented' | 'unchanged' | 'stale' | 'no_evidence'; comment_id?: string }> {
     const store = this.docs.store
     const { claims, unsourced } = this.extract(docId)
     const byId = new Map([...claims, ...unsourced].map(c => [c.claim_id, c]))
-    const out: Array<{ claim_id: string; status: 'recorded' | 'commented' | 'unchanged' | 'stale'; comment_id?: string }> = []
+    const cites = new Map(store.listCitations(docId).map(c => [c.id, c]))
+    const hasAbstract = (claim: Claim) => claim.cite_ids.some(id => { const row = cites.get(id); return !!(row && store.getAbstract(row.doi)?.abstract) })
+    const out: Array<{ claim_id: string; status: 'recorded' | 'commented' | 'unchanged' | 'stale' | 'no_evidence'; comment_id?: string }> = []
     for (const r of results) {
       const claim = byId.get(r.claim_id)
       if (!claim) { out.push({ claim_id: r.claim_id, status: 'stale' }); continue }
@@ -93,10 +122,11 @@ export class ClaimService {
         out.push({ claim_id: r.claim_id, status: 'unchanged', ...(prev.comment_id ? { comment_id: prev.comment_id } : {}) })
         continue
       }
+      const noEvidence = r.verdict === 'unclear' && (r.no_evidence === true || !hasAbstract(claim))
       let commentId: string | null = null
-      if (r.verdict !== 'supported') commentId = this.comment(docId, claim, r.verdict, r.reason)
-      store.putClaimCheck({ doc_id: docId, claim_id: r.claim_id, node_id: claim.node_id, sentence: claim.sentence, verdict: r.verdict, reason: r.reason, comment_id: commentId, rev: this.docs.rev(docId) })
-      out.push({ claim_id: r.claim_id, status: commentId ? 'commented' : 'recorded', ...(commentId ? { comment_id: commentId } : {}) })
+      if (r.verdict !== 'supported' && !noEvidence) commentId = this.comment(docId, claim, r.verdict, r.reason)
+      store.putClaimCheck({ doc_id: docId, claim_id: r.claim_id, node_id: claim.node_id, sentence: claim.sentence, verdict: r.verdict, reason: noEvidence ? `（没有可核对的证据）${r.reason}` : r.reason, comment_id: commentId, rev: this.docs.rev(docId) })
+      out.push({ claim_id: r.claim_id, status: noEvidence ? 'no_evidence' : commentId ? 'commented' : 'recorded', ...(commentId ? { comment_id: commentId } : {}) })
     }
     return out
   }
@@ -123,9 +153,8 @@ export function verifyPrompt(docId: string): string {
   return (
     `请核对文档 ${docId} 中带引用的论断，只核对、不修改正文：\n` +
     `1. 调用 verify_claims（doc_id="${docId}"），按 next_cursor 翻页直到取完；\n` +
-    `2. 逐条对照所引文献的摘要判断：supported（摘要支持该句的说法与数字）/ unsupported（摘要与该句矛盾，或数字、结论、人群对不上）/ unclear（摘要信息不足以判断）；` +
-    `unsourced 里的数值句判为 missing_citation；\n` +
-    `3. 每页判断完就用 claim_report 提交，reason 用一两句话写明依据（引用摘要里的关键数字或结论）；\n` +
-    `4. 最后用两三句话总结核对结果。`
+    `2. ${CLAIM_CRITERIA}unsourced 里的数值句判为 missing_citation；\n` +
+    `3. 每页判断完就用 claim_report 提交；\n` +
+    `4. 最后用两三句话总结核对结果：几条不支持（已挂评论）、几条缺少可核对的证据（列出句子开头，建议补充全文或更直接的文献）。`
   )
 }

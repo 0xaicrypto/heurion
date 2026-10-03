@@ -184,6 +184,37 @@ describe('论断核对', () => {
   })
 })
 
+describe('论断核对 v3（C2 评测后）', () => {
+  it('没有可核对证据的「无法判断」只记录不挂评论；有证据的不支持照常挂评论', async () => {
+    const t = await connect('占位。')
+    const withAbs = t.store.upsertCitation({ doc_id: t.docId, doi: '10.1056/nejmoa2307563', pmid: null, formatted: 'Lincoff AM. SELECT. 2023.', url: null })
+    const noAbs = t.store.upsertCitation({ doc_id: t.docId, doi: '10.9999/no-abstract', pmid: null, formatted: 'Conf Abstract. 2024.', url: null })
+    t.store.putAbstract('10.9999/no-abstract', null, null) // 会议摘要之类：PubMed 没有摘要
+    const id = t.docs.get(t.docId).child(0).attrs.id as string
+    t.ops.edit({ doc_id: t.docId, base_rev: 0, mode: 'apply', ops: [{ op: 'replace_block', id, markdown: `SELECT 试验提前终止[@c:${withAbs.id}]。某会议报告了类似结果[@c:${noAbs.id}]。该队列随访 5 年[@c:${withAbs.id}]。` }] }, { actor: 'user', turnId: null })
+    const ev = (await t.call('verify_claims', { doc_id: t.docId })).body
+    expect(ev.claims.map((c: any) => !!c.no_abstract)).toEqual([false, true, false])
+    const r = await t.call('claim_report', { doc_id: t.docId, results: [
+      { claim_id: ev.claims[0].claim_id, verdict: 'unsupported', reason: '摘要显示按计划完成。' },
+      { claim_id: ev.claims[1].claim_id, verdict: 'unclear', reason: '没有摘要。' },
+      { claim_id: ev.claims[2].claim_id, verdict: 'unclear', reason: '摘要没提随访时长。', no_evidence: true },
+    ] })
+    expect(r.body.results.map((x: any) => x.status)).toEqual(['commented', 'no_evidence', 'no_evidence'])
+    expect(t.store.listComments(t.docId, 'open')).toHaveLength(1)
+  })
+
+  it('超长摘要截断时保留结果与结论段', async () => {
+    const { fitAbstract } = await import('../src/claims/service.ts')
+    const abs = `BACKGROUND: ${'背景'.repeat(1500)} METHODS: ${'方法'.repeat(1000)} RESULTS: HR 0.80 (95% CI 0.72-0.90). CONCLUSIONS: 降低 20%。`
+    const out = fitAbstract(abs, 4000)
+    expect(out.length).toBeLessThanOrEqual(4000)
+    expect(out).toContain('RESULTS: HR 0.80')
+    expect(out).toContain('CONCLUSIONS')
+    expect(out.startsWith('BACKGROUND')).toBe(true)
+    expect(fitAbstract('短摘要', 4000)).toBe('短摘要')
+  })
+})
+
 describe('MCP 会话失效', () => {
   it('被停止的 dsh 进程的令牌立即失效；当前进程的令牌照常', async () => {
     const { handleMcp } = await import('../src/mcp/server.ts')

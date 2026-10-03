@@ -460,13 +460,15 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   server.registerTool('claim_report', {
     description:
       '提交论断核对结果。verdict：supported / unsupported / unclear / missing_citation（unsourced 的数值句）。' +
-      '除 supported 外，平台会在该句挂一条 AI 评论供用户决定是否修改；reason 写明依据。',
+      '不支持、缺出处、有证据但不足以判断的 unclear，平台会在该句挂一条 AI 评论供用户决定是否修改；' +
+      '没有可核对证据的 unclear（无摘要或摘要没涉及）标 no_evidence=true，只记录不挂评论，在总结里汇总。reason 用中文写明依据。',
     inputSchema: {
       doc_id: z.string(),
       results: z.array(z.object({
         claim_id: z.string(),
         verdict: z.enum(['supported', 'unsupported', 'unclear', 'missing_citation']),
         reason: z.string().min(1).max(1000),
+        no_evidence: z.boolean().optional().describe('unclear 时：所引文献没有摘要，或摘要根本没涉及该句的内容'),
       })).min(1).max(50),
     },
   }, async ({ doc_id, results }) => {

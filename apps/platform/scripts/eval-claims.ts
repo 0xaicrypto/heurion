@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ClaimService, type ClaimEvidence } from '../src/claims/service.ts'
+import { CLAIM_CRITERIA, ClaimService, type ClaimEvidence } from '../src/claims/service.ts'
 import { PubMedClient } from '../src/literature/pubmed.ts'
 import { assignIds } from '../src/model/ids.ts'
 import { parseBlocks } from '../src/model/markdown.ts'
@@ -50,13 +50,18 @@ const V1 = `你在核对医学文稿里带引用的论断。逐条对照所引�
 只依据给出的摘要，不要凭记忆补充。reason 用一两句话写明依据（引用摘要里的关键数字或结论）。
 只输出 JSON：{"results":[{"claim_id":"…","verdict":"supported|unsupported|unclear","reason":"…"}]}`
 
-/** 评测变体：判定提示 + 摘要长度。 */
-const VARIANTS: Record<string, { system: string; abstractMax: number; label: string }> = {
-  v1: { system: V1, abstractMax: ABSTRACT_MAX, label: '产品现状：verifyPrompt 判定标准，摘要截断 1800 字' },
-  v2: { system: V1, abstractMax: FULL_MAX, label: '同一提示，摘要放宽到 4000 字（结构化摘要的结果 / 结论段不再被截掉）' },
+/** v3：产品现行判定标准（CLAIM_CRITERIA，与 verifyPrompt 共用），多一个 no_evidence 标记。 */
+const V3 = `你在核对医学文稿里带引用的论断。${CLAIM_CRITERIA}
+只输出 JSON：{"results":[{"claim_id":"…","verdict":"supported|unsupported|unclear","reason":"…","no_evidence":false}]}`
+
+/** 评测变体：判定提示 + 证据（abstractMax = 简单截断的字数；product = 产品 ClaimService 给的证据原样）。 */
+const VARIANTS: Record<string, { system: string; abstractMax: number | 'product'; label: string }> = {
+  v1: { system: V1, abstractMax: ABSTRACT_MAX, label: '2026-10-02 的产品：旧判定标准，摘要截断 1800 字' },
+  v2: { system: V1, abstractMax: FULL_MAX, label: '旧判定标准，摘要放宽到 4000 字（结构化摘要的结果 / 结论段不再被截掉）' },
+  v3: { system: V3, abstractMax: 'product', label: '2026-10-03 的产品：新判定标准（理由指出不符必须判不支持、标出无证据、中文理由）+ 摘要 4000 字且截断时保留结果 / 结论段' },
 }
 
-async function judge(batch: ClaimEvidence[], system: string): Promise<Map<string, { verdict: Verdict; reason: string }>> {
+async function judge(batch: ClaimEvidence[], system: string): Promise<Map<string, { verdict: Verdict; reason: string; noEvidence: boolean }>> {
   const user = batch.map(c => ({
     claim_id: c.claim_id,
     sentence: c.sentence,
@@ -72,11 +77,11 @@ async function judge(batch: ClaimEvidence[], system: string): Promise<Map<string
       })
       if (!res.ok) throw new Error(`DeepSeek ${res.status}`)
       const body = await res.json() as { choices: Array<{ message: { content: string } }> }
-      const parsed = JSON.parse(body.choices[0]!.message.content) as { results: Array<{ claim_id: string; verdict: string; reason: string }> }
-      const out = new Map<string, { verdict: Verdict; reason: string }>()
+      const parsed = JSON.parse(body.choices[0]!.message.content) as { results: Array<{ claim_id: string; verdict: string; reason: string; no_evidence?: boolean }> }
+      const out = new Map<string, { verdict: Verdict; reason: string; noEvidence: boolean }>()
       for (const r of parsed.results ?? []) {
         const v = (['supported', 'unsupported', 'unclear'].includes(r.verdict) ? r.verdict : 'unclear') as Verdict
-        out.set(r.claim_id, { verdict: v, reason: String(r.reason ?? '') })
+        out.set(r.claim_id, { verdict: v, reason: String(r.reason ?? ''), noEvidence: r.no_evidence === true })
       }
       return out
     } catch (err) {
@@ -93,6 +98,8 @@ const escapeMd = (s: string) => s.replace(/([\\*_`[\]<>#|])/g, '\\$1')
 interface Cached {
   verdict: Verdict
   reason: string
+  /** 产品会不会在这句挂评论（不支持，或有证据的无法判断；v3 起无证据的无法判断不挂）。 */
+  commented?: boolean
   has_abstract: boolean
   /** 所引文献数 / 取到摘要的数。 */
   n_cites: number
@@ -152,15 +159,15 @@ async function main(): Promise<void> {
     const nodeToClaim = new Map<string, EvalClaim>()
     docs.get(row.id).forEach((n, _o, i) => { if (batch[i]) nodeToClaim.set(n.attrs.id as string, batch[i]!) })
     // 平台可能把一段切成多句：每条评测论断收集它的全部片段
-    type Part = { ev: ClaimEvidence; verdict: { verdict: Verdict; reason: string } | null; ems: number; jms: number; size: number }
+    type Part = { ev: ClaimEvidence; verdict: { verdict: Verdict; reason: string; noEvidence: boolean } | null; ems: number; jms: number; size: number }
     const parts = new Map<string, Part[]>()
     let cursor: number | null = 0
     while (cursor !== null) {
       const t0 = performance.now()
       const page = await service.evidence(row.id, cursor)
       const t1 = performance.now()
-      if (variant.abstractMax !== ABSTRACT_MAX) {
-        // 变体：从同一摘要缓存取更长的摘要替换 ClaimService 截断后的
+      if (variant.abstractMax !== 'product') {
+        // v1 / v2：按当时的做法从同一摘要缓存简单截断（产品现在给的证据见 v3）
         const byId = new Map(store.listCitations(row.id).map(x => [x.id, x]))
         for (const ev of page.claims) {
           for (const x of ev.citations) {
@@ -187,9 +194,13 @@ async function main(): Promise<void> {
       if (!list || list.some(p => !p.verdict)) { missing++; continue }
       const worst = list.reduce((a, b) => SEVERITY[b.verdict!.verdict] > SEVERITY[a.verdict!.verdict] ? b : a)
       const cites = list.flatMap(p => p.ev.citations)
+      // 产品口径：任一片段会挂评论即算（v1 / v2 时代无法判断一律挂）
+      const commented = list.some(p => p.verdict!.verdict === 'unsupported' || (p.verdict!.verdict === 'unclear'
+        && (PROMPT !== 'v3' || (!p.verdict!.noEvidence && p.ev.citations.some(x => !!x.abstract)))))
       cache[key(c)] = {
         verdict: worst.verdict!.verdict,
         reason: worst.verdict!.reason,
+        commented,
         has_abstract: cites.some(x => !!x.abstract),
         n_cites: new Set(cites.map(x => x.cite_id)).size,
         n_abstracts: new Set(cites.filter(x => !!x.abstract).map(x => x.cite_id)).size,
@@ -339,9 +350,17 @@ function report(rows: Row[], versions: ReadonlyArray<readonly [string, Row[]]>, 
   }
 
   if (versions.length > 1) {
-    lines.push('', '## 提示 v2（证据变体）与 v1 对比', '')
+    lines.push('', '## 各版本对比（v2 证据变体、v3 现行产品）', '')
     for (const [ver] of versions) lines.push(`- ${ver}：${VARIANTS[ver]!.label}`)
-    lines.push('', 'v2 只在评测里实现（evidence 之后用同一摘要缓存替换截断后的摘要），**产品的 ClaimService（ABSTRACT_MAX = 1800）与 verifyPrompt 都没有改**。v2 的取证据耗时走摘要缓存，不可与 v1 比。', '')
+    lines.push('', 'v1 / v2 在评测里从同一摘要缓存简单截断；v3 用产品现行的 ClaimService 证据（4000 字、截断时保留结果 / 结论段）与 CLAIM_CRITERIA。取证据耗时走摘要缓存，不可与第一轮比。', '')
+    lines.push('', '**产品口径：句子上会不会挂评论**（用户实际看到的提醒；v3 起没有可核对证据的「无法判断」不挂，只在总结里汇总）', '')
+    lines.push('| 版本 | 错误论断被挂评论（检出） | 正确论断被挂评论（打扰） |', '|---|---|---|')
+    for (const [ver, rs] of versions) {
+      const cm = (x: Row) => x.v.commented ?? (x.v.verdict !== 'supported')
+      const neg = rs.filter(x => !!x.claim.perturbation), pos = rs.filter(x => !x.claim.perturbation)
+      lines.push(`| ${ver} | ${pct(neg.filter(cm).length / (neg.length || 1))}（${neg.filter(cm).length}/${neg.length}） | ${pct(pos.filter(cm).length / (pos.length || 1))}（${pos.filter(cm).length}/${pos.length}） |`)
+    }
+    lines.push('')
     const ids = versions.map(([, rs]) => new Set(rs.map(x => x.claim.id))).reduce((a, b) => new Set([...a].filter(i => b.has(i))))
     lines.push(`共同评过的论断 ${ids.size} 条。`, '')
     prfTable(lines, versions.flatMap(([ver, rs]) => {
