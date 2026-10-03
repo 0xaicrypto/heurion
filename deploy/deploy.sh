@@ -61,11 +61,21 @@ if [ ! -f .cutover-done ] && docker inspect nexus-server >/dev/null 2>&1; then
   fi
 fi
 
+# Caddyfile 是挂载进容器的单个文件：内容变了 compose 不会重建 Caddy，旧配置会一直生效——按内容哈希判断，变了就重建（证书在卷里，几秒中断）
+CADDY_HASH=$(sha256sum Caddyfile | cut -d' ' -f1)
+CADDY_RECREATE=()
+if [ "$(cat .caddyfile.sha 2>/dev/null)" != "$CADDY_HASH" ]; then CADDY_RECREATE=(--force-recreate caddy); fi
+
 if ! "${COMPOSE[@]}" up -d --remove-orphans; then
   echo "❌ 启动 2.0 失败"
   "${COMPOSE[@]}" logs --tail=80 || true
   [ "$CUTOVER" -eq 1 ] && restore_v1
   exit 1
+fi
+
+if [ ${#CADDY_RECREATE[@]} -gt 0 ]; then
+  echo "== Caddyfile 有变化：重建 Caddy"
+  "${COMPOSE[@]}" up -d --no-deps "${CADDY_RECREATE[@]}" && echo "$CADDY_HASH" > .caddyfile.sha
 fi
 
 wait_health() {
