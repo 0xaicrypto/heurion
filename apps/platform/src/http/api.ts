@@ -1031,7 +1031,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/studies', async c => { try { return c.json(st().create(c.get('user'), await c.req.json()), 201) } catch (err) { return studyFailure(c, err) } })
   app.get('/api/studies/:sid', c => { try { return c.json(st().read(c.get('user'), c.req.param('sid'))) } catch (err) { return studyFailure(c, err) } })
   app.patch('/api/studies/:sid', async c => { try { return c.json(st().update(c.get('user'), c.req.param('sid'), await c.req.json())) } catch (err) { return studyFailure(c, err) } })
-  app.delete('/api/studies/:sid', c => { try { st().remove(c.get('user'), c.req.param('sid')); return c.json({ ok: true }) } catch (err) { return studyFailure(c, err) } })
+  app.delete('/api/studies/:sid', c => { try { return c.json({ ok: true, ...st().remove(c.get('user'), c.req.param('sid')) }) } catch (err) { return studyFailure(c, err) } })
   /** 归入文档 / 数据集：{kind: doc | dataset, ref_id, role?: protocol | manuscript | slides | other} */
   app.post('/api/studies/:sid/items', async c => { try { st().link(c.get('user'), c.req.param('sid'), await c.req.json()); return c.json({ ok: true }, 201) } catch (err) { return studyFailure(c, err) } })
   app.delete('/api/studies/:sid/items/:kind/:rid', c => { try { st().unlink(c.get('user'), c.req.param('sid'), c.req.param('kind'), c.req.param('rid')); return c.json({ ok: true }) } catch (err) { return studyFailure(c, err) } })

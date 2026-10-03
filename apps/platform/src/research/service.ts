@@ -5,7 +5,7 @@ import type { Store, StudyRow } from '../store/db.ts'
  * 临床研究项目：把研究方案、数据集、分析、稿件放在一起。
  * - 文档（方案 / 论文 / 幻灯片）与数据集经「归入」进研究，各自只属于一个研究；归入研究的文档不出现在写作的文档列表里（docs.context）。
  * - 分析不用手工维护：用这个研究的数据集画出来的图（带分析来源的资产）自动汇总。
- * - 删除研究只删这个容器：文档回到文档列表，数据集仍在「全部数据集」里。
+ * - 删除研究：里面的文档一起进回收站（可恢复），数据集仍在「全部数据集」里。
  * - 归属按用户（与文档、数据集一致）；以后加研究团队协作时改按租户 + 成员。
  * 入组患者（从患者库按条件筛选）见 cohort.ts：入组关系在机构的患者库里，不进 study_items。
  */
@@ -63,12 +63,18 @@ export class StudyService {
     return this.store.getStudy(id)!
   }
 
-  /** 删除研究：只删容器，文档回到文档列表，数据集保留。 */
-  remove(owner: string, id: string): void {
+  /** 删除研究：研究里的文档（方案、论文、幻灯片）一起进回收站（可恢复，恢复后在文档列表里）；数据集保留在「全部数据集」。返回进回收站的文档数。 */
+  remove(owner: string, id: string): { trashed_docs: number } {
     this.own(owner, id)
-    for (const i of this.store.studyItems(id)) if (i.kind === 'doc') this.store.setDocContext(i.ref_id, null)
+    let n = 0
+    for (const i of this.store.studyItems(id)) if (i.kind === 'doc') {
+      this.store.setDocContext(i.ref_id, null)
+      const d = this.store.getDoc(i.ref_id)
+      if (d && !d.deleted_at) { this.store.trashDoc(i.ref_id, true); n++ }
+    }
     this.onRemove?.(owner, id)
     this.store.deleteStudy(id)
+    return { trashed_docs: n }
   }
 
   /** 把文档或数据集归入研究（只能是自己的；已在别的研究里时要先移出）。 */

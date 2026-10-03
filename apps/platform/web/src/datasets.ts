@@ -113,7 +113,7 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
 
   async function openDetail(id: string): Promise<void> {
     stopPoll()
-    const [x, preview] = await Promise.all([api<Dataset>(`/api/datasets/${id}`), api<{ header: string[]; rows: string[][] }>(`/api/datasets/${id}/preview?limit=50`)])
+    const [x, preview, studies] = await Promise.all([api<Dataset>(`/api/datasets/${id}`), api<{ header: string[]; rows: string[][] }>(`/api/datasets/${id}/preview?limit=50`), api<Array<{ id: string; title: string }>>('/api/studies').catch(() => [])])
     const el = hooks.showPage(PAGE, x.name)
     view = { kind: 'detail', x }
     const phi = new Set(x.phi.map(p => p.name))
@@ -122,7 +122,8 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
       <div class="rs-head">
         <input class="rs-title" id="dsName" value="${esc(x.name)}" aria-label="数据集名称">
         <div class="row"><span class="muted small">${esc(x.filename)} · ${esc(x.format)} · ${x.rows.toLocaleString()} 行 × ${x.cols} 列${x.truncated ? ' · <b>超过 200 万行，只导入了前 200 万行</b>' : ''}</span>
-          ${statusPill(x)}<span class="grow"></span><button class="danger small-btn" data-del>删除数据集</button></div>
+          ${statusPill(x)}<span class="grow"></span><label class="muted small ds-study">所属研究 <select id="dsStudy"><option value="">（未归入）</option>${studies.map(st => `<option value="${st.id}"${x.study?.id === st.id ? ' selected' : ''}>${esc(st.title)}</option>`).join('')}</select></label>
+          <button class="danger small-btn" data-del>删除数据集</button></div>
       </div>
       ${x.phi.length ? `<section class="ds-phi">
         <div><b>这些列像身份信息</b>，处理后才能给 AI 分析。删除的列从数据集里去掉（原文件里的也不再使用）；确认「不是身份信息」的会保留并记录。</div>
@@ -192,6 +193,16 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
       return
     }
     const id = view.x.id
+    if (t.id === 'dsStudy') {
+      const cur = view.x.study?.id
+      try {
+        if (cur) await api(`/api/studies/${cur}/items/dataset/${id}`, { method: 'DELETE' })
+        if (t.value) await api(`/api/studies/${t.value}/items`, { method: 'POST', body: JSON.stringify({ kind: 'dataset', ref_id: id }) })
+        notice(t.value ? '已归入研究' : '已移出研究')
+      } catch (err) { notice((err as Error).message, true) }
+      void openDetail(id)
+      return
+    }
     if (t.id === 'dsName') {
       if (!t.value.trim()) return
       try { await api(`/api/datasets/${id}`, { method: 'PATCH', body: JSON.stringify({ name: t.value }) }); document.getElementById('docTitle')!.textContent = t.value.trim() }

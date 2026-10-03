@@ -392,7 +392,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (act === 'attach') { $('rsMore').hidden = true; await attachExisting(s); return }
     if (act === 'delete') {
       $('rsMore').hidden = true
-      if (await askConfirm({ title: '删除研究项目', message: `删除「${s.title}」？只删除这个研究项目：里面的文档回到写作的文档列表，数据集仍在「全部数据集」里。`, confirm: '删除', danger: true })) {
+      if (await askConfirm({ title: '删除研究项目', message: `删除「${s.title}」？研究里的方案、论文、幻灯片会一起移到回收站（可以恢复）；数据集保留在「全部数据集」里。`, confirm: '删除', danger: true })) {
         await api(`/api/studies/${id}`, { method: 'DELETE' }); await loadList(); showWelcome()
       }
     }

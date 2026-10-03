@@ -15,7 +15,7 @@ function env() {
 }
 
 describe('临床研究项目', () => {
-  it('新建、归入方案 / 论文 / 数据集；归入的文档不在文档列表里；改名后文档归属跟着改；删除研究只删容器', () => {
+  it('新建、归入方案 / 论文 / 数据集；归入的文档不在文档列表里；改名后文档归属跟着改；删除研究时文档进回收站', () => {
     const t = env()
     const s = t.svc.create('u1', { title: 'SGLT2 与肾功能', design: 'retrospective_cohort' })
     expect(s.status).toBe('planning')
@@ -38,7 +38,11 @@ describe('临床研究项目', () => {
 
     t.svc.unlink('u1', s.id, 'doc', paper.id)
     expect(t.store.listDocs('u1').map(d => d.title).sort()).toEqual(['其他笔记', '论文初稿'])
-    t.svc.remove('u1', s.id)
+    // 删除研究：研究里的方案进回收站（可恢复，恢复后回到文档列表、不再带研究归属）；移出过的论文不受影响
+    expect(t.svc.remove('u1', s.id)).toEqual({ trashed_docs: 1 })
+    expect(t.store.listDocs('u1').map(d => d.title).sort()).toEqual(['其他笔记', '论文初稿'])
+    expect(t.store.getDoc(protocol.id)!.deleted_at).toBeTruthy()
+    t.store.trashDoc(protocol.id, false)
     expect(t.store.listDocs('u1')).toHaveLength(3)
     expect(t.store.getDataset(ds.id)).toBeTruthy()
     expect(t.svc.list('u1')).toEqual([])
