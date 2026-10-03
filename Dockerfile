@@ -8,8 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libreoffice-writer-nogui libreoffice-impress-nogui poppler-utils \
       fonts-noto-cjk fonts-liberation2 \
     && rm -rf /var/lib/apt/lists/*
+# 统计：回归（statsmodels）、生存分析（lifelines）、读 SPSS / Stata（pyreadstat）；matplotlib 默认用 Noto CJK，中文不出方框
 RUN python3 -m venv /opt/compute \
-    && /opt/compute/bin/pip install --no-cache-dir pandas matplotlib scipy openpyxl
+    && /opt/compute/bin/pip install --no-cache-dir pandas matplotlib scipy openpyxl statsmodels lifelines pyreadstat \
+    && /opt/compute/bin/python -c "import matplotlib, os; p = os.path.join(os.path.dirname(matplotlib.__file__), 'mpl-data', 'matplotlibrc'); open(p, 'a').write('\\nfont.family: sans-serif\\nfont.sans-serif: Noto Sans CJK SC, Noto Sans CJK JP, DejaVu Sans\\naxes.unicode_minus: False\\n')" \
+    && chmod -R a+rX /opt/compute
 ENV PATH=/opt/compute/bin:$PATH
 
 RUN npm install -g pnpm@12.5.1

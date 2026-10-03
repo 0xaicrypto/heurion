@@ -10,6 +10,8 @@ import { SearchIndex } from './model/search-index.ts'
 import { HttpEmbedder } from './kb/embedder.ts'
 import { localOcr } from './kb/ocr.ts'
 import { KbService } from './kb/service.ts'
+import { makeIngest } from './datasets/ingest.ts'
+import { DatasetService } from './datasets/service.ts'
 import { MemoryEvolution } from './memory/evolve.ts'
 import { MemoryService } from './memory/service.ts'
 import { MemorySignals } from './memory/signals.ts'
@@ -57,6 +59,12 @@ const evolution = new MemoryEvolution(store, memory, docs, makeComplete({ upstre
 const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
 // 运维告警：模型服务不可用、回合大量失败时发邮件给管理员
 const alerts = new Alerts(store, mailer)
+// 数据集（实验室数据分析）：上传的表格在该用户的隔离环境里解析（与 AI 代码同一个 uid）
+const datasets = new DatasetService(store, config.datasetsDir, makeIngest({
+  python: config.computePython,
+  script: fileURLToPath(new URL('../scripts/dataset_ingest.py', import.meta.url)),
+  sandbox: config.sandbox ? { uid: userId => store.sandboxUid(userId), workspaceDir: userId => pool.workspaceDir(userId), homeDir: userId => pool.homeDir(userId) } : null,
+}))
 const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
@@ -66,6 +74,7 @@ const mcpDeps = {
   kb,
   memory,
   evolution,
+  datasets,
   fulltext,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
@@ -89,7 +98,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

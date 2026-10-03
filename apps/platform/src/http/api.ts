@@ -7,6 +7,7 @@ import { duplicateDoc } from '../model/duplicate.ts'
 import type { SearchIndex } from '../model/search-index.ts'
 import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
+import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
@@ -56,6 +57,8 @@ export interface ApiDeps {
   memory?: MemoryService
   /** 记忆演进（整理建议）；没有模型 key 时不可用。 */
   evolution?: MemoryEvolution
+  /** 数据集（实验室数据分析）。 */
+  datasets?: DatasetService
   devUser: string
 }
 
@@ -106,6 +109,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'DELETE', re: /^\/api\/memory$/, action: 'memory.clear' },
     { method: 'GET', re: /^\/api\/memory-export$/, action: 'memory.export' },
     { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
+    { method: 'POST', re: /^\/api\/datasets$/, action: 'dataset.upload' },
+    { method: 'POST', re: /^\/api\/datasets\/[^/]+\/phi$/, action: 'dataset.phi_resolve' },
+    { method: 'DELETE', re: /^\/api\/datasets\/[^/]+$/, action: 'dataset.delete' },
     { method: 'PATCH', re: /^\/api\/admin\/users\/[^/]+$/, action: 'admin.user_update' },
     { method: 'POST', re: /^\/api\/admin\/users\/[^/]+\/reset-password$/, action: 'admin.user_reset_password' },
     { method: 'POST', re: /^\/api\/admin\/users\/[^/]+\/logout$/, action: 'admin.user_logout' },
@@ -837,15 +843,60 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   // —— 对话 ——
 
+  // —— 数据集（实验室数据分析） ——
+  const datasetFailure = (c: Context, err: unknown) => {
+    if (err instanceof DatasetError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : 400)
+    throw err
+  }
+  app.get('/api/datasets', c => c.json(deps.datasets?.list(c.get('user')) ?? []))
+  app.post('/api/datasets', async c => {
+    if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
+    const form = await c.req.parseBody({ all: true })
+    const files = ([] as unknown[]).concat(form.file ?? []).filter((f): f is File => f instanceof File)
+    if (files.length === 0) return c.json({ error: '请选择文件' }, 400)
+    const out: unknown[] = []
+    for (const f of files) {
+      try {
+        const r = deps.datasets.upload(c.get('user'), f.name, new Uint8Array(await f.arrayBuffer()))
+        out.push({ ...r.dataset, duplicate: r.duplicate })
+      } catch (err) {
+        if (err instanceof DatasetError) out.push({ filename: f.name, error: err.message })
+        else throw err
+      }
+    }
+    return c.json(out, 201)
+  })
+  app.get('/api/datasets/:did', c => {
+    try { return c.json(deps.datasets!.get(c.get('user'), c.req.param('did'))) } catch (err) { return datasetFailure(c, err) }
+  })
+  app.get('/api/datasets/:did/preview', c => {
+    try { return c.json(deps.datasets!.preview(c.get('user'), c.req.param('did'), Math.min(200, Number(c.req.query('limit')) || 50))) } catch (err) { return datasetFailure(c, err) }
+  })
+  app.patch('/api/datasets/:did', async c => {
+    const body = await c.req.json<{ name?: string; labels?: Record<string, string> }>()
+    try { return c.json(deps.datasets!.update(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
+  })
+  /** 疑似身份信息的列：drop 删掉，keep 确认不是身份信息（每一列二选一）。 */
+  app.post('/api/datasets/:did/phi', async c => {
+    const body = await c.req.json<{ drop?: string[]; keep?: string[] }>()
+    try { return c.json(await deps.datasets!.resolvePhi(c.get('user'), c.req.param('did'), body.drop ?? [], body.keep ?? [])) } catch (err) { return datasetFailure(c, err) }
+  })
+  app.delete('/api/datasets/:did', c => {
+    try { deps.datasets!.remove(c.get('user'), c.req.param('did')); return c.json({ ok: true }) } catch (err) { return datasetFailure(c, err) }
+  })
+
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
-    const { message, suggest, kb_files, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; memory?: boolean }>()
+    const { message, suggest, kb_files, datasets, memory } = await c.req.json<{ message?: string; suggest?: boolean; kb_files?: string[]; datasets?: string[]; memory?: boolean }>()
     if (!message?.trim()) return c.json({ error: 'message 必填' }, 400)
     // 对话里选中的参考资料：告诉 AI 用哪几份（只认自己的资料）
     const picked = (kb_files ?? []).slice(0, 20).map(id => store.getKbFile(id)).filter(f => f && f.owner === c.get('user'))
     const note = picked.length === 0 ? '' : `\n\n［参考资料］请依据这些资料（kb_search 用 file_ids 限定检索，kb_read 读原文）：${picked.map(f => `《${f!.name}》(file_id=${f!.id})`).join('、')}`
-    return streamTurn(c, deps, row.id, message.trim() + note, { suggest, ...(memory === false ? { memory: false } : {}) })
+    // 对话里选中的数据集（只认自己的、已可用的）
+    const sets = (datasets ?? []).slice(0, 10).map(id => store.getDataset(id)).filter(d => d && d.owner === c.get('user') && d.status === 'ready')
+    const dnote = sets.length === 0 ? '' : `\n\n［数据集］请用这些数据分析（dataset_describe 看变量，dataset_open 放进工作区后用 Python 分析）：${sets.map(d => `《${d!.name}》(dataset_id=${d!.id}，${d!.rows} 行 × ${d!.cols} 列)`).join('、')}`
+    return streamTurn(c, deps, row.id, message.trim() + note + dnote, { suggest, ...(memory === false ? { memory: false } : {}) })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消
@@ -875,6 +926,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json({ asset_id: asset.id, name: asset.name }, 201)
   })
 
+  app.get('/api/assets/:id/provenance', c => {
+    const asset = store.getAsset(c.req.param('id'))
+    if (!asset || asset.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    return c.json(store.getAssetProvenance(asset.id))
+  })
   app.get('/api/assets/:id', c => {
     const asset = store.getAsset(c.req.param('id'))
     if (!asset || asset.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)

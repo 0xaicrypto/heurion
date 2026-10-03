@@ -1,4 +1,4 @@
-import { realpathSync, readFileSync, statSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, join, relative, isAbsolute } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -23,6 +23,7 @@ import type { Documents } from '../model/runtime.ts'
 import type { OpService } from '../ops/service.ts'
 import { DocOp, OpError } from '../ops/types.ts'
 import { citationOrder, diff, outline, read, ReadError, search } from '../views/read.ts'
+import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import type { KbService } from '../kb/service.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
@@ -48,6 +49,8 @@ export interface McpDeps {
   memory?: MemoryService
   /** 记忆演进（memory_review）。 */
   evolution?: MemoryEvolution
+  /** 数据集（实验室数据分析）。 */
+  datasets?: DatasetService
   /** 开放获取全文（可选）。 */
   fulltext?: FullTextClient
 }
@@ -73,6 +76,10 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 插图：幻灯片里的柱状 / 条形 / 折线 / 饼图优先用 deck_edit 的 add_chart（原生图表，用户能在 PowerPoint 里改数据）；其他数据图（生存曲线、森林图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
 - 参考资料库：写作需要依据时用 kb_search 检索用户上传的资料（论文、指南、内部材料），kb_read 读原文；资料是文献时仍用 insert_citation 规范引用。
 - 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；用户说「忘掉…」「别再…」时用 memory_forget；用户要你「整理一下记忆」时用 memory_review（结果是待用户采纳的建议）；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
+- 数据分析（用户选了数据集，或要求分析数据）：dataset_describe 看变量 → dataset_open 放进工作区 → 在 shell 里用 Python（pandas、scipy、statsmodels、lifelines、matplotlib 已装好，不能联网装包）分析。
+  报告规范：先说明纳入多少例、缺失怎么处理；连续变量正态用均值±标准差、偏态用中位数（四分位距），分类变量用 n（%）；写清检验方法；效应量给 95% CI，P 值保留三位小数（<0.001 写 P<0.001）。
+  Table 1 用文档原生表格写入（表题在表上方、表注写明统计方法）；图用 matplotlib 画（中文用 Noto Sans CJK SC 字体），分析脚本存成 .py 文件运行，asset_upload 时给 code_path 和 dataset_ids，用户能看到图是怎么来的。
+  只报告代码实际算出的数字，不要估计或编造；结果与预期不符就如实写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -518,9 +525,14 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   // —— 资产 ——
 
   server.registerTool('asset_upload', {
-    description: '把工作区里的图片（png/jpg/svg/gif/webp，≤10MB）上传为平台资产，返回 asset_id；之后用 ![说明](asset:<asset_id>) 插入文档。',
-    inputSchema: { path: z.string().min(1).describe('工作区内的相对路径') },
-  }, async ({ path }) => {
+    description: '把工作区里的图片（png/jpg/svg/gif/webp，≤10MB）上传为平台资产，返回 asset_id；之后用 ![说明](asset:<asset_id>) 插入文档。' +
+      '图是数据分析画出来的：给 code_path（生成它的 .py 脚本）和 dataset_ids，用户点开图能看到代码与数据来源。',
+    inputSchema: {
+      path: z.string().min(1).describe('工作区内的相对路径'),
+      code_path: z.string().optional().describe('生成这张图的脚本（工作区内的相对路径）'),
+      dataset_ids: z.array(z.string()).optional().describe('用到的数据集'),
+    },
+  }, async ({ path, code_path, dataset_ids }) => {
     if (!claims.p.includes('write')) return fail('forbidden', '当前令牌不能上传资产')
     const root = realpathSync(deps.workspaceDir(claims.u))
     let file: string
@@ -534,8 +546,61 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     const mime = IMAGE_MIME[extname(file).toLowerCase()]
     if (!mime) return fail('unsupported_type', `不支持的文件类型 ${extname(file)}`, { hint: '支持 png/jpg/svg/gif/webp。' })
     if (statSync(file).size > MAX_ASSET) return fail('too_large', '文件超过 10MB')
-    const asset = store.putAsset({ owner: claims.u, mime, name: rel, bytes: readFileSync(file) })
-    return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id})` })
+    // 分析来源：脚本内容（≤50KB）与数据集版本
+    let code: string | null = null
+    if (code_path) {
+      try {
+        const cf = realpathSync(isAbsolute(code_path) ? code_path : join(root, code_path))
+        const crel = relative(root, cf)
+        if (!crel.startsWith('..') && !isAbsolute(crel) && statSync(cf).size <= 50_000) code = readFileSync(cf, 'utf8')
+      } catch { /* 找不到脚本就只记数据集 */ }
+    }
+    const sets = (dataset_ids ?? []).map(id => store.getDataset(id)).filter(d => d && d.owner === claims.u).map(d => ({ id: d!.id, name: d!.name, version: d!.version, rows: d!.rows }))
+    const provenance = code || sets.length ? { code, code_path: code_path ?? null, datasets: sets, turn_id: ctx.turnId, at: new Date().toISOString() } : null
+    const asset = store.putAsset({ owner: claims.u, mime, name: rel, bytes: readFileSync(file), provenance })
+    return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id})`, ...(provenance ? { provenance: code ? '已记录代码与数据来源' : '已记录数据来源（没找到脚本）' } : {}) })
+  })
+
+  const datasetFail = (err: unknown) => {
+    if (err instanceof DatasetError) return fail(err.code, err.message, err.code === 'needs_review' ? { hint: '请用户在「数据」里处理标出的身份信息列后再分析。' } : {})
+    throw err
+  }
+
+  server.registerTool('dataset_list', {
+    description: '列出用户上传的数据集（大样本表格：CSV / Excel / SAS / SPSS / Stata 导入）。只有 status=ready 的能分析。',
+    inputSchema: {},
+  }, async () => {
+    if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
+    return json(deps.datasets.list(claims.u).map(d => ({ dataset_id: d.id, name: d.name, format: d.format, rows: d.rows, cols: d.cols, status: d.status, updated_at: d.updated_at })))
+  })
+
+  server.registerTool('dataset_describe', {
+    description: '数据集的变量：列名、用户起的标签、类型（numeric / categorical / date / text）、缺失数、摘要统计或最常见的取值。分析前先看。',
+    inputSchema: { dataset_id: z.string() },
+  }, async ({ dataset_id }) => {
+    if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
+    try {
+      const d = deps.datasets.get(claims.u, dataset_id)
+      return json({ dataset_id: d.id, name: d.name, rows: d.rows, status: d.status, truncated: d.truncated, columns: d.columns.map(c => ({ ...c, label: d.labels[c.name] ?? c.label })) })
+    } catch (err) { return datasetFail(err) }
+  })
+
+  server.registerTool('dataset_open', {
+    description: '把数据集（规范化的 UTF-8 CSV）放进工作区的 data/ 目录，返回路径，之后在 shell 里用 pandas 读。数据是只读副本，改动不影响原数据集。',
+    inputSchema: { dataset_id: z.string() },
+  }, async ({ dataset_id }) => {
+    if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
+    try {
+      const { dataset, path } = deps.datasets.readyCsv(claims.u, dataset_id)
+      const dir = join(deps.workspaceDir(claims.u), 'data')
+      if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
+      const rel = `data/${dataset.id}.csv`
+      const dest = join(deps.workspaceDir(claims.u), rel)
+      copyFileSync(path, dest)
+      chmodSync(dest, 0o644)
+      const labels = Object.entries(dataset.labels)
+      return json({ path: rel, rows: dataset.rows, columns: dataset.columns.map(c => c.name), ...(labels.length ? { labels: Object.fromEntries(labels) } : {}), hint: `pd.read_csv('${rel}')；画图、做表时用 labels 里的中文名` })
+    } catch (err) { return datasetFail(err) }
   })
 
   server.registerTool('kb_search', {

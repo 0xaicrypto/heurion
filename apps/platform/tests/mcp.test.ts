@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -9,6 +9,7 @@ import type { CrossrefClient } from '../src/literature/crossref.ts'
 import type { PubMedClient } from '../src/literature/pubmed.ts'
 import { ClaimService } from '../src/claims/service.ts'
 import { KbService } from '../src/kb/service.ts'
+import { DatasetService } from '../src/datasets/service.ts'
 import { MemoryEvolution } from '../src/memory/evolve.ts'
 import { MemoryService } from '../src/memory/service.ts'
 import type { FullTextClient } from '../src/literature/fulltext.ts'
@@ -23,6 +24,16 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
   const env = setup(markdown)
   const kb = new KbService(env.store, null)
   const memory = new MemoryService(env.store, null)
+  // 数据集：假的导入（不依赖 Python）——内容为 y 的文件标出一列身份信息
+  const datasets = new DatasetService(env.store, mkdtempSync(join(tmpdir(), 'heurion-ds-')), async (_owner, src) => {
+    const dir = mkdtempSync(join(tmpdir(), 'heurion-ds-out-'))
+    writeFileSync(join(dir, 'data.csv'), 'arm,age\nA,60\nB,55\n')
+    const phi = readFileSync(src, 'utf8') === 'y'
+    return { csv: join(dir, 'data.csv'), cleanup: () => {}, profile: { ok: true, rows: 2, truncated: false, columns: [
+      { name: 'arm', type: 'categorical', missing: 0, unique: 2, ...(phi ? { phi: { reason: '列名像姓名' } } : {}) },
+      { name: 'age', type: 'numeric', missing: 0, unique: 2 },
+    ] } }
+  })
   // 记忆整理：假模型——有「数值」相关的记忆就提议合并，并总结一条新规律
   const evolution = new MemoryEvolution(env.store, memory, env.docs, async (_s, user) => {
     const ms = JSON.parse(user).memories as Array<{ id: string; content: string }>
@@ -51,6 +62,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     kb,
     memory,
     evolution,
+    datasets,
     fulltext: { get: async (doi: string) => doi === '10.1/open' ? { source: 'pmc', url: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/', license: 'CC BY', text: 'Intro paragraph that is long enough to count as a passage for ranking purposes here.\n\nResults: the hazard ratio was 0.80 (95% CI 0.72 to 0.90) for the primary endpoint in all participants.' } : null } as unknown as FullTextClient,
   }, claims)
   const [a, b] = InMemoryTransport.createLinkedPair()
@@ -64,7 +76,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     try { parsed = JSON.parse(body) } catch { /* 纯文本视图 */ }
     return { isError: Boolean(r.isError), body: parsed as any, text: body }
   }
-  return { ...env, client, call, registry, workspace, kb, memory }
+  return { ...env, client, call, registry, workspace, kb, memory, datasets }
 }
 
 describe('MCP 工具', () => {
@@ -372,6 +384,35 @@ describe('文档仓库（AI 一侧）', () => {
     expect(f.body).toMatchObject({ result: 'forgotten', forgotten: ['统计软件用 R'] })
     expect(gone[0]).toMatchObject({ type: 'memory', result: 'forgotten' })
     expect(JSON.parse((await t.call('memory_forget', { target: '统计软件用 R' })).text).code).toBe('not_found')
+  })
+
+  it('数据集：dataset_list / describe / open 只给自己的、已处理身份信息的；asset_upload 记下代码与数据来源', async () => {
+    const t = await connect('一段。')
+    const ok = t.datasets.upload('u1', 'trial.csv', new TextEncoder().encode('x')).dataset
+    const phi = t.datasets.upload('u1', 'phi.csv', new TextEncoder().encode('y')).dataset
+    const other = t.datasets.upload('u2', 'mine.csv', new TextEncoder().encode('z')).dataset
+    await t.datasets.idle()
+    t.datasets.update('u1', ok.id, { labels: { age: '年龄（岁）' } })
+
+    const list = await t.call('dataset_list', {})
+    expect(list.body.map((d: any) => [d.name, d.status]).sort()).toEqual([['phi', 'review'], ['trial', 'ready']])
+    expect((await t.call('dataset_describe', { dataset_id: ok.id })).body.columns[1]).toMatchObject({ name: 'age', label: '年龄（岁）' })
+    expect(JSON.parse((await t.call('dataset_describe', { dataset_id: other.id })).text).code).toBe('not_found')
+
+    const opened = await t.call('dataset_open', { dataset_id: ok.id })
+    expect(opened.body).toMatchObject({ path: `data/${ok.id}.csv`, rows: 2, labels: { age: '年龄（岁）' } })
+    expect(readFileSync(join(t.workspace, opened.body.path), 'utf8')).toContain('arm,age')
+    expect(JSON.parse((await t.call('dataset_open', { dataset_id: phi.id })).text).code).toBe('needs_review')
+    expect(JSON.parse((await t.call('dataset_open', { dataset_id: other.id })).text).code).toBe('not_found')
+
+    // 分析画的图：带上脚本与数据集
+    writeFileSync(join(t.workspace, 'km.py'), 'import pandas as pd\n# KM 曲线\n')
+    writeFileSync(join(t.workspace, 'km.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
+    const up = await t.call('asset_upload', { path: 'km.png', code_path: 'km.py', dataset_ids: [ok.id, other.id] })
+    const prov = t.store.getAssetProvenance(up.body.asset_id)!
+    expect(prov.code).toContain('KM 曲线')
+    expect(prov.datasets.map(d => d.name)).toEqual(['trial'])
+    expect(t.store.getAssetProvenance((await t.call('asset_upload', { path: 'km.png' })).body.asset_id)).toBeNull()
   })
 
   it('记忆：memory_review 生成待用户采纳的建议（与界面「整理记忆」同一方法），本轮关闭记忆时不可用', async () => {

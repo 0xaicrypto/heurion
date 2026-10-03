@@ -701,7 +701,9 @@ function displayMessage(text: string): string {
   const m = /^请处理文档 \S+ 中的评论 (\S+)：/.exec(text)
   if (m) return `处理评论 ${m[1]}`
   if (/^请核对文档 \S+ 中带引用的论断/.test(text)) return '核对全部论断'
-  return text
+  // 发送时附给 AI 的说明（选中的资料 / 数据集）：对话里只显示名字
+  return text.replace(/\n\n［(参考资料|数据集)］[^：]*：(.*)/g, (_m, kind: string, list: string) =>
+    `\n（${kind === '数据集' ? '数据' : '资料'}：${[...list.matchAll(/《([^》]+)》/g)].map(x => x[1]).join('、')}）`)
 }
 
 /** AI 文字常带 **粗体** 与 `代码`：转义后只渲染这两种。 */

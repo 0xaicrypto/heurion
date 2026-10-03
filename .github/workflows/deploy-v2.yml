@@ -32,6 +32,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @heurion2/platform exec tsc --noEmit
       - run: pnpm --filter @heurion2/platform exec tsc --noEmit -p web
+      # 数据集导入测试真实运行 Python 脚本（与镜像里 /opt/compute 同一组读表的包）
+      - run: python3 -m venv .venv-compute && .venv-compute/bin/pip install --quiet pandas openpyxl pyreadstat
       - run: pnpm --filter @heurion2/platform exec vitest run
 
   images:

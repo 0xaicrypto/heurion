@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -50,6 +51,10 @@ export const config = {
    */
   sandbox: env('HEURION_SANDBOX', '0') === '1',
   dshHomesDir: resolve(dataDir, 'platform', 'dsh-homes'),
+  /** 数据集（上传的原文件、规范化后的 data.csv 与概况）。 */
+  datasetsDir: resolve(dataDir, 'platform', 'datasets'),
+  /** 计算用的 Python（统计、数据导入）：容器里是 /opt/compute 的 venv；本地开发用仓库里的 .venv-compute。 */
+  computePython: env('HEURION_PYTHON', existsSync('/opt/compute/bin/python3') ? '/opt/compute/bin/python3' : resolve(repoRoot, '.venv-compute/bin/python3')),
   /** OCR 语言模型目录（镜像里构建时已下载好；本机开发第一次用时下载）。 */
   ocrCacheDir: env('HEURION_OCR_CACHE', resolve(dataDir, 'ocr-cache')),
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),

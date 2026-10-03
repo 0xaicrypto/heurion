@@ -50,6 +50,11 @@ export class HarnessPool {
     return dir
   }
 
+  /** 该用户 dsh 的 home（隔离模式下与工作区一起交给启动器）。 */
+  homeDir(userId: string): string {
+    return `${this.config.dshHomesDir}/${safeName(userId)}`
+  }
+
   /** 隔离模式：启动器参数（uid、工作区、该用户自己的 dsh home、真正的 dsh）。 */
   private sandboxEnv(userId: string): NodeJS.ProcessEnv {
     if (!this.config.sandbox) return {}

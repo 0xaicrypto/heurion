@@ -5,9 +5,9 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 
-	# 上传（资料库 PDF 最大 50MB、docx / pptx 导入）
+	# 上传（资料库 PDF 最大 50MB、docx / pptx 导入、数据集最大 100MB）
 	request_body {
-		max_size 60MB
+		max_size 110MB
 	}
 
 	# MCP 与模型代理只给容器里的 dsh 用（走 127.0.0.1），不对外

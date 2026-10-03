@@ -95,6 +95,18 @@ export interface MemoryRow {
   last_used_at: string | null
 }
 
+/** 数据集（大样本表格）：上传 → 隔离环境里解析与概况 → 疑似身份信息的列由用户确认删除 → 可用。 */
+export interface DatasetRow {
+  id: string; owner: string; name: string; filename: string; format: string; size: number; sha256: string
+  status: 'processing' | 'review' | 'ready' | 'failed'
+  rows: number; cols: number
+  /** profile.json（列类型、缺失、摘要、疑似身份信息） */
+  profile: string | null
+  /** 用户给列起的标签 {列名: 标签} */
+  labels: string
+  error: string | null; version: number; created_at: string; updated_at: string
+}
+
 /** 记忆演进的信号：用户改写了 AI 写的段落（edit_ai）、拒绝了 AI 的修订（reject）。整理时交给模型总结规律。 */
 export interface MemorySignalRow {
   id: string; owner: string; doc_id: string; node_id: string | null; kind: 'edit_ai' | 'reject'
@@ -203,6 +215,15 @@ export interface AssetRow {
   name: string
   size: number
   created_at: string
+}
+
+/** 分析来源：AI 用哪段代码、哪些数据集（哪个版本）生成了这张图。 */
+export interface AssetProvenance {
+  code: string | null
+  code_path: string | null
+  datasets: Array<{ id: string; name: string; version: number; rows: number }>
+  turn_id: string | null
+  at: string
 }
 
 export interface TurnRow {
@@ -352,6 +373,12 @@ export class Store {
         before TEXT, after TEXT, at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS memory_events_memory ON memory_events (memory_id, at);
+      CREATE TABLE IF NOT EXISTS datasets (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, filename TEXT NOT NULL, format TEXT NOT NULL, size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL, status TEXT NOT NULL, rows INTEGER NOT NULL DEFAULT 0, cols INTEGER NOT NULL DEFAULT 0, profile TEXT,
+        labels TEXT NOT NULL DEFAULT '{}', error TEXT, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE (owner, sha256)
+      );
       CREATE TABLE IF NOT EXISTS memory_signals (
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc_id TEXT NOT NULL, node_id TEXT, kind TEXT NOT NULL,
         ai_text TEXT NOT NULL, user_text TEXT, ai_rev INTEGER NOT NULL, at TEXT NOT NULL, consumed_at TEXT
@@ -384,6 +411,8 @@ export class Store {
     if (!docCols.includes('deleted_at')) this.db.exec('ALTER TABLE docs ADD COLUMN deleted_at TEXT')
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
+    const assetCols = (this.db.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!assetCols.includes('provenance')) this.db.exec('ALTER TABLE assets ADD COLUMN provenance TEXT')
     const memCols = (this.db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map(c => c.name)
     if (!memCols.includes('use_count')) this.db.exec('ALTER TABLE memories ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0')
     if (!memCols.includes('last_used_at')) this.db.exec('ALTER TABLE memories ADD COLUMN last_used_at TEXT')
@@ -755,6 +784,43 @@ export class Store {
     for (const id of ids) st.run(t, id)
   }
 
+  // —— 数据集 ——
+
+  addDataset(d: Pick<DatasetRow, 'owner' | 'name' | 'filename' | 'format' | 'size' | 'sha256'>): DatasetRow {
+    const id = 'ds' + randomUUID().replace(/-/g, '').slice(0, 10)
+    const t = now()
+    this.db.prepare('INSERT INTO datasets (id, owner, name, filename, format, size, sha256, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, d.owner, d.name, d.filename, d.format, d.size, d.sha256, 'processing', t, t)
+    return this.getDataset(id)!
+  }
+
+  getDataset(id: string): DatasetRow | undefined {
+    return this.db.prepare('SELECT * FROM datasets WHERE id = ?').get(id) as DatasetRow | undefined
+  }
+
+  findDatasetBySha(owner: string, sha256: string): DatasetRow | undefined {
+    return this.db.prepare('SELECT * FROM datasets WHERE owner = ? AND sha256 = ?').get(owner, sha256) as DatasetRow | undefined
+  }
+
+  listDatasets(owner: string): DatasetRow[] {
+    return this.db.prepare('SELECT * FROM datasets WHERE owner = ? ORDER BY created_at DESC').all(owner) as unknown as DatasetRow[]
+  }
+
+  updateDataset(id: string, patch: Partial<Pick<DatasetRow, 'name' | 'status' | 'rows' | 'cols' | 'profile' | 'labels' | 'error' | 'version'>>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    if (keys.length === 0) return
+    this.db.prepare(`UPDATE datasets SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map(k => patch[k] as never), now(), id)
+  }
+
+  deleteDataset(id: string): void {
+    this.db.prepare('DELETE FROM datasets WHERE id = ?').run(id)
+  }
+
+  /** 服务重启时还在处理中的数据集（重新处理）。 */
+  processingDatasets(): DatasetRow[] {
+    return this.db.prepare("SELECT * FROM datasets WHERE status = 'processing'").all() as unknown as DatasetRow[]
+  }
+
   // —— 记忆演进：信号与整理建议 ——
 
   /** 同一段落、同一次 AI 写入只记一条（第一次被用户改时的 AI 原文）。返回是否新记了一条。 */
@@ -1058,15 +1124,21 @@ export class Store {
 
   // —— 资产 ——
 
-  putAsset(input: { owner: string; mime: string; name: string; bytes: Uint8Array }): AssetRow {
+  putAsset(input: { owner: string; mime: string; name: string; bytes: Uint8Array; provenance?: AssetProvenance | null }): AssetRow {
     const id = 'a' + randomUUID().replace(/-/g, '').slice(0, 15)
-    this.db.prepare('INSERT INTO assets (id, owner, mime, name, size, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, input.owner, input.mime, input.name, input.bytes.byteLength, input.bytes, now())
+    this.db.prepare('INSERT INTO assets (id, owner, mime, name, size, bytes, created_at, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, input.owner, input.mime, input.name, input.bytes.byteLength, input.bytes, now(), input.provenance ? JSON.stringify(input.provenance) : null)
     return this.getAsset(id)!
   }
 
   getAsset(id: string): AssetRow | undefined {
     return this.db.prepare('SELECT id, owner, mime, name, size, created_at FROM assets WHERE id = ?').get(id) as AssetRow | undefined
+  }
+
+  /** 由分析生成的图：生成它的代码与用到的数据集（没有则 null）。 */
+  getAssetProvenance(id: string): AssetProvenance | null {
+    const row = this.db.prepare('SELECT provenance FROM assets WHERE id = ?').get(id) as { provenance: string | null } | undefined
+    return row?.provenance ? JSON.parse(row.provenance) as AssetProvenance : null
   }
 
   getAssetBytes(id: string): Uint8Array | null {
