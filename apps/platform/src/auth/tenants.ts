@@ -14,9 +14,11 @@ export interface TenantSettings {
   external_model_for_patients: boolean
   /** 患者默认可见范围：创建者 + 诊疗组 / 本机构全员 */
   patient_visibility: 'care_team' | 'tenant'
+  /** AI 修改患者记录：review = 进待确认、由医生确认（默认）；direct = 和人一样直接生效 */
+  ai_patient_writes: 'review' | 'direct'
 }
 
-export const DEFAULT_SETTINGS: TenantSettings = { patient_module: true, external_model_for_patients: true, patient_visibility: 'care_team' }
+export const DEFAULT_SETTINGS: TenantSettings = { patient_module: true, external_model_for_patients: true, patient_visibility: 'care_team', ai_patient_writes: 'review' }
 
 export class TenantError extends Error {
   constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 400) { super(message) }
@@ -93,6 +95,7 @@ export class TenantService {
       if (typeof s.patient_module === 'boolean') cur.patient_module = s.patient_module
       if (typeof s.external_model_for_patients === 'boolean') cur.external_model_for_patients = s.external_model_for_patients
       if (s.patient_visibility === 'care_team' || s.patient_visibility === 'tenant') cur.patient_visibility = s.patient_visibility
+      if (s.ai_patient_writes === 'review' || s.ai_patient_writes === 'direct') cur.ai_patient_writes = s.ai_patient_writes
       next.settings = JSON.stringify(cur)
     }
     this.store.updateTenant(t.id, next)

@@ -61,6 +61,8 @@ export interface DocRow {
   project_id: string | null
   /** 进了回收站的时间；null 为正常文档。 */
   deleted_at: string | null
+  /** 归属（JSON）：属于某位患者的文档（病例报告等）为 {"kind":"patient","patient_id","code"}，不出现在文档列表与文档搜索里；null 为普通文档。 */
+  context: string | null
 }
 
 export type KbStatus = 'pending' | 'extracting' | 'ocr' | 'embedding' | 'ready' | 'failed'
@@ -434,6 +436,7 @@ export class Store {
     const docCols = (this.db.prepare('PRAGMA table_info(docs)').all() as Array<{ name: string }>).map(c => c.name)
     if (!docCols.includes('project_id')) this.db.exec('ALTER TABLE docs ADD COLUMN project_id TEXT')
     if (!docCols.includes('deleted_at')) this.db.exec('ALTER TABLE docs ADD COLUMN deleted_at TEXT')
+    if (!docCols.includes('context')) this.db.exec('ALTER TABLE docs ADD COLUMN context TEXT')
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
     if (!userCols.includes('tenant_id')) this.db.exec('ALTER TABLE users ADD COLUMN tenant_id TEXT')
@@ -467,7 +470,7 @@ export class Store {
   }
 
   getDoc(id: string): DocRow | undefined {
-    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at FROM docs WHERE id = ?').get(id) as DocRow | undefined
+    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at, context FROM docs WHERE id = ?').get(id) as DocRow | undefined
   }
 
   // —— 用户 ——
@@ -624,8 +627,13 @@ export class Store {
   }
 
   /** 正常文档（不含回收站）。 */
+  setDocContext(id: string, context: object | null): void {
+    this.db.prepare('UPDATE docs SET context = ? WHERE id = ?').run(context ? JSON.stringify(context) : null, id)
+  }
+
+  /** 文档列表：普通文档（属于患者的病例报告等不在这里，在患者页）。 */
   listDocs(owner: string): DocRow[] {
-    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at FROM docs WHERE owner = ? AND deleted_at IS NULL ORDER BY updated_at DESC')
+    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at, context FROM docs WHERE owner = ? AND deleted_at IS NULL AND context IS NULL ORDER BY updated_at DESC')
       .all(owner) as unknown as DocRow[]
   }
 
@@ -634,7 +642,7 @@ export class Store {
   }
 
   listTrash(owner: string): DocRow[] {
-    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at FROM docs WHERE owner = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC')
+    return this.db.prepare('SELECT id, owner, title, kind, rev, created_at, updated_at, project_id, deleted_at, context FROM docs WHERE owner = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC')
       .all(owner) as unknown as DocRow[]
   }
 
@@ -1046,7 +1054,7 @@ export class Store {
     const q = query.trim()
     if (!q) return []
     const base = `SELECT d.id AS doc_id, d.title, d.kind, d.project_id, d.updated_at, f.body AS body FROM docs_fts f JOIN docs d ON d.id = f.doc_id
-      WHERE f.owner = ? AND d.deleted_at IS NULL`
+      WHERE f.owner = ? AND d.deleted_at IS NULL AND d.context IS NULL`
     let rows: Array<{ doc_id: string; title: string; kind: DocKind; project_id: string | null; updated_at: string; body: string }>
     if ([...q].length >= 3) {
       // trigram 匹配：整串当作短语

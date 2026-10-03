@@ -107,9 +107,10 @@ async function setup() {
   const asset = await json('POST', `/api/docs/${doc.id}/assets`, A.token, undefined, imgForm)
   const invite = await json('POST', '/api/tenant/invites', A.token, {})
   const patient = await json('POST', '/api/patients', A.token, { sex: 'M', tags: [MARK] })
-  const lab = await json('POST', `/api/patients/${patient.id}/labs`, A.token, { test_name: MARK, value: 141, unit: 'µmol/L', collected_on: '2025-09-01' })
-  const pForm = new FormData(); pForm.append('file', new File([`报告 ${MARK}`], `${MARK}.pdf`, { type: 'application/pdf' })); pForm.append('kind', 'lab_report')
+  const pForm = new FormData(); pForm.append('file', new File([`报告 ${MARK}`], `${MARK}.pdf`, { type: 'application/pdf' })); pForm.append('kind', 'lab_report'); pForm.append('report_date', '2025-09-01')
   const pfile = await json('POST', `/api/patients/${patient.id}/files`, A.token, undefined, pForm)
+  const lab = await json('POST', `/api/patients/${patient.id}/records/${pfile.record.id}/labs`, A.token, { test_name: MARK, value: 141, unit: 'µmol/L' })
+  await json('POST', `/api/patients/${patient.id}/records/${pfile.record.id}/confirm`, A.token, {})
   const proposal = patients.propose({ userId: A.user.id, via: 'ai' }, patient.id, { kind: 'tag', payload: { tag: MARK }, reason: MARK })
 
   const seed: Seed = {
@@ -170,7 +171,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
   const TOOL_PARAMS: Record<string, (s: Seed) => unknown> = {
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
-    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
+    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, record_id: s => s.record, lab_id: s => s.lab, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {

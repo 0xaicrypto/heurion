@@ -6,7 +6,7 @@ import type { TenantService, TenantSettings } from '../auth/tenants.ts'
 import type { Store } from '../store/db.ts'
 import type { TenantKeys } from './keys.ts'
 import type { Complete } from '../memory/evolve.ts'
-import { extractReport } from './extract-report.ts'
+import { extractReport, redact } from './extract-report.ts'
 
 /**
  * 患者数据（docs/design/TENANCY.md §2、§4；患者模块第二期的底座）。
@@ -16,7 +16,9 @@ import { extractReport } from './extract-report.ts'
  * - 可见范围：诊疗组（创建者 + 被加入的成员），或机构设置为本机构全员；机构管理员不自动可见，查看要走紧急访问（填理由、24 小时、留痕）。
  *   看不到的患者一律当不存在（不暴露存在与否）。
  * - 每次查看、下载、导出都记访问日志（谁、何时、做了什么）。
- * - 化验值、报告、标签的修改：人直接改；AI 只能提议（proposals），由诊疗组成员采纳。
+ * - AI 与人操作能力相同（经 MCP，以当前用户身份，访问日志标明 AI）。机构设置 ai_patient_writes：
+ *   review（默认）= AI 的写入进待确认 / 提议，由医生确认；direct = 和人一样直接生效。确认化验、确认报告这类「审核」本身在 review 模式下只能由人做。
+ *   两项不给 AI：删除患者（不可恢复，与文档一致）、紧急访问（机构管理员以个人名义承担，理由须本人填写）。
  * - 化验日期是报告上的日期（collected_on），不是上传时间（v1 的教训）。
  */
 
@@ -48,7 +50,7 @@ export interface RecordRow {
 /** 报告文字：PDF（文字层 / 扫描件 OCR）、图片（OCR）→ 每页文字。 */
 export type ReportPages = (name: string, mime: string, bytes: Uint8Array) => Promise<string[]>
 export interface ProposalRow {
-  id: string; patient_id: string; kind: 'lab' | 'tag' | 'note'; payload: Record<string, unknown>; reason: string
+  id: string; patient_id: string; kind: 'lab' | 'tag' | 'note' | 'update'; payload: Record<string, unknown>; reason: string
   turn_id: string | null; status: 'pending' | 'accepted' | 'rejected'; created_by: string; created_at: string; resolved_by: string | null; resolved_at: string | null
 }
 
@@ -186,6 +188,16 @@ export class PatientService {
     return { db, tenantId: t.id, settings, tenantAdmin: this.tenants.roleOf(a.userId) === 'admin' }
   }
 
+  /** AI 写入要不要先经医生确认（机构设置）。 */
+  private aiReview(a: Actor, c: { settings: TenantSettings }): boolean {
+    return a.via === 'ai' && c.settings.ai_patient_writes !== 'direct'
+  }
+
+  /** review 模式下 AI 不能做审核动作（确认 / 驳回）。 */
+  private noAiReview(a: Actor, c: { settings: TenantSettings }, what: string): void {
+    if (this.aiReview(a, c)) throw new PatientError('needs_human_review', `${what}需要医生在「待确认」里操作（本机构设置为 AI 的修改需医生确认）`, 403)
+  }
+
   private teamRole(db: TenantPatientDb, patientId: string, userId: string): 'owner' | 'member' | null {
     return (db.db.prepare('SELECT role FROM care_team WHERE patient_id = ? AND user_id = ?').get(patientId, userId) as { role: 'owner' | 'member' } | undefined)?.role ?? null
   }
@@ -212,7 +224,6 @@ export class PatientService {
   // —— 患者 ——
 
   create(a: Actor, input: { sex?: unknown; birth_year?: unknown; tags?: unknown }): PatientRow {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能新建患者', 403)
     const c = this.ctx(a)
     const id = rid('pt')
     const t = now()
@@ -252,8 +263,15 @@ export class PatientService {
   }
 
   update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown }): PatientRow {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能直接修改患者，请用 patient_record_propose 提议', 403)
     const { c } = this.requireTeam(a, patientId)
+    if (this.aiReview(a, c)) {
+      // 需医生确认：作为一条「修改」提议
+      const clean: Record<string, unknown> = {}
+      for (const k of ['sex', 'birth_year', 'tags', 'summary', 'status'] as const) if (patch[k] !== undefined) clean[k] = patch[k]
+      if (patch.birth_year !== undefined) birthYear(patch.birth_year)
+      this.propose(a, patientId, { kind: 'update', payload: clean, reason: typeof (patch as { reason?: unknown }).reason === 'string' ? (patch as { reason: string }).reason : 'AI 修改患者信息' })
+      return this.visible(a, patientId).p
+    }
     const sets: string[] = []
     const args: Array<string | number | null> = []
     if (patch.sex !== undefined) { sets.push('sex = ?'); args.push(sex(patch.sex)) }
@@ -268,6 +286,7 @@ export class PatientService {
 
   /** 删除患者（只有负责人）：库里的记录与加密文件一起删。 */
   remove(a: Actor, patientId: string): void {
+    if (a.via === 'ai') throw new PatientError('forbidden', '删除患者不可恢复，只能由负责人在界面上操作', 403)
     const { c } = this.requireTeam(a, patientId, 'owner')
     for (const f of c.db.db.prepare('SELECT id FROM files WHERE patient_id = ?').all(patientId) as Array<{ id: string }>) rmSync(join(c.db.files, f.id), { force: true })
     c.db.db.prepare('DELETE FROM patients WHERE id = ?').run(patientId)
@@ -330,7 +349,7 @@ export class PatientService {
 
   /** 人录入 / 确认的化验值直接生效；AI 走 propose。 */
   addLab(a: Actor, patientId: string, input: Record<string, unknown>, opts: { status?: LabRow['status']; source?: LabRow['source']; recordId?: string | null } = {}): LabRow {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能直接写化验值，请用 patient_record_propose 提议', 403)
+    if (a.via === 'ai') throw new PatientError('forbidden', '化验要来自上传的报告：用 report_upload 上传，或在报告上 report_lab_add 补项', 403)
     const { c } = this.requireTeam(a, patientId)
     const lab = labInput(input)
     const id = rid('lb')
@@ -346,6 +365,7 @@ export class PatientService {
 
   setLabStatus(a: Actor, patientId: string, labId: string, status: 'confirmed' | 'rejected'): void {
     const { c } = this.requireTeam(a, patientId)
+    this.noAiReview(a, c, status === 'confirmed' ? '确认化验' : '删除待确认的化验')
     if (status === 'confirmed' && (c.db.db.prepare('SELECT collected_on FROM labs WHERE id = ?').get(labId) as { collected_on: string | null } | undefined)?.collected_on === null) {
       throw new PatientError('date_required', '这条化验没有日期，请先填写报告日期')
     }
@@ -381,7 +401,6 @@ export class PatientService {
 
   /** 上传原始报告：内容与文件名用机构密钥加密存盘，生成一条待确认的报告记录。 */
   addFile(a: Actor, patientId: string, input: { name: string; mime: string; bytes: Uint8Array; kind?: RecordRow['kind']; report_date?: string | null; title?: string }): { file_id: string; record: RecordRow } {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能上传患者文件', 403)
     const { c } = this.requireTeam(a, patientId)
     if (input.bytes.byteLength > 30 * 1024 * 1024) throw new PatientError('too_large', '文件超过 30 MB')
     const fid = rid('pf')
@@ -447,23 +466,22 @@ export class PatientService {
 
   /** 审核时对照原件补一项（自动提取漏了，或不能自动提取时）：挂在这份报告上，日期取报告日期，待确认。 */
   addRecordLab(a: Actor, patientId: string, recordId: string, input: Record<string, unknown>): LabRow {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能直接写化验，请用 patient_record_propose 提议', 403)
     const { c } = this.requireTeam(a, patientId)
     const rec = c.db.db.prepare("SELECT * FROM records WHERE id = ? AND patient_id = ? AND status = 'pending'").get(recordId, patientId) as RecordRow | undefined
     if (!rec) throw new PatientError('not_found', '没有待确认的这份报告', 404)
     const lab = labInput({ ...input, collected_on: rec.report_date ?? '1900-01-01' })
     const id = rid('lb')
     c.db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, status, source, locator, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', NULL, ?, ?)`).run(id, patientId, recordId, testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit,
-      lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), rec.report_date, a.userId, now())
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, ?, ?)`).run(id, patientId, recordId, testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit,
+      lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), rec.report_date, a.via === 'ai' ? 'ai' : 'manual', a.userId, now())
     this.log(c, a, patientId, 'lab_add', lab.test_name)
     return labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(id) as Record<string, unknown>)
   }
 
   /** 确认 / 驳回一份报告：确认时一并确认它的待确认化验（报告没有日期时必须补填）。 */
   resolveRecord(a: Actor, patientId: string, recordId: string, input: { accept: boolean; report_date?: unknown }): void {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能确认报告', 403)
     const { c } = this.requireTeam(a, patientId)
+    this.noAiReview(a, c, input.accept ? '确认报告' : '驳回报告')
     const rec = c.db.db.prepare('SELECT * FROM records WHERE id = ? AND patient_id = ?').get(recordId, patientId) as RecordRow | undefined
     if (!rec) throw new PatientError('not_found', '报告不存在', 404)
     if (!input.accept) {
@@ -484,7 +502,6 @@ export class PatientService {
 
   /** 改一条待确认的化验（审核时修正提取错误）。 */
   editLab(a: Actor, patientId: string, labId: string, input: Record<string, unknown>): LabRow {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能修改化验', 403)
     const { c } = this.requireTeam(a, patientId)
     const cur = c.db.db.prepare("SELECT * FROM labs WHERE id = ? AND patient_id = ? AND status = 'pending'").get(labId, patientId) as Record<string, unknown> | undefined
     if (!cur) throw new PatientError('not_found', '没有待确认的这条化验', 404)
@@ -500,19 +517,21 @@ export class PatientService {
 
   /** 把一份文档关联到患者（只能关联自己的文档；文档仍在作者自己的文档库里）。 */
   linkDoc(a: Actor, patientId: string, docId: string, kind: unknown = 'case_report'): void {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能关联文档', 403)
     const { c } = this.requireTeam(a, patientId)
     const doc = this.store.getDoc(docId)
     if (!doc || doc.owner !== a.userId || doc.deleted_at) throw new PatientError('not_found', '文档不存在', 404)
     const k = kind === 'followup' || kind === 'discussion' || kind === 'other' ? kind : 'case_report'
     c.db.db.prepare('INSERT OR IGNORE INTO patient_docs (patient_id, doc_id, kind, created_by, created_at) VALUES (?, ?, ?, ?, ?)').run(patientId, docId, k, a.userId, now())
+    // 属于患者的文档：不出现在文档列表里，打开时显示归属并能回到患者页
+    const p = c.db.db.prepare('SELECT code FROM patients WHERE id = ?').get(patientId) as { code: string }
+    this.store.setDocContext(docId, { kind: 'patient', patient_id: patientId, code: p.code, doc_kind: k })
     this.log(c, a, patientId, 'doc_link', docId)
   }
 
   unlinkDoc(a: Actor, patientId: string, docId: string): void {
-    if (a.via === 'ai') throw new PatientError('forbidden', 'AI 不能取消关联', 403)
     const { c } = this.requireTeam(a, patientId)
-    c.db.db.prepare('DELETE FROM patient_docs WHERE patient_id = ? AND doc_id = ? AND created_by = ?').run(patientId, docId, a.userId)
+    const r = c.db.db.prepare('DELETE FROM patient_docs WHERE patient_id = ? AND doc_id = ? AND created_by = ?').run(patientId, docId, a.userId)
+    if (Number(r.changes) > 0) this.store.setDocContext(docId, null)
     this.log(c, a, patientId, 'doc_unlink', docId)
   }
 
@@ -526,12 +545,22 @@ export class PatientService {
       })
   }
 
+  /** 报告的文字（自动提取时保存的，已打码：姓名、证件号、电话、住院号等换成占位符）。给 AI 读报告用；人看原件。 */
+  recordText(a: Actor, patientId: string, recordId: string): { title: string; kind: string; report_date: string | null; text: string | null } {
+    const { c } = this.visible(a, patientId)
+    const r = c.db.db.prepare('SELECT title, kind, report_date, text_enc FROM records WHERE id = ? AND patient_id = ?').get(recordId, patientId) as { title: string; kind: string; report_date: string | null; text_enc: string | null } | undefined
+    if (!r) throw new PatientError('not_found', '报告不存在', 404)
+    const text = this.keys.decryptText(c.tenantId, r.text_enc)
+    this.log(c, a, patientId, 'record_read', recordId)
+    return { title: r.title, kind: r.kind, report_date: r.report_date, text: text === null ? null : redact(text).slice(0, 20000) }
+  }
+
   // —— AI 提议 ——
 
   propose(a: Actor, patientId: string, input: { kind?: unknown; payload?: unknown; reason?: unknown }): ProposalRow {
     const { c } = this.visible(a, patientId)
     const kind = input.kind
-    if (kind !== 'lab' && kind !== 'tag' && kind !== 'note') throw new PatientError('bad_kind', 'kind 只能是 lab / tag / note')
+    if (kind !== 'lab' && kind !== 'tag' && kind !== 'note' && kind !== 'update') throw new PatientError('bad_kind', 'kind 只能是 lab / tag / note / update')
     const payload = (input.payload && typeof input.payload === 'object' ? input.payload : {}) as Record<string, unknown>
     if (kind === 'lab') labInput(payload) // 先校验
     if (kind === 'tag' && (typeof payload.tag !== 'string' || !payload.tag.trim())) throw new PatientError('bad_payload', 'tag 需要 payload.tag')
@@ -560,6 +589,8 @@ export class PatientService {
       if (prop.kind === 'lab') {
         const lab = this.addLab({ ...a, via: 'user' }, patientId, prop.payload)
         c.db.db.prepare("UPDATE labs SET source = 'ai' WHERE id = ?").run(lab.id)
+      } else if (prop.kind === 'update') {
+        this.update(a, patientId, prop.payload)
       } else if (prop.kind === 'tag') {
         this.update(a, patientId, { tags: [...new Set([...p.tags, String(prop.payload.tag).trim()])] })
       } else {

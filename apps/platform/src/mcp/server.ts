@@ -84,8 +84,9 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
   报告规范：先说明纳入多少例、缺失怎么处理；连续变量正态用均值±标准差、偏态用中位数（四分位距），分类变量用 n（%）；写清检验方法；效应量给 95% CI，P 值保留三位小数（<0.001 写 P<0.001）。
   Table 1 用文档原生表格写入（表题在表上方、表注写明统计方法）；图用 matplotlib 画（插入时写图注：图号、图题、样本量、统计方法，例如「图 1 两组 Kaplan-Meier 生存曲线（n=312，log-rank 检验）」）（中文用 Noto Sans CJK SC 字体），分析脚本存成 .py 文件运行，asset_upload 时给 code_path 和 dataset_ids，用户能看到图是怎么来的。
   只报告代码实际算出的数字，不要估计或编造；结果与预期不符就如实写。
-- 患者（patient_*、labs_*）：患者只有代号（P-0001），没有姓名，写作时也只用代号或「患者，男，60 余岁」这样的去标识写法。
-  只引用已确认的化验值并写明日期；发现报告里有值得记录的化验、诊断时用 patient_record_propose 提议（写清来自哪份报告、哪一页），由医生确认——你不能直接改患者记录。
+- 患者（patient_* / report_* / lab_*）：你和医生能做同样的操作（新建、改信息、上传报告、补项改项、确认、关联病例报告、诊疗组）。患者只有代号（P-0001），没有姓名，写作时也只用代号或「患者，男，60 余岁」这样的去标识写法。
+  化验只来自上传的报告；只引用已确认的化验值并写明日期。本机构若设为「AI 的修改需医生确认」，你的写入进待确认、确认 / 驳回由医生做——遇到 needs_human_review 就告诉用户去患者页「待确认」审核。
+  写病例报告：doc_create 新建文档 → patient_doc_link 关联到患者（这样它出现在患者页的「病例报告」里，不在文档列表里）→ 依据 patient_read / labs_query 写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -633,27 +634,28 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     try {
       const p = deps.patients.read(aiActor(), patient_id)
       return json({
-        patient_id: p.id, code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, summary: p.summary,
-        records: p.records.map(r => ({ kind: r.kind, title: r.title, report_date: r.report_date, status: r.status })),
+        patient_id: p.id, code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, summary: p.summary, your_access: p.access,
+        records: p.records.map(r => ({ record_id: r.id, kind: r.kind, title: r.title, report_date: r.report_date, status: r.status, extraction: r.extraction, note: r.extraction_note })),
         latest_labs: p.latest_labs.map(l => ({ test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref: l.ref_low !== null || l.ref_high !== null ? `${l.ref_low ?? ''}–${l.ref_high ?? ''}` : l.ref_text, date: l.collected_on })),
         pending_proposals: p.pending_proposals.length,
-        previous_reports: p.documents.map(d => ({ title: d.title, kind: d.kind, updated_at: d.updated_at })),
+        previous_reports: p.documents.map(d => ({ doc_id: d.can_open ? d.doc_id : null, title: d.title, kind: d.kind, author: d.author, updated_at: d.updated_at })),
       })
     } catch (err) { return patientFail(err) }
   })
 
   server.registerTool('labs_query', {
-    description: '一位患者的化验长表（只含已确认的；按项目、日期排序）。tests 可写中文或缩写（肌酐 / Cr / creatinine 视为同一项）。看趋势、写病例时用。',
+    description: '一位患者的化验长表（默认只含已确认的；include_pending=true 时也列待确认的，审核时用）。tests 可写中文或缩写（肌酐 / Cr / creatinine 视为同一项）。看趋势、写病例时用。',
     inputSchema: {
       patient_id: z.string(),
+      include_pending: z.boolean().optional(),
       tests: z.array(z.string()).optional(),
       from: z.string().optional().describe('YYYY-MM-DD'),
       to: z.string().optional().describe('YYYY-MM-DD'),
     },
-  }, async ({ patient_id, tests, from, to }) => {
+  }, async ({ patient_id, include_pending, tests, from, to }) => {
     if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
     try {
-      return json(deps.patients.labs(aiActor(), patient_id, { tests, from, to }).map(l => ({ test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref_low: l.ref_low, ref_high: l.ref_high, date: l.collected_on })))
+      return json(deps.patients.labs(aiActor(), patient_id, { tests, from, to, includePending: include_pending }).map(l => ({ lab_id: l.id, record_id: l.record_id, status: l.status, source: l.source, test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref_low: l.ref_low, ref_high: l.ref_high, date: l.collected_on, page: l.locator?.page ?? null, found_in_original: l.locator?.verified ?? null })))
     } catch (err) { return patientFail(err) }
   })
 
@@ -688,6 +690,109 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       return json({ result: 'proposed', proposal_id: p.id, message: '已提议，等医生在患者页确认' })
     } catch (err) { return patientFail(err) }
   })
+
+  // —— 与人相同的患者操作（界面上的每个操作都有对应工具；删除患者、紧急访问除外）——
+  const pt = (fn: (svc: PatientService) => unknown) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try { return json(fn(deps.patients)) } catch (err) { return patientFail(err) }
+  }
+
+  server.registerTool('patient_create', {
+    description: '新建患者（你是负责人）。只填代号以外的去标识信息：性别、出生年份、诊断标签；不要填姓名。',
+    inputSchema: { sex: z.enum(['M', 'F']).optional(), birth_year: z.number().int().optional(), tags: z.array(z.string()).optional() },
+  }, async args => pt(svc => { const p = svc.create(aiActor(), args); return { patient_id: p.id, code: p.code } }))
+
+  server.registerTool('patient_update', {
+    description: '改患者信息：性别、出生年份、诊断标签（整组替换）、摘要（整段替换）、状态（active / archived）。需医生确认的机构里会变成一条待确认的修改。',
+    inputSchema: {
+      patient_id: z.string(), sex: z.enum(['M', 'F']).optional(), birth_year: z.number().int().optional(), tags: z.array(z.string()).optional(),
+      summary: z.string().max(5000).optional(), status: z.enum(['active', 'archived']).optional(), reason: z.string().max(300).optional().describe('为什么改（给医生看）'),
+    },
+  }, async ({ patient_id, ...patch }) => pt(svc => {
+    const before = svc.read(aiActor(), patient_id).pending_proposals.length
+    svc.update(aiActor(), patient_id, patch)
+    const pending = svc.read(aiActor(), patient_id).pending_proposals.length > before
+    return { result: pending ? 'proposed' : 'updated', message: pending ? '已作为待确认的修改提交，等医生在患者页确认' : '已修改' }
+  }))
+
+  server.registerTool('report_upload', {
+    description: '把工作区里的报告文件（PDF / 图片 / docx / txt，≤30MB）上传为患者的原始报告，自动提取化验项进待确认。report_date 是报告上的日期（知道就填）。',
+    inputSchema: {
+      patient_id: z.string(), path: z.string().describe('工作区内的相对路径'),
+      kind: z.enum(['lab_report', 'discharge', 'pathology', 'imaging', 'note', 'other']).optional(), title: z.string().max(120).optional(), report_date: z.string().optional(),
+    },
+  }, async ({ patient_id, path, kind, title, report_date }) => {
+    const root = realpathSync(deps.workspaceDir(claims.u))
+    let file: string
+    try { file = realpathSync(isAbsolute(path) ? path : join(root, path)) } catch { return fail('file_not_found', `找不到文件 ${path}`) }
+    const rel = relative(root, file)
+    if (rel.startsWith('..') || isAbsolute(rel)) return fail('forbidden', '只能上传工作目录内的文件')
+    const MIME: Record<string, string> = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.txt': 'text/plain', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }
+    const mime = MIME[extname(file).toLowerCase()]
+    if (!mime) return fail('unsupported_type', `不支持 ${extname(file)}`, { hint: '支持 PDF、图片、docx、txt。' })
+    return pt(svc => {
+      const r = svc.addFile(aiActor(), patient_id, { name: rel.split('/').pop()!, mime, bytes: readFileSync(file), kind, title, report_date: report_date ?? null })
+      return { record_id: r.record.id, extraction: r.record.extraction, message: r.record.extraction === 'queued' ? '已上传，正在自动提取；稍后用 patient_read 看提取结果' : r.record.extraction_note }
+    })
+  })
+
+  server.registerTool('report_read', {
+    description: '读一份原始报告的文字（自动提取时识别的；姓名、证件号、电话、住院号等已打码）。核对化验项、写病例时用。',
+    inputSchema: { patient_id: z.string(), record_id: z.string() },
+  }, async ({ patient_id, record_id }) => pt(svc => svc.recordText(aiActor(), patient_id, record_id)))
+
+  server.registerTool('report_lab_add', {
+    description: '在一份待确认的报告上补一项化验（自动提取漏了时；照报告原文填写）。日期取这份报告的日期，进待确认。',
+    inputSchema: {
+      patient_id: z.string(), record_id: z.string(), test_name: z.string(), value: z.union([z.string(), z.number()]), unit: z.string().optional(),
+      ref_low: z.number().optional(), ref_high: z.number().optional(), ref_text: z.string().optional(),
+    },
+  }, async ({ patient_id, record_id, ...lab }) => pt(svc => { const l = svc.addRecordLab(aiActor(), patient_id, record_id, lab); return { lab_id: l.id, status: l.status, flag: l.flag } }))
+
+  server.registerTool('lab_edit', {
+    description: '改一条待确认的化验（修正提取错误：项目名、数值、单位、参考范围、日期）。',
+    inputSchema: {
+      patient_id: z.string(), lab_id: z.string(), test_name: z.string().optional(), value: z.union([z.string(), z.number()]).optional(), unit: z.string().optional(),
+      ref_low: z.number().optional(), ref_high: z.number().optional(), collected_on: z.string().optional(),
+    },
+  }, async ({ patient_id, lab_id, ...patch }) => pt(svc => { const l = svc.editLab(aiActor(), patient_id, lab_id, patch); return { lab_id: l.id, value: l.value_num ?? l.value_text, flag: l.flag } }))
+
+  server.registerTool('lab_resolve', {
+    description: '确认或删除一条待确认的化验。本机构设为「AI 的修改需医生确认」时只能由医生做（会返回 needs_human_review）。',
+    inputSchema: { patient_id: z.string(), lab_id: z.string(), action: z.enum(['confirm', 'reject']) },
+  }, async ({ patient_id, lab_id, action }) => pt(svc => { svc.setLabStatus(aiActor(), patient_id, lab_id, action === 'confirm' ? 'confirmed' : 'rejected'); return { result: action } }))
+
+  server.registerTool('report_resolve', {
+    description: '确认或驳回整份报告（确认时一并确认它的待确认化验；报告没有日期时要给 report_date）。本机构设为「AI 的修改需医生确认」时只能由医生做。',
+    inputSchema: { patient_id: z.string(), record_id: z.string(), action: z.enum(['confirm', 'reject']), report_date: z.string().optional() },
+  }, async ({ patient_id, record_id, action, report_date }) => pt(svc => { svc.resolveRecord(aiActor(), patient_id, record_id, { accept: action === 'confirm', report_date }); return { result: action } }))
+
+  server.registerTool('patient_doc_link', {
+    description: '把一份文档关联到患者（如你写的病例报告），它会出现在患者页「病例报告」里、不出现在文档列表里；action=unlink 取消关联。',
+    inputSchema: { patient_id: z.string(), doc_id: z.string(), action: z.enum(['link', 'unlink']).optional(), kind: z.enum(['case_report', 'followup', 'discussion', 'other']).optional() },
+  }, async ({ patient_id, doc_id, action, kind }) => pt(svc => {
+    if (action === 'unlink') svc.unlinkDoc(aiActor(), patient_id, doc_id)
+    else svc.linkDoc(aiActor(), patient_id, doc_id, kind)
+    return { result: action ?? 'link' }
+  }))
+
+  server.registerTool('patient_team', {
+    description: '诊疗组（只有负责人能改）：action=list 看成员；add / remove 按用户名加入或移出本机构的同事。',
+    inputSchema: { patient_id: z.string(), action: z.enum(['list', 'add', 'remove']), username: z.string().optional() },
+  }, async ({ patient_id, action, username }) => pt(svc => {
+    if (action !== 'list') {
+      const u = username ? store.getUserByName(username) : undefined
+      if (!u) throw new PatientError('not_found', '本机构没有这位成员', 404)
+      if (action === 'add') svc.addMember(aiActor(), patient_id, u.id)
+      else svc.removeMember(aiActor(), patient_id, u.id)
+    }
+    return svc.read(aiActor(), patient_id).care_team.map(m => ({ name: m.name, role: m.role }))
+  }))
+
+  server.registerTool('patient_access_log', {
+    description: '患者的访问记录（谁、何时、做了什么、是不是 AI）。只有负责人能看。',
+    inputSchema: { patient_id: z.string() },
+  }, async ({ patient_id }) => pt(svc => svc.accessLog(aiActor(), patient_id).slice(0, 200)))
 
   server.registerTool('kb_search', {
     description:

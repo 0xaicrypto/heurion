@@ -396,6 +396,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   return {
     /** 打开文档时：患者页失效 */
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
+    /** 打开患者页（从病例报告回到患者） */
+    async open(id: string): Promise<void> { setMode('patients'); await openPatient(id) },
     /** 机构没开患者模块时隐藏页签 */
     setEnabled(on: boolean): void { $('navPatients').closest<HTMLElement>('.nav-switch')!.hidden = !on; if (!on) setMode('docs') },
   }

@@ -19,7 +19,7 @@ export interface Me {
   tenant: { id: string; name: string; kind: 'personal' | 'org'; role: 'admin' | 'member'; settings: TenantSettings; members: number } | null
 }
 
-interface TenantSettings { patient_module: boolean; external_model_for_patients: boolean; patient_visibility: 'care_team' | 'tenant' }
+interface TenantSettings { patient_module: boolean; external_model_for_patients: boolean; patient_visibility: 'care_team' | 'tenant'; ai_patient_writes: 'review' | 'direct' }
 
 /** 邀请链接里的邀请码（/app?invite=…）。 */
 export const inviteCode = (): string | null => new URLSearchParams(location.search).get('invite')
@@ -523,10 +523,11 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
   const dlg = openDialog(t.kind === 'org' ? '机构管理' : '机构与邀请', `
     <form id="tenantForm" class="form"><label>机构名称<span class="field-row"><input type="text" name="name" value="${esc(t.name)}" maxlength="60" required><button class="primary">保存</button></span></label></form>
     ${t.kind === 'personal' ? '<div class="muted">现在是个人账户。邀请同事加入后，这里就成为一个机构：成员的文档、资料仍各自私有；以后的患者数据按机构隔离。</div>' : ''}
-    <h3 class="mem-h">患者数据（下一期上线）</h3>
+    <h3 class="mem-h">患者数据</h3>
     <div class="tenant-settings">
       <label class="toggle"><input type="checkbox" data-set="patient_module" ${t.settings.patient_module ? 'checked' : ''}> 启用患者模块</label>
       <label class="toggle"><input type="checkbox" data-set="external_model_for_patients" ${t.settings.external_model_for_patients ? 'checked' : ''}> 患者数据可以交给外部模型分析（只发代号，不发姓名）</label>
+      <label class="toggle">AI 修改患者记录 <select data-set="ai_patient_writes"><option value="review"${t.settings.ai_patient_writes !== 'direct' ? ' selected' : ''}>需医生确认（进待确认）</option><option value="direct"${t.settings.ai_patient_writes === 'direct' ? ' selected' : ''}>直接生效（和人一样）</option></select></label>
       <label class="toggle">患者默认可见范围 <select data-set="patient_visibility"><option value="care_team"${t.settings.patient_visibility === 'care_team' ? ' selected' : ''}>创建者 + 诊疗组</option><option value="tenant"${t.settings.patient_visibility === 'tenant' ? ' selected' : ''}>本机构全员</option></select></label>
     </div>
     <h3 class="mem-h">成员</h3><div id="tenantMembers" class="muted">加载中…</div>

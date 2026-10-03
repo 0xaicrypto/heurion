@@ -294,6 +294,7 @@ function leaveDoc(): void {
   $('toolbar').hidden = true
   $('deckToolbar').hidden = true
   $('docTitle').textContent = ''
+  $('docContext').hidden = true
   setSyncStatus('offline')
   $('syncStatus').textContent = ''
   for (const b of ['exportBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = true
@@ -355,6 +356,13 @@ async function open(docId: string): Promise<void> {
     })
     session = { docId, kind: 'doc', stream, ydoc, provider, editor }
     $('page').classList.remove('deck')
+  }
+  // 属于患者的文档（病例报告等）：顶栏显示归属，点击回到患者页
+  const ctx = (() => { try { return meta.context ? JSON.parse(meta.context) : null } catch { return null } })()
+  $('docContext').hidden = ctx?.kind !== 'patient'
+  if (ctx?.kind === 'patient') {
+    $('docContext').textContent = `← ${ctx.code} · ${({ case_report: '病例报告', followup: '随访小结', discussion: '病例讨论' } as Record<string, string>)[ctx.doc_kind] ?? '患者文档'}`
+    $('docContext').onclick = () => void patientsUi.open(ctx.patient_id)
   }
   $('toolbar').hidden = meta.kind === 'deck'
   $('deckToolbar').hidden = meta.kind !== 'deck'

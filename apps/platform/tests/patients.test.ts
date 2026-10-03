@@ -89,24 +89,72 @@ describe('患者：化验', () => {
   })
 })
 
-describe('患者：AI 只能提议', () => {
-  it('AI 不能新建、修改、直接写化验；提议要写依据；人采纳后生效并标明来源', () => {
+describe('患者：AI 与人操作能力相同', () => {
+  it('默认（需医生确认）：AI 能新建、改信息、上传报告、补项、改待确认的项、关联文档，但写入都进待确认；确认 / 驳回只能由人做', () => {
+    const t = env()
+    const ai = t.as(t.u.drA, 'ai')
+    const dr = t.as(t.u.drA)
+    const p = t.svc.create(ai, { sex: 'M', tags: ['CKD3'] })
+    expect(t.svc.read(dr, p.id).care_team.map(m => m.role)).toEqual(['owner'])
+
+    // 改信息 → 一条「修改」提议，人采纳后生效
+    t.svc.update(ai, p.id, { tags: ['CKD3', '2型糖尿病'] })
+    expect(t.svc.read(dr, p.id).tags).toEqual(['CKD3'])
+    const prop = t.svc.read(dr, p.id).pending_proposals[0]!
+    expect(prop.kind).toBe('update')
+    expect(() => t.svc.resolveProposal(ai, p.id, prop.id, true)).toThrow('AI')
+    t.svc.resolveProposal(dr, p.id, prop.id, true)
+    expect(t.svc.read(dr, p.id).tags).toEqual(['CKD3', '2型糖尿病'])
+
+    // 上传报告、补项、改项：都在待确认里
+    const up = t.svc.addFile(ai, p.id, { name: 'r.pdf', mime: 'application/pdf', bytes: Buffer.from('x'), report_date: '2025-09-01' })
+    const lab = t.svc.addRecordLab(ai, p.id, up.record.id, { test_name: 'ALT', value: 50, unit: 'U/L', ref_high: 40 })
+    expect([lab.status, lab.source, lab.flag]).toEqual(['pending', 'ai', 'H'])
+    t.svc.editLab(ai, p.id, lab.id, { value: 52 })
+    expect(() => t.svc.resolveRecord(ai, p.id, up.record.id, { accept: true })).toThrow('医生')
+    expect(() => t.svc.setLabStatus(ai, p.id, lab.id, 'confirmed')).toThrow('医生')
+    expect(() => t.svc.addLab(ai, p.id, { test_name: 'ALT', value: 50, collected_on: '2025-01-01' })).toThrow('上传的报告')
+    t.svc.resolveRecord(dr, p.id, up.record.id, { accept: true })
+    expect(t.svc.labs(dr, p.id).map(l => [l.test_key, l.value_num, l.source])).toEqual([['alt', 52, 'ai']])
+
+    // 关联文档（AI 写的病例报告）
+    const doc = t.store.createDoc({ owner: t.u.drA, title: 'P-0001 病例报告', kind: 'doc', state: new Uint8Array() })
+    t.svc.linkDoc(ai, p.id, doc.id)
+    expect(t.svc.read(dr, p.id).documents.map(d => d.title)).toEqual(['P-0001 病例报告'])
+    // 属于患者的文档不在文档列表里
+    expect(t.store.listDocs(t.u.drA).map(d => d.id)).not.toContain(doc.id)
+    expect(JSON.parse(t.store.getDoc(doc.id)!.context!)).toMatchObject({ kind: 'patient', patient_id: p.id, code: 'P-0001' })
+    t.svc.unlinkDoc(dr, p.id, doc.id)
+    expect(t.store.listDocs(t.u.drA).map(d => d.id)).toContain(doc.id)
+    t.svc.linkDoc(dr, p.id, doc.id)
+
+    // 不给 AI：删除、紧急访问
+    expect(() => t.svc.remove(ai, p.id)).toThrow('删除')
+    expect(() => t.svc.breakGlass(t.as(t.u.adminA, 'ai'), p.id, '患者夜间急诊需要查看既往化验')).toThrow('AI')
+    expect(t.svc.accessLog(dr, p.id).filter(l => l.via === 'ai').map(l => l.action)).toEqual(expect.arrayContaining(['create', 'propose', 'file_upload', 'lab_add', 'lab_edit', 'doc_link']))
+  })
+
+  it('机构设为「直接生效」：AI 的修改和确认和人一样直接生效', () => {
+    const t = env()
+    t.tenants.update(t.u.adminA, { settings: { ai_patient_writes: 'direct' } })
+    const ai = t.as(t.u.drA, 'ai')
+    const p = t.svc.create(ai, {})
+    t.svc.update(ai, p.id, { tags: ['心衰'] })
+    expect(t.svc.read(t.as(t.u.drA), p.id).tags).toEqual(['心衰'])
+    const up = t.svc.addFile(ai, p.id, { name: 'r.pdf', mime: 'application/pdf', bytes: Buffer.from('x'), report_date: '2025-09-01' })
+    t.svc.addRecordLab(ai, p.id, up.record.id, { test_name: 'NT-proBNP', value: 1850, unit: 'pg/mL', ref_high: 125 })
+    t.svc.resolveRecord(ai, p.id, up.record.id, { accept: true })
+    expect(t.svc.labs(t.as(t.u.drA), p.id).map(l => [l.test_key, l.status, l.flag])).toEqual([['nt_probnp', 'confirmed', 'H']])
+  })
+
+  it('AI 的提议要写依据；人不采纳就不生效', () => {
     const t = env()
     const p = t.svc.create(t.as(t.u.drA), {})
     const ai = t.as(t.u.drA, 'ai')
-    expect(() => t.svc.create(ai, {})).toThrow('AI')
-    expect(() => t.svc.update(ai, p.id, { tags: [] })).toThrow('提议')
-    expect(() => t.svc.addLab(ai, p.id, { test_name: 'ALT', value: 50, collected_on: '2025-01-01' })).toThrow('提议')
-    expect(() => t.svc.propose(ai, p.id, { kind: 'lab', payload: { test_name: 'ALT', value: 50, collected_on: '2025-01-01' } })).toThrow('依据')
-    const prop = t.svc.propose(ai, p.id, { kind: 'lab', payload: { test_name: 'ALT', value: 50, unit: 'U/L', ref_high: 40, collected_on: '2025-01-01' }, reason: '2025-01-01 肝功能报告第 1 页' })
-    expect(t.svc.labs(t.as(t.u.drA), p.id)).toEqual([])
-    expect(() => t.svc.resolveProposal(ai, p.id, prop.id, true)).toThrow('AI')
-    t.svc.resolveProposal(t.as(t.u.drA), p.id, prop.id, true)
-    expect(t.svc.labs(t.as(t.u.drA), p.id).map(l => [l.test_key, l.flag, l.source])).toEqual([['alt', 'H', 'ai']])
+    expect(() => t.svc.propose(ai, p.id, { kind: 'tag', payload: { tag: '脂肪肝' } })).toThrow('依据')
     const tag = t.svc.propose(ai, p.id, { kind: 'tag', payload: { tag: '脂肪肝' }, reason: '出院小结诊断' })
     t.svc.resolveProposal(t.as(t.u.drA), p.id, tag.id, false)
     expect(t.svc.read(t.as(t.u.drA), p.id).tags).toEqual([])
-    expect(t.svc.accessLog(t.as(t.u.drA), p.id).filter(l => l.via === 'ai').map(l => l.action)).toContain('propose')
   })
 
   it('机构关闭「患者数据交给外部模型」时 AI 一律不能访问；关闭患者模块时谁都不能访问', () => {

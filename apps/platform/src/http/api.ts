@@ -300,7 +300,6 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.json(pt(c).labs(me(c), c.req.param('ptid'), { tests, from: c.req.query('from'), to: c.req.query('to'), includePending: c.req.query('pending') === '1' }))
     } catch (err) { return patientFailure(c, err) }
   })
-  app.post('/api/patients/:ptid/labs', async c => { try { return c.json(pt(c).addLab(me(c), c.req.param('ptid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) } })
   app.post('/api/patients/:ptid/labs/:lid/:action{confirm|reject}', c => {
     try { pt(c).setLabStatus(me(c), c.req.param('ptid'), c.req.param('lid'), c.req.param('action') === 'confirm' ? 'confirmed' : 'rejected'); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }
   })

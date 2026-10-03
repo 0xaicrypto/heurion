@@ -501,6 +501,8 @@ button.block { width: 100%; padding: 10px 12px; }
 .kb-picker-empty { padding: 6px 10px; }
 
 /* —— 患者 —— */
+.doc-context { flex: none; font-size: 12px; padding: 3px 10px; border-color: var(--green-line); color: var(--mint-text); background: var(--green-soft); }
+
 .nav-switch { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 16px 0; border: 1px solid var(--line-strong); }
 .nav-switch button { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 0 7px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 14px; font-weight: 500; }
 .nav-switch button + button { border-left: 1px solid var(--line-strong); }
