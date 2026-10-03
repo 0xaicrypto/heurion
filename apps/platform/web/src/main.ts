@@ -11,9 +11,12 @@ import { Editor, type SelectionAnchor } from './editor.ts'
 import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
+import { applyTheme, mountThemeSwitch } from './theme.ts'
 
 const TOKEN = storedToken()
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
+applyTheme()
+mountThemeSwitch($('themeSwitch'))
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 
 async function api<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
