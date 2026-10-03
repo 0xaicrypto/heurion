@@ -108,7 +108,14 @@ export async function importReferences(
       if (seen.has(doi)) continue
       seen.add(doi)
       if (existing.has(doi)) { report.already++; continue }
-      const article = await deps.crossref.lookup(doi).catch(() => null)
+      // lookup：DOI 不存在返回 null；网络 / 限流抛错——重试一次，仍失败就如实说是暂时访问不了（不能说成「查不到」）
+      let article: Awaited<ReturnType<CrossrefClient['lookup']>>
+      try {
+        article = await deps.crossref.lookup(doi).catch(async () => { await new Promise(res => setTimeout(res, 1500)); return deps.crossref.lookup(doi) })
+      } catch (err) {
+        report.skipped.push({ label: r.label || doi, reason: `Crossref 暂时无法访问（${(err as Error).message.slice(0, 60)}），稍后重新导入即可` })
+        continue
+      }
       if (!article) { report.skipped.push({ label: r.label || doi, reason: `DOI ${doi} 在 Crossref 查不到` }); continue }
       const row = deps.store.upsertCitation({ doc_id: docId, doi: article.doi!, pmid: r.pmid ?? null, formatted: formatAma(article), url: `https://doi.org/${article.doi}` })
       report.added.push({ cite_id: row.id, formatted: row.formatted })

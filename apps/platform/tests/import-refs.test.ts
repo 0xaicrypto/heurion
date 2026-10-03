@@ -46,6 +46,16 @@ describe('参考文献导入：解析', () => {
 })
 
 describe('参考文献导入：核实与登记', () => {
+  it('Crossref 网络出错：重试一次，仍失败时如实报告「暂时无法访问」而不是「查不到」', async () => {
+    const store = new Store(':memory:')
+    const d1 = new Documents(store).create({ owner: 'u', title: 'x' }).id
+    let calls = 0
+    const crossref = { lookup: async () => { calls++; throw new Error('Crossref HTTP 429') } } as unknown as CrossrefClient
+    const r = await importReferences({ store, crossref, pubmed: { summaries: async () => [] } as unknown as PubMedClient }, d1, parseReferences('10.1056/NEJMoa2307563'))
+    expect(calls).toBe(2)
+    expect(r.skipped[0]!.reason).toContain('暂时无法访问')
+  })
+
   it('DOI 经 Crossref 核实登记；只有 PMID 的经 PubMed 补 DOI；查不到的跳过；重复与已有的不重复登记', async () => {
     const store = new Store(':memory:')
     const d1 = new Documents(store).create({ owner: 'u', title: 'x' }).id
