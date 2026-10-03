@@ -405,6 +405,49 @@ await page.click('#askOk')
 await wait(1000)
 slides = (await deckModel()).content
 ok('删页：删掉选中形状所在的页', slides.length === 2 && slides.every((sl: any) => sl.attrs.layout_name !== '两栏'))
+
+// 带图模板：模板选择器里照片缩略图；换成带图模板后封面铺照片（装饰，画布里能显示）
+await page.click('#deckTheme')
+await page.waitForSelector('.tpl-grid')
+ok('模板选择器：带图模板的封面预览显示照片与摄影师署名', await page.locator('.tpl-card[data-tpl="mist"] .tpl-cover svg image').count() === 1 && /Unsplash/.test(await page.locator('.tpl-card[data-tpl="mist"] .tpl-credit').textContent() ?? ''))
+const photoLoaded = await page.evaluate(async () => { const r = await fetch('/theme-photos/tp_mist_cover.jpg'); return r.ok && r.headers.get('content-type') === 'image/jpeg' })
+ok('带图模板的照片能取到（内置资源）', photoLoaded)
+await page.click('.tpl-card[data-tpl="mist"]')
+await wait(1200)
+const coverShapes = (await deckModel()).content[0].content
+ok('换成带图模板：封面铺全幅照片装饰（内置资产），画布显示出来', coverShapes.some((c: any) => c.attrs?.kind === 'image' && c.attrs.asset_id === 'tp_mist_cover' && isDeco(c))
+  && await page.locator('.slide-wrap:first-child .shape.deco img').evaluate(e => (e as HTMLImageElement).complete && (e as HTMLImageElement).naturalWidth > 0).catch(() => false))
+
+// 图库：本测试实例没配 Unsplash key → 「＋图片」直接上传，不出现搜图入口
+const imgCfg = await api('/api/images')
+if (!imgCfg.configured) {
+  const chooser = page.waitForEvent('filechooser', { timeout: 3000 }).then(() => true).catch(() => false)
+  await page.click('[data-dk="image"]')
+  ok('图库未配置：「＋图片」直接打开文件选择，不出现「从 Unsplash 搜索」', await chooser && await page.locator('#imageMenu').isHidden())
+}
+// 图库已配置时的界面流程（用拦截的假数据，不打真实 Unsplash）：菜单 → 搜索面板 → 网格与署名 → 点击插入
+await page.route('**/api/images', r => r.fulfill({ json: { configured: true, source: 'unsplash' } }))
+await page.route('**/api/images/search?*', r => r.fulfill({ json: { total: 2, pages: 1, results: [
+  { id: 'fakeA', width: 1600, height: 1000, color: '#0c73a6', description: 'mountain', thumb: '/theme-photos/tp_mist_panel.jpg', small: '', credit: { name: 'Ada Lab', profile: '#', photo_page: '#', text: 'Photo by Ada Lab on Unsplash' } },
+  { id: 'fakeB', width: 1000, height: 1400, color: '#a68ca6', description: 'dusk', thumb: '/theme-photos/tp_dusk_panel.jpg', small: '', credit: { name: 'Ben Hill', profile: '#', photo_page: '#', text: 'Photo by Ben Hill on Unsplash' } },
+] } }))
+let photoPost: any = null
+await page.route('**/slides/*/photo', r => { photoPost = { url: r.request().url(), body: r.request().postDataJSON() }; return r.fulfill({ status: 201, json: { shape_id: 'x', asset_id: 'a', rev: 1, credit: { text: 'Photo by Ada Lab on Unsplash' } } }) })
+await page.reload()
+await page.click(`li[data-id="${deck.id}"]`)
+await page.waitForSelector('.slide .shape')
+await page.click('[data-dk="image"]')
+await page.click('#imageMenu [data-image-src="unsplash"]')
+await page.fill('#phQuery', 'mountain')
+await page.click('.ph-search button')
+await page.waitForSelector('.ph-tile')
+ok('从 Unsplash 搜索：网格结果、悬停显示署名', await page.locator('.ph-tile').count() === 2 && /Photo by Ada Lab on Unsplash/.test(await page.locator('.ph-tile').first().textContent() ?? ''))
+await page.locator('.ph-tile').first().click()
+await wait(500)
+ok('点击照片插入当前页（提交 photo_id，面板关闭）', photoPost?.body?.photo_id === 'fakeA' && /\/api\/docs\/[^/]+\/slides\/[^/]+\/photo$/.test(photoPost.url) && await page.locator('.ph-dialog').count() === 0)
+await page.unroute('**/api/images')
+await page.unroute('**/api/images/search?*')
+await page.unroute('**/slides/*/photo')
 await remove(deck.id)
 
 // 新建幻灯片先选模板
