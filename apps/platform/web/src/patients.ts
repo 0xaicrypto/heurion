@@ -28,6 +28,8 @@ interface Detail extends Patient {
   documents: Array<{ doc_id: string; kind: string; title: string; author: string; linked_at: string; updated_at: string; can_open: boolean }>
   care_team: Array<{ user_id: string; role: string; name: string }>; records: RecordRow[]; latest_labs: Lab[]
   pending_proposals: Array<{ id: string; kind: string; payload: Record<string, unknown>; reason: string; created_at: string }>
+  /** 所在研究（研究编号） */
+  studies?: Array<{ study_id: string; title: string; subject_id: string; enrolled_at: string }>
 }
 
 export interface PatientHooks {
@@ -40,6 +42,8 @@ export interface PatientHooks {
   goSpace(space: 'write' | 'patients' | 'research'): void
   tenantId(): string | null
   token(): string
+  /** 打开研究页（患者所在研究） */
+  openStudy?(id: string): Promise<void>
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
@@ -166,6 +170,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <thead><tr><th>项目</th><th>结果</th><th>参考范围</th><th>日期</th></tr></thead><tbody>
         ${d.latest_labs.map(l => `<tr data-trend="${esc(l.test_key)}"><td>${esc(l.test_name)}</td><td class="flag-${l.flag ?? 'n'}" title="${esc(origNote(l))}">${esc(stdValue(l))} ${esc(l.std_unit ?? '')}${l.flag === 'H' ? ' ↑' : l.flag === 'L' ? ' ↓' : ''}${l.converted || l.unknown_unit ? '<sup>*</sup>' : ''}</td><td class="muted">${esc(stdRef(l))}</td><td class="muted">${esc(when(l))}</td></tr>`).join('')}
         </tbody></table><div class="muted small">点一行看趋势。</div>`}</section>
+      ${d.studies?.length ? `<section><h3 class="mem-h">所在研究</h3><div>${d.studies.map(x => `<button class="chip pt-study" data-study="${x.study_id}" title="打开研究">${esc(x.title)} · ${esc(x.subject_id)}</button>`).join(' ')}</div></section>` : ''}
       <section><h3 class="mem-h">诊疗组</h3><div>${d.care_team.map(m => `<span class="chip">${esc(m.name)}${m.role === 'owner' ? '（负责人）' : ''}</span>`).join(' ')}</div></section>`
   }
 
@@ -237,7 +242,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           ${canEdit && !busy ? '<div class="row end"><button class="danger" data-recx="reject">驳回整份</button><button class="primary" data-recx="confirm">确认这份报告</button></div>' : ''}
         </div></div>`
     }).join('')
-    const props = d.pending_proposals.map(p => `<li class="mem" data-prop="${p.id}"><div class="mem-text"><span class="mem-kind">AI 提议</span>${esc(p.kind === 'lab' ? `化验：${p.payload.test_name} ${p.payload.value} ${p.payload.unit ?? ''}（${p.payload.collected_on}）` : p.kind === 'tag' ? `诊断标签：${p.payload.tag}` : `摘要补充：${p.payload.text}`)}</div>
+    const props = d.pending_proposals.map(p => `<li class="mem" data-prop="${p.id}"><div class="mem-text"><span class="mem-kind">AI 提议</span>${esc(p.kind === 'lab' ? `化验：${p.payload.test_name} ${p.payload.value} ${p.payload.unit ?? ''}（${p.payload.collected_on}）` : p.kind === 'tag' ? `诊断标签：${p.payload.tag}` : p.kind === 'enroll' ? `入组研究「${p.payload.study_title}」` : p.kind === 'unenroll' ? `移出研究「${p.payload.study_title}」（${p.payload.subject_id}）` : p.kind === 'update' ? `修改患者信息：${Object.keys(p.payload).join('、')}` : `摘要补充：${p.payload.text}`)}</div>
         <div class="muted small">依据：${esc(p.reason)}</div>${canEdit ? '<div class="actions-row"><button class="primary" data-propx="accept">采纳</button><button data-propx="reject">不采纳</button></div>' : ''}</li>`).join('')
     return recHtml + (props ? `<h3 class="mem-h">AI 的提议</h3><ul class="mem-list">${props}</ul>` : '')
   }
@@ -302,6 +307,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     if (t.closest('[data-trend-close]')) { document.getElementById('ptTrendBox')?.remove(); return }
     const opendoc = t.closest<HTMLElement>('[data-opendoc]')
     if (opendoc) { current = null; await hooks.openDoc(opendoc.dataset.opendoc!); return }
+    const study = t.closest<HTMLElement>('[data-study]')
+    if (study && hooks.openStudy) { current = null; await hooks.openStudy(study.dataset.study!); return }
     const file = t.closest<HTMLElement>('[data-file]')
     if (file) { window.open(`/api/patients/${id}/files/${file.dataset.file}?token=${encodeURIComponent(hooks.token())}`, '_blank'); return }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
@@ -332,7 +339,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         notice('诊疗组已更新'); void openPatient(id, true)
       } else if (act === 'log') {
         const rows = await api<any[]>(`/api/patients/${id}/access-log`)
-        const ACTION: Record<string, string> = { create: '新建', view: '查看', update: '修改', labs_read: '读化验', lab_add: '补录化验项', doc_link: '关联报告', doc_unlink: '取消关联', lab_confirm: '确认化验', lab_reject: '删除化验', lab_edit: '修改化验', file_upload: '上传报告', file_download: '查看原件', record_confirm: '确认报告', record_reject: '驳回报告', propose: '提议', proposal_accept: '采纳提议', proposal_reject: '不采纳提议', team_add: '加入诊疗组', team_remove: '移出诊疗组', break_glass: '紧急访问', delete: '删除' }
+        const ACTION: Record<string, string> = { create: '新建', view: '查看', update: '修改', labs_read: '读化验', lab_add: '补录化验项', doc_link: '关联报告', doc_unlink: '取消关联', lab_confirm: '确认化验', lab_reject: '删除化验', lab_edit: '修改化验', file_upload: '上传报告', file_download: '查看原件', record_confirm: '确认报告', record_reject: '驳回报告', propose: '提议', proposal_accept: '采纳提议', proposal_reject: '不采纳提议', team_add: '加入诊疗组', team_remove: '移出诊疗组', break_glass: '紧急访问', delete: '删除', cohort_screen: '研究筛选', enroll: '入组研究', unenroll: '移出研究', cohort_export: '生成研究数据集' }
         const dlg = document.getElementById('dialog')!
         dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="访问记录"><div class="dialog-head"><h2>${esc(d.code)} 访问记录</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
           <div class="dialog-body"><table class="users audit-table"><thead><tr><th>时间</th><th>谁</th><th>操作</th><th>说明</th></tr></thead><tbody>

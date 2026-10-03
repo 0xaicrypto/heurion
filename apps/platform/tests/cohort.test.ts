@@ -219,6 +219,16 @@ describe('研究数据集', () => {
     expect([again.unchanged, again.dataset.id]).toEqual([true, v2.dataset.id])
   })
 
+  it('解析失败时报错并删掉失败的数据集（不留空数据集、不归入研究）', async () => {
+    const t = env()
+    const broken = new DatasetService(t.store, mkdtempSync(join(tmpdir(), 'co-ds2-')), async () => { throw new Error('python 不在') })
+    const cohort = new CohortService(t.studies, t.patients, broken)
+    t.cohort.enroll(t.a, t.study.id, { patient_ids: [t.p1.id] })
+    await expect(cohort.dataset(t.a, t.study.id, {})).rejects.toThrow('生成研究数据集失败：python 不在')
+    expect(broken.list(t.u.drA)).toEqual([])
+    expect(t.studies.read(t.u.drA, t.study.id).datasets).toEqual([])
+  })
+
   it('没有入组的人不能生成；别人的研究不能生成；离开诊疗组的受试者不进数据集', async () => {
     const t = env()
     await expect(t.cohort.dataset(t.a, t.study.id, {})).rejects.toThrow('还没有入组')

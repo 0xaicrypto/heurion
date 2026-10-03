@@ -93,6 +93,11 @@ export class CohortService {
       this.datasets.setOrigin(a.userId, dataset.id, { ...(dataset.origin ?? {}), fingerprint: snap.fingerprint } as never)
     } else {
       await this.datasets.idle()
+      const done = this.datasets.get(a.userId, dataset.id)
+      if (done.status === 'failed') {
+        this.datasets.remove(a.userId, dataset.id)
+        throw new StudyError('dataset_failed', `生成研究数据集失败：${done.error ?? '未知原因'}`)
+      }
       this.datasets.update(a.userId, dataset.id, { labels })
     }
     try { this.studies.link(a.userId, studyId, { kind: 'dataset', ref_id: dataset.id }) } catch (err) { if (!(err instanceof StudyError && err.code === 'in_other_study')) throw err }

@@ -775,3 +775,19 @@ button.block { width: 100%; padding: 10px 12px; }
 #auditMore { align-self: center; font-size: 12px; }
 @media (max-width: 900px) { .audit-table th:nth-child(5), .audit-table td:nth-child(5) { display: none; } .audit input[type=search] { width: 120px; } }
 
+
+/* —— 研究入组（筛选、入组名单、研究数据集）—— */
+#rsCohort .banner { margin: 0 0 8px; }
+.rs-cohort-ds { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; margin: 0 0 8px; border: 1px solid var(--line); cursor: pointer; }
+.rs-cohort-ds:hover { background: var(--hover); }
+.rs-cohort-ds > span:nth-child(2) { flex: 1; min-width: 0; }
+.rs-cohort-ds.stale { border-color: var(--warn, #c98a00); }
+.rs-subjects td, .rs-candidates td { vertical-align: top; }
+.rs-subjects tr.muted td { color: var(--text-2); }
+.linkish { background: none; border: 0; padding: 0; color: var(--mint-text); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.rs-labrow { margin: 6px 0; flex-wrap: wrap; }
+.rs-labrow input[name=lab_test] { flex: 2 1 160px; }
+.rs-labrow input[name=lab_value] { flex: 1 1 110px; }
+.rs-preview-head { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 6px; }
+.chip.pt-study { cursor: pointer; padding: 2px 8px; color: var(--text); font: inherit; font-size: 12px; }
+.chip.pt-study:hover { border-color: var(--mint); }

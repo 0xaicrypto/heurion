@@ -201,6 +201,7 @@ const patientsUi = initPatients(api, (m, e) => showNotice(m, e), {
   goSpace: space => spaces.set(space),
   tenantId: () => ME?.tenant?.id ?? null,
   token: () => TOKEN,
+  openStudy: id => researchUi.open(id),
 })
 /** 把建议的指令填进对话框（不发送，由人改好再发） */
 function prefillChat(text: string): void {
@@ -217,6 +218,7 @@ const researchUi = initResearch(api, (m, e) => showNotice(m, e), {
   goSpace: space => spaces.set(space),
   token: () => TOKEN,
   datasets: { upload: files => datasets.upload(files), openDetail: id => datasets.openDetail(id), showProvenance: id => datasets.showProvenance(id) },
+  openPatient: id => patientsUi.open(id),
 })
 // 左侧图标栏：写作 / 患者 / 临床研究
 const spaces = initSpaces({
