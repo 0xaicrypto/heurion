@@ -75,7 +75,7 @@ const BOX_OVERRIDES: Record<string, Boxes> = {
   graphite: { 'section.title': [80, 190, 480, 110], 'section.body': [80, 310, 480, 70] },
   swiss: { 'section.title': [80, 190, 480, 110], 'section.body': [80, 310, 480, 70], 'cover.title': [80, 200, 800, 110], 'closing.title': [80, 200, 800, 110] },
   coral: {
-    'cover.title': [80, 170, 480, 130], 'cover.subtitle': [80, 316, 480, 70],
+    'cover.title': [80, 170, 470, 130], 'cover.subtitle': [80, 316, 450, 70],
     'closing.title': [80, 190, 480, 110], 'closing.body': [80, 310, 480, 70],
     'section.title': [360, 190, 520, 110], 'section.body': [360, 310, 520, 70],
     'content.title': [60, 40, 830, 70], 'content.body': [60, 130, 830, 360],
