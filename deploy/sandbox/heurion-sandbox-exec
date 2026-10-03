@@ -1,0 +1,42 @@
+#!/bin/bash
+# AI 代码隔离（root 运行，平台用户 node 经 sudo 调用）：把一个平台用户的 dsh 进程降到它专属的 Linux 用户。
+#   heurion-sandbox-exec <uid> <workspace> <dsh-home> -- <command...>
+# - uid 在 20000–59999（每个平台用户一个，由平台分配）
+# - 工作区、dsh home 只能在 /app/data/platform/{workspaces,dsh-homes}/<名字> 下；属主改为该 uid，组为 node（平台读写资产）
+# - 环境只保留白名单里的变量（sudo 的 env_keep 传进来），umask 007、进程数与文件大小受限
+# - 降权后没有 sudo 权限（不在 sudoers）、no_new_privs、清空能力集
+set -euo pipefail
+die() { echo "heurion-sandbox-exec: $*" >&2; exit 64; }
+
+[ $# -ge 5 ] || die "用法：<uid> <workspace> <dsh-home> -- <command...>"
+SBX_UID=$1; WS=$2; HM=$3; shift 3
+[ "$1" = "--" ] || die "缺少 --"; shift
+[[ "$SBX_UID" =~ ^[0-9]+$ ]] && (( SBX_UID >= 20000 && SBX_UID < 60000 )) || die "uid 不在 20000–59999"
+
+ROOT=/app/data/platform
+NODE_GID=$(id -g node)
+check_dir() { # $1 路径，$2 允许的父目录
+  local name; name=$(basename "$1")
+  [ "$(dirname "$1")" = "$2" ] && [[ "$name" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || die "路径不允许：$1"
+}
+check_dir "$WS" "$ROOT/workspaces"
+check_dir "$HM" "$ROOT/dsh-homes"
+
+for d in "$WS" "$HM"; do
+  [ -L "$d" ] && die "不允许符号链接：$d"
+  mkdir -p "$d"
+  # 第一次交给这个 uid（或从不隔离的旧版本迁移过来）：整棵树改属主
+  if [ "$(stat -c %u "$d")" != "$SBX_UID" ]; then chown -R "$SBX_UID:$NODE_GID" "$d"; fi
+done
+chmod 2770 "$WS"   # 组 node 可读写（平台读用户生成的图做资产），其他 uid 进不来
+chmod 0700 "$HM"   # dsh 自己的会话与缓存，平台不需要
+mkdir -p "$WS/.tmp" && chown "$SBX_UID:$NODE_GID" "$WS/.tmp"
+
+# 环境白名单（值来自 sudo env_keep；其余一律丢弃）
+KEEP=(DEEPSEEK_API_KEY DEEPSEEK_BASE_URL HEURION_MCP_URL HEURION_MCP_TOKEN DSH_PRIMARY_RUNTIME PIP_NO_INDEX)
+ENVV=(PATH=/opt/compute/bin:/usr/local/bin:/usr/bin:/bin HOME="$HM" DSH_HOME="$HM" LANG=C.UTF-8 TMPDIR="$WS/.tmp" MPLCONFIGDIR="$WS/.tmp")
+for k in "${KEEP[@]}"; do [ -n "${!k:-}" ] && ENVV+=("$k=${!k}"); done
+
+cd "$WS"
+exec setpriv --reuid="$SBX_UID" --regid="$SBX_UID" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all \
+  env -i "${ENVV[@]}" /bin/bash -c 'umask 007; ulimit -u 512 && ulimit -f 4194304 || exit 70; exec "$@"' bash "$@"

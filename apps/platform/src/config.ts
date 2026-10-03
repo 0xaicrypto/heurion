@@ -44,6 +44,12 @@ export const config = {
   emailFrom: process.env.EMAIL_FROM ?? '',
   /** 本地嵌入服务（apps/embedder，bge-m3）；为空时资料库只用关键词检索。 */
   embeddingUrl: env('EMBEDDING_URL', 'http://127.0.0.1:8003'),
+  /**
+   * AI 代码隔离（容器里开启）：每个平台用户的 dsh 进程及它执行的代码以专属 uid 运行（deploy/sandbox/heurion-sandbox-exec），
+   * 读不到平台的数据库、密钥和其他用户的工作区。本机开发（macOS）不开。
+   */
+  sandbox: env('HEURION_SANDBOX', '0') === '1',
+  dshHomesDir: resolve(dataDir, 'platform', 'dsh-homes'),
   harnessIdleMs: Number(env('HARNESS_IDLE_MS', String(10 * 60_000))),
   /** 回合无响应超时：模型 / 工具连续这么久没有任何动静，自动停止该回合，放行队列。 */
   turnIdleTimeoutMs: Number(env('TURN_IDLE_TIMEOUT_MS', String(5 * 60_000))),

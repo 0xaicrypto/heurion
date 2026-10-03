@@ -1,0 +1,3 @@
+# 平台用户 node 只能以 root 运行隔离启动器（它再降到每个平台用户专属的 uid），其他一概不行
+Defaults!/usr/local/bin/heurion-sandbox-exec env_keep += "DEEPSEEK_API_KEY DEEPSEEK_BASE_URL HEURION_MCP_URL HEURION_MCP_TOKEN DSH_PRIMARY_RUNTIME PIP_NO_INDEX"
+node ALL=(root) NOPASSWD: /usr/local/bin/heurion-sandbox-exec

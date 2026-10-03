@@ -31,7 +31,7 @@ const store = new Store(config.dbPath)
 const docs = new Documents(store)
 const ops = new OpService(docs)
 const registry = new TurnRegistry()
-const pool = new HarnessPool(config)
+const pool = new HarnessPool(config, userId => store.sandboxUid(userId))
 const postcheck = new PostCheck(docs)
 
 const pubmed = new PubMedClient(fetch, config.ncbiApiKey, config.contactEmail)

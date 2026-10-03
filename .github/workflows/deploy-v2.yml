@@ -123,6 +123,10 @@ jobs:
           echo "$GHCR_TOKEN" | $SSH "$HOST" "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
           $SSH "$HOST" "cd /opt/heurion2 && chmod 600 .env.production && chmod +x scripts/*.sh && \
             HEURION2_IMAGE=${APP_IMAGE}:${SHA} EMBEDDER_IMAGE=${EMBEDDER_IMAGE}:${SHA} bash scripts/deploy.sh"
+      - name: AI 代码隔离自检（容器里以两个测试 uid 尝试读密钥、数据库、别人的工作区）
+        env:
+          HOST: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+        run: ssh -o StrictHostKeyChecking=no "$HOST" "docker exec -u node heurion2 bash /app/deploy/sandbox/probe.sh"
       - name: 冒烟检查
         run: |
           curl -fsS https://heurion.org/healthz

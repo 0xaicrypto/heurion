@@ -331,6 +331,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS memory_events_memory ON memory_events (memory_id, at);
       CREATE TABLE IF NOT EXISTS user_settings (user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
       CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS sandbox_uids (user_id TEXT PRIMARY KEY, uid INTEGER NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY, doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE, role TEXT NOT NULL,
         text TEXT NOT NULL, turn_id TEXT, created_at TEXT NOT NULL
@@ -600,6 +601,17 @@ export class Store {
 
   setAppSetting(key: string, value: string): void {
     this.db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value)
+  }
+
+  /** AI 代码隔离：平台用户 → 专属 Linux uid（20000 起，分配后不变）。 */
+  sandboxUid(userId: string): number {
+    const hit = this.db.prepare('SELECT uid FROM sandbox_uids WHERE user_id = ?').get(userId) as { uid: number } | undefined
+    if (hit) return hit.uid
+    const max = (this.db.prepare('SELECT MAX(uid) AS m FROM sandbox_uids').get() as { m: number | null }).m
+    const uid = Math.max(20000, (max ?? 19999) + 1)
+    if (uid >= 60000) throw new Error('隔离 uid 用完了')
+    this.db.prepare('INSERT INTO sandbox_uids (user_id, uid) VALUES (?, ?)').run(userId, uid)
+    return uid
   }
 
   // —— 记忆（R3） ——

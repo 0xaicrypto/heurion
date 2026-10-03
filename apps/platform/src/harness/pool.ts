@@ -1,11 +1,24 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DeepSeekHarness, type HarnessNotification, type RunResult } from '@deepseek-ai/dsh-sdk-client'
 import { issueToken } from '../auth/token.ts'
 import type { Config } from '../config.ts'
 
 export const PROFILE_PATCH = fileURLToPath(new URL('./profile/heurion.cordis.yml', import.meta.url))
+/** 隔离模式下 SDK 运行的「dsh」：经 sudo 降到用户专属 uid 再启动真正的 dsh。 */
+const SANDBOX_LAUNCH = fileURLToPath(new URL('./sandbox-launch.mjs', import.meta.url))
+
+/** 与 SDK 同版本的 dsh 可执行文件（SDK 默认启动的那个；SDK 没有导出解析函数）。 */
+function realDshBin(): string {
+  const sdk = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client')
+  const manifestPath = createRequire(sdk).resolve('@deepseek-ai/dsh/package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { bin: string | Record<string, string> }
+  const bin = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin.dsh!
+  return resolve(dirname(manifestPath), bin)
+}
 
 interface Entry {
   harness: DeepSeekHarness
@@ -25,15 +38,28 @@ export class HarnessPool {
   private readonly entries = new Map<string, Entry>()
   private readonly reaper: NodeJS.Timeout
 
-  constructor(private readonly config: Config) {
+  /** sandboxUid：隔离模式下平台用户 → 专属 uid（Store.sandboxUid）。 */
+  constructor(private readonly config: Config, private readonly sandboxUid?: (userId: string) => number) {
     this.reaper = setInterval(() => void this.reapIdle(), 60_000)
     this.reaper.unref()
   }
 
   workspaceDir(userId: string): string {
-    const dir = `${this.config.workspacesDir}/${userId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    const dir = `${this.config.workspacesDir}/${safeName(userId)}`
     mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  /** 隔离模式：启动器参数（uid、工作区、该用户自己的 dsh home、真正的 dsh）。 */
+  private sandboxEnv(userId: string): NodeJS.ProcessEnv {
+    if (!this.config.sandbox) return {}
+    if (!this.sandboxUid) throw new Error('隔离模式需要 sandboxUid')
+    return {
+      HEURION_SANDBOX_UID: String(this.sandboxUid(userId)),
+      HEURION_SANDBOX_WORKSPACE: this.workspaceDir(userId),
+      HEURION_SANDBOX_HOME: `${this.config.dshHomesDir}/${safeName(userId)}`,
+      HEURION_DSH_BIN: realDshBin(),
+    }
   }
 
   private childEnv(userId: string, generation: string): NodeJS.ProcessEnv {
@@ -50,6 +76,7 @@ export class HarnessPool {
       // 不加载 dsh office 技能：文档编辑只走 MCP
       DSH_PRIMARY_RUNTIME: '',
       PIP_NO_INDEX: '1',
+      ...this.sandboxEnv(userId),
     }
   }
 
@@ -62,7 +89,9 @@ export class HarnessPool {
         harness: new DeepSeekHarness({
           profile: 'sdk',
           patches: [PROFILE_PATCH],
-          dshHome: this.config.dshHome,
+          // 隔离模式：dsh home 每个用户一份（由启动器以该 uid 建好），SDK 启动的是隔离启动器
+          dshHome: this.config.sandbox ? `${this.config.dshHomesDir}/${safeName(userId)}` : this.config.dshHome,
+          ...(this.config.sandbox ? { dshBin: SANDBOX_LAUNCH } : {}),
           cwd,
           processCwd: cwd,
           env: this.childEnv(userId, generation),
@@ -128,3 +157,5 @@ export class HarnessPool {
     await Promise.allSettled([...this.entries.keys()].map(id => this.cancel(id)))
   }
 }
+
+const safeName = (userId: string) => userId.replace(/[^a-zA-Z0-9_-]/g, '_')
