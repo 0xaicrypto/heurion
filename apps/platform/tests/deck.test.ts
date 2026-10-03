@@ -111,13 +111,16 @@ describe('deck：模型与编辑', () => {
 })
 
 describe('deck：导出 XML 结构', () => {
-  it('版式占位符的继承样式：版式自己写的优先，没写的取母版（标题页标题底端居中、正文页标题取母版标题样式）', () => {
+  it('版式占位符的样式：模板版式写明字号、粗细、对齐（居中模板的封面居中）', () => {
     const { layouts } = readLayouts(pptxTemplate())
-    const title = layouts.find(l => l.name === 'Title Slide')!.placeholders
-    expect(title.find(p => p.type === 'ctrTitle')!.style).toEqual({ anchor: 'b', align: 'ctr', size: 44, bold: true })
-    expect(title.find(p => p.type === 'subTitle')!.style).toMatchObject({ anchor: 't', align: 'ctr', size: 24 })
-    const content = layouts.find(l => l.name === 'Title and Content')!.placeholders
-    expect(content.find(p => p.type === 'title')!.style).toMatchObject({ align: 'l', size: 40, bold: true })
+    expect(layouts.map(l => l.name)).toEqual(['封面', '标题和内容', '空白', '章节页', '两栏', '图文', '大数字', '致谢'])
+    const cover = layouts.find(l => l.name === '封面')!.placeholders
+    expect(cover.find(p => p.type === 'ctrTitle')!.style).toEqual({ anchor: 't', align: 'l', size: 44, bold: true })
+    expect(cover.find(p => p.type === 'subTitle')!.style).toMatchObject({ anchor: 't', align: 'l', size: 20 })
+    const content = layouts.find(l => l.name === '标题和内容')!.placeholders
+    expect(content.find(p => p.type === 'title')!.style).toMatchObject({ align: 'l', size: 32, bold: true })
+    const centered = readLayouts(pptxTemplate('paper')).layouts.find(l => l.name === '封面')!.placeholders
+    expect(centered.find(p => p.type === 'ctrTitle')!.style).toMatchObject({ align: 'ctr' })
   })
 
   it('新建的占位符写明位置、文字顶端左对齐（与画布一致，不靠版式继承）', () => {

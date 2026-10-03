@@ -7,9 +7,10 @@ import { z } from 'zod'
 import { canAccess, verifyToken, type Permission, type TokenClaims } from '../auth/token.ts'
 import type { ClaimService } from '../claims/service.ts'
 import { pptxFor } from '../convert/exports.ts'
-import { readLayouts } from '../convert/pptx-layouts.ts'
 import { pptxTemplate } from '../convert/pptx-template.ts'
-import { DeckOp, newDeckContent } from '../ops/deck.ts'
+import { DeckOp, newTemplateDeck } from '../ops/deck.ts'
+import { LAYOUTS, layoutSpec, templateCatalog } from '../model/deck-templates.ts'
+import { DECK_THEMES, DEFAULT_THEME } from '../model/deck-themes.ts'
 import type { SlideRenderer } from '../render/slides.ts'
 import { deckOutline, deckRead, slideRead } from '../views/deck.ts'
 import { checkLayout } from '../views/layout.ts'
@@ -140,20 +141,21 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     .map(h => ({ doc_id: h.doc_id, title: h.title, kind: h.kind, snippet: h.snippet, updated_at: h.updated_at }))))
 
   server.registerTool('doc_create', {
-    description: '新建文档：kind=doc（Word 文档，可附初始 markdown，同样受引用规范约束）或 kind=deck（幻灯片，带一页标题页，之后用 deck_edit 添加内容）。返回 doc_id 与 rev。',
+    description: '新建文档：kind=doc（Word 文档，可附初始 markdown，同样受引用规范约束）或 kind=deck（幻灯片，按模板生成一页封面，之后用 deck_edit 添加内容）。返回 doc_id 与 rev。',
     inputSchema: {
       title: z.string().min(1).max(200),
       kind: z.enum(['doc', 'deck']).default('doc'),
       markdown: z.string().optional().describe('doc 的初始内容'),
+      template: z.enum(Object.keys(DECK_THEMES) as [string, ...string[]]).optional().describe('deck 的模板（deck_templates 列出各模板的风格与版式）；缺省 clinical'),
     },
-  }, async ({ title, kind, markdown }) => {
+  }, async ({ title, kind, markdown, template }) => {
     if (!claims.p.includes('write') || claims.d !== '*') return fail('forbidden', '当前令牌不能新建文档')
     if (kind === 'deck') {
-      const pkg = pptxTemplate()
-      const row = docs.create({ owner: claims.u, title, kind: 'deck', content: newDeckContent(readLayouts(pkg).layouts, title) })
-      store.putPackage(row.id, 'pptx', pkg)
+      const key = template ?? DEFAULT_THEME
+      const row = docs.create({ owner: claims.u, title, kind: 'deck', content: newTemplateDeck(title, key) })
+      store.putPackage(row.id, 'pptx', pptxTemplate(key))
       deps.turns.touch(claims.u, row.id)
-      return json({ doc_id: row.id, kind: 'deck', title, rev: 0, layouts: readLayouts(pkg).layouts.map(l => l.name) })
+      return json({ doc_id: row.id, kind: 'deck', title, rev: 0, template: key, layouts: LAYOUTS.map(l => `${l.name}：${l.hint}`) })
     }
     const row = docs.create({ owner: claims.u, title })
     if (markdown?.trim()) {
@@ -180,7 +182,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     const row = store.getDoc(doc_id)!
     if (row.kind === 'deck') {
       const info = deps.ops.deckContextInfo(doc_id)
-      return text(deckOutline({ doc: docs.get(doc_id), docId: doc_id, title: row.title, rev: docs.rev(doc_id), layouts: info.layouts, size: info.size, openComments: store.listComments(doc_id, 'open').length }))
+      return text(deckOutline({ doc: docs.get(doc_id), docId: doc_id, title: row.title, rev: docs.rev(doc_id), layouts: info.layouts, size: info.size, openComments: store.listComments(doc_id, 'open').length, platform: info.platform }))
     }
     return text(outline({
       doc: docs.get(doc_id), docId: doc_id, title: row.title, rev: docs.rev(doc_id),
@@ -294,6 +296,15 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
 
   const deckOnly = (docId: string) => store.getDoc(docId)?.kind === 'deck' ? null : fail('wrong_tool', '这不是幻灯片文档，请用 doc_* 工具')
 
+  server.registerTool('deck_templates', {
+    description: '列出幻灯片模板：每套模板的风格说明、适合场合、配色，以及平台版式（封面、章节页、标题和内容、两栏、图文、大数字、致谢、空白）各自的占位符。' +
+      '新建 deck 用 doc_create 的 template 选模板；已有 deck 用 deck_edit 的 apply_theme 换模板；加页用 add_slide 的 layout 选版式。',
+    inputSchema: {},
+  }, async () => json({
+    templates: templateCatalog().map(t => ({ key: t.key, label: t.label, description: t.description, tags: t.tags, dark: luminance(t.bg) < 0.4, colors: { bg: t.bg, title: t.title, body: t.body, accent: t.accent, accent2: t.accent2 } })),
+    layouts: LAYOUTS.map(l => ({ name: l.name, hint: l.hint, placeholders: layoutSpec(DEFAULT_THEME, l.key).map(p => p.role) })),
+  }))
+
   server.registerTool('slide_read', {
     description: '读一页幻灯片：每个形状的 id、种类、占位符、位置与大小（pt）、文字（markdown，列表项按级别缩进）和备注。编辑前先读。',
     inputSchema: { doc_id: z.string(), slide_id: z.string() },
@@ -311,7 +322,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   server.registerTool('deck_edit', {
     description:
       '编辑幻灯片：一批操作原子提交，base_rev 用最近读到的 rev。几何单位 pt。操作：' +
-      'add_slide {after, layout?, title?, body?}（按版式填占位符，不需要算坐标）；delete_slide {slide_id}；move_slide {slide_id, after}；' +
+      'add_slide {after, layout?, title?, body?, body2?}（按版式填占位符，不需要算坐标；平台模板的版式：封面、章节页、标题和内容、两栏（body 左栏 / body2 右栏）、图文（左图片区，body 为右侧说明）、大数字（body 数字 / body2 说明）、致谢、空白）；delete_slide {slide_id}；move_slide {slide_id, after}；' +
       'set_text {shape_id, markdown}（整体重写，按模板格式；列表项 - 对应项目符号）；replace_text {shape_id, find, replace}（小改动首选）；' +
       'set_paragraphs {shape_id, paragraphs:[{text, lvl?}]}（逐段改写多段文字，未改的字保留原有颜色、加粗、引用与评论标记）；' +
       'add_shape {slide_id, markdown?, x, y, w, h, font_size?, geometry?: rect|roundRect|ellipse, fill?, color?}（文本框；带 geometry / fill 即色块、标题条、卡片）；' +
@@ -324,9 +335,10 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       'add_chart {slide_id, type: column|bar|line|pie|area|doughnut, x, y, w, h, title?, categories, series}（原生图表，颜色取主题）；' +
       'chart_set_type {shape_id, type}（换图表类型，数据不变；饼图 / 圆环图只能一个系列；导入的图表换类型后形状 id 会变，以返回的为准）；' +
       'align_shapes {shape_ids, align: left|center|right|top|middle|bottom, to?: selection|slide}；distribute_shapes {shape_ids（≥3）, direction: horizontal|vertical}（对齐与等距，不必自己算坐标）；' +
-      'apply_theme {theme, slide_ids?}（整套配色：背景、标题与正文颜色、强调色；之后新加的页沿用）；' +
+      'apply_theme {theme, slide_ids?}（换模板：背景、标题与正文颜色、强调色、模板装饰与版式位置；之后新加的页沿用；deck_templates 列出全部模板）；' +
       'set_notes {slide_id, markdown}；table_set_cells {shape_id, cells:[{row, col, markdown}]}。' +
-      '颜色写 6 位十六进制或主题记号（accent / accent2 / title / body / muted / bg / surface，按该页主题取色）。改完用 layout_check 检查溢出与重叠，必要时 slide_render 看效果。',
+      '名字以 deco: 开头的形状是模板装饰（slide_read 里标出），不能写字，换模板时自动替换。' +
+      '颜色写 6 位十六进制或主题记号（accent / accent2 / title / body / muted / bg / surface / soft，按该页主题取色）。改完用 layout_check 检查溢出与重叠，必要时 slide_render 看效果。',
     inputSchema: {
       doc_id: z.string(),
       base_rev: z.number().int().min(0),
@@ -1063,4 +1075,10 @@ export async function handleMcp(deps: McpDeps, req: IncomingMessage, res: Server
   res.on('close', () => { void transport.close(); void server.close() })
   await server.connect(transport)
   await transport.handleRequest(req, res)
+}
+
+/** 颜色亮度（0–1），判断深色模板。 */
+function luminance(hex: string): number {
+  const n = parseInt(hex, 16)
+  return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255
 }

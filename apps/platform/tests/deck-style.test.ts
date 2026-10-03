@@ -156,7 +156,7 @@ describe('deck 样式操作（C1：画布与 MCP 共用）', () => {
     t.doc().forEach(s => expect([s.attrs.theme, s.attrs.bg]).toEqual(['midnight', m.bg]))
     const titleRpr = t.shape(1, a => a.ph === 'title').firstChild!.firstChild!.marks.find(mk => mk.type.name === 'rpr')!.attrs.xml as string
     expect(titleRpr).toContain(`<a:srgbClr val="${m.title}"/>`)
-    const bodyRpr = t.shape(1, a => a.ph !== 'title').firstChild!.firstChild!.marks.find(mk => mk.type.name === 'rpr')!.attrs.xml as string
+    const bodyRpr = t.shape(1, a => a.ph === 'body').firstChild!.firstChild!.marks.find(mk => mk.type.name === 'rpr')!.attrs.xml as string
     expect(bodyRpr).toContain(`<a:srgbClr val="${m.body}"/>`)
     // 新加的页沿用主题
     t.edit([{ op: 'add_slide', after: t.slide(1).attrs.id as string, title: '主要结果', body: '- HR 0.80' }])

@@ -819,3 +819,30 @@ button.block { width: 100%; padding: 10px 12px; }
 .rs-preview-head { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 6px; }
 .chip.pt-study { cursor: pointer; padding: 2px 8px; color: var(--text); font: inherit; font-size: 12px; }
 .chip.pt-study:hover { border-color: var(--mint); }
+/* —— 幻灯片模板：选择器、版式菜单、画布上的模板装饰与空占位符 —— */
+.tpl-dialog { width: min(1080px, 100%); }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.tpl-card { display: flex; flex-direction: column; gap: 8px; padding: 10px; text-align: left; background: var(--raised); border: 1px solid var(--line); color: var(--text); cursor: pointer; transition: border-color .15s, transform .15s; }
+.tpl-card:hover, .tpl-card:focus-visible { border-color: var(--mint); transform: translateY(-2px); outline: none; }
+.tpl-card.on { border-color: var(--mint); box-shadow: 0 0 0 1px var(--mint); }
+.tpl-card svg { display: block; width: 100%; height: auto; }
+.tpl-cover { display: block; box-shadow: 0 0 0 1px var(--line); }
+.tpl-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tpl-strip > span { display: block; box-shadow: 0 0 0 1px var(--line); }
+.tpl-meta { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.tpl-meta b { font-size: 14px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.tpl-meta b em { font-style: normal; font-size: 11px; font-weight: 400; padding: 0 6px; border: 1px solid var(--mint); color: var(--mint-text); }
+.tpl-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.tpl-tags i { font-style: normal; font-size: 11px; padding: 1px 6px; background: var(--hover); color: var(--muted); }
+.layout-pop { position: fixed; z-index: 80; width: min(492px, calc(100vw - 16px)); background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); box-shadow: var(--shadow); padding: 10px; }
+.layout-pop-head { font-size: 12px; color: var(--muted); padding: 0 2px 8px; }
+.layout-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.layout-grid button { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid var(--line); background: transparent; color: var(--text-2); font-size: 12px; cursor: pointer; }
+.layout-grid button:hover, .layout-grid button:focus-visible { border-color: var(--mint); color: var(--text); outline: none; }
+.layout-grid svg { display: block; width: 100%; height: auto; }
+@media (max-width: 900px) { .layout-grid { grid-template-columns: repeat(2, 1fr); } .tpl-grid { grid-template-columns: 1fr; } }
+.slide .shape.deco { pointer-events: none; border: 0; }
+.slide .shape.ph-empty { outline: 1px dashed rgba(100, 116, 139, .45); outline-offset: -1px; }
+.slide .shape.ph-empty::after { content: attr(data-hint); position: absolute; left: 8px; top: 6px; font-size: 12px; font-weight: 400; color: rgba(100, 116, 139, .9); pointer-events: none; }
+.slide .shape.ph-empty.editing::after, .slide .shape.ph-empty:has(.editing)::after { content: none; }
+.slide[data-theme="teal"] .shape:is([data-ph="title"], [data-ph="ctrTitle"]), .slide[data-theme="warm"] .shape:is([data-ph="title"], [data-ph="ctrTitle"]) { font-family: 'Songti SC', 'STSong', 'SimSun', serif; }

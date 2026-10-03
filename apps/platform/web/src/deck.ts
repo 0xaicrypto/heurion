@@ -38,6 +38,12 @@ const MIN_WIDTH = 280
 const MAX_WIDTH = 960
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 const PH_SIZE: Record<string, number> = { title: 40, ctrTitle: 44, subTitle: 24 }
+const PH_HINT: Record<string, string> = { title: '双击输入标题', ctrTitle: '双击输入标题', subTitle: '双击输入副标题', body: '双击输入正文' }
+/** 模板版式里各正文区的提示（版式名/占位符 idx）。 */
+const LAYOUT_HINT: Record<string, string> = {
+  '两栏/1': '双击输入左栏', '两栏/2': '双击输入右栏', '大数字/1': '双击输入数字或一句结论', '大数字/2': '双击输入说明',
+  '章节页/1': '双击输入一句说明', '图文/2': '双击输入说明（图片放在左侧区域）', '致谢/1': '双击输入联系方式或问答提示',
+}
 
 interface PhStyle { anchor?: 't' | 'ctr' | 'b'; align?: 'l' | 'ctr' | 'r' | 'just'; size?: number; bold?: boolean }
 const BODY_LEVELS = [28, 24, 20, 18, 18]
@@ -133,10 +139,10 @@ export class DeckView {
       const suggest = slide.attrs?.suggest ? ` data-suggest="${slide.attrs.suggest}" data-suggest-group="${esc(slide.attrs.suggest_group)}"` : ''
       const body = this.precise.has(i)
         ? `<img class="slide-png" src="/api/docs/${this.opts.docId}/slides/${i}/render.png?token=${encodeURIComponent(this.opts.token)}&rev=${this.data!.rev}" alt="渲染中…" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'精确渲染不可用（需要 LibreOffice 或 heurion2:dev 镜像）'}))">`
-        : (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s, slide.attrs?.layout as string | undefined)).join('')
+        : (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s, slide.attrs?.layout as string | undefined, slide.attrs?.layout_name as string | undefined)).join('')
       return `<div class="slide-wrap" data-id="${esc(slide.attrs?.id)}" data-index="${i}"${suggest}>
         <div class="slide-head"><span>第 ${i + 1} 页 · ${esc(slide.attrs?.layout_name || '无版式')}</span><button data-precise="${i}">${this.precise.has(i) ? '近似预览' : '精确预览'}</button></div>
-        <div class="slide" style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg};${isDark(slide.attrs.bg) ? 'color:#E2E8F0;' : ''}` : ''}">${body}</div>
+        <div class="slide"${slide.attrs?.theme ? ` data-theme="${esc(slide.attrs.theme)}"` : ''} style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg};${isDark(slide.attrs.bg) ? 'color:#E2E8F0;' : ''}` : ''}">${body}</div>
         <div class="slide-notes"><span class="notes-label">备注</span><div class="notes-text${notes && this.text(notes) ? '' : ' empty'}" data-notes="${esc(slide.attrs?.id)}" title="双击编辑演讲者备注">${notes && this.text(notes) ? esc(this.text(notes)) : '双击添加演讲者备注'}</div></div>
       </div>`
     }).join('')
@@ -511,7 +517,7 @@ export class DeckView {
     return { ...(hit?.style ?? {}), ...(own ? { anchor: own } : {}) }
   }
 
-  private shape(s: PMJson, layout?: string): string {
+  private shape(s: PMJson, layout?: string, layoutName?: string): string {
     const a = s.attrs!
     const k = this.scale()
     this.phStyle = this.inheritedStyle(a, layout)
@@ -524,7 +530,12 @@ export class DeckView {
     const sel = this.selected.includes(a.id) ? ' selected' : ''
     // 带几何 / 实心填充的文本框按色块显示（文字垂直居中，与导出的 anchor="ctr" 一致）
     const block = a.kind === 'text' && !a.ph && (a.geom || (a.fill && a.fill !== 'none'))
-    const common = `class="shape shape-${block ? 'shape' : a.kind}${sel}" data-id="${esc(a.id)}"${suggest} style="${box}${fill}${radius}${anchor}"`
+    // 模板装饰：不可选中、不挡点击（换模板时自动替换）
+    const deco = String(a.name ?? '').startsWith('deco:') ? ' deco' : ''
+    // 还没写字的模板占位符：显示提示（双击输入）
+    const hint = LAYOUT_HINT[`${layoutName ?? ''}/${a.ph_idx ?? ''}`] ?? PH_HINT[a.ph as string] ?? '双击输入文字'
+    const empty = a.kind === 'text' && a.ph && !this.text(s).trim() ? ` ph-empty" data-hint="${esc(hint)}` : ''
+    const common = `class="shape shape-${block ? 'shape' : a.kind}${sel}${deco}${empty}" data-id="${esc(a.id)}"${a.ph ? ` data-ph="${esc(a.ph)}"` : ''}${suggest} style="${box}${fill}${radius}${anchor}"`
     if (a.kind === 'image' && a.asset_id) return `<div ${common}><img src="/api/assets/${esc(a.asset_id)}?token=${encodeURIComponent(this.opts.token)}" alt=""></div>`
     if (a.kind === 'text' && !block) return `<div ${common}>${(s.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</div>`
     if (block) return `<div ${common}><div class="shape-text">${(s.content ?? []).map(p => this.paragraph(s, p, k)).join('')}</div></div>`
@@ -567,9 +578,11 @@ export class DeckView {
       }
       return `<span data-o="${o}"${color ? ` style="color:#${color}"` : ''}>${html}</span>`
     }).join('')
+    // 还没写字的模板占位符：版式规定的字号在段落属性的 a:defRPr 里
+    if (!size) { const d = /<a:defRPr\b[^>]*\ssz="(\d+)"/.exec(String(p.attrs?.ppr ?? '')); if (d) size = Number(d[1]) / 100 }
     if (!size) size = (lvl === 0 && this.phStyle?.size) || (ph && PH_SIZE[ph]) || (ph === 'body' || ph === 'obj' ? BODY_LEVELS[lvl] ?? 18 : 18)
     // 项目符号用 CSS 画，不进选区文字
-    const bullet = (ph === 'body' || ph === 'obj') && runs ? ' class="bullet"' : ''
+    const bullet = (ph === 'body' || ph === 'obj') && runs && !/<a:buNone\b/.test(String(p.attrs?.ppr ?? '')) ? ' class="bullet"' : ''
     const inherited = this.phStyle?.align ? { l: 'left', ctr: 'center', r: 'right', just: 'justify' }[this.phStyle.align] : null
     const align = p.attrs?.align ? `text-align:${p.attrs.align};` : inherited ? `text-align:${inherited};` : ''
     const weight = this.phStyle?.bold ? 'font-weight:700;' : ''

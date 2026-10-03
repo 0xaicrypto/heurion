@@ -5,6 +5,7 @@ import './style.css'
 import * as Y from 'yjs'
 import { initUserMenu, showAuthScreen, signOut, storedToken, type Me } from './account.ts'
 import { DeckView, type ChartData } from './deck.ts'
+import { pickLayout, pickTemplate } from './templates.ts'
 import { EDITABLE_CHART_TYPES, editChartData } from './chart-dialog.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { Editor, type SelectionAnchor } from './editor.ts'
@@ -278,7 +279,10 @@ async function openTrash(): Promise<void> {
 async function createDoc(kind: 'doc' | 'deck', renameNow = true): Promise<void> {
   // 新文档放进当前打开文档所在的项目
   const project_id = docRows.find(x => x.id === session?.docId)?.project_id ?? null
-  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify(kind === 'deck' ? { title: '未命名汇报', kind, project_id } : { title: '未命名文档', project_id }) })
+  // 新建幻灯片先选模板（与 AI 的 doc_create template 同一套）
+  const template = kind === 'deck' ? await pickTemplate(api, { title: '新建幻灯片：选一个模板' }) : null
+  if (kind === 'deck' && !template) return
+  const d = await api('/api/docs', { method: 'POST', body: JSON.stringify(kind === 'deck' ? { title: '未命名汇报', kind, project_id, template } : { title: '未命名文档', project_id }) })
   await loadDocs()
   await open(d.id)
   if (renameNow) editTitle()
@@ -567,7 +571,6 @@ async function deckEdit(docId: string, ops: Array<Record<string, unknown>>, base
 
 async function initDeckToolbar(): Promise<void> {
   if (Object.keys(deckThemes).length === 0) deckThemes = await api('/api/deck-themes').catch(() => ({}))
-  $('deckTheme').innerHTML = '<option value="">主题</option>' + Object.entries(deckThemes).map(([k, t]) => `<option value="${esc(k)}">${esc(t.label)}</option>`).join('')
   syncDeckToolbar()
 }
 
@@ -620,12 +623,6 @@ function shapeFontSize(shape: any): number {
 }
 
 const hasBold = (shape: any): boolean => JSON.stringify(shape).includes('"type":"bold"')
-
-$('deckTheme').onchange = async () => {
-  const theme = $<HTMLSelectElement>('deckTheme').value
-  $<HTMLSelectElement>('deckTheme').value = ''
-  if (theme && session?.deck) await session.deck.edit([{ op: 'apply_theme', theme }])
-}
 
 const tableRows = (shape: any): number => shape.content?.[0]?.content?.length ?? 0
 const tableCols = (shape: any): number => shape.content?.[0]?.content?.[0]?.content?.length ?? 0
@@ -707,6 +704,22 @@ $('deckToolbar').onclick = async e => {
   const each = (op: Record<string, unknown>) => ids.map(shape_id => ({ ...op, shape_id }))
   const cell = deck.tableCell()
   switch (btn.dataset.dk) {
+    // 模板与加页：与 AI 的 apply_theme / add_slide 同一套
+    case 'theme': {
+      const current = (deck.currentSlide()?.attrs?.theme as string | null) ?? null
+      const key = await pickTemplate(api, { title: '换模板', current })
+      if (key && key !== current) await deck.edit([{ op: 'apply_theme', theme: key }])
+      break
+    }
+    case 'slide-add': {
+      const layout = await pickLayout(api, btn, (slide.attrs?.theme as string | null) ?? null)
+      if (layout) await deck.edit([{ op: 'add_slide', after: slide.attrs!.id, layout }])
+      break
+    }
+    case 'slide-del': {
+      if (await askConfirm({ title: '删除这一页', message: '删除当前这一页？可以在版本历史里找回。', confirm: '删除', danger: true })) await deck.edit([{ op: 'delete_slide', slide_id: slide.attrs!.id }])
+      break
+    }
     case 'bg': { const c = await pickColor(btn, theme, false); if (c) await deck.edit([{ op: 'set_background', slide_id: slide.attrs!.id, color: c }]); break }
     case 'textbox': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '新文本框', x: Math.round(W / 2 - 200), y: Math.round(H / 2 - 30), w: 400, h: 60, color: 'body' }]); break
     case 'block': await deck.edit([{ op: 'add_shape', slide_id: slide.attrs!.id, markdown: '', x: Math.round(W / 2 - 150), y: Math.round(H / 2 - 60), w: 300, h: 120, geometry: 'roundRect', fill: 'accent', color: 'FFFFFF' }]); break
