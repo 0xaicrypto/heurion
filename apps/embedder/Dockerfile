@@ -11,7 +11,7 @@ RUN pnpm install --frozen-lockfile --filter @heurion2/embedder...
 ENV EMBED_CACHE_DIR=/models \
     EMBED_HOST=0.0.0.0 \
     EMBED_PORT=8003
-RUN pnpm --filter @heurion2/embedder precache && chmod -R a+rX /models
+RUN pnpm --filter @heurion2/embedder precache && chmod -R a+rX /models /app
 
 USER node
 EXPOSE 8003
