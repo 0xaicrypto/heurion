@@ -1,0 +1,38 @@
+name: Cleanup Heurion 1.0
+
+# 切换到 2.0 并确认无误后手动运行：删除 1.0 的容器、卷、镜像与 /opt/heurion，停掉执行面 worker VPS。
+# 不可恢复（只剩切换前的全量备份：/opt/heurion2/backups 与 S3 heurion2/v1-final/）。
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '输入 DELETE-V1 确认删除 1.0'
+        required: true
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 确认
+        run: '[ "${{ inputs.confirm }}" = "DELETE-V1" ] || { echo "::error::需要输入 DELETE-V1"; exit 1; }'
+      - uses: webfactory/ssh-agent@v0.9.0
+        with: { ssh-private-key: '${{ secrets.VPS_SSH_KEY }}' }
+      - name: 清理主 VPS 上的 1.0
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "CONFIRM=DELETE-V1 bash /opt/heurion2/scripts/cleanup-v1.sh"
+      - uses: webfactory/ssh-agent@v0.9.0
+        with: { ssh-private-key: '${{ secrets.WORKER_VPS_SSH_KEY || secrets.VPS_SSH_KEY }}' }
+      - name: 停掉执行面 worker VPS（2.0 的计算在平台容器里的 dsh）
+        env:
+          WORKER_HOST: ${{ secrets.WORKER_VPS_HOST }}
+          WORKER_USER: ${{ secrets.WORKER_VPS_USER || secrets.VPS_USER }}
+        run: |
+          [ -n "$WORKER_HOST" ] || { echo "没有 WORKER_VPS_HOST，跳过"; exit 0; }
+          ssh -o StrictHostKeyChecking=no "$WORKER_USER@$WORKER_HOST" \
+            "cd /opt/heurion-worker 2>/dev/null && docker compose -f docker-compose.worker.yml down || docker rm -f \$(docker ps -aq --filter name=heurion-worker) 2>/dev/null || true"
