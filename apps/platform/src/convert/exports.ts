@@ -3,6 +3,7 @@ import { withoutPending } from '../ops/suggest.ts'
 import { exportDocx } from './docx-export.ts'
 import { exportPptx } from './pptx-export.ts'
 import { isPlatformPackage, pptxTemplate } from './pptx-template.ts'
+import { themePhoto } from '../model/theme-photos.ts'
 
 /** 导入时的模型（未改动判断的基准）：只有从文件导入的文档才有。 */
 function baselineOf(docs: Documents, docId: string) {
@@ -42,6 +43,8 @@ export function pptxFor(docs: Documents, docId: string) {
     src: id => store.getNodeSrc(docId, id),
     citations: store.listCitations(docId),
     asset: id => {
+      const builtin = themePhoto(id) // 带图模板的内置照片
+      if (builtin) return builtin
       const a = store.getAsset(id)
       const bytes = a ? store.getAssetBytes(id) : null
       return a && bytes ? { mime: a.mime, bytes } : null

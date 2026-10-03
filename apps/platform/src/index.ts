@@ -39,6 +39,9 @@ import { Documents } from './model/runtime.ts'
 import { OpService } from './ops/service.ts'
 import { Store } from './store/db.ts'
 import { TurnService } from './turns/service.ts'
+import { themePhoto } from './model/theme-photos.ts'
+import { ImageService } from './images/service.ts'
+import { Unsplash } from './images/unsplash.ts'
 
 const store = new Store(config.dbPath)
 const docs = new Documents(store)
@@ -83,6 +86,8 @@ const patients = new PatientService(config.tenantsDir, new TenantService(store, 
   { pages: reportPages, complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }) })
 const studies = new StudyService(store, datasets)
 const cohort = new CohortService(studies, patients, datasets)
+// Unsplash 图库（幻灯片搜图）：没配 key 时 configured=false，界面隐藏入口、MCP 返回「未配置」
+const images = new ImageService(docs, ops, new Unsplash(config.unsplashAccessKey))
 const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
@@ -97,6 +102,7 @@ const mcpDeps = {
   studies,
   cohort,
   fulltext,
+  images,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
@@ -119,7 +125,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, workspaceDir: userId => pool.workspaceDir(userId) })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, images, workspaceDir: userId => pool.workspaceDir(userId) })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))
@@ -128,6 +134,11 @@ app.get('/assets/:file', c => {
   const file = join(DIST, 'assets', basename(c.req.param('file')))
   if (!existsSync(file)) return c.notFound()
   return c.body(readFileSync(file), 200, { 'Content-Type': MIME[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable' })
+})
+// 带图模板的照片（模板选择器的缩略图用；Unsplash 授权，公开）
+app.get('/theme-photos/:id', c => {
+  const p = themePhoto(basename(c.req.param('id')).replace(/\.jpg$/, ''))
+  return p ? c.body(Buffer.from(p.bytes), 200, { 'Content-Type': p.mime, 'Cache-Control': 'public, max-age=86400' }) : c.notFound()
 })
 app.get('/app', c => existsSync(join(DIST, 'index.html'))
   ? c.html(readFileSync(join(DIST, 'index.html'), 'utf8'))

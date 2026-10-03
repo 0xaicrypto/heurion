@@ -128,6 +128,7 @@ export const DeckOp = z.discriminatedUnion('op', [
     x: z.number(), y: z.number(), w: z.number().positive(),
     h: z.number().positive().optional().describe('缺省按原图比例'),
     description: z.string().optional().describe('图片说明（替代文字）'),
+    credit: z.string().optional().describe('图片署名（markdown，追加到这一页的演讲备注末尾；图库照片必填，如 Photo by X on Unsplash）'),
   }),
   z.object({ op: z.literal('set_z'), shape_id: z.string(), to: z.enum(['front', 'back', 'forward', 'backward']).describe('置顶 / 置底 / 上移一层 / 下移一层') }),
   z.object({
@@ -661,6 +662,15 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
       const last = hit.node.lastChild
       const at = last?.type.name === 'notes' ? hit.pos + hit.node.nodeSize - 1 - last.nodeSize : hit.pos + hit.node.nodeSize - 1
       tr.insert(at, shape)
+      if (op.credit?.trim()) {
+        // 署名追加到演讲备注末尾（导出 pptx 时在备注页里）
+        const slide = find(tr, op.slide_id, 'slide')
+        const credit = deckParagraphs(op.credit.trim(), { ppr: () => null, rpr: null })
+        const notes = slide.node.lastChild
+        const end = slide.pos + slide.node.nodeSize - 1
+        if (notes?.type.name === 'notes') tr.insert(end - 1, credit)
+        else tr.insert(end, deckSchema.node('notes', null, credit))
+      }
       return [shape.attrs.id as string]
     }
     case 'set_z': {
@@ -767,9 +777,11 @@ function specParagraphs(spec: PhSpec, themeKey: string, markdown?: string): PMNo
 
 /** 模板装饰形状（最底层；名字 deco: 开头）。 */
 function decoShapes(themeKey: string, key: LayoutKey): PMNode[] {
-  return decorations(themeKey, key).map(d => deckSchema.node('shape', {
-    kind: 'shape', name: d.name, geom: d.geom, fill: d.fill, x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]),
-  }))
+  return decorations(themeKey, key).map(d => d.image
+    ? deckSchema.node('shape', { kind: 'image', name: d.name, asset_id: d.image, description: d.credit ?? '', x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]) })
+    : deckSchema.node('shape', {
+      kind: 'shape', name: d.name, geom: d.geom, fill: d.fill, x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]),
+    }))
 }
 
 /**

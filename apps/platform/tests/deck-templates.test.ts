@@ -9,6 +9,7 @@ import { isPlatformPackage, pptxTemplate } from '../src/convert/pptx-template.ts
 import { deckSchema, emu, pt } from '../src/model/deck-schema.ts'
 import { decorations, isDecoName, LAYOUTS, layoutSpec, templateCatalog } from '../src/model/deck-templates.ts'
 import { DECK_THEMES } from '../src/model/deck-themes.ts'
+import { themePhoto } from '../src/model/theme-photos.ts'
 import { Documents } from '../src/model/runtime.ts'
 import { newTemplateDeck, type DeckOp } from '../src/ops/deck.ts'
 import { OpService } from '../src/ops/service.ts'
@@ -238,3 +239,52 @@ function oldPackage(): Uint8Array {
   }
   return zipSync(files)
 }
+
+describe('带图模板（Unsplash 照片）', () => {
+  const PHOTO = Object.entries(DECK_THEMES).filter(([, t]) => t.photo).map(([k]) => k)
+  const images = (shapes: PMNode[]) => shapes.filter(s => s.attrs.kind === 'image').map(s => s.attrs.asset_id as string)
+
+  it('3–5 套；封面 / 致谢全幅照片、章节页半幅照片（都是装饰），文字压在照片上用白字；照片和署名文件都在', () => {
+    expect(PHOTO.length).toBeGreaterThanOrEqual(3)
+    expect(PHOTO.length).toBeLessThanOrEqual(5)
+    for (const key of PHOTO) {
+      const slug = DECK_THEMES[key]!.photo!
+      const cover = decorations(key, 'cover').find(d => d.image)!
+      expect(cover).toMatchObject({ box: [0, 0, 960, 540], image: `tp_${slug}_cover` })
+      expect(cover.credit).toMatch(/^Photo by .+ on Unsplash$/)
+      expect(decorations(key, 'section').find(d => d.image)?.image).toBe(`tp_${slug}_panel`)
+      expect(decorations(key, 'content').some(d => d.image)).toBe(false)
+      expect(layoutSpec(key, 'cover').map(s => s.color)).toEqual(['FFFFFF', 'E5E7EB'])
+      expect(layoutSpec(key, 'content')[0]!.color).toBe('title')
+      for (const v of ['cover', 'panel'] as const) {
+        const p = themePhoto(`tp_${slug}_${v}`)!
+        expect(p.mime).toBe('image/jpeg')
+        expect(p.bytes.byteLength).toBeLessThanOrEqual(400_000)
+      }
+      expect(templateCatalog().find(t => t.key === key)).toMatchObject({ photo: slug, credit: { slug } })
+    }
+  })
+
+  it('新建、换模板：照片装饰整体替换（带图 ↔ 不带图），用户插的图片不动；导出内嵌照片', () => {
+    const t = deck('lab')
+    const cover = t.doc().child(0).attrs.id as string
+    expect(images(t.shapes(0))).toEqual(['tp_lab_cover'])
+    const sec = t.edit([{ op: 'add_slide', after: cover, layout: '章节页', title: '第一部分' }]).results[0]!.ids[0]!
+    expect(images(t.shapes(1))).toEqual(['tp_lab_panel'])
+    const asset = t.store.putAsset({ owner: 'u', mime: 'image/png', name: 'fig.png', bytes: new Uint8Array(pptxTemplate().slice(0, 8)) })
+    t.edit([{ op: 'add_image', slide_id: sec, asset_id: asset.id, x: 80, y: 400, w: 100, h: 60 }])
+    t.edit([{ op: 'apply_theme', theme: 'library' }])
+    expect(images(t.shapes(0))).toEqual(['tp_library_cover'])
+    expect(images(t.shapes(1)).sort()).toEqual([asset.id, 'tp_library_panel'].sort())
+    t.edit([{ op: 'apply_theme', theme: 'clinical' }])
+    expect(images(t.shapes(0))).toEqual([])
+    expect(images(t.shapes(1))).toEqual([asset.id])
+    t.edit([{ op: 'apply_theme', theme: 'mist' }])
+    const files = unzipSync(pptxFor(t.docs, t.docId).bytes)
+    const media = Object.keys(files).filter(f => f.startsWith('ppt/media/'))
+    expect(media.length).toBeGreaterThanOrEqual(2)
+    expect(media.some(f => files[f]!.byteLength === themePhoto('tp_mist_cover')!.bytes.byteLength)).toBe(true)
+    // AI 读到：照片装饰合进「模板装饰」一行
+    expect(slideRead(t.doc().child(0), 0, 1)).toMatch(/模板装饰 \d+ 个/)
+  })
+})

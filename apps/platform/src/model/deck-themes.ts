@@ -26,6 +26,8 @@ export interface DeckTheme {
   serif?: boolean
   /** 适合的场合（模板选择器里显示）。 */
   tags: string[]
+  /** 带图模板：照片的 slug（theme-photos/<slug>-cover.jpg、<slug>-panel.jpg）。封面 / 致谢全幅照片，章节页半幅照片，其余版式用照片的主色。 */
+  photo?: string
 }
 
 const YAHEI = { titleFont: 'Microsoft YaHei', bodyFont: 'DengXian' }
@@ -41,6 +43,11 @@ export const DECK_THEMES: Record<string, DeckTheme> = {
   swiss: { label: '网格', description: '黑色粗线、红色方块、严格左对齐，信息密集也清楚', bg: 'FFFFFF', surface: 'F5F5F5', soft: 'F5F5F5', title: '111111', body: '262626', muted: '737373', accent: 'DC2626', accent2: '111111', ...YAHEI, frame: 'left', tags: ['数据汇报', '基金答辩'] },
   mint: { label: '薄荷', description: '浅绿底、圆润色块、柔和配色，轻松友好', bg: 'F3FAF6', surface: 'E3F4EA', soft: 'D3EEDD', title: '14532D', body: '1F3A2C', muted: '5B7B6A', accent: '22A06B', accent2: '0F766E', ...YAHEI, frame: 'center', tags: ['健康教育', '团队分享'] },
   coral: { label: '珊瑚', description: '珊瑚色大色块撞藏青文字，醒目有冲击力', bg: 'FFFFFF', surface: 'FFF1EC', soft: 'FFE4D9', title: '1E293B', body: '334155', muted: '64748B', accent: 'F0643C', accent2: '1E293B', ...YAHEI, frame: 'left', tags: ['项目路演', '宣讲'] },
+  lab: { label: '实验室', description: '显微镜头全幅封面、灰青配色，适合基础研究与实验汇报', bg: 'FFFFFF', surface: 'F2F5F5', soft: 'E3EBEB', title: '1F2A2E', body: '37474F', muted: '6B7C80', accent: '2E8B8B', accent2: '1F2A2E', ...YAHEI, frame: 'left', tags: ['基础研究', '实验汇报'], photo: 'lab' },
+  micro: { label: '显微', description: '荧光细胞全幅封面、靛蓝配色，适合基础医学与大会报告', bg: 'F7F8FC', surface: 'ECEEF8', soft: 'DDE1F3', title: '1B1B4B', body: '33365C', muted: '6B6F8E', accent: '3B5BDB', accent2: '0EA5E9', ...YAHEI, frame: 'left', tags: ['基础医学', '大会报告'], photo: 'micro' },
+  mist: { label: '山岚', description: '层叠远山全幅封面、湖蓝配色，开阔沉静', bg: 'FFFFFF', surface: 'EFF6FA', soft: 'D9EBF4', title: '0B3B57', body: '2D4654', muted: '64808F', accent: '0C73A6', accent2: '0B3B57', ...YAHEI, frame: 'left', tags: ['大会报告', '通用'], photo: 'mist' },
+  dusk: { label: '暮色', description: '暮色山影全幅封面、雾紫配色，柔和有温度', bg: 'FAF8FB', surface: 'F2ECF3', soft: 'E6DAE8', title: '3B2440', body: '4A3D4E', muted: '7D6E80', accent: '8E5C9A', accent2: 'D9822B', ...YAHEI, frame: 'left', tags: ['人文讲座', '年度总结'], photo: 'dusk' },
+  library: { label: '书卷', description: '古典图书馆全幅封面、宋体标题、牛皮纸配色，适合文献解读与教学', bg: 'FBF8F2', surface: 'F3ECDF', soft: 'EADDC6', title: '2B2118', body: '453A2F', muted: '7A6E60', accent: '8B5A2B', accent2: '2B2118', ...SONG, frame: 'left', tags: ['文献解读', '教学'], photo: 'library' },
 }
 
 export const DEFAULT_THEME = 'clinical'

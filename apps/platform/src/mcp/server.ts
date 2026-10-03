@@ -34,6 +34,8 @@ import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import { DiagramError, renderSvg } from '../render/diagram.ts'
 import type { TurnRegistry } from './turns.ts'
+import type { ImageService } from '../images/service.ts'
+import { UnsplashError } from '../images/unsplash.ts'
 
 export interface McpDeps {
   claims: ClaimService
@@ -64,6 +66,8 @@ export interface McpDeps {
   cohort?: CohortService
   /** 开放获取全文（可选）。 */
   fulltext?: FullTextClient
+  /** Unsplash 图库（可选；服务器没配 key 时 configured=false）。 */
+  images?: ImageService
 }
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
@@ -98,7 +102,8 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
   研究入组：study_cohort_preview 按条件筛（先给用户看名单与依据）→ 用户同意后 study_enroll → study_cohort_dataset 生成研究数据集（只有研究编号）→ dataset_open 分析；study_cohort_list 里 stale=true 时先提醒用户刷新。
   写病例报告：doc_create 新建文档 → patient_doc_link 关联到患者（这样它出现在患者页的「病例报告」里，不在文档列表里）→ 依据 patient_read / labs_query 写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
-- 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
+- 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。
+- 幻灯片配图：image_search 按关键词（英文效果更好）搜 Unsplash 图库 → slide_add_photo 把选中的照片插入某一页（图文版式自动放进图片区）。署名（Photo by 摄影师 on Unsplash）由平台写进图片说明和这一页的演讲备注，不要删；回复用户时也要提到署名。图库没配置时这两个工具返回 unsplash_unconfigured，改用用户上传的图片。`
 
 /** 一次 MCP 请求的上下文。 */
 class Ctx {
@@ -389,6 +394,33 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     } catch (err) {
       return fail('render_unavailable', (err as Error).message, { hint: '改用 layout_check 检查版面。' })
     }
+  })
+
+  // —— 图库（Unsplash）：与界面「图片 ▾ → 从 Unsplash 搜索」同一个服务 ——
+
+  const imageFail = (err: unknown) => err instanceof UnsplashError ? fail(err.code, err.message) : err instanceof OpError ? fail(err.code, err.message, err.toJSON()) : fail('image_failed', (err as Error).message)
+
+  server.registerTool('image_search', {
+    description: '在 Unsplash 图库按关键词搜索照片（英文关键词效果更好），返回 photo_id、尺寸、主色、描述、署名。用 slide_add_photo 插入幻灯片；署名由平台自动写进备注。',
+    inputSchema: { query: z.string().describe('关键词，如 laboratory microscope'), page: z.number().int().min(1).max(50).optional() },
+  }, async ({ query, page }) => {
+    if (!deps.images?.configured) return fail('unsplash_unconfigured', '图库未配置（服务器没有设置 UNSPLASH_ACCESS_KEY），请改用用户上传的图片')
+    try {
+      const r = await deps.images.search(query, page ?? 1)
+      return json({ total: r.total, pages: r.pages, results: r.results.map(p => ({ photo_id: p.id, width: p.width, height: p.height, color: p.color, description: p.description, credit: p.credit.text })) })
+    } catch (err) { return imageFail(err) }
+  })
+
+  server.registerTool('slide_add_photo', {
+    description: '把 Unsplash 照片插入一页幻灯片：平台下载成资产、按版式放置（图文版式放进图片区，其他居中；也可给 x / y / w，单位 pt），署名写进图片说明与这一页的演讲备注。',
+    inputSchema: { doc_id: z.string(), slide_id: z.string(), photo_id: z.string().describe('image_search 返回的 photo_id'), x: z.number().optional(), y: z.number().optional(), w: z.number().positive().optional() },
+  }, async ({ doc_id, slide_id, photo_id, x, y, w }) => {
+    const denied = ctx.check(doc_id, 'write') ?? deckOnly(doc_id)
+    if (denied) return denied
+    if (!deps.images?.configured) return fail('unsplash_unconfigured', '图库未配置（服务器没有设置 UNSPLASH_ACCESS_KEY），请改用用户上传的图片')
+    try {
+      return json(await deps.images.addToSlide(claims.u, { doc_id, slide_id, photo_id, x, y, w }, { actor: 'ai', turnId: ctx.turnId }))
+    } catch (err) { return imageFail(err) }
   })
 
   // —— 评论 ——

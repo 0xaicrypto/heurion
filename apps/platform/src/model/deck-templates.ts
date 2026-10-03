@@ -1,5 +1,6 @@
 import { DECK_THEMES, DEFAULT_THEME, resolveColor, type DeckTheme } from './deck-themes.ts'
 import { emu } from './deck-schema.ts'
+import { themePhotoCredit, themePhotoId } from './theme-photos.ts'
 
 /**
  * deck 完整模板：deck-themes.ts 的配色字体 + 这里的版式几何与装饰。
@@ -9,6 +10,8 @@ import { emu } from './deck-schema.ts'
  *   1–3 号与早期平台模板（Title Slide / Title and Content / Blank）一一对应，旧 deck 直接沿用。
  * - 装饰：色条、角块、圆形、细线等，作为页上的形状存在（查看器、导出、AI 读到的一致），名字以 deco: 开头；
  *   换模板时整体删掉重加，用户自己加的形状不受影响。装饰不能改字，可以删除。
+ * - 带图模板（主题带 photo）：封面 / 致谢铺全幅照片（已压暗，白字），章节页右侧半幅照片；照片也是装饰（kind=image，
+ *   引用内置资产 tp_<模板>_cover / _panel），换模板一样整体替换。
  * 坐标单位 pt，页面 960×540（16:9）。
  */
 
@@ -58,7 +61,8 @@ export interface PhSpec {
   box: [number, number, number, number]
   size: number
   bold: boolean
-  color: ColorToken
+  /** 主题记号；压在照片上的文字用固定的白 / 浅灰。 */
+  color: ColorToken | 'FFFFFF' | 'E5E7EB'
   align: 'l' | 'ctr'
   bullets: boolean
   /** add_slide 的哪个参数填进来。 */
@@ -74,6 +78,11 @@ const BOX_OVERRIDES: Record<string, Boxes> = {
   warm: { 'section.title': [80, 190, 420, 110], 'section.body': [80, 310, 420, 70] },
   graphite: { 'section.title': [80, 190, 480, 110], 'section.body': [80, 310, 480, 70] },
   swiss: { 'section.title': [80, 190, 480, 110], 'section.body': [80, 310, 480, 70], 'cover.title': [80, 200, 800, 110], 'closing.title': [80, 200, 800, 110] },
+  ...Object.fromEntries(['lab', 'micro', 'mist', 'dusk', 'library'].map(k => [k, {
+    'cover.title': [80, 190, 640, 120], 'cover.subtitle': [80, 320, 600, 70],
+    'closing.title': [80, 190, 640, 110], 'closing.body': [80, 310, 600, 70],
+    'section.title': [80, 190, 420, 110], 'section.body': [80, 310, 420, 70],
+  } as Boxes])),
   coral: {
     'cover.title': [80, 170, 470, 130], 'cover.subtitle': [80, 316, 450, 70],
     'closing.title': [80, 190, 480, 110], 'closing.body': [80, 310, 480, 70],
@@ -83,8 +92,14 @@ const BOX_OVERRIDES: Record<string, Boxes> = {
   },
 }
 
-/** 版式的占位符（按模板）。 */
+/** 版式的占位符（按模板）。带图模板的封面 / 致谢：文字压在压暗的照片上，用白字。 */
 export function layoutSpec(themeKey: string | null | undefined, key: LayoutKey): PhSpec[] {
+  const specs = baseLayoutSpec(themeKey, key)
+  if (!themeOf(themeKey).photo || (key !== 'cover' && key !== 'closing')) return specs
+  return specs.map(s => ({ ...s, color: s.color === 'title' ? 'FFFFFF' : 'E5E7EB' }))
+}
+
+function baseLayoutSpec(themeKey: string | null | undefined, key: LayoutKey): PhSpec[] {
   const theme = themeOf(themeKey)
   const key_ = DECK_THEMES[themeKey ?? ''] ? themeKey! : DEFAULT_THEME
   const center = theme.frame === 'center'
@@ -135,13 +150,27 @@ export function phSpecOf(specs: PhSpec[], ph: string | null, idx: string | null)
     ?? null
 }
 
-export interface Deco { name: string; box: Box; fill: string; geom: 'rect' | 'roundRect' | 'ellipse' }
+export interface Deco {
+  name: string; box: Box; fill: string; geom: 'rect' | 'roundRect' | 'ellipse'
+  /** 照片装饰：内置资产 id（tp_<模板>_cover / _panel）与署名 */
+  image?: string
+  credit?: string
+}
 
-type DecoToken = 'accent' | 'accent2' | 'soft' | 'surface' | 'title'
+type DecoToken = 'accent' | 'accent2' | 'soft' | 'surface' | 'title' | 'photo:cover' | 'photo:panel'
 type D = [string, Box, DecoToken, Deco['geom']?]
 
 /** 每套模板的装饰（按版式）。 */
+/** 带图模板共用的装饰：封面 / 致谢全幅照片，章节页右侧半幅照片，内页顶部一道主色细条。 */
+const photoDecos = (key: LayoutKey): D[] => {
+  if (key === 'cover' || key === 'closing') return [['photo', [0, 0, 960, 540], 'photo:cover'], ['rule', [80, 168, 64, 5], 'accent']]
+  if (key === 'section') return [['photo', [540, 0, 420, 540], 'photo:panel'], ['rule', [80, 168, 56, 5], 'accent']]
+  if (key === 'blank' || key === 'image_text') return [['band', [0, 0, 960, 6], 'accent']]
+  return [['band', [0, 0, 960, 6], 'accent'], ['rule', [key === 'big_number' ? 60 : 60, 112, 48, 4], 'accent']]
+}
+
 const DECOS: Record<string, (key: LayoutKey) => D[]> = {
+  lab: photoDecos, micro: photoDecos, mist: photoDecos, dusk: photoDecos, library: photoDecos,
   clinical: key => {
     if (key === 'cover' || key === 'closing') return [['band', [0, 0, 24, 540], 'accent'], ['rule', [80, 404, 96, 5], 'accent2']]
     if (key === 'section') return [['panel', [640, 0, 320, 540], 'soft'], ['band', [0, 0, 24, 540], 'accent']]
@@ -214,6 +243,11 @@ export function decorations(themeKey: string | null | undefined, key: LayoutKey)
     out.push({ name: `${DECO_PREFIX}${k}:picture`, box: pic.box, fill: theme.soft, geom: k === 'mint' ? 'roundRect' : 'rect' })
   }
   for (const [name, box, token, geom] of DECOS[k]?.(key) ?? []) {
+    if (token === 'photo:cover' || token === 'photo:panel') {
+      const slug = theme.photo!
+      out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: 'none', geom: 'rect', image: themePhotoId(slug, token === 'photo:cover' ? 'cover' : 'panel'), credit: themePhotoCredit(slug)?.credit ?? 'Photo on Unsplash' })
+      continue
+    }
     out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: resolveColor(token, k)!, geom: geom ?? 'rect' })
   }
   return out
@@ -238,7 +272,8 @@ export function templateCatalog() {
     layouts: LAYOUTS.map(l => ({
       key: l.key, name: l.name, hint: l.hint,
       placeholders: layoutSpec(key, l.key).map(s => ({ role: s.role, type: s.type, box: s.box, size: s.size, bold: s.bold, color: resolveColor(s.color, key), align: s.align })),
-      decorations: decorations(key, l.key).map(d => ({ box: d.box, fill: d.fill, geom: d.geom })),
+      decorations: decorations(key, l.key).map(d => ({ box: d.box, fill: d.fill, geom: d.geom, ...(d.image ? { image: d.image } : {}) })),
     })),
+    ...(t.photo ? { credit: themePhotoCredit(t.photo) } : {}),
   }))
 }

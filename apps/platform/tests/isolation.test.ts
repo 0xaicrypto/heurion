@@ -28,6 +28,8 @@ import { TenantService } from '../src/auth/tenants.ts'
 import { kekFrom, TenantKeys } from '../src/tenancy/keys.ts'
 import { PatientService } from '../src/tenancy/patients.ts'
 import { StudyService } from '../src/research/service.ts'
+import { ImageService } from '../src/images/service.ts'
+import { fakeUnsplash } from './fake-unsplash.ts'
 
 /**
  * 跨租户 / 跨用户越权（docs/design/TENANCY.md §9，上线门槛）：
@@ -43,7 +45,7 @@ type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' |
 const PARAMS: Record<string, (s: Seed) => string> = {
   id: s => s.doc, did: s => s.dataset, fid: s => s.kb, mid: s => s.memory, cid: s => s.comment, pid: s => s.project,
   uid: s => s.userA, code: s => s.invite, tid: s => s.tenantA, jid: s => s.job, turnId: s => s.turn, seq: () => '1', index: () => '0', group: () => 'g1',
-  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc,
+  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc,
 }
 /** 按设计公开的接口（不需要登录或本身就是给持有链接的人用的）。 */
 const PUBLIC: Record<string, string> = {
@@ -71,9 +73,10 @@ async function setup() {
   const patients = new PatientService(mkdtempSync(join(tmpdir(), 'iso-pt-')), new TenantService(store, { devMode: false }), new TenantKeys(store, kekFrom({ secret: SECRET })), store)
   const turns = new TurnService(docs, pool, new TurnRegistry(), { memory })
   const ops = new OpService(docs)
+  const images = new ImageService(docs, ops, fakeUnsplash().unsplash)
   const app = buildApi({
     docs, ops, turns, postcheck: new PostCheck(docs), crossref: {} as CrossrefClient,
-    renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r-'))), accounts, devMode: false, devUser: 'dev', kb, memory, evolution, datasets, patients, studies,
+    renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r-'))), accounts, devMode: false, devUser: 'dev', kb, memory, evolution, datasets, patients, studies, images,
   })
   const call = async (method: string, path: string, token?: string, body?: unknown, form?: FormData) => {
     if (/^\/api\/auth\/(register|login)$/.test(path)) body = { ...(body as object), pow: solveChallenge((await (await app.request('/api/auth/challenge')).json()) as Challenge) }
@@ -123,7 +126,7 @@ async function setup() {
     userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
     patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id,
   }
-  return { app, store, docs, ops, kb, memory, evolution, datasets, patients, studies, call, seed, A, B, op }
+  return { app, store, docs, ops, kb, memory, evolution, datasets, patients, studies, images, call, seed, A, B, op }
 }
 
 describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 都碰不到', () => {
@@ -179,7 +182,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
   const TOOL_PARAMS: Record<string, (s: Seed) => unknown> = {
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
-    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0',
+    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0', photo_id: () => 'p0',
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {
@@ -189,7 +192,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     const server = buildMcpServer({
       docs: t.docs, ops: t.ops, turns: new TurnRegistry(), secret: SECRET, claims: new ClaimService(t.docs, {} as PubMedClient), renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r2-'))),
       pubmed: {} as PubMedClient, crossref: {} as CrossrefClient, workspaceDir: () => mkdtempSync(join(tmpdir(), 'iso-mws-')), isLiveSession: () => true,
-      kb: t.kb, memory: t.memory, evolution: t.evolution, datasets: t.datasets, patients: t.patients, studies: t.studies,
+      kb: t.kb, memory: t.memory, evolution: t.evolution, datasets: t.datasets, patients: t.patients, studies: t.studies, images: t.images,
     }, claims)
     const [a, b] = InMemoryTransport.createLinkedPair()
     await server.connect(a)
