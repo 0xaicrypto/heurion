@@ -64,11 +64,12 @@ const KINDS = new Set(['lab_report', 'discharge', 'pathology', 'imaging', 'other
 
 /** 数值能否在原文那一页（或任一页）里找到（防止模型编造或读错行）。 */
 function foundIn(value: string, pages: string[], page: number): boolean {
-  const v = value.replace(/\s+/g, '')
+  // 空白压成一个空格（不能删掉：表格的数值常按列排，删掉换行会把相邻两个数粘成一个）
+  const v = value.replace(/[↑↓]/g, '').replace(/\s+/g, ' ').trim()
   if (!v) return false
-  const hay = (s: string) => s.replace(/\s+/g, '')
+  const hay = (s: string) => s.replace(/\s+/g, ' ')
   const target = pages[page - 1]
-  const re = new RegExp(`(?<![0-9.])${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`)
+  const re = new RegExp(`(?<![0-9.])${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\.?[0-9])`)
   return Boolean((target && re.test(hay(target))) || pages.some(p => re.test(hay(p))))
 }
 

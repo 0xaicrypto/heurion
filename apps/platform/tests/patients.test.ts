@@ -6,7 +6,7 @@ import { TenantService } from '../src/auth/tenants.ts'
 import { Store } from '../src/store/db.ts'
 import { kekFrom, KeyDestroyedError, TenantKeys } from '../src/tenancy/keys.ts'
 import { PatientError, PatientService, testKey, type Actor } from '../src/tenancy/patients.ts'
-import { redact } from '../src/tenancy/extract-report.ts'
+import { extractReport, redact } from '../src/tenancy/extract-report.ts'
 
 function env() {
   const store = new Store(':memory:')
@@ -251,6 +251,14 @@ describe('患者：报告自动提取', () => {
     expect(t.svc.labs(a, p.id).map(l => [l.test_key, l.value_num, l.flag, l.collected_on])).toEqual([
       ['alt', 52, 'H', '2025-09-01'], ['creatinine', 141, 'H', '2025-09-01'], ['hemoglobin', 131, null, '2025-09-01'],
     ])
+  })
+
+  it('原文核对：数值按列排（PDF 文字层常见）也能核对到；38 不会误配 38.6；带箭头的值先去掉箭头', async () => {
+    const columnar = '项目名称\n丙氨酸氨基转移酶(ALT)\n白蛋白(ALB)\n结果\n35\n38.6\n提示\n↓\n单位\nU/L\ng/L'
+    const r = await extractReport([columnar], async () => JSON.stringify({ kind: 'lab_report', title: '肝功能', report_date: '2025-03-02', labs: [
+      { test_name: 'ALT', value: '35', page: 1 }, { test_name: '白蛋白', value: '38.6↓', page: 1 }, { test_name: '白蛋白（编的）', value: '38', page: 1 },
+    ] }))
+    expect(r.labs.map(l => l.verified)).toEqual([true, true, false])
   })
 
   it('报告上没有日期：化验先不带日期，确认报告时必须补填（不用上传时间代替）', async () => {
