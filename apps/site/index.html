@@ -19,6 +19,7 @@
     <nav class="links" id="links">
       <a href="#capabilities">能力</a>
       <a href="#how">工作方式</a>
+      <a href="#roadmap">路线图</a>
       <a href="#security">安全与合规</a>
       <a href="#partners">数据来源</a>
     </nav>
@@ -160,8 +161,39 @@
     </div>
   </section>
 
+  <!-- 路线图 -->
+  <section class="section" id="roadmap">
+    <div class="wrap">
+      <p class="eyebrow">ROADMAP</p>
+      <h2><span class="nw">接下来，</span><span class="nw">陆续加入。</span></h2>
+      <p class="lead">从写作出发，逐步延伸到临床科研的数据与证据。</p>
+      <div class="road">
+        <article class="road-item">
+          <span class="status live">已上线 · 持续增强</span>
+          <h3>资料库</h3>
+          <p>论文、指南、说明书集中管理，AI 检索并按页码引用原文。下一步：抽取图表与表格里的数据，跨资料对比结论。</p>
+        </article>
+        <article class="road-item">
+          <span class="status soon">即将推出</span>
+          <h3>记忆自我演进</h3>
+          <p>AI 从你的修订与采纳中总结写作习惯，自动整理、合并、淘汰过时的记忆——每一次变化仍由你确认。</p>
+        </article>
+        <article class="road-item">
+          <span class="status plan">规划中</span>
+          <h3>影像分析</h3>
+          <p>上传医学影像，AI 辅助测量与描述，结果带来源写进稿件。影像先去标识化，在隔离环境中处理。</p>
+        </article>
+        <article class="road-item">
+          <span class="status plan">规划中</span>
+          <h3>实验室数据分析</h3>
+          <p>化验与随访数据的清洗、统计与作图——Table 1、生存曲线、组间比较，直接生成可放进论文的图表。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <!-- 工作方式 -->
-  <section class="section" id="how">
+  <section class="section alt" id="how">
     <div class="wrap">
       <p class="eyebrow">HOW IT WORKS</p>
       <h2><span class="nw">三步，</span><span class="nw">从资料到可提交的稿件。</span></h2>
@@ -186,7 +218,7 @@
   </section>
 
   <!-- 安全与合规 -->
-  <section class="section alt" id="security">
+  <section class="section" id="security">
     <div class="wrap sec-row">
       <div class="sec-copy">
         <p class="eyebrow">SECURITY &amp; COMPLIANCE</p>
@@ -204,7 +236,7 @@
   </section>
 
   <!-- 数据来源 -->
-  <section class="section" id="partners">
+  <section class="section alt" id="partners">
     <div class="wrap">
       <p class="eyebrow">DATA SOURCES</p>
       <h2><span class="nw">建立在</span><span class="nw">开放学术数据之上。</span></h2>
@@ -240,6 +272,7 @@
 </footer>
 
 <script>
+{
   // 已登录（应用把令牌存在 localStorage 的 heurion.token）：主按钮改为「进入工作台」
   try {
     if (localStorage.getItem('heurion.token')) {
@@ -251,9 +284,10 @@
   const btn = document.getElementById('menuBtn'), links = document.getElementById('links')
   btn.onclick = () => { const open = links.classList.toggle('open'); btn.setAttribute('aria-expanded', String(open)) }
   links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => { links.classList.remove('open'); btn.setAttribute('aria-expanded', 'false') }))
-  const top = document.getElementById('top')
-  const onScroll = () => top.classList.toggle('scrolled', scrollY > 8)
+  const header = document.getElementById('top') // 不能叫 top：与 window.top 冲突，整段脚本会报错
+  const onScroll = () => header.classList.toggle('scrolled', scrollY > 8)
   addEventListener('scroll', onScroll, { passive: true }); onScroll()
+}
 </script>
 </body>
 </html>
