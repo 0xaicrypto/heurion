@@ -1,0 +1,47 @@
+name: Heurion 在线探测
+
+# 外部探测 heurion.org：每 10 分钟查一次 /healthz 与首页，连续两次失败开一个 issue（订阅仓库的人会收到邮件），
+# 恢复后自动关闭。GitHub 的定时任务只在默认分支（main）上运行——这个文件要放到 0xaicrypto/heurion 的 main 上，
+# 路径 .github/workflows/uptime.yml（2.0 代码在 v2 分支）。
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 探测
+        id: probe
+        run: |
+          ok=0
+          for i in 1 2; do
+            if curl -fsS -m 20 https://heurion.org/healthz | grep -q '"ok":true' && curl -fsS -m 20 -o /dev/null https://heurion.org/ && curl -fsS -m 20 -o /dev/null https://heurion.org/app; then ok=1; break; fi
+            sleep 60
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "healthz: $(curl -s -m 20 -o /dev/null -w '%{http_code}' https://heurion.org/healthz)" >> "$GITHUB_STEP_SUMMARY"
+      - name: 开 / 关告警 issue
+        uses: actions/github-script@v7
+        env:
+          OK: ${{ steps.probe.outputs.ok }}
+        with:
+          script: |
+            const title = '🔴 heurion.org 不可用'
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', labels: 'uptime' })
+            const existing = open.find(i => i.title === title)
+            if (process.env.OK !== '1' && !existing) {
+              await github.rest.issues.create({ ...context.repo, title, labels: ['uptime'],
+                body: `连续两次探测失败（/healthz 或首页）。时间：${new Date().toISOString()}\n运行：${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}` })
+            } else if (process.env.OK === '1' && existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body: `✅ 已恢复：${new Date().toISOString()}` })
+              await github.rest.issues.update({ ...context.repo, issue_number: existing.number, state: 'closed' })
+            }
