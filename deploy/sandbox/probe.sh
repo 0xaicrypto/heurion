@@ -35,6 +35,14 @@ run_as 59999 "$A" "curl -fsS -m 5 http://127.0.0.1:${PORT:-8787}/healthz" | grep
 run_as 59999 "$A" 'curl -sS -m 5 -o /dev/null https://example.com' >/dev/null 2>&1 && bad "能访问外网" || ok "不能访问外网"
 run_as 59999 "$A" 'curl -sS -m 5 -o /dev/null http://embedder:8003/health' >/dev/null 2>&1 && bad "能访问内部网络的其他服务" || ok "不能访问内部网络的其他服务"
 
+# 数据导入（与平台 datasets/ingest.ts 同一条路）：平台在工作区里建中转目录、放输入 → 以该 uid 运行导入脚本 → 平台读结果、清理
+run_as 59999 "$A" 'python3 -c "import pandas, scipy, statsmodels, lifelines, pyreadstat, openpyxl, matplotlib"' >/dev/null && ok "统计包可用（pandas、statsmodels、lifelines、pyreadstat）" || bad "统计包缺失"
+STAGE="$ROOT/workspaces/$A/.datasets/probe"
+mkdir -p "$STAGE" && chmod 2777 "$ROOT/workspaces/$A/.datasets" "$STAGE" && printf 'grp,val\nA,1\nB,2\n' > "$STAGE/input.csv" && chmod 644 "$STAGE/input.csv"
+run_as 59999 "$A" "python3 /app/apps/platform/scripts/dataset_ingest.py $STAGE/input.csv $STAGE/out" >/dev/null
+grep -q '"ok": true' "$STAGE/out/profile.json" 2>/dev/null && head -1 "$STAGE/out/data.csv" | grep -q 'grp,val' && rm -rf "$STAGE" && [ ! -e "$STAGE" ] \
+  && ok "数据导入在隔离环境里运行，平台能读结果并清理" || bad "数据导入在隔离环境里失败"
+
 rm -rf "$ROOT/workspaces/$A" "$ROOT/workspaces/$B" "$ROOT/dsh-homes/$A" "$ROOT/dsh-homes/$B" 2>/dev/null \
   || sudo -n /usr/local/bin/heurion-sandbox-exec 59999 "$ROOT/workspaces/$A" "$ROOT/dsh-homes/$A" -- bash -c 'rm -rf ./* ./.tmp' >/dev/null 2>&1
 exit $fail
