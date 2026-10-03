@@ -236,15 +236,21 @@ export class TurnService {
 
     let status: 'done' | 'error' | 'cancelled' | 'timeout' = 'done'
     let failure: string | null = null
+    let modelError: string | null = null
     try {
       const result = await Promise.race([
         this.pool.run(userId, prompt, (n, sessionId) => {
           lastActivity = Date.now()
-          for (const e of mapNotification(n, sessionId)) emit(e)
+          for (const e of mapNotification(n, sessionId)) {
+            // 模型调用失败（认证失败、限流、服务出错等）：dsh 正常结束回合但带错误，按失败记，不算「已完成」
+            if (e.type === 'error') modelError = e.message
+            emit(e)
+          }
         }),
         aborted,
       ])
       if (result.finalResponse) store.addMessage(docId, 'assistant', result.finalResponse, turn.id)
+      if (modelError) { status = 'error'; failure = modelError }
     } catch (err) {
       status = this.timedOut.has(userId) ? 'timeout' : this.cancelling.has(userId) ? 'cancelled' : 'error'
       const kept = '已提交的修改保留，可撤销本轮或按版本回滚。'

@@ -907,7 +907,13 @@ function renderTurnEvent(ev: any): void {
     case 'comment_reply': scheduleRefresh(); break
     case 'memory': $('chatLog').appendChild(memory.memoryCard(ev)); $('chatLog').scrollTop = 1e9; break
     case 'version': addStep(`  ✓ 已保存为 v${ev.seq}`, 'ok'); break
-    case 'error': addStep(ev.message, 'err'); break
+    case 'error': {
+      addStep(ev.message, 'err')
+      // 失败原因直接显示在对话里（不只在折叠的工作过程里）
+      const div = addMsg('assistant', `出错了：${friendlyError(ev.message)}`)
+      div.classList.add('error')
+      break
+    }
     case 'turn_done':
       setBusy(false)
       void loadQueue()
@@ -1237,3 +1243,13 @@ async function boot(): Promise<void> {
   await loadDocs()
 }
 boot().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Error).message)}</div>` })
+
+/** 模型服务的报错翻成用户看得懂的话（原文仍在工作过程里）。 */
+function friendlyError(message: string): string {
+  if (/Authentication Fails|api key.*invalid|401/i.test(message)) return '模型服务认证失败（平台的 API key 无效或过期），请联系管理员。'
+  if (/rate limit|429|Too Many Requests/i.test(message)) return '模型服务繁忙（限流），请稍后重试。'
+  if (/insufficient|balance|402/i.test(message)) return '模型服务余额不足，请联系管理员。'
+  if (/timeout|ETIMEDOUT|ECONNRESET|fetch failed/i.test(message)) return '连接模型服务失败，请稍后重试。'
+  return message.slice(0, 300)
+}
+

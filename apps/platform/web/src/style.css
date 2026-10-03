@@ -507,3 +507,4 @@ button.danger:hover:not(:disabled) { filter: brightness(.92); }
 .chart-grid input:focus { border-color: var(--sky); outline: none; background: var(--panel); }
 .chart-grid th input { font-weight: 600; }
 .chart-grid button { font-size: 12px; padding: 1px 8px; }
+.msg.assistant.error { border: 1px solid var(--danger); color: var(--danger); }
