@@ -424,8 +424,10 @@ describe('文档仓库（AI 一侧）', () => {
     expect(r.body).toMatchObject({
       result: 'reviewed',
       new_memories_proposed: [{ content: '效应量写 HR 与 95% CI' }],
-      cleanup_suggestions: [{ action: '合并', memories: ['数值保留两位小数', '小数保留两位'], new_content: '数值一律保留两位小数' }],
+      cleanup_suggestions: [{ action: '合并', new_content: '数值一律保留两位小数' }],
     })
+    // 两条记忆同一毫秒创建，先后不固定：只比内容
+    expect([...r.body.cleanup_suggestions[0].memories].sort()).toEqual(['小数保留两位', '数值保留两位小数'])
     expect(notices).toMatchObject([{ type: 'memory', result: 'proposed' }])
     // 建议不会自动生效
     expect(t.store.listMemories('u1', ['active']).map(m => m.content).sort()).toEqual(['小数保留两位', '数值保留两位小数'])
