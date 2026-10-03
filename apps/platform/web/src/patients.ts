@@ -2,6 +2,7 @@
  * 患者（第二期）：左栏「患者」页签、患者页（概览 / 化验 / 报告 / 待确认）、上传报告与审核、诊疗组、紧急访问、访问记录。
  * 患者在平台里只有代号；「代号 → 姓名」的备注只存在这台电脑的浏览器里（localStorage），平台不保存。
  */
+import { photoFigure } from './photos.ts'
 import { askConfirm, askText } from './dialogs.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
@@ -433,7 +434,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <li><b>写病例报告</b><span>依据已确认的数据起草，报告保存在患者的「病例报告」里。</span></li>
       </ol>
       <div class="row"><button class="primary" data-pw="new">＋ 新建患者</button>${list[0] ? `<button data-pw="open">打开 ${esc(label(list[0]))}</button>` : ''}</div>
-    </div>`
+    </div>${photoFigure('patients')}`
   }
 
   document.getElementById('page')!.addEventListener('click', e => {

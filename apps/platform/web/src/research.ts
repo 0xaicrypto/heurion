@@ -3,6 +3,7 @@
  * 入组：按条件筛选诊疗组里的患者 → 预览（代号 + 匹配依据）→ 勾选入组（研究编号 S001…）→ 生成研究数据集（只有研究编号）。
  * 新建方案 / 论文 / 幻灯片：新建文档并归入研究，打开后把建议的指令填进对话框（由人改好再发送）。
  */
+import { photoFigure } from './photos.ts'
 import { askConfirm } from './dialogs.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
@@ -335,7 +336,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
         <li><b>入组患者</b><span>从患者库按条件筛选入组，生成只有研究编号的研究数据集。</span></li>
       </ol>
       <div class="row"><button class="primary" data-rw="new">＋ 新建研究</button>${list[0] ? `<button data-rw="open">打开「${esc(list[0].title)}」</button>` : ''}</div>
-    </div>`
+    </div>${photoFigure('research')}`
   }
 
   // —— 事件 ——

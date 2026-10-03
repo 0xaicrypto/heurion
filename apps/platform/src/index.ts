@@ -123,7 +123,7 @@ const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, 
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))
-const MIME: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' }
+const MIME: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2' }
 app.get('/assets/:file', c => {
   const file = join(DIST, 'assets', basename(c.req.param('file')))
   if (!existsSync(file)) return c.notFound()

@@ -17,11 +17,13 @@ import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 import { applyTheme, mountThemeSwitch } from './theme.ts'
+import { photoFigure } from './photos.ts'
 
 const TOKEN = storedToken()
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 applyTheme()
 mountThemeSwitch($('themeSwitch'))
+$('authScreen').insertAdjacentHTML('afterbegin', photoFigure('login'))
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 
 async function api<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -314,6 +316,7 @@ $<HTMLInputElement>('uploadInput').onchange = async e => {
 function showWelcome(): void {
   $('page').className = 'page welcome-page'
   $('page').replaceChildren(($('welcomeTpl') as HTMLTemplateElement).content.cloneNode(true))
+  $('page').insertAdjacentHTML('beforeend', photoFigure('write'))
 }
 
 $('page').addEventListener('click', async e => {
