@@ -1,6 +1,6 @@
 /**
  * 参考资料库（R2b）：上传论文 / 指南 / 内部材料，平台抽取文字、切块、向量化；AI 用 kb_search / kb_read 检索与读原文。
- * 这里是资料库对话框（上传、处理状态、试检索、删除）和对话框下方的「引用资料」选择。
+ * 这里是工作区里的资料库页（上传、处理状态、归入项目、试检索、删除）和对话框下方的「引用资料」选择。
  */
 import { askConfirm } from './dialogs.ts'
 
@@ -19,7 +19,12 @@ function size(n: number): string {
   return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-export function initLibrary(api: Api, token: () => string, notice: (msg: string, error?: boolean) => void) {
+export interface LibraryHooks {
+  /** 把中间区域换成一个页面（关掉文档、离开患者页 / 研究页），返回页面元素 */
+  showPage(cls: string, title: string): HTMLElement
+}
+
+export function initLibrary(api: Api, token: () => string, notice: (msg: string, error?: boolean) => void, hooks: LibraryHooks) {
   /** 对话里选中的资料（发送时随消息带上，发完清空）。 */
   let picked: KbFile[] = []
   let poll: ReturnType<typeof setTimeout> | null = null
@@ -43,92 +48,112 @@ export function initLibrary(api: Api, token: () => string, notice: (msg: string,
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
-  async function openLibrary(): Promise<void> {
-    const dlg = document.getElementById('dialog')!
-    let files: KbFile[] = []
-    let projects: Array<{ id: string; name: string }> = []
-    let vector = false
-    let query = ''
-    let hits: any[] | null = null
+  // —— 资料库页 ——
 
-    const row = (f: KbFile) => {
-      const busy = f.status !== 'ready' && f.status !== 'failed'
-      const meta = [f.pages ? `${f.pages} 页` : '', size(f.size), f.doi ? `DOI ${f.doi}` : '', f.status === 'ready' && f.chunks > 0 && f.embedded < f.chunks ? '仅关键词' : ''].filter(Boolean).join(' · ')
-      return `<tr data-id="${f.id}"><td><div class="kb-name">${esc(f.name)}</div><div class="muted small">${esc(meta)}</div>${f.note ? `<div class="kb-note${f.status === 'failed' ? ' error' : ''}">${esc(f.note)}</div>` : ''}</td>
-        <td><select data-project title="归入项目：项目里的文档对话时可按项目检索">${['<option value="">未归类</option>', ...projects.map(p => `<option value="${esc(p.id)}"${p.id === f.project_id ? ' selected' : ''}>${esc(p.name)}</option>`)].join('')}</select></td>
-        <td><span class="kb-status ${f.status}${busy ? ' busy' : ''}">${STATUS[f.status]}</span></td>
-        <td class="actions"><div class="actions-row"><button data-view>原文</button><button data-del class="danger">删除</button></div></td></tr>`
-    }
-    const render = () => {
-      const focusSearch = document.activeElement?.id === 'kbQuery'
-      dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="参考资料库">
-        <div class="dialog-head"><h2>参考资料库</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
-        <div class="dialog-body">
-          <div class="muted">上传论文、指南、内部材料（PDF、docx、pptx、txt、md），AI 写作时会检索这些资料并标明出处。
-            ${vector ? '' : '<br><b>向量检索暂不可用</b>（嵌入服务没启动），目前只按关键词检索，服务就绪后自动补上。'}</div>
-          <div class="kb-drop" id="kbDrop">把文件拖到这里，或 <button id="kbPick" class="primary">选择文件</button><input id="kbInput" type="file" accept="${ACCEPT}" multiple hidden></div>
-          <form class="kb-search" id="kbSearch"><input id="kbQuery" type="search" placeholder="试检索：输入问题，看资料库能找到什么" value="${esc(query)}" autocomplete="off"><button>检索</button></form>
-          ${hits === null ? '' : hits.length === 0 ? '<div class="muted">没有找到相关片段</div>' : `<ol class="kb-hits">${hits.map(h => `<li><div class="muted small">《${esc(h.file_name)}》第 ${h.page} 页</div><div>${esc(h.text.slice(0, 280))}${h.text.length > 280 ? '…' : ''}</div></li>`).join('')}</ol>`}
-          ${files.length === 0 ? '<div class="muted kb-empty">资料库还是空的</div>' : `<table class="users kb-table"><tbody>${files.map(row).join('')}</tbody></table>`}
-        </div></div>`
-      if (focusSearch) { const q = dlg.querySelector<HTMLInputElement>('#kbQuery')!; q.focus(); q.setSelectionRange(q.value.length, q.value.length) }
-      const input = dlg.querySelector<HTMLInputElement>('#kbInput')!
-      dlg.querySelector<HTMLButtonElement>('#kbPick')!.onclick = () => input.click()
-      input.onchange = () => { if (input.files?.length) void withRefresh(upload(input.files)) }
-      const drop = dlg.querySelector<HTMLElement>('#kbDrop')!
-      drop.ondragover = e => { e.preventDefault(); drop.classList.add('over') }
-      drop.ondragleave = () => drop.classList.remove('over')
-      drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer?.files.length) void withRefresh(upload(e.dataTransfer.files)) }
-      dlg.querySelector<HTMLFormElement>('#kbSearch')!.onsubmit = async e => {
-        e.preventDefault()
-        query = dlg.querySelector<HTMLInputElement>('#kbQuery')!.value.trim()
-        hits = query ? await api<any[]>(`/api/kb-search?q=${encodeURIComponent(query)}`) : null
-        render()
-      }
-    }
-    const refresh = async () => {
-      if (dlg.hidden || !dlg.querySelector('[aria-label="参考资料库"]')) return
-      files = await api<KbFile[]>('/api/kb')
-      render()
-      // 有资料在处理中就隔两秒再看
-      if (poll) clearTimeout(poll)
-      if (files.some(f => f.status !== 'ready' && f.status !== 'failed')) poll = setTimeout(() => void refresh(), 2000)
-    }
-    const withRefresh = async (p: Promise<unknown>) => {
-      try { await p } catch (err) { notice((err as Error).message, true) }
+  const PAGE = 'library-page'
+  const page = () => document.getElementById('page')!
+  const onPage = () => page().classList.contains(PAGE)
+  let files: KbFile[] = []
+  let projects: Array<{ id: string; name: string }> = []
+  let vector = false
+  let query = ''
+  let hits: any[] | null = null
+
+  const row = (f: KbFile) => {
+    const busy = f.status !== 'ready' && f.status !== 'failed'
+    const meta = [f.pages ? `${f.pages} 页` : '', size(f.size), f.doi ? `DOI ${f.doi}` : '', f.status === 'ready' && f.chunks > 0 && f.embedded < f.chunks ? '仅关键词' : ''].filter(Boolean).join(' · ')
+    return `<tr data-id="${f.id}"><td><div class="kb-name"><b>${esc(f.name)}</b></div><div class="muted small">${esc(meta)}</div>${f.note ? `<div class="kb-note${f.status === 'failed' ? ' error' : ''}">${esc(f.note)}</div>` : ''}</td>
+      <td><select data-project title="归入项目：项目里的文档对话时可按项目检索">${['<option value="">未归类</option>', ...projects.map(p => `<option value="${esc(p.id)}"${p.id === f.project_id ? ' selected' : ''}>${esc(p.name)}</option>`)].join('')}</select></td>
+      <td><span class="kb-status ${f.status}${busy ? ' busy' : ''}">${STATUS[f.status]}</span></td>
+      <td class="muted nowrap">${new Date(f.created_at).toLocaleDateString('zh-CN')}</td>
+      <td class="actions"><div class="actions-row"><button data-view>原文</button><button data-del class="danger">删除</button></div></td></tr>`
+  }
+
+  function render(): void {
+    if (!onPage()) return
+    const el = page()
+    const focusSearch = document.activeElement?.id === 'kbQuery'
+    el.innerHTML = `
+      <div class="pg-head">
+        <h1>参考资料库</h1>
+        <p class="muted">上传论文、指南、内部材料（PDF、docx、pptx、txt、md），AI 写作时会检索这些资料并标明出处；参考文献条目（RIS、BibTeX、EndNote、PubMed、DOI 列表）在文档右侧「参考文献」里导入。
+          ${vector ? '' : '<br><b>向量检索暂不可用</b>（嵌入服务没启动），目前只按关键词检索，服务就绪后自动补上。'}</p>
+      </div>
+      <div class="kb-drop" id="kbDrop">把文件拖到这里，或 <button id="kbPick" class="primary">选择文件</button><input id="kbInput" type="file" accept="${ACCEPT}" multiple hidden></div>
+      <form class="kb-search" id="kbSearch"><input id="kbQuery" type="search" placeholder="试检索：输入问题，看资料库能找到什么" value="${esc(query)}" autocomplete="off"><button>检索</button></form>
+      ${hits === null ? '' : hits.length === 0 ? '<div class="muted">没有找到相关片段</div>' : `<section class="rs-card wide kb-hits-card"><div class="rs-card-head"><h3>检索结果</h3><button class="quiet small-btn" data-clear>清除</button></div><ol class="kb-hits">${hits.map(h => `<li><div class="muted small">《${esc(h.file_name)}》第 ${h.page} 页</div><div>${esc(h.text.slice(0, 280))}${h.text.length > 280 ? '…' : ''}</div></li>`).join('')}</ol></section>`}
+      ${files.length === 0 ? '<div class="muted kb-empty">资料库还是空的</div>' : `<div class="pg-table"><table class="users kb-table"><thead><tr><th>资料（${files.length}）</th><th>项目</th><th>状态</th><th>上传</th><th></th></tr></thead><tbody>${files.map(row).join('')}</tbody></table></div>`}`
+    if (focusSearch) { const q = el.querySelector<HTMLInputElement>('#kbQuery')!; q.focus(); q.setSelectionRange(q.value.length, q.value.length) }
+  }
+
+  async function refresh(): Promise<void> {
+    if (!onPage()) return
+    files = await api<KbFile[]>('/api/kb')
+    render()
+    // 有资料在处理中就隔两秒再看
+    if (poll) clearTimeout(poll)
+    poll = null
+    if (files.some(f => f.status !== 'ready' && f.status !== 'failed')) poll = setTimeout(() => void refresh(), 2000)
+  }
+  const withRefresh = async (p: Promise<unknown>) => {
+    try { await p } catch (err) { notice((err as Error).message, true) }
+    await refresh()
+  }
+
+  async function openLibrary(): Promise<void> {
+    ;[files, { vector }, projects] = await Promise.all([api<KbFile[]>('/api/kb'), api<{ vector: boolean }>('/api/kb-status'), api<Array<{ id: string; name: string }>>('/api/projects')])
+    hooks.showPage(PAGE, '参考资料库')
+    query = ''
+    hits = null
+    render()
+    void refresh()
+  }
+
+  page().addEventListener('click', async e => {
+    if (!onPage()) return
+    const t = e.target as HTMLElement
+    if (t.closest('#kbPick')) { page().querySelector<HTMLInputElement>('#kbInput')!.click(); return }
+    if (t.closest('[data-clear]')) { query = ''; hits = null; render(); return }
+    const f = files.find(x => x.id === (t.closest('tr[data-id]') as HTMLElement | null)?.dataset.id)
+    if (!f) return
+    if (t.closest('[data-view]')) void openFile(f)
+    else if (t.closest('[data-del]')) {
+      const ok = await askConfirm({ title: '删除资料', message: `删除「${f.name}」？AI 将检索不到它；已插入文档的引用不受影响。`, confirm: '删除', danger: true })
+      if (!ok) return
+      try { await api(`/api/kb/${f.id}`, { method: 'DELETE' }) } catch (err) { notice((err as Error).message, true) }
+      picked = picked.filter(p => p.id !== f.id)
+      renderPicked()
       await refresh()
     }
-
-    ;[files, { vector }, projects] = await Promise.all([api<KbFile[]>('/api/kb'), api<{ vector: boolean }>('/api/kb-status'), api<Array<{ id: string; name: string }>>('/api/projects')])
+  })
+  page().addEventListener('submit', async e => {
+    if (!onPage() || (e.target as HTMLElement).id !== 'kbSearch') return
+    e.preventDefault()
+    query = page().querySelector<HTMLInputElement>('#kbQuery')!.value.trim()
+    try { hits = query ? await api<any[]>(`/api/kb-search?q=${encodeURIComponent(query)}`) : null } catch (err) { notice((err as Error).message, true) }
     render()
-    dlg.hidden = false
-    void refresh()
-    dlg.onchange = async e => {
-      const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('select[data-project]')
-      const id = (sel?.closest('tr[data-id]') as HTMLElement | null)?.dataset.id
-      if (!sel || !id) return
-      try {
-        await api(`/api/kb/${id}`, { method: 'PATCH', body: JSON.stringify({ project_id: sel.value || null }) })
-        files = files.map(f => f.id === id ? { ...f, project_id: sel.value || null } : f)
-        notice(sel.value ? `已归入「${projects.find(p => p.id === sel.value)?.name}」` : '已移出项目')
-      } catch (err) { notice((err as Error).message, true) }
-    }
-    dlg.onclick = async e => {
-      const t = e.target as HTMLElement
-      if (t === dlg || t.closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = ''; if (poll) clearTimeout(poll); return }
-      const f = files.find(x => x.id === (t.closest('tr[data-id]') as HTMLElement | null)?.dataset.id)
-      if (!f) return
-      if (t.closest('[data-view]')) void openFile(f)
-      else if (t.closest('[data-del]')) {
-        dlg.hidden = true
-        const ok = await askConfirm({ title: '删除资料', message: `删除「${f.name}」？AI 将检索不到它；已插入文档的引用不受影响。`, confirm: '删除', danger: true })
-        if (ok) await api(`/api/kb/${f.id}`, { method: 'DELETE' })
-        picked = picked.filter(p => p.id !== f.id)
-        renderPicked()
-        void openLibrary()
-      }
-    }
-  }
+  })
+  page().addEventListener('change', async e => {
+    if (!onPage()) return
+    const t = e.target as HTMLElement
+    if (t.id === 'kbInput') { const input = t as HTMLInputElement; if (input.files?.length) { const fl = Array.from(input.files); input.value = ''; void withRefresh(upload(fl)) } return }
+    const sel = t.closest<HTMLSelectElement>('select[data-project]')
+    const id = (sel?.closest('tr[data-id]') as HTMLElement | null)?.dataset.id
+    if (!sel || !id) return
+    try {
+      await api(`/api/kb/${id}`, { method: 'PATCH', body: JSON.stringify({ project_id: sel.value || null }) })
+      files = files.map(f => f.id === id ? { ...f, project_id: sel.value || null } : f)
+      notice(sel.value ? `已归入「${projects.find(p => p.id === sel.value)?.name}」` : '已移出项目')
+    } catch (err) { notice((err as Error).message, true) }
+  })
+  page().addEventListener('dragover', e => { const drop = (e.target as HTMLElement).closest<HTMLElement>('#kbDrop'); if (onPage() && drop) { e.preventDefault(); drop.classList.add('over') } })
+  page().addEventListener('dragleave', e => { (e.target as HTMLElement).closest<HTMLElement>('#kbDrop')?.classList.remove('over') })
+  page().addEventListener('drop', e => {
+    const drop = (e.target as HTMLElement).closest<HTMLElement>('#kbDrop')
+    if (!onPage() || !drop) return
+    e.preventDefault(); drop.classList.remove('over')
+    if (e.dataTransfer?.files.length) void withRefresh(upload(e.dataTransfer.files))
+  })
 
   // —— 对话框下方：「引用资料」 ——
 
@@ -174,6 +199,9 @@ export function initLibrary(api: Api, token: () => string, notice: (msg: string,
   }
 
   return {
+    open: openLibrary,
+    /** 离开资料库页（别的页面接管中间区域时） */
+    leave(): void { if (poll) clearTimeout(poll); poll = null },
     /** 发送时取走选中的资料 id（发完清空）。 */
     takePicked(): string[] {
       const ids = picked.map(f => f.id)

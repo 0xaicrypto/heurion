@@ -1,5 +1,5 @@
 /**
- * 数据集（实验室数据分析）：左栏「数据」对话框（上传、处理状态、身份信息列处理、变量与标签、预览、删除），
+ * 数据集（实验室数据分析）：工作区里的「数据集」页（列表：上传、处理状态、所属研究；详情：身份信息列处理、变量与标签、预览、删除），
  * 对话框下方的「引用数据」选择，以及文档里分析图的「来自分析」（代码与数据来源）。
  */
 import { askConfirm } from './dialogs.ts'
@@ -15,6 +15,8 @@ interface Column {
 interface Dataset {
   id: string; name: string; filename: string; format: string; size: number; status: 'processing' | 'review' | 'ready' | 'failed'
   rows: number; cols: number; error: string | null; created_at: string; updated_at: string
+  /** 所属研究（归入研究项目时） */
+  study?: { id: string; title: string } | null
   columns: Column[]; labels: Record<string, string>; phi: Array<{ name: string; reason: string }>; truncated: boolean
 }
 
@@ -34,13 +36,25 @@ function summary(c: Column, rows: number): string {
   return ''
 }
 
-export function initDatasets(api: Api, notice: (msg: string, error?: boolean) => void) {
+export interface DatasetHooks {
+  /** 把中间区域换成一个页面（关掉文档、离开患者页 / 研究页），返回页面元素 */
+  showPage(cls: string, title: string): HTMLElement
+  /** 打开研究页（数据集详情里「返回研究」） */
+  openStudy(id: string): void
+}
+
+const PAGE = 'datasets-page'
+
+export function initDatasets(api: Api, notice: (msg: string, error?: boolean) => void, hooks: DatasetHooks) {
   let picked: Dataset[] = []
   let poll: ReturnType<typeof setTimeout> | null = null
   /** 这次刚上传的：处理完如果要处理身份信息，直接打开详情 */
   const justUploaded = new Set<string>()
   const dlg = () => document.getElementById('dialog')!
-  const isOpen = () => !dlg().hidden && !!dlg().querySelector('[aria-label="数据"]')
+  const page = () => document.getElementById('page')!
+  const onPage = () => page().classList.contains(PAGE)
+  /** 数据集页当前显示：列表，或某个数据集的详情 */
+  let view: { kind: 'list'; list: Dataset[] } | { kind: 'detail'; x: Dataset } | null = null
 
   async function upload(files: FileList | File[]): Promise<Dataset[]> {
     const form = new FormData()
@@ -53,133 +67,155 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
     return res.filter(r => r.id && !r.error)
   }
 
-  // —— 列表 ——
+  const stopPoll = () => { if (poll) clearTimeout(poll); poll = null }
+  const statusPill = (x: Dataset) => `<span class="kb-status ${x.status === 'ready' ? 'ready' : x.status === 'failed' ? 'failed' : x.status === 'review' ? 'review' : 'busy'}">${STATUS[x.status]}</span>`
+
+  // —— 列表页 ——
 
   async function openList(): Promise<void> {
-    const d = dlg()
-    let list: Dataset[] = await api<Dataset[]>('/api/datasets')
-    const row = (x: Dataset) => `<tr data-id="${x.id}"><td><div class="kb-name">${esc(x.name)}</div>
-        <div class="muted small">${[x.format, x.status === 'ready' || x.status === 'review' ? `${x.rows.toLocaleString()} 行 × ${x.cols} 列` : '', x.error ? esc(x.error) : ''].filter(Boolean).join(' · ')}</div></td>
-      <td><span class="kb-status ${x.status === 'ready' ? 'ready' : x.status === 'failed' ? 'failed' : x.status === 'review' ? 'review' : 'busy'}">${STATUS[x.status]}</span></td>
-      <td class="actions"><div class="actions-row">${x.status === 'failed' || x.status === 'processing' ? '' : `<button data-open>${x.status === 'review' ? '处理' : '查看'}</button>`}<button data-del class="danger">删除</button></div></td></tr>`
-    const render = () => {
-      d.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="数据">
-        <div class="dialog-head"><h2>数据</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
-        <div class="dialog-body">
-          <div class="muted">上传研究数据表（CSV、Excel 第一个工作表、SAS .xpt / .sas7bdat、SPSS .sav、Stata .dta，≤100 MB），在对话里「＋ 引用数据」后让 AI 做统计分析：Table 1、生存曲线、组间比较、回归，结果直接写进文稿。
-            <br>上传时会检查疑似身份信息的列（姓名、证件号、电话、病历号、地址、出生日期），处理后才能分析。</div>
-          <div class="kb-drop" id="dsDrop">把文件拖到这里，或 <button id="dsPick" class="primary">选择文件</button><input id="dsInput" type="file" accept="${DATASET_ACCEPT}" multiple hidden></div>
-          ${list.length === 0 ? '<div class="muted kb-empty">还没有数据</div>' : `<table class="users kb-table"><tbody>${list.map(row).join('')}</tbody></table>`}
-        </div></div>`
-      const input = d.querySelector<HTMLInputElement>('#dsInput')!
-      d.querySelector<HTMLButtonElement>('#dsPick')!.onclick = () => input.click()
-      input.onchange = () => { if (input.files?.length) void withRefresh(upload(input.files)) }
-      const drop = d.querySelector<HTMLElement>('#dsDrop')!
-      drop.ondragover = e => { e.preventDefault(); drop.classList.add('over') }
-      drop.ondragleave = () => drop.classList.remove('over')
-      drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer?.files.length) void withRefresh(upload(e.dataTransfer.files)) }
-    }
-    const refresh = async () => {
-      if (!isOpen() || d.querySelector('.ds-detail')) return
-      list = await api<Dataset[]>('/api/datasets')
-      if (poll) clearTimeout(poll)
-      poll = null
-      // 刚上传的处理完、需要处理身份信息：直接打开详情
-      const fresh = list.find(x => justUploaded.has(x.id) && x.status === 'review')
-      for (const x of list) if (x.status !== 'processing') justUploaded.delete(x.id)
-      if (fresh) { void openDetail(fresh.id); return }
-      render()
-      if (list.some(x => x.status === 'processing')) poll = setTimeout(() => void refresh(), 1500)
-    }
-    const withRefresh = async (p: Promise<unknown>) => {
-      try { await p } catch (err) { notice((err as Error).message, true) }
-      await refresh()
-    }
-    render()
-    d.hidden = false
-    if (list.some(x => x.status === 'processing')) poll = setTimeout(() => void refresh(), 1500)
-    d.onchange = null
-    d.onclick = async e => {
-      const t = e.target as HTMLElement
-      if (t === d || t.closest('[data-close]')) { close(); return }
-      const x = list.find(y => y.id === (t.closest('tr[data-id]') as HTMLElement | null)?.dataset.id)
-      if (!x) return
-      if (t.closest('[data-open]')) void openDetail(x.id)
-      else if (t.closest('[data-del]')) {
-        d.hidden = true
-        if (await askConfirm({ title: '删除数据', message: `删除「${x.name}」？AI 将不能再分析它；已写进文稿的结果不受影响。`, confirm: '删除', danger: true })) {
-          await api(`/api/datasets/${x.id}`, { method: 'DELETE' })
-          picked = picked.filter(p => p.id !== x.id)
-          renderPicked()
-        }
-        void openList()
-      }
-    }
+    stopPoll()
+    const list = await api<Dataset[]>('/api/datasets')
+    const el = hooks.showPage(PAGE, '数据集')
+    view = { kind: 'list', list }
+    const row = (x: Dataset) => `<tr data-id="${x.id}" class="${x.status === 'processing' || x.status === 'failed' ? '' : 'pg-row'}"><td><div class="kb-name"><b>${esc(x.name)}</b></div>${x.error ? `<div class="kb-note error">${esc(x.error)}</div>` : ''}</td>
+      <td class="muted">${esc(x.format)}</td>
+      <td class="muted nowrap">${x.status === 'ready' || x.status === 'review' ? `${x.rows.toLocaleString()} × ${x.cols}` : '—'}</td>
+      <td>${statusPill(x)}</td>
+      <td>${x.study ? `<button class="link-btn" data-study="${x.study.id}" title="打开研究">${esc(x.study.title)}</button>` : '<span class="muted">—</span>'}</td>
+      <td class="actions"><div class="actions-row">${x.status === 'review' ? '<button data-open class="primary">处理身份信息</button>' : ''}<button data-del class="danger">删除</button></div></td></tr>`
+    el.innerHTML = `
+      <div class="pg-head">
+        <h1>数据集</h1>
+        <p class="muted">上传研究数据表（CSV、Excel 第一个工作表、SAS .xpt / .sas7bdat、SPSS .sav、Stata .dta，≤100 MB），在对话里「＋ 引用数据」或把数据集归入研究项目后，让 AI 做 Table 1、生存曲线、组间比较、回归。
+          上传时会检查疑似身份信息的列（姓名、证件号、电话、病历号、地址、出生日期），处理后才能分析。</p>
+      </div>
+      <div class="kb-drop" id="dsDrop">把文件拖到这里，或 <button id="dsPick" class="primary">选择文件</button><input id="dsInput" type="file" accept="${DATASET_ACCEPT}" multiple hidden></div>
+      ${list.length === 0 ? '<div class="muted kb-empty">还没有数据</div>' : `<div class="pg-table"><table class="users ds-list"><thead><tr><th>名称</th><th>格式</th><th>行 × 列</th><th>状态</th><th>所属研究</th><th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`}`
+    if (list.some(x => x.status === 'processing')) poll = setTimeout(() => void refreshList(), 1500)
   }
 
-  function close(): void {
-    const d = dlg()
-    d.hidden = true
-    d.innerHTML = ''
-    if (poll) clearTimeout(poll)
-    poll = null
+  async function refreshList(): Promise<void> {
+    if (!onPage() || view?.kind !== 'list') return
+    const list = await api<Dataset[]>('/api/datasets')
+    // 刚上传的处理完、需要处理身份信息：直接打开详情
+    const fresh = list.find(x => justUploaded.has(x.id) && x.status === 'review')
+    for (const x of list) if (x.status !== 'processing') justUploaded.delete(x.id)
+    if (fresh) { void openDetail(fresh.id); return }
+    await openList()
   }
 
-  // —— 详情：身份信息处理、变量与标签、预览 ——
+  const withRefresh = async (p: Promise<unknown>) => {
+    try { await p } catch (err) { notice((err as Error).message, true) }
+    await refreshList()
+  }
+
+  // —— 详情页：身份信息处理、变量与标签、预览 ——
 
   async function openDetail(id: string): Promise<void> {
-    const d = dlg()
+    stopPoll()
     const [x, preview] = await Promise.all([api<Dataset>(`/api/datasets/${id}`), api<{ header: string[]; rows: string[][] }>(`/api/datasets/${id}/preview?limit=50`)])
+    const el = hooks.showPage(PAGE, x.name)
+    view = { kind: 'detail', x }
     const phi = new Set(x.phi.map(p => p.name))
-    d.innerHTML = `<div class="dialog-card ds-detail" role="dialog" aria-modal="true" aria-label="数据">
-      <div class="dialog-head"><h2><button class="quiet small-btn" data-back title="返回列表">←</button>
-        <input class="ds-name" id="dsName" value="${esc(x.name)}" aria-label="数据集名称"></h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
-      <div class="dialog-body">
-        <div class="muted small">${esc(x.filename)} · ${x.format} · ${x.rows.toLocaleString()} 行 × ${x.cols} 列${x.truncated ? ' · <b>超过 200 万行，只导入了前 200 万行</b>' : ''}</div>
-        ${x.phi.length ? `<div class="ds-phi">
-          <div><b>这些列像身份信息</b>，处理后才能给 AI 分析。删除的列从数据集里去掉（原文件里的也不再使用）；确认「不是身份信息」的会保留并记录。</div>
-          <table class="users"><tbody>${x.phi.map(p => `<tr><td><b>${esc(p.name)}</b><div class="muted small">${esc(p.reason)}</div></td>
-            <td><label class="toggle"><input type="radio" name="phi-${esc(p.name)}" value="drop" checked> 删除这一列</label></td>
-            <td><label class="toggle"><input type="radio" name="phi-${esc(p.name)}" value="keep"> 不是身份信息，保留</label></td></tr>`).join('')}</tbody></table>
-          <div class="row end"><button class="primary" id="dsPhiOk">确认</button></div></div>` : ''}
-        <h3 class="mem-h">变量（${x.columns.length}）</h3>
-        <div class="ds-scroll"><table class="users ds-vars"><thead><tr><th>列名</th><th>标签（画图、做表时用的名字）</th><th>类型</th><th>缺失</th><th>概况</th></tr></thead><tbody>
+    el.innerHTML = `
+      <div class="pg-crumbs"><button class="link-btn" data-back>← 全部数据集</button>${x.study ? `<span class="muted">·</span><button class="link-btn" data-study="${x.study.id}">← 返回研究「${esc(x.study.title)}」</button>` : ''}</div>
+      <div class="rs-head">
+        <input class="rs-title" id="dsName" value="${esc(x.name)}" aria-label="数据集名称">
+        <div class="row"><span class="muted small">${esc(x.filename)} · ${esc(x.format)} · ${x.rows.toLocaleString()} 行 × ${x.cols} 列${x.truncated ? ' · <b>超过 200 万行，只导入了前 200 万行</b>' : ''}</span>
+          ${statusPill(x)}<span class="grow"></span><button class="danger small-btn" data-del>删除数据集</button></div>
+      </div>
+      ${x.phi.length ? `<section class="ds-phi">
+        <div><b>这些列像身份信息</b>，处理后才能给 AI 分析。删除的列从数据集里去掉（原文件里的也不再使用）；确认「不是身份信息」的会保留并记录。</div>
+        <table class="users"><tbody>${x.phi.map(p => `<tr><td><b>${esc(p.name)}</b><div class="muted small">${esc(p.reason)}</div></td>
+          <td><label class="toggle"><input type="radio" name="phi-${esc(p.name)}" value="drop" checked> 删除这一列</label></td>
+          <td><label class="toggle"><input type="radio" name="phi-${esc(p.name)}" value="keep"> 不是身份信息，保留</label></td></tr>`).join('')}</tbody></table>
+        <div class="row end"><button class="primary" id="dsPhiOk">确认，可以分析</button></div></section>` : ''}
+      <section class="rs-card wide">
+        <div class="rs-card-head"><h3>变量（${x.columns.length}）</h3><span class="muted small">标签是画图、做表时用的名字</span></div>
+        <div class="ds-scroll"><table class="users ds-vars"><thead><tr><th>列名</th><th>标签</th><th>类型</th><th>缺失</th><th>概况</th></tr></thead><tbody>
           ${x.columns.map(c => `<tr${phi.has(c.name) ? ' class="ds-flag"' : ''}><td class="ds-col">${esc(c.name)}</td>
             <td><input class="ds-label" data-col="${esc(c.name)}" value="${esc(x.labels[c.name] ?? c.label ?? '')}" placeholder="${c === x.columns[0] ? '例如：胆红素（mg/dL）' : '添加标签'}"></td>
             <td>${TYPE[c.type]}</td><td>${c.missing ? `${c.missing}（${Math.round(c.missing / Math.max(1, x.rows) * 100)}%）` : '—'}</td>
             <td class="muted small">${esc(summary(c, x.rows))}</td></tr>`).join('')}
         </tbody></table></div>
-        <h3 class="mem-h">预览（前 ${preview.rows.length} 行）</h3>
+      </section>
+      <section class="rs-card wide">
+        <div class="rs-card-head"><h3>预览</h3><span class="muted small">前 ${preview.rows.length} 行</span></div>
         <div class="ds-scroll ds-preview"><table class="chart-grid"><thead><tr>${preview.header.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
           <tbody>${preview.rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-      </div></div>`
-    d.hidden = false
-    const name = d.querySelector<HTMLInputElement>('#dsName')!
-    name.onchange = async () => { if (name.value.trim()) await api(`/api/datasets/${id}`, { method: 'PATCH', body: JSON.stringify({ name: name.value }) }).catch(err => notice((err as Error).message, true)) }
-    d.onchange = async e => {
-      const input = (e.target as HTMLElement).closest<HTMLInputElement>('.ds-label')
-      if (!input) return
-      try { await api(`/api/datasets/${id}`, { method: 'PATCH', body: JSON.stringify({ labels: { [input.dataset.col!]: input.value } }) }) }
+      </section>`
+  }
+
+  async function remove(x: Dataset): Promise<boolean> {
+    if (!await askConfirm({ title: '删除数据', message: `删除「${x.name}」？AI 将不能再分析它；已写进文稿的结果不受影响。`, confirm: '删除', danger: true })) return false
+    try { await api(`/api/datasets/${x.id}`, { method: 'DELETE' }) } catch (err) { notice((err as Error).message, true); return false }
+    picked = picked.filter(p => p.id !== x.id)
+    renderPicked()
+    return true
+  }
+
+  page().addEventListener('click', async e => {
+    if (!onPage() || !view) return
+    const t = e.target as HTMLElement
+    const study = t.closest<HTMLElement>('[data-study]')?.dataset.study
+    if (study) { e.stopPropagation(); stopPoll(); view = null; hooks.openStudy(study); return }
+    if (t.closest('[data-back]')) { void openList(); return }
+    if (view.kind === 'list') {
+      if (t.closest('#dsPick')) { page().querySelector<HTMLInputElement>('#dsInput')!.click(); return }
+      const x = view.list.find(y => y.id === (t.closest('tr[data-id]') as HTMLElement | null)?.dataset.id)
+      if (!x) return
+      if (t.closest('[data-del]')) { if (await remove(x)) void openList(); return }
+      if (t.closest('[data-open]') || (t.closest('tr.pg-row') && !t.closest('button, a, input'))) void openDetail(x.id)
+      return
+    }
+    const x = view.x
+    if (t.closest('[data-del]')) { if (await remove(x)) void openList(); return }
+    if (t.closest('#dsPhiOk')) {
+      const drop: string[] = []
+      const keep: string[] = []
+      for (const p of x.phi) (page().querySelector<HTMLInputElement>(`input[name="phi-${CSS.escape(p.name)}"]:checked`)?.value === 'keep' ? keep : drop).push(p.name)
+      const btn = t.closest<HTMLButtonElement>('#dsPhiOk')!
+      btn.disabled = true
+      btn.textContent = '处理中…'
+      try {
+        const r = await api<Dataset>(`/api/datasets/${x.id}/phi`, { method: 'POST', body: JSON.stringify({ drop, keep }) })
+        notice(r.status === 'ready' ? `已处理${drop.length ? `，删除了 ${drop.length} 列` : ''}，可以分析了` : '还有需要处理的列')
+      } catch (err) { notice((err as Error).message, true) }
+      void openDetail(x.id)
+    }
+  })
+  page().addEventListener('change', async e => {
+    if (!onPage() || !view) return
+    const t = e.target as HTMLInputElement
+    if (view.kind === 'list') {
+      if (t.id === 'dsInput' && t.files?.length) { const files = Array.from(t.files); t.value = ''; void withRefresh(upload(files)) }
+      return
+    }
+    const id = view.x.id
+    if (t.id === 'dsName') {
+      if (!t.value.trim()) return
+      try { await api(`/api/datasets/${id}`, { method: 'PATCH', body: JSON.stringify({ name: t.value }) }); document.getElementById('docTitle')!.textContent = t.value.trim() }
+      catch (err) { notice((err as Error).message, true) }
+      return
+    }
+    if (t.classList.contains('ds-label')) {
+      try { await api(`/api/datasets/${id}`, { method: 'PATCH', body: JSON.stringify({ labels: { [t.dataset.col!]: t.value } }) }) }
       catch (err) { notice((err as Error).message, true) }
     }
-    d.onclick = async e => {
-      const t = e.target as HTMLElement
-      if (t === d || t.closest('[data-close]')) { close(); return }
-      if (t.closest('[data-back]')) { void openList(); return }
-      if (t.closest('#dsPhiOk')) {
-        const drop: string[] = []
-        const keep: string[] = []
-        for (const p of x.phi) (d.querySelector<HTMLInputElement>(`input[name="phi-${CSS.escape(p.name)}"]:checked`)?.value === 'keep' ? keep : drop).push(p.name)
-        const btn = t.closest<HTMLButtonElement>('#dsPhiOk')!
-        btn.disabled = true
-        btn.textContent = '处理中…'
-        try {
-          const r = await api<Dataset>(`/api/datasets/${id}/phi`, { method: 'POST', body: JSON.stringify({ drop, keep }) })
-          notice(r.status === 'ready' ? `已处理${drop.length ? `，删除了 ${drop.length} 列` : ''}，可以分析了` : '还有需要处理的列')
-        } catch (err) { notice((err as Error).message, true) }
-        void openDetail(id)
-      }
-    }
+  })
+  page().addEventListener('dragover', e => { const drop = (e.target as HTMLElement).closest<HTMLElement>('#dsDrop'); if (onPage() && drop) { e.preventDefault(); drop.classList.add('over') } })
+  page().addEventListener('dragleave', e => { (e.target as HTMLElement).closest<HTMLElement>('#dsDrop')?.classList.remove('over') })
+  page().addEventListener('drop', e => {
+    const drop = (e.target as HTMLElement).closest<HTMLElement>('#dsDrop')
+    if (!onPage() || !drop) return
+    e.preventDefault(); drop.classList.remove('over')
+    if (e.dataTransfer?.files.length) void withRefresh(upload(e.dataTransfer.files))
+  })
+
+  function close(): void {
+    const d = dlg()
+    d.hidden = true
+    d.innerHTML = ''
   }
 
   // —— 对话框下方：「引用数据」 ——
@@ -257,8 +293,10 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
     openList,
     /** 研究页上传数据集（返回上传成功的，含重复的已有数据集） */
     upload,
-    /** 打开数据集详情（变量、身份信息处理、预览） */
+    /** 打开数据集详情页（变量、身份信息处理、预览） */
     openDetail,
+    /** 离开数据集页（别的页面接管中间区域时） */
+    leave(): void { stopPoll(); view = null },
     /** 文档里的图是否由分析生成（编辑器给图加「来自分析」标记用）。 */
     hasProvenance: async (assetId: string) => Boolean(await provenance(assetId)),
     showProvenance,

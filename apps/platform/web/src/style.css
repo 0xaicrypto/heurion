@@ -643,6 +643,34 @@ button.block { width: 100%; padding: 10px 12px; }
 .rs-soon { opacity: .7; border-style: dashed; }
 @media (max-width: 900px) { .rs-grid { grid-template-columns: 1fr; } }
 
+/* —— 资料库页、数据集页（工作区页面，和研究页同一套版式） —— */
+.page.library-page, .page.datasets-page { max-width: 1160px; padding: 28px 24px 120px; }
+.page button.danger { color: var(--danger); border-color: var(--danger); }
+.pg-head { margin-bottom: 8px; }
+.pg-head h1 { font-size: 26px; font-weight: 500; margin: 0 0 8px; }
+.pg-head p { margin: 0; font-size: 13.5px; line-height: 1.7; max-width: 820px; }
+.pg-crumbs { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; flex-wrap: wrap; }
+.pg-table { overflow-x: auto; margin-top: 12px; }
+.pg-table .users th:first-child { width: 40%; }
+.users tr.pg-row { cursor: pointer; }
+.users tr.pg-row:hover { background: var(--hover); }
+.page button.link-btn, .link-btn { border: 0; background: transparent; padding: 0; color: var(--mint-text); font: inherit; text-align: left; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+.nowrap { white-space: nowrap; }
+.datasets-page .rs-card { margin-top: 14px; }
+.datasets-page .ds-phi { margin-top: 4px; }
+.datasets-page .ds-scroll { max-height: 56vh; }
+.kb-hits-card { margin-bottom: 12px; }
+.kb-hits-card .kb-hits { margin: 0; }
+/* 资料库页打开时只高亮「资料库」，当前空间按钮回到普通样式 */
+.rail.on-page .rail-btn[data-space].on { background: transparent; border-left-color: transparent; color: var(--muted); }
+.rail.on-page .rail-btn[data-space].on svg { color: inherit; }
+@media (max-width: 900px) {
+  .page.library-page, .page.datasets-page { padding: 20px 14px 96px; }
+  .pg-head h1 { font-size: 22px; }
+  .ds-list th:nth-child(2), .ds-list td:nth-child(2), .kb-table th:nth-child(4), .kb-table td:nth-child(4) { display: none; }
+}
+
 /* —— 数据（数据集） —— */
 .kb-status.review { color: var(--warn); border-color: rgba(245, 181, 68, .45); }
 .ds-detail { width: min(1080px, 100%); }

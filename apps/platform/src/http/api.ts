@@ -1033,7 +1033,13 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (err instanceof DatasetError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : 400)
     throw err
   }
-  app.get('/api/datasets', c => c.json(deps.datasets?.list(c.get('user')) ?? []))
+  /** 数据集所属的研究（数据集页显示「所属研究」并能回到研究；数据集与研究同属一个用户） */
+  const studyRef = (id: string) => {
+    const it = store.studyOf('dataset', id)
+    const st = it ? store.getStudy(it.study_id) : undefined
+    return st ? { id: st.id, title: st.title } : null
+  }
+  app.get('/api/datasets', c => c.json((deps.datasets?.list(c.get('user')) ?? []).map(d => ({ ...d, study: studyRef(d.id) }))))
   app.post('/api/datasets', async c => {
     if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
     const form = await c.req.parseBody({ all: true })
@@ -1052,7 +1058,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json(out, 201)
   })
   app.get('/api/datasets/:did', c => {
-    try { return c.json(deps.datasets!.get(c.get('user'), c.req.param('did'))) } catch (err) { return datasetFailure(c, err) }
+    try { const d = deps.datasets!.get(c.get('user'), c.req.param('did')); return c.json({ ...d, study: studyRef(d.id) }) } catch (err) { return datasetFailure(c, err) }
   })
   app.get('/api/datasets/:did/preview', c => {
     try { return c.json(deps.datasets!.preview(c.get('user'), c.req.param('did'), Math.min(200, Number(c.req.query('limit')) || 50))) } catch (err) { return datasetFailure(c, err) }

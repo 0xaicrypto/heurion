@@ -190,9 +190,12 @@ $('newProject').onclick = async () => {
 }
 
 $('trashBtn').onclick = () => void openTrash()
-const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e))
+const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e), { showPage: (cls, title) => showPage(cls, title) })
 const memory = initMemory(api, (m, e) => showNotice(m, e), id => void open(id))
-const datasets = initDatasets(api, (m, e) => showNotice(m, e))
+const datasets = initDatasets(api, (m, e) => showNotice(m, e), {
+  showPage: (cls, title) => showPage(cls, title),
+  openStudy: id => void researchUi.open(id),
+})
 let ME: Me | null = null
 const patientsUi = initPatients(api, (m, e) => showNotice(m, e), {
   leaveDoc: () => leaveDoc(),
@@ -216,8 +219,16 @@ const researchUi = initResearch(api, (m, e) => showNotice(m, e), {
   prefillChat: text => prefillChat(text),
   goSpace: space => spaces.set(space),
   token: () => TOKEN,
-  datasets: { upload: files => datasets.upload(files), openDetail: id => datasets.openDetail(id), showProvenance: id => datasets.showProvenance(id) },
+  datasets: { upload: files => datasets.upload(files), openDetail: id => { researchUi.leave(); return datasets.openDetail(id) }, showProvenance: id => datasets.showProvenance(id) },
 })
+// 资料库页打开时，图标栏高亮「资料库」而不是当前空间
+new MutationObserver(() => {
+  const lib = $('page').classList.contains('library-page')
+  $('libraryBtn').classList.toggle('on', lib)
+  document.querySelector('.rail')!.classList.toggle('on-page', lib)
+  if (!lib) library.leave()
+  if (!$('page').classList.contains('datasets-page')) datasets.leave()
+}).observe($('page'), { attributes: true, attributeFilter: ['class'] })
 // 左侧图标栏：写作 / 患者 / 临床研究
 const spaces = initSpaces({
   write: { title: '写作', label: '文档', actions: 'docActions', list: 'docList', placeholder: '搜索文档（标题与正文）',
@@ -311,6 +322,20 @@ $('page').addEventListener('click', async e => {
   input.value = t.dataset.prompt ?? ''
   input.focus()
 })
+
+/**
+ * 资料库、数据集这类工作区页面：离开患者页 / 研究页，没在这个页面上时先关掉文档，返回页面元素。
+ * 资料库页高亮左侧图标栏的「资料库」（见 watchRail）。
+ */
+function showPage(cls: string, title: string): HTMLElement {
+  patientsUi.leave()
+  researchUi.leave()
+  if (!$('page').classList.contains(cls)) leaveDoc()
+  const page = $('page')
+  page.className = `page ${cls}`
+  $('docTitle').textContent = title
+  return page
+}
 
 /** 离开文档（打开患者页时）：关掉编辑器，清空中间区域与对话。 */
 function leaveDoc(): void {

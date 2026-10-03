@@ -23,10 +23,10 @@ export function initSpaces(defs: Record<Space, SpaceDef>) {
   let cur: Space = 'write'
   const hidden = new Set<Space>()
 
-  /** 中间区域没在编辑文档：开始页、患者页、研究页或空白 */
+  /** 中间区域没在编辑文档：开始页、患者页、研究页、资料库页、数据集页或空白 */
   const idle = () => {
     const page = $('page')
-    return page.childElementCount === 0 || ['welcome-page', 'patient-page', 'study-page'].some(c => page.classList.contains(c))
+    return page.childElementCount === 0 || ['welcome-page', 'patient-page', 'study-page', 'library-page', 'datasets-page'].some(c => page.classList.contains(c))
   }
 
   function set(space: Space): void {
