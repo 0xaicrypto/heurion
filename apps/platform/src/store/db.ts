@@ -82,7 +82,7 @@ export interface MemoryRow {
   content: string
   /** AI 提议时给的理由。 */
   reason: string | null
-  source: 'turn' | 'comment' | 'manual' | 'import'
+  source: 'turn' | 'comment' | 'manual' | 'import' | 'review'
   source_doc_id: string | null
   source_turn_id: string | null
   status: MemoryStatus
@@ -90,6 +90,26 @@ export interface MemoryRow {
   explicit: number
   created_at: string
   updated_at: string
+  /** 被注入回合 / 被检索命中的次数与最近一次时间（记忆演进：长期不用的提议归档）。 */
+  use_count: number
+  last_used_at: string | null
+}
+
+/** 记忆演进的信号：用户改写了 AI 写的段落（edit_ai）、拒绝了 AI 的修订（reject）。整理时交给模型总结规律。 */
+export interface MemorySignalRow {
+  id: string; owner: string; doc_id: string; node_id: string | null; kind: 'edit_ai' | 'reject'
+  /** edit_ai：AI 写的原文；reject：被拒的 AI 版本 */
+  ai_text: string
+  /** reject：用户保留的原文；edit_ai 为空，整理时取段落当前文字 */
+  user_text: string | null
+  ai_rev: number; at: string; consumed_at: string | null
+}
+
+/** 记忆整理建议（合并 / 改写 / 归档），用户采纳后才生效。新总结出的规律直接作为「待确认」记忆，不走这里。 */
+export interface MemoryChangeRow {
+  id: string; owner: string; action: 'merge' | 'update' | 'archive'
+  target_ids: string[]; content: string | null; reason: string
+  status: 'pending' | 'applied' | 'dismissed'; created_at: string; resolved_at: string | null
 }
 
 export interface MemoryEventRow { id: string; memory_id: string; owner: string; action: string; actor: 'user' | 'ai' | 'system'; before: string | null; after: string | null; at: string }
@@ -332,6 +352,17 @@ export class Store {
         before TEXT, after TEXT, at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS memory_events_memory ON memory_events (memory_id, at);
+      CREATE TABLE IF NOT EXISTS memory_signals (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc_id TEXT NOT NULL, node_id TEXT, kind TEXT NOT NULL,
+        ai_text TEXT NOT NULL, user_text TEXT, ai_rev INTEGER NOT NULL, at TEXT NOT NULL, consumed_at TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS memory_signals_once ON memory_signals (doc_id, node_id, kind, ai_rev);
+      CREATE INDEX IF NOT EXISTS memory_signals_owner ON memory_signals (owner, consumed_at);
+      CREATE TABLE IF NOT EXISTS memory_changes (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, action TEXT NOT NULL, target_ids TEXT NOT NULL, content TEXT, reason TEXT NOT NULL,
+        status TEXT NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS memory_changes_owner ON memory_changes (owner, status);
       CREATE TABLE IF NOT EXISTS user_settings (user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
       CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit_events (
@@ -353,6 +384,9 @@ export class Store {
     if (!docCols.includes('deleted_at')) this.db.exec('ALTER TABLE docs ADD COLUMN deleted_at TEXT')
     const userCols = (this.db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(c => c.name)
     if (!userCols.includes('email')) this.db.exec('ALTER TABLE users ADD COLUMN email TEXT')
+    const memCols = (this.db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!memCols.includes('use_count')) this.db.exec('ALTER TABLE memories ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0')
+    if (!memCols.includes('last_used_at')) this.db.exec('ALTER TABLE memories ADD COLUMN last_used_at TEXT')
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users (email) WHERE email IS NOT NULL')
   }
 
@@ -646,9 +680,9 @@ export class Store {
 
   // —— 记忆（R3） ——
 
-  private static readonly MEM_COLS = 'id, owner, scope, project_id, kind, content, reason, source, source_doc_id, source_turn_id, status, explicit, created_at, updated_at'
+  private static readonly MEM_COLS = 'id, owner, scope, project_id, kind, content, reason, source, source_doc_id, source_turn_id, status, explicit, created_at, updated_at, use_count, last_used_at'
 
-  addMemory(input: Omit<MemoryRow, 'id' | 'created_at' | 'updated_at'> & { norm: string }): MemoryRow {
+  addMemory(input: Omit<MemoryRow, 'id' | 'created_at' | 'updated_at' | 'use_count' | 'last_used_at'> & { norm: string }): MemoryRow {
     const id = 'm' + randomUUID().replace(/-/g, '').slice(0, 11)
     const t = now()
     this.db.prepare(`INSERT INTO memories (id, owner, scope, project_id, kind, content, norm, reason, source, source_doc_id, source_turn_id, status, explicit, created_at, updated_at)
@@ -696,9 +730,11 @@ export class Store {
   clearMemories(owner?: string): number {
     if (owner) {
       this.db.prepare('DELETE FROM memory_events WHERE owner = ?').run(owner)
+      this.db.prepare('DELETE FROM memory_signals WHERE owner = ?').run(owner)
+      this.db.prepare('DELETE FROM memory_changes WHERE owner = ?').run(owner)
       return Number(this.db.prepare('DELETE FROM memories WHERE owner = ?').run(owner).changes)
     }
-    this.db.exec('DELETE FROM memory_events')
+    this.db.exec('DELETE FROM memory_events; DELETE FROM memory_signals; DELETE FROM memory_changes')
     return Number(this.db.prepare('DELETE FROM memories').run().changes)
   }
 
@@ -709,6 +745,78 @@ export class Store {
 
   memoryEvents(memoryId: string): MemoryEventRow[] {
     return this.db.prepare('SELECT id, memory_id, owner, action, actor, before, after, at FROM memory_events WHERE memory_id = ? ORDER BY at').all(memoryId) as unknown as MemoryEventRow[]
+  }
+
+  /** 记一次使用（注入回合、检索命中）。不动 updated_at（那是内容变化的时间）。 */
+  touchMemories(ids: string[]): void {
+    if (ids.length === 0) return
+    const t = now()
+    const st = this.db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?')
+    for (const id of ids) st.run(t, id)
+  }
+
+  // —— 记忆演进：信号与整理建议 ——
+
+  /** 同一段落、同一次 AI 写入只记一条（第一次被用户改时的 AI 原文）。返回是否新记了一条。 */
+  addMemorySignal(s: Omit<MemorySignalRow, 'id' | 'at' | 'consumed_at'>): boolean {
+    const r = this.db.prepare('INSERT OR IGNORE INTO memory_signals (id, owner, doc_id, node_id, kind, ai_text, user_text, ai_rev, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(randomUUID(), s.owner, s.doc_id, s.node_id, s.kind, s.ai_text, s.user_text, s.ai_rev, now())
+    return Number(r.changes) > 0
+  }
+
+  openMemorySignals(owner: string, limit = 60): MemorySignalRow[] {
+    return this.db.prepare('SELECT * FROM memory_signals WHERE owner = ? AND consumed_at IS NULL ORDER BY at DESC LIMIT ?').all(owner, limit) as unknown as MemorySignalRow[]
+  }
+
+  consumeMemorySignals(ids: string[]): void {
+    const t = now()
+    const st = this.db.prepare('UPDATE memory_signals SET consumed_at = ? WHERE id = ?')
+    for (const id of ids) st.run(t, id)
+  }
+
+  /** 有待整理信号的用户（定时整理用）。 */
+  usersWithMemorySignals(min: number): string[] {
+    return (this.db.prepare('SELECT owner FROM memory_signals WHERE consumed_at IS NULL GROUP BY owner HAVING COUNT(*) >= ?').all(min) as Array<{ owner: string }>).map(r => r.owner)
+  }
+
+  /** 清掉 60 天前的信号（用过的、没用上的都不再需要）。 */
+  purgeMemorySignals(days = 60): void {
+    this.db.prepare('DELETE FROM memory_signals WHERE at < ?').run(new Date(Date.now() - days * 86_400_000).toISOString())
+  }
+
+  addMemoryChange(c: Pick<MemoryChangeRow, 'owner' | 'action' | 'target_ids' | 'content' | 'reason'>): MemoryChangeRow {
+    const id = 'c' + randomUUID().replace(/-/g, '').slice(0, 11)
+    this.db.prepare('INSERT INTO memory_changes (id, owner, action, target_ids, content, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, c.owner, c.action, JSON.stringify(c.target_ids), c.content, c.reason, 'pending', now())
+    return this.getMemoryChange(id)!
+  }
+
+  getMemoryChange(id: string): MemoryChangeRow | undefined {
+    const r = this.db.prepare('SELECT * FROM memory_changes WHERE id = ?').get(id) as (Omit<MemoryChangeRow, 'target_ids'> & { target_ids: string }) | undefined
+    return r ? { ...r, target_ids: JSON.parse(r.target_ids) as string[] } : undefined
+  }
+
+  listMemoryChanges(owner: string, statuses: MemoryChangeRow['status'][], limit = 50): MemoryChangeRow[] {
+    const rows = this.db.prepare(`SELECT * FROM memory_changes WHERE owner = ? AND status IN (${statuses.map(() => '?').join(',')}) ORDER BY created_at DESC LIMIT ?`)
+      .all(owner, ...statuses, limit) as Array<Omit<MemoryChangeRow, 'target_ids'> & { target_ids: string }>
+    return rows.map(r => ({ ...r, target_ids: JSON.parse(r.target_ids) as string[] }))
+  }
+
+  resolveMemoryChange(id: string, status: 'applied' | 'dismissed'): void {
+    this.db.prepare('UPDATE memory_changes SET status = ?, resolved_at = ? WHERE id = ?').run(status, now(), id)
+  }
+
+  /** 用户在某时间之后发的对话消息（整理时看有没有反复强调的要求）。 */
+  userMessagesSince(owner: string, since: string | null, limit = 40): Array<{ text: string; doc_id: string; created_at: string }> {
+    return this.db.prepare(`SELECT m.text, m.doc_id, m.created_at FROM messages m JOIN docs d ON d.id = m.doc_id
+      WHERE d.owner = ? AND m.role = 'user' AND m.created_at > ? ORDER BY m.created_at DESC LIMIT ?`).all(owner, since ?? '', limit) as Array<{ text: string; doc_id: string; created_at: string }>
+  }
+
+  /** 某个节点的 AI 写入：最近一次 AI 改动的 rev 与时间。 */
+  lastAiWrite(docId: string, nodeId: string): { rev: number; at: string } | null {
+    const r = this.db.prepare(`SELECT nc.rev AS rev, o.created_at AS at FROM node_changes nc JOIN op_log o ON o.doc_id = nc.doc_id AND o.rev = nc.rev
+      WHERE nc.doc_id = ? AND nc.node_id = ? AND nc.actor = 'ai' ORDER BY nc.rev DESC LIMIT 1`).get(docId, nodeId) as { rev: number; at: string } | undefined
+    return r ?? null
   }
 
   // —— 项目（文件夹） ——

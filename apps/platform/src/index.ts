@@ -10,7 +10,10 @@ import { SearchIndex } from './model/search-index.ts'
 import { HttpEmbedder } from './kb/embedder.ts'
 import { localOcr } from './kb/ocr.ts'
 import { KbService } from './kb/service.ts'
+import { MemoryEvolution } from './memory/evolve.ts'
 import { MemoryService } from './memory/service.ts'
+import { MemorySignals } from './memory/signals.ts'
+import { makeComplete } from './harness/complete.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
 import { attachCollab } from './collab/gateway.ts'
@@ -48,6 +51,9 @@ const kb = new KbService(store, embedder, localOcr(config.ocrCacheDir))
 kb.resume()
 // 记忆（R3）：相似去重与按相关度注入用同一个嵌入服务，不在时按文本
 const memory = new MemoryService(store, embedder)
+// 记忆演进：收集用户改写 AI 段落 / 拒绝修订的信号；整理（合并、改写、归档、总结新规律）都是待用户采纳的建议
+new MemorySignals(store, memory, docs)
+const evolution = new MemoryEvolution(store, memory, docs, makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }))
 const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
 // 运维告警：模型服务不可用、回合大量失败时发邮件给管理员
 const alerts = new Alerts(store, mailer)
@@ -59,6 +65,7 @@ const mcpDeps = {
   workspaceDir: (userId: string) => pool.workspaceDir(userId),
   kb,
   memory,
+  evolution,
   fulltext,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
@@ -69,10 +76,20 @@ const indexed = search.backfill()
 if (indexed) console.log(`全文索引：补齐 ${indexed} 份文档`)
 // 回收站：30 天后自动彻底删除（启动时一次，之后每 12 小时）
 // 审计日志保留 365 天
-const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } store.purgeAudit(365) }
+const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } store.purgeAudit(365); store.purgeMemorySignals(60) }
 purge()
 setInterval(purge, 12 * 3600_000).unref()
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory })
+// 定时整理记忆：每 6 小时看一次，有 3 条以上新信号、且距上次整理超过一天的用户整理一次（MEMORY_AUTO_REVIEW=0 关闭）
+if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
+  setInterval(() => void (async () => {
+    for (const owner of store.usersWithMemorySignals(3)) {
+      const last = store.getUserSetting(owner, 'memory_review_at')
+      if (!memory.active(owner) || (last && Date.now() - Date.parse(last) < 86_400_000)) continue
+      await evolution.review(owner, { force: false }).catch(err => console.error('[memory-review]', owner, (err as Error).message))
+    }
+  })(), 6 * 3600_000).unref()
+}
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))

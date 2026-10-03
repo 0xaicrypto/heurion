@@ -24,6 +24,7 @@ import type { OpService } from '../ops/service.ts'
 import { DocOp, OpError } from '../ops/types.ts'
 import { citationOrder, diff, outline, read, ReadError, search } from '../views/read.ts'
 import type { KbService } from '../kb/service.ts'
+import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import { DiagramError, renderSvg } from '../render/diagram.ts'
 import type { TurnRegistry } from './turns.ts'
@@ -45,6 +46,8 @@ export interface McpDeps {
   kb?: KbService
   /** 记忆（可选）。 */
   memory?: MemoryService
+  /** 记忆演进（memory_review）。 */
+  evolution?: MemoryEvolution
   /** 开放获取全文（可选）。 */
   fulltext?: FullTextClient
 }
@@ -69,7 +72,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
 - 报错时按返回的 code 与 hint 处理（例如 conflict_user_edited 要基于 current 重新决定改法），不要原样重试。
 - 插图：幻灯片里的柱状 / 条形 / 折线 / 饼图优先用 deck_edit 的 add_chart（原生图表，用户能在 PowerPoint 里改数据）；其他数据图（生存曲线、森林图）用 shell 里的 matplotlib 画成图片后 asset_upload；示意图（机制、流程、研究设计）用 diagram_render 写 SVG。拿到 asset_id 后，文档用 ![图注](asset:<asset_id>) 插入，幻灯片用 deck_edit 的 add_image。
 - 参考资料库：写作需要依据时用 kb_search 检索用户上传的资料（论文、指南、内部材料），kb_read 读原文；资料是文献时仍用 insert_citation 规范引用。
-- 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；用户说「忘掉…」「别再…」时用 memory_forget；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
+- 记忆：回合开头的［记忆］是用户确认过的偏好与事实，照做。用户明确说「记住…」「以后都…」时用 memory_propose（explicit=true）记下；用户说「忘掉…」「别再…」时用 memory_forget；用户要你「整理一下记忆」时用 memory_review（结果是待用户采纳的建议）；发现用户反复强调同一偏好时可以 memory_propose 提议，由用户确认。一条只记一件事，写成以后可直接照做的规则。不要记患者信息、病例细节、账号，也不要记只对本份文档有用的内容。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。`
 
@@ -612,6 +615,32 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if ((turn && turn.memory === false) || !deps.memory.active(claims.u)) return fail('memory_off', '本轮不使用记忆', { hint: '不要依赖记忆，按本轮要求完成。' })
     const hits = await deps.memory.search(claims.u, query, turn?.docId ?? null)
     return json(hits.map(m => ({ kind: m.kind, scope: m.scope, content: m.content })))
+  })
+
+  server.registerTool('memory_review', {
+    description:
+      '整理用户的记忆（与界面上「整理记忆」相同）：根据近期信号（用户改写 AI 段落、拒绝的修订、对话里说的话）总结新的写作习惯，' +
+      '并建议合并重复、改写过时、归档长期不用的记忆。只在用户要求整理记忆时调用。结果全部是建议，需用户在「记忆」里采纳；你不能代为采纳。',
+    inputSchema: {},
+  }, async () => {
+    if (!deps.evolution) return fail('review_unavailable', '记忆整理不可用')
+    const turn = deps.turns.active(claims.u)
+    if (turn && turn.memory === false) return fail('memory_off', '本轮不使用记忆', { hint: '告诉用户本轮关了记忆；需要整理时请用户打开记忆后再说。' })
+    try {
+      const r = await deps.evolution.review(claims.u)
+      for (const m of r.proposed) deps.turns.notify(claims.u, { type: 'memory', result: 'proposed', memory: m })
+      const KIND = { merge: '合并', update: '改写', archive: '归档' } as const
+      return json({
+        result: 'reviewed',
+        looked_at: { signals: r.signals, messages: r.messages },
+        new_memories_proposed: r.proposed.map(m => ({ content: m.content, reason: m.reason })),
+        cleanup_suggestions: r.changes.map(c => ({ action: KIND[c.action], memories: c.target_ids.map(id => store.getMemory(id)?.content ?? ''), new_content: c.content, reason: c.reason })),
+        message: r.proposed.length + r.changes.length ? '已生成建议，请用户在「记忆」里逐条采纳或忽略（复述要点，不要提 id）' : '没有需要整理的地方',
+      })
+    } catch (err) {
+      if (err instanceof MemoryError) return fail(err.code, err.message, err.hint ? { hint: err.hint } : {})
+      throw err
+    }
   })
 
   server.registerTool('kb_read', {

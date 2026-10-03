@@ -7,6 +7,7 @@ import { duplicateDoc } from '../model/duplicate.ts'
 import type { SearchIndex } from '../model/search-index.ts'
 import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
+import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
 import { verifyPrompt } from '../claims/service.ts'
@@ -53,6 +54,8 @@ export interface ApiDeps {
   /** 参考资料库。 */
   kb?: KbService
   memory?: MemoryService
+  /** 记忆演进（整理建议）；没有模型 key 时不可用。 */
+  evolution?: MemoryEvolution
   devUser: string
 }
 
@@ -268,7 +271,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!m) return c.json({ enabled: false, instance: false, paused: false, items: [] })
     const user = c.get('user')
     const items = store.listMemories(user, ['proposed', 'active']).map(x => ({ ...x, source_doc_title: x.source_doc_id ? store.getDoc(x.source_doc_id)?.title ?? null : null }))
-    return c.json({ enabled: m.active(user), instance: m.instanceEnabled(), paused: m.paused(user), items })
+    const changes = (deps.evolution?.pending(user) ?? []).map(ch => ({ ...ch, targets: ch.target_ids.map(id => store.getMemory(id)).filter(Boolean).map(t => ({ id: t!.id, kind: t!.kind, content: t!.content })) }))
+    return c.json({ enabled: m.active(user), instance: m.instanceEnabled(), paused: m.paused(user), items, changes, review: { available: deps.evolution?.available() ?? false, last: store.getUserSetting(user, 'memory_review_at') } })
   })
   app.put('/api/memory/settings', async c => {
     if (!deps.memory) return c.json({ error: '记忆未启用' }, 503)
@@ -302,6 +306,22 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const m = store.getMemory(c.req.param('mid'))
     if (!m || m.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
     return c.json(store.memoryEvents(m.id))
+  })
+  // 记忆演进：整理（与 MCP memory_review 同一个方法），采纳 / 忽略整理建议（只能由用户做）
+  app.post('/api/memory/review', async c => {
+    if (!deps.evolution) return c.json({ error: '记忆整理不可用' }, 503)
+    try {
+      const r = await deps.evolution.review(c.get('user'))
+      return c.json({ proposed: r.proposed.length, changes: r.changes.length, signals: r.signals, messages: r.messages })
+    } catch (err) { return memoryFailure(c, err) }
+  })
+  app.post('/api/memory/changes/:cid/:action{apply|dismiss}', async c => {
+    if (!deps.evolution) return c.json({ error: '记忆整理不可用' }, 503)
+    try {
+      if (c.req.param('action') === 'apply') return c.json(await deps.evolution.apply(c.get('user'), c.req.param('cid')))
+      deps.evolution.dismiss(c.get('user'), c.req.param('cid'))
+      return c.json({ ok: true })
+    } catch (err) { return memoryFailure(c, err) }
   })
   /** 清空自己的全部记忆（不可恢复）。 */
   app.delete('/api/memory', c => c.json({ deleted: store.clearMemories(c.get('user')) }))

@@ -1,5 +1,5 @@
 /**
- * 记忆（R3，参考 Claude 的记忆设计）：记忆页（待确认、已生效、编辑删除、出处、导出导入、暂停 / 清空）、
+ * 记忆（R3，参考 Claude 的记忆设计）：记忆页（待确认、已生效、编辑删除、出处、导出导入、暂停 / 清空、整理建议）、
  * 对话里的「记住这条？」卡片、对话框的「本轮不用记忆」。
  */
 import { askConfirm, askText } from './dialogs.ts'
@@ -8,19 +8,37 @@ type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 
 interface Memory {
   id: string; scope: 'global' | 'project'; project_id: string | null; kind: 'preference' | 'fact' | 'style' | 'term'
-  content: string; reason: string | null; source: 'turn' | 'comment' | 'manual' | 'import'; source_doc_id: string | null; source_doc_title: string | null
-  status: 'proposed' | 'active'; explicit: number; updated_at: string
+  content: string; reason: string | null; source: 'turn' | 'comment' | 'manual' | 'import' | 'review'; source_doc_id: string | null; source_doc_title: string | null
+  status: 'proposed' | 'active'; explicit: number; updated_at: string; use_count: number; last_used_at: string | null
+}
+
+/** 整理建议：合并 / 改写 / 归档（采纳后才生效）。 */
+interface Change {
+  id: string; action: 'merge' | 'update' | 'archive'; content: string | null; reason: string
+  targets: Array<{ id: string; kind: Memory['kind']; content: string }>
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 const KINDS: Record<Memory['kind'], string> = { preference: '偏好', fact: '事实', style: '写法', term: '术语' }
-const SOURCE: Record<Memory['source'], string> = { turn: '对话', comment: '评论', manual: '手动添加', import: '导入' }
+const SOURCE: Record<Memory['source'], string> = { turn: '对话', comment: '评论', manual: '手动添加', import: '导入', review: '整理记忆' }
+const ACTION: Record<Change['action'], string> = { merge: '合并', update: '改写', archive: '归档' }
+
+/** 「用过 3 次 · 2 天前」 */
+function usage(m: Memory): string {
+  if (!m.use_count) return '还没用到'
+  const d = m.last_used_at ? Math.floor((Date.now() - Date.parse(m.last_used_at)) / 86_400_000) : null
+  return `用过 ${m.use_count} 次${d === null ? '' : d === 0 ? ' · 今天' : ` · ${d} 天前`}`
+}
 
 export function initMemory(api: Api, notice: (msg: string, error?: boolean) => void, openDoc: (id: string) => void) {
   const dlg = () => document.getElementById('dialog')!
 
   async function openMemory(): Promise<void> {
-    const [data, projects] = await Promise.all([api<{ enabled: boolean; instance: boolean; paused: boolean; items: Memory[] }>('/api/memory'), api<Array<{ id: string; name: string }>>('/api/projects')])
+    const [data, projects] = await Promise.all([
+      api<{ enabled: boolean; instance: boolean; paused: boolean; items: Memory[]; changes?: Change[]; review?: { available: boolean; last: string | null } }>('/api/memory'),
+      api<Array<{ id: string; name: string }>>('/api/projects'),
+    ])
+    const changes = data.changes ?? []
     const projectName = (id: string | null) => projects.find(p => p.id === id)?.name ?? '项目'
     const proposed = data.items.filter(m => m.status === 'proposed')
     const active = data.items.filter(m => m.status === 'active')
@@ -31,10 +49,18 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
     ].filter(Boolean).join(' · ')
     const row = (m: Memory) => `<li class="mem" data-id="${m.id}">
         <div class="mem-text"><span class="mem-kind">${KINDS[m.kind]}</span>${esc(m.content)}</div>
-        <div class="muted small">${origin(m)}${m.reason ? ` · ${esc(m.reason)}` : ''}</div>
+        <div class="muted small">${origin(m)}${m.status === 'active' ? ` · ${usage(m)}` : ''}${m.reason ? ` · ${esc(m.reason)}` : ''}</div>
         <div class="actions-row">${m.status === 'proposed'
           ? '<button class="primary" data-act="accept">采纳</button><button data-act="edit">改写</button><button data-act="reject">拒绝</button>'
           : '<button data-act="edit">编辑</button><button data-act="history">历史</button><button data-act="delete" class="danger">删除</button>'}</div></li>`
+
+    function changeRow(c: Change): string {
+      const before = c.targets.map(t => `<div class="mem-text mem-old"><span class="mem-kind">${KINDS[t.kind]}</span>${esc(t.content)}</div>`).join('')
+      const after = c.action === 'archive' ? '<div class="muted small">→ 归档（不再使用，可在历史里查到）</div>' : `<div class="mem-text mem-new">→ ${esc(c.content)}</div>`
+      return `<li class="mem mem-change" data-change="${c.id}">
+        <div class="muted small"><span class="pill">${ACTION[c.action]}</span> ${esc(c.reason)}</div>${before}${after}
+        <div class="actions-row"><button class="primary" data-cact="apply">采纳</button><button data-cact="dismiss">忽略</button></div></li>`
+    }
 
     const d = dlg()
     d.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="记忆">
@@ -44,7 +70,9 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
         ${!data.instance ? '<div class="mem-banner">管理员已停用记忆。</div>' : `<div class="row">
           <label class="toggle"><input type="checkbox" id="memOn" ${data.paused ? '' : 'checked'}> 使用记忆</label>
           <span class="muted small">${data.paused ? '已暂停：保留已有记忆，但对话里不使用、也不提议新的。' : ''}</span>
-          <span class="grow"></span><button id="memAdd">＋ 添加</button></div>`}
+          <span class="grow"></span>${data.review?.available && data.enabled ? '<button id="memReview" title="根据你最近对 AI 文字的修改、拒绝的修订和对话，总结新的写作习惯，并整理重复、过时、不用的记忆。结果都要你采纳。">整理记忆</button>' : ''}<button id="memAdd">＋ 添加</button></div>`}
+        ${data.review?.last ? `<div class="muted small">上次整理：${new Date(data.review.last).toLocaleString('zh-CN', { hour12: false })}</div>` : ''}
+        ${changes.length ? `<h3 class="mem-h">整理建议（${changes.length}）</h3><ul class="mem-list">${changes.map(changeRow).join('')}</ul>` : ''}
         ${proposed.length ? `<h3 class="mem-h">待确认（${proposed.length}）</h3><ul class="mem-list">${proposed.map(row).join('')}</ul>` : ''}
         <h3 class="mem-h">已生效（${active.length}）</h3>
         ${active.length ? `<ul class="mem-list">${active.map(row).join('')}</ul>` : '<div class="muted">还没有记忆。对话里说「记住……」，或点「＋ 添加」。</div>'}
@@ -56,6 +84,16 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
     const reopen = () => void openMemory()
     const on = d.querySelector<HTMLInputElement>('#memOn')
     if (on) on.onchange = async () => { await api('/api/memory/settings', { method: 'PUT', body: JSON.stringify({ paused: !on.checked }) }); notice(on.checked ? '已恢复使用记忆' : '已暂停记忆'); reopen() }
+    const review = d.querySelector<HTMLButtonElement>('#memReview')
+    if (review) review.onclick = async () => {
+      review.disabled = true
+      review.textContent = '整理中…'
+      try {
+        const r = await api<{ proposed: number; changes: number; signals: number; messages: number }>('/api/memory/review', { method: 'POST' })
+        notice(r.proposed + r.changes ? `整理完成：${r.proposed} 条新记忆待确认，${r.changes} 条整理建议` : `看了 ${r.signals} 处修改、${r.messages} 条对话，没有需要整理的地方`)
+      } catch (err) { notice((err as Error).message, true) }
+      reopen()
+    }
     const add = d.querySelector<HTMLButtonElement>('#memAdd')
     if (add) add.onclick = async () => {
       const content = await askText({ title: '添加记忆', label: '一条偏好、写法、术语或事实', placeholder: '例如：数值保留两位小数', confirm: '添加', hint: '写成以后可以直接照做的规则；不要写患者信息。' })
@@ -93,6 +131,16 @@ export function initMemory(api: Api, notice: (msg: string, error?: boolean) => v
       if (t === d || t.closest('[data-close]')) { d.hidden = true; d.innerHTML = ''; return }
       const link = t.closest<HTMLElement>('[data-doc]')
       if (link) { e.preventDefault(); d.hidden = true; openDoc(link.dataset.doc!); return }
+      const cact = t.closest<HTMLElement>('[data-cact]')?.dataset.cact
+      const change = t.closest<HTMLElement>('li[data-change]')?.dataset.change
+      if (cact && change) {
+        try {
+          await api(`/api/memory/changes/${change}/${cact}`, { method: 'POST' })
+          notice(cact === 'apply' ? '已采纳' : '已忽略，不会再提这条')
+        } catch (err) { notice((err as Error).message, true) }
+        reopen()
+        return
+      }
       const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
       const m = data.items.find(x => x.id === t.closest<HTMLElement>('li[data-id]')?.dataset.id)
       if (!act || !m) return

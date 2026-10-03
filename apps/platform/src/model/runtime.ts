@@ -21,6 +21,8 @@ export interface CommitEvent {
   changes: NodeChange[]
 }
 
+export interface CommitDetail { event: CommitEvent; before: PMNode; after: PMNode; ops: unknown }
+
 /** 变更 diff 时计入「修改」的节点：叶子级块（容器类只记增删）。 */
 const LEAF_BLOCKS = new Set(['paragraph', 'heading', 'figure', 'opaque', 'table', 'shape'])
 
@@ -172,7 +174,7 @@ interface Loaded {
  *   （rev+1、op log、节点变更索引），并修复编辑器拆段带来的重复 id；
  * - 每个 AI 回合有自己的 Y.UndoManager：撤销本轮只撤掉该回合的改动，用户在此期间的编辑保留（CRDT 语义）。
  */
-export class Documents extends EventEmitter<{ commit: [CommitEvent]; created: [DocRow] }> {
+export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-detail': [CommitDetail]; created: [DocRow] }> {
   private readonly loaded = new Map<string, Loaded>()
 
   constructor(readonly store: Store) {
@@ -254,7 +256,8 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; created: [D
   }
 
   private record(docId: string, l: Loaded, after: PMNode, meta: { actor: Actor; turnId: string | null; ops: unknown }): CommitEvent {
-    const changes = diffNodes(l.committed, after)
+    const before = l.committed
+    const changes = diffNodes(before, after)
     const rev = this.store.commit({
       docId, actor: meta.actor, turnId: meta.turnId, state: Y.encodeStateAsUpdate(l.ydoc), ops: meta.ops, changes,
     })
@@ -262,6 +265,8 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; created: [D
     l.committed = after
     const event: CommitEvent = { docId, rev, actor: meta.actor, turnId: meta.turnId, changes }
     this.emit('commit', event)
+    // 带改前 / 改后文档的版本（服务端内部用，例如记忆演进收集「用户改了 AI 写的段落」；不推给浏览器）
+    this.emit('commit-detail', { event, before, after, ops: meta.ops } satisfies CommitDetail)
     return event
   }
 

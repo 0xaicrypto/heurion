@@ -7,7 +7,7 @@ import { sensitiveReason } from './guard.ts'
  * - AI 提议进「待确认」，用户采纳后生效；用户明确要求「记住」时直接生效。
  * - 敏感内容（患者可识别信息、账号）写前拦截。
  * - 三层开关：管理员停用（删除全部）/ 用户暂停 / 单次对话不用记忆（回合选项，见 TurnOptions.memory）。
- * - 每回合按预算注入相关的已生效记忆（全局 + 当前文档所在项目）。
+ * - 每回合按预算注入相关的已生效记忆（全局 + 当前文档所在项目），并记下使用次数（演进时归档长期不用的，见 evolve.ts）。
  */
 
 export const MEMORY_KINDS: Record<MemoryKind, string> = { preference: '偏好', fact: '事实', style: '写法', term: '术语' }
@@ -195,6 +195,7 @@ export class MemoryService {
       for (const m of list) { if (used + m.content.length + 8 > budget) continue; picked.push(m); used += m.content.length + 8 }
       list = picked
     }
+    this.store.touchMemories(list.map(m => m.id))
     return `［记忆］用户确认过的偏好与事实，本轮写入文档的内容必须遵守（即使下面的消息里给的写法不同，例如数字格式；只有用户明确要求例外时才不遵守）：\n${list.map(m => `- [${MEMORY_KINDS[m.kind]}] ${m.content}`).join('\n')}\n\n［本轮消息］\n`
   }
 
@@ -205,7 +206,9 @@ export class MemoryService {
     const qv = await this.embed(query)
     const vecs = qv ? new Map(this.store.memoryVectors(owner, ['active']).map(x => [x.id, x.v])) : new Map<string, Float32Array>()
     const score = (m: MemoryRow) => (q && normalize(m.content).includes(q) ? 1 : 0) + (qv && vecs.get(m.id) ? dot(qv, vecs.get(m.id)!) : 0)
-    return list.map(m => ({ m, s: score(m) })).filter(x => x.s > (qv ? 0.45 : 0)).sort((a, b) => b.s - a.s).slice(0, limit).map(x => x.m)
+    const hits = list.map(m => ({ m, s: score(m) })).filter(x => x.s > (qv ? 0.45 : 0)).sort((a, b) => b.s - a.s).slice(0, limit).map(x => x.m)
+    this.store.touchMemories(hits.map(m => m.id))
+    return hits
   }
 
   // —— 导出 / 导入 ——

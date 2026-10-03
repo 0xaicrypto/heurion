@@ -9,6 +9,7 @@ import type { CrossrefClient } from '../src/literature/crossref.ts'
 import type { PubMedClient } from '../src/literature/pubmed.ts'
 import { ClaimService } from '../src/claims/service.ts'
 import { KbService } from '../src/kb/service.ts'
+import { MemoryEvolution } from '../src/memory/evolve.ts'
 import { MemoryService } from '../src/memory/service.ts'
 import type { FullTextClient } from '../src/literature/fulltext.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
@@ -22,6 +23,15 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
   const env = setup(markdown)
   const kb = new KbService(env.store, null)
   const memory = new MemoryService(env.store, null)
+  // 记忆整理：假模型——有「数值」相关的记忆就提议合并，并总结一条新规律
+  const evolution = new MemoryEvolution(env.store, memory, env.docs, async (_s, user) => {
+    const ms = JSON.parse(user).memories as Array<{ id: string; content: string }>
+    const num = ms.filter(m => m.content.includes('小数'))
+    return JSON.stringify({ changes: [
+      { action: 'create', kind: 'style', content: '效应量写 HR 与 95% CI', reason: '你多次补上了 HR', evidence: ['u1', 'u2'] },
+      ...(num.length >= 2 ? [{ action: 'merge', ids: num.map(m => m.id), content: '数值一律保留两位小数', reason: '重复' }] : []),
+    ] })
+  })
   const workspace = mkdtempSync(join(tmpdir(), 'heurion-ws-'))
   const registry = new TurnRegistry()
   const crossref = {
@@ -40,6 +50,7 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
     isLiveSession: () => true,
     kb,
     memory,
+    evolution,
     fulltext: { get: async (doi: string) => doi === '10.1/open' ? { source: 'pmc', url: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/', license: 'CC BY', text: 'Intro paragraph that is long enough to count as a passage for ranking purposes here.\n\nResults: the hazard ratio was 0.80 (95% CI 0.72 to 0.90) for the primary endpoint in all participants.' } : null } as unknown as FullTextClient,
   }, claims)
   const [a, b] = InMemoryTransport.createLinkedPair()
@@ -361,6 +372,24 @@ describe('文档仓库（AI 一侧）', () => {
     expect(f.body).toMatchObject({ result: 'forgotten', forgotten: ['统计软件用 R'] })
     expect(gone[0]).toMatchObject({ type: 'memory', result: 'forgotten' })
     expect(JSON.parse((await t.call('memory_forget', { target: '统计软件用 R' })).text).code).toBe('not_found')
+  })
+
+  it('记忆：memory_review 生成待用户采纳的建议（与界面「整理记忆」同一方法），本轮关闭记忆时不可用', async () => {
+    const t = await connect('一段。')
+    for (const content of ['数值保留两位小数', '小数保留两位']) await t.memory.propose('u1', { content, kind: 'preference', scope: 'global' }, { source: 'manual', actor: 'user' })
+    const notices: unknown[] = []
+    t.registry.begin('u1', { turnId: 't1', docId: t.docId, touched: new Set(), notify: n => notices.push(n), mode: 'apply', memory: true })
+    const r = await t.call('memory_review', {})
+    expect(r.body).toMatchObject({
+      result: 'reviewed',
+      new_memories_proposed: [{ content: '效应量写 HR 与 95% CI' }],
+      cleanup_suggestions: [{ action: '合并', memories: ['数值保留两位小数', '小数保留两位'], new_content: '数值一律保留两位小数' }],
+    })
+    expect(notices).toMatchObject([{ type: 'memory', result: 'proposed' }])
+    // 建议不会自动生效
+    expect(t.store.listMemories('u1', ['active']).map(m => m.content).sort()).toEqual(['小数保留两位', '数值保留两位小数'])
+    t.registry.begin('u1', { turnId: 't2', docId: t.docId, touched: new Set(), notify: () => {}, mode: 'apply', memory: false })
+    expect(JSON.parse((await t.call('memory_review', {})).text).code).toBe('memory_off')
   })
 })
 
