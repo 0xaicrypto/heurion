@@ -253,6 +253,16 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .welcome-examples button::after { content: '→'; color: var(--mint-text); }
 .welcome-examples button:hover:not(:disabled) { background: var(--teal); }
 
+/* —— 开始页（文档欢迎页、患者引导）：填满整个工作区 —— */
+.scroller:has(> .page.welcome-page), .scroller:has(> .page.patient-page.pt-welcome) { padding: 0; display: flex; flex-direction: column; }
+.page.welcome-page, .page.patient-page.pt-welcome {
+  max-width: none; width: 100%; margin: 0; flex: 1 0 auto; min-height: 100%; border: 0; box-shadow: none;
+  padding: clamp(32px, 7vh, 88px) clamp(24px, 6vw, 96px); display: flex; flex-direction: column; justify-content: center;
+  background-color: transparent; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 100% 25%, 25% 100%; }
+.page.welcome-page .welcome, .page.pt-welcome .pt-welcome-body { max-width: 1000px; width: 100%; margin: 0 auto; }
+.page.pt-welcome .pt-welcome-body h1 { font-size: 44px; }
+
 /* —— 右栏 —— */
 .side { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
 .tabs { display: flex; gap: 0; margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
@@ -512,7 +522,7 @@ button.block { width: 100%; padding: 10px 12px; }
 /* —— 患者 —— */
 .doc-context { flex: none; font-size: 12px; padding: 3px 10px; border-color: var(--green-line); color: var(--mint-text); background: var(--green-soft); }
 
-.nav-switch { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 16px 0; border: 1px solid var(--line-strong); }
+.nav-switch { display: grid; grid-template-columns: 1fr 1fr; margin: 0 16px 14px; border: 1px solid var(--line-strong); }
 .nav-switch button { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 0 7px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 14px; font-weight: 500; }
 .nav-switch button + button { border-left: 1px solid var(--line-strong); }
 .nav-switch button svg { width: 16px; height: 16px; flex: none; }
@@ -524,6 +534,14 @@ button.block { width: 100%; padding: 10px 12px; }
 .pt-code.big { font-size: 22px; }
 .pt-glass-row { padding-top: 10px; }
 .page.patient-page { max-width: 1100px; padding: 28px 8px 120px; }
+.pt-welcome-body { max-width: 640px; margin: 8vh auto 0; display: flex; flex-direction: column; gap: 14px; }
+.pt-welcome-body h1 { font-size: 34px; font-weight: 400; margin: 0; }
+.pt-steps { list-style: none; counter-reset: s; margin: 8px 0; padding: 0; border: 1px solid var(--line); }
+.pt-steps li { counter-increment: s; display: grid; grid-template-columns: 36px 160px 1fr; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); align-items: baseline; }
+.pt-steps li:last-child { border-bottom: 0; }
+.pt-steps li::before { content: counter(s, decimal-leading-zero); font-family: var(--mono); color: var(--mint-text); font-size: 12px; }
+.pt-steps span { color: var(--text-2); font-size: 13px; }
+@media (max-width: 900px) { .pt-steps li { grid-template-columns: 30px 1fr; } .pt-steps span { grid-column: 2; } }
 .pt-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .pt-id { display: flex; align-items: center; gap: 12px; }
 .pt-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-2); }
@@ -537,6 +555,10 @@ button.block { width: 100%; padding: 10px 12px; }
 .pt-labs tr[data-trend], .pt-pivot tr[data-trend] { cursor: pointer; }
 .pt-labs tr[data-trend]:hover, .pt-pivot tr[data-trend]:hover { background: var(--hover); }
 .flag-H { color: var(--danger); font-weight: 600; }
+.pt-multi { font-size: 10px; color: var(--muted); margin-left: 3px; font-weight: 400; }
+.pt-pivot sup, .pt-labs sup { color: var(--muted); font-weight: 400; }
+.pt-sameday td { font-size: 12px; color: var(--text-2); background: var(--warn-soft); }
+.pt-sameday select { font-size: 12px; margin-left: 8px; padding: 2px 6px; }
 .flag-L { color: var(--warn); font-weight: 600; }
 .pt-pivot td, .pt-pivot th { white-space: nowrap; padding: 5px 10px; font-size: 12.5px; }
 .pt-trend { border: 1px solid var(--line); padding: 10px 12px; margin: 10px 0; background: var(--panel); }

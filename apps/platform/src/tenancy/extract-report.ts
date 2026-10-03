@@ -15,6 +15,8 @@ export interface ExtractedReport {
   kind: 'lab_report' | 'discharge' | 'pathology' | 'imaging' | 'other'
   title: string
   report_date: string | null
+  /** 采样时间 HH:MM（报告上有时） */
+  report_time: string | null
   labs: ExtractedLab[]
 }
 
@@ -44,11 +46,11 @@ export function redact(text: string, names: string[] = namesIn(text)): string {
 }
 
 const SYSTEM = `你在从医学检验 / 检查报告里提取结构化数据。输入是报告各页文字（已打码，【】里是隐去的身份信息）。
-只输出 JSON：{"kind":"lab_report|discharge|pathology|imaging|other","title":"…","report_date":"YYYY-MM-DD 或 null","labs":[{"test_name":"…","value":"…","unit":"…或 null","ref_low":数字或 null,"ref_high":数字或 null,"ref_text":"参考范围原文或 null","page":页码}]}
+只输出 JSON：{"kind":"lab_report|discharge|pathology|imaging|other","title":"…","report_date":"YYYY-MM-DD 或 null","report_time":"HH:MM 或 null","labs":[{"test_name":"…","value":"…","unit":"…或 null","ref_low":数字或 null,"ref_high":数字或 null,"ref_text":"参考范围原文或 null","page":页码}]}
 规则：
 - kind：化验单 / 检验报告 = lab_report；出院小结 / 出院记录 = discharge；病理 = pathology；CT / MRI / 超声 / X 线等 = imaging；其他 = other。
 - title：简短的报告名，例如「肝功能」「血常规」「出院小结」，不要写任何姓名。
-- report_date：报告上的采样 / 检验 / 报告日期（优先采样日期），不是今天；没有就 null。
+- report_date：报告上的采样 / 检验 / 报告日期（优先采样日期），不是今天；没有就 null。report_time：同一时间的时分（如采样时间 07:30），没有就 null。
 - labs：只在 kind=lab_report 或报告里明确列出检验结果时提取；每一项照抄报告上的项目名与数值（value 原样抄写，含 < > 等符号），不要换算单位、不要计算、不要补全报告里没有的项目。
 - 参考范围写成「3.5-5.5」这类时拆成 ref_low / ref_high；只有上限（如「<40」）时 ref_low 为 null；同时把原文写进 ref_text。
 - 看不清、不确定的项目不要提取。`
@@ -79,6 +81,7 @@ export async function extractReport(pages: string[], complete: Complete): Promis
   const raw = parseJson(await complete(SYSTEM, input))
   const kind = typeof raw.kind === 'string' && KINDS.has(raw.kind) ? raw.kind as ExtractedReport['kind'] : 'other'
   const date = typeof raw.report_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.report_date) ? raw.report_date : null
+  const time = typeof raw.report_time === 'string' && /^\d{2}:\d{2}$/.test(raw.report_time) ? raw.report_time : null
   const labs = (Array.isArray(raw.labs) ? raw.labs : []).slice(0, 200).flatMap((x): ExtractedLab[] => {
     if (!x || typeof x !== 'object') return []
     const l = x as Record<string, unknown>
@@ -94,5 +97,5 @@ export async function extractReport(pages: string[], complete: Complete): Promis
   })
   // 标题明文存储：再过一遍打码（模型若从别处抄了名字也会被换掉）
   const title = typeof raw.title === 'string' ? redact(raw.title, names).trim().slice(0, 60) : ''
-  return { kind, title: title || ({ lab_report: '化验报告', discharge: '出院小结', pathology: '病理报告', imaging: '影像报告', other: '报告' })[kind], report_date: date, labs }
+  return { kind, report_time: time, title: title || ({ lab_report: '化验报告', discharge: '出院小结', pathology: '病理报告', imaging: '影像报告', other: '报告' })[kind], report_date: date, labs }
 }

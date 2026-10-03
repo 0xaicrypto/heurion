@@ -195,6 +195,14 @@ let ME: Me | null = null
 const patientsUi = initPatients(api, (m, e) => showNotice(m, e), {
   leaveDoc: () => leaveDoc(),
   openDoc: id => open(id),
+  prefillChat: text => {
+    switchTab('chatPane')
+    const input = $<HTMLTextAreaElement>('chatInput')
+    input.value = text
+    input.focus()
+    input.setSelectionRange(input.value.length, input.value.length)
+  },
+  showDocWelcome: () => { leaveDoc(); showWelcome() },
   tenantId: () => ME?.tenant?.id ?? null,
   token: () => TOKEN,
 })
@@ -295,11 +303,15 @@ function leaveDoc(): void {
   $('deckToolbar').hidden = true
   $('docTitle').textContent = ''
   $('docContext').hidden = true
+  docPatient = null
   setSyncStatus('offline')
   $('syncStatus').textContent = ''
   for (const b of ['exportBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = true
   void loadDocs()
 }
+
+/** 当前文档所属的患者（病例报告等）；对话时自动带上。 */
+let docPatient: string | null = null
 
 /** 当前文档事件流收到 hello 的次数（大于 1 说明是断线重连）。 */
 let streamHellos = 0
@@ -360,6 +372,7 @@ async function open(docId: string): Promise<void> {
   // 属于患者的文档（病例报告等）：顶栏显示归属，点击回到患者页
   const ctx = (() => { try { return meta.context ? JSON.parse(meta.context) : null } catch { return null } })()
   $('docContext').hidden = ctx?.kind !== 'patient'
+  docPatient = ctx?.kind === 'patient' ? ctx.patient_id : null
   if (ctx?.kind === 'patient') {
     $('docContext').textContent = `← ${ctx.code} · ${({ case_report: '病例报告', followup: '随访小结', discussion: '病例讨论' } as Record<string, string>)[ctx.doc_kind] ?? '患者文档'}`
     $('docContext').onclick = () => void patientsUi.open(ctx.patient_id)
@@ -1046,8 +1059,10 @@ async function send(): Promise<void> {
   chatImages = []
   renderChatImages()
   $<HTMLTextAreaElement>('chatInput').value = ''
+  // 属于患者的文档（病例报告等）：对话自动带上这位患者
+  const patients = docPatient ? [docPatient] : []
   try {
-    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), datasets: datasets.takePicked(), images, memory: memory.takeMemoryFlag() }) })
+    await api(`/api/docs/${session.docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text, suggest: $<HTMLInputElement>('suggestMode').checked, kb_files: library.takePicked(), datasets: datasets.takePicked(), images, patients, memory: memory.takeMemoryFlag() }) })
   } catch (err) {
     showNotice((err as Error).message, true)
   }
@@ -1370,8 +1385,9 @@ async function boot(): Promise<void> {
   const me = await api<Me>('/api/me')
   ME = me
   initUserMenu(me, api, showNotice)
+  // 上次停在患者页签时显示患者引导（患者模块自己负责），否则显示文档欢迎页
+  if (!patientsUi.isPatientMode()) showWelcome()
   patientsUi.setEnabled(me.tenant?.settings.patient_module !== false)
-  showWelcome()
   await loadDocs()
 }
 boot().catch(err => { $('page').innerHTML = `<div class="empty">${esc((err as Error).message)}</div>` })

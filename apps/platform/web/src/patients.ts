@@ -14,7 +14,10 @@ interface Patient {
 interface Lab {
   id: string; record_id: string | null; test_key: string; test_name: string; value_num: number | null; value_text: string | null; unit: string | null
   ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null; collected_on: string | null
-  status: 'pending' | 'confirmed' | 'rejected'; source: string; locator: { page?: number; verified?: boolean } | null
+  status: 'pending' | 'confirmed' | 'rejected' | 'superseded'; source: string; locator: { page?: number; verified?: boolean } | null
+  collected_at: string | null; replaces: string | null
+  std_value: number | null; std_unit: string | null; std_ref_low: number | null; std_ref_high: number | null; converted: boolean; unknown_unit: boolean
+  same_day?: Lab[]
 }
 interface RecordRow {
   id: string; kind: string; title: string; report_date: string | null; file_id: string | null; status: 'pending' | 'confirmed' | 'rejected'
@@ -31,6 +34,10 @@ export interface PatientHooks {
   /** 离开当前文档（关掉编辑器、清空中间区域） */
   leaveDoc(): void
   openDoc(id: string): Promise<void>
+  /** 把指令填进对话框（不发送） */
+  prefillChat(text: string): void
+  /** 文档模式的欢迎页 */
+  showDocWelcome(): void
   tenantId(): string | null
   token(): string
 }
@@ -41,6 +48,11 @@ const SEX: Record<string, string> = { M: '男', F: '女' }
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.txt'
 const value = (l: Lab) => l.value_num ?? l.value_text ?? ''
 const ref = (l: Lab) => l.ref_low !== null || l.ref_high !== null ? `${l.ref_low ?? ''}–${l.ref_high ?? ''}` : (l.ref_text ?? '')
+/** 标准单位下的值（化验表、趋势用）；换算过的带「*」，悬停看原值 */
+const stdValue = (l: Lab) => l.std_value ?? l.value_text ?? ''
+const stdRef = (l: Lab) => l.std_ref_low !== null || l.std_ref_high !== null ? `${l.std_ref_low ?? ''}–${l.std_ref_high ?? ''}` : (l.ref_text ?? '')
+const origNote = (l: Lab) => l.converted ? `原值 ${l.value_num} ${l.unit ?? ''}，已换算` : l.unknown_unit ? `单位 ${l.unit} 无法换算，不能与其他次直接比较` : ''
+const when = (l: Lab) => l.collected_at ?? l.collected_on ?? ''
 
 export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   let list: Patient[] = []
@@ -135,7 +147,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         ${d.access === 'break_glass' ? '<div class="notice">紧急访问（只读，24 小时内有效，已记入访问日志）</div>' : d.access === 'tenant' ? '<div class="muted small">机构设置为全员可见：你可以查看，修改需要加入诊疗组</div>' : ''}
         <div class="row pt-actions">
           ${canEdit ? `<button class="primary" data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
-          <button data-act="report" title="新建一份文档，让 AI 依据这位患者的已确认数据写病例报告">写病例报告</button>
+          <button data-act="report" title="新建一份病例报告并关联到这位患者；对话框里会填好建议的指令，由你确认后发送">写病例报告</button>
           ${d.access === 'owner' ? '<button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button class="danger" data-act="delete">删除</button>' : ''}
         </div>
         ${pendingCount ? `<div class="banner pt-pending"><span class="dot"></span>${d.records.filter(r => r.status === 'pending').length} 份报告、${d.pending_proposals.length} 条 AI 提议待确认<button data-tab="review">去审核</button></div>` : ''}
@@ -151,7 +163,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         ${canEdit ? `<textarea id="ptSummary" rows="4" placeholder="病史要点、用药、随访计划（只用代号，不写姓名）">${esc(d.summary ?? '')}</textarea>` : `<div class="pt-summary">${esc(d.summary ?? '（无）')}</div>`}</section>
       <section><h3 class="mem-h">最近化验</h3>${d.latest_labs.length === 0 ? '<div class="muted">还没有已确认的化验。点「上传化验单 / 报告」，自动提取后在「待确认」里审核。</div>' : `<table class="users pt-labs">
         <thead><tr><th>项目</th><th>结果</th><th>参考范围</th><th>日期</th></tr></thead><tbody>
-        ${d.latest_labs.map(l => `<tr data-trend="${esc(l.test_key)}"><td>${esc(l.test_name)}</td><td class="flag-${l.flag ?? 'n'}">${esc(value(l))} ${esc(l.unit ?? '')}${l.flag === 'H' ? ' ↑' : l.flag === 'L' ? ' ↓' : ''}</td><td class="muted">${esc(ref(l))}</td><td class="muted">${esc(l.collected_on ?? '')}</td></tr>`).join('')}
+        ${d.latest_labs.map(l => `<tr data-trend="${esc(l.test_key)}"><td>${esc(l.test_name)}</td><td class="flag-${l.flag ?? 'n'}" title="${esc(origNote(l))}">${esc(stdValue(l))} ${esc(l.std_unit ?? '')}${l.flag === 'H' ? ' ↑' : l.flag === 'L' ? ' ↓' : ''}${l.converted || l.unknown_unit ? '<sup>*</sup>' : ''}</td><td class="muted">${esc(stdRef(l))}</td><td class="muted">${esc(when(l))}</td></tr>`).join('')}
         </tbody></table><div class="muted small">点一行看趋势。</div>`}</section>
       <section><h3 class="mem-h">诊疗组</h3><div>${d.care_team.map(m => `<span class="chip">${esc(m.name)}${m.role === 'owner' ? '（负责人）' : ''}</span>`).join(' ')}</div></section>`
   }
@@ -160,13 +172,22 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     if (labs.length === 0) return '<div class="muted">还没有已确认的化验。</div>'
     const dates = [...new Set(labs.map(l => l.collected_on!))].sort().reverse().slice(0, 12)
     const tests = [...new Map(labs.map(l => [l.test_key, l])).values()]
+    // 同一天多次：显示最新一次 + ×N，悬停列出每一次（时间、值、原单位）
     const cell = (key: string, date: string) => {
-      const l = labs.find(x => x.test_key === key && x.collected_on === date)
-      return l ? `<td class="flag-${l.flag ?? 'n'}">${esc(value(l))}${l.flag === 'H' ? '↑' : l.flag === 'L' ? '↓' : ''}</td>` : '<td></td>'
+      const day = labs.filter(x => x.test_key === key && x.collected_on === date)
+      const l = day.at(-1)
+      if (!l) return '<td></td>'
+      const tip = day.map(x => `${x.collected_at ?? x.collected_on}：${stdValue(x)} ${x.std_unit ?? ''}${x.converted ? `（原值 ${x.value_num} ${x.unit}）` : ''}`).join('\n') + (origNote(l) && day.length === 1 ? '' : '')
+      return `<td class="flag-${l.flag ?? 'n'}" title="${esc(day.length > 1 ? tip : origNote(l))}">${esc(stdValue(l))}${l.flag === 'H' ? '↑' : l.flag === 'L' ? '↓' : ''}${l.converted || l.unknown_unit ? '<sup>*</sup>' : ''}${day.length > 1 ? `<span class="pt-multi">×${day.length}</span>` : ''}</td>`
     }
+    const unitOf = (key: string) => {
+      const units = [...new Set(labs.filter(l => l.test_key === key).map(l => l.std_unit ?? ''))]
+      return units.length > 1 ? `<span class="flag-L" title="有无法换算的单位，不同次不能直接比较">${esc(units.join(' / '))} ⚠</span>` : esc(units[0] ?? '')
+    }
+    const anyConverted = labs.some(l => l.converted)
     return `<div class="ds-scroll"><table class="chart-grid pt-pivot"><thead><tr><th>项目</th><th>单位</th>${dates.map(d => `<th>${esc(d)}</th>`).join('')}</tr></thead>
-      <tbody>${tests.map(t => `<tr data-trend="${esc(t.test_key)}"><td>${esc(t.test_name)}</td><td class="muted">${esc(t.unit ?? '')}</td>${dates.map(d => cell(t.test_key, d)).join('')}</tr>`).join('')}</tbody></table></div>
-      <div class="muted small">只显示已确认的化验，最近 12 次。点一行看趋势。</div><div id="ptTrend"></div>`
+      <tbody>${tests.map(t => `<tr data-trend="${esc(t.test_key)}"><td>${esc(t.test_name)}</td><td class="muted">${unitOf(t.test_key)}</td>${dates.map(d => cell(t.test_key, d)).join('')}</tr>`).join('')}</tbody></table></div>
+      <div class="muted small">只显示已确认的化验，最近 12 个检查日；同一天多次显示最新一次（×N，悬停看每次）。${anyConverted ? '带 * 的是从其他单位换算的（悬停看原值）。' : ''}点一行看趋势。</div><div id="ptTrend"></div>`
   }
 
   /** 病例报告历史：「写病例报告」新建的文档都关联在这里，新的在前。 */
@@ -208,7 +229,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               <td><input data-f="test_name" value="${esc(l.test_name)}" ${canEdit ? '' : 'disabled'}></td><td><input data-f="value" value="${esc(value(l))}" ${canEdit ? '' : 'disabled'}></td>
               <td><input data-f="unit" value="${esc(l.unit ?? '')}" ${canEdit ? '' : 'disabled'}></td><td><input data-f="ref_low" value="${esc(l.ref_low ?? '')}" ${canEdit ? '' : 'disabled'}></td>
               <td><input data-f="ref_high" value="${esc(l.ref_high ?? '')}" ${canEdit ? '' : 'disabled'}></td><td class="muted">${l.locator?.page ?? ''}${l.locator?.verified === false ? ' <span title="原文里没找到这个数，请对照原件">⚠</span>' : ''}</td>
-              <td>${canEdit ? '<button class="quiet small-btn" data-labx="reject" title="删除这一项">✕</button>' : ''}</td></tr>`).join('')}</tbody></table>` : busy ? '' : '<div class="muted small">没有提取到化验项。</div>'}
+              <td>${canEdit ? '<button class="quiet small-btn" data-labx="reject" title="删除这一项">✕</button>' : ''}</td></tr>
+              ${l.same_day?.length ? `<tr class="pt-sameday" data-lab="${l.id}"><td colspan="7">同一天已确认：${l.same_day.map(o => `${esc(stdValue(o))} ${esc(o.std_unit ?? '')}${o.collected_at ? `（${esc(o.collected_at.slice(11))}）` : ''}`).join('、')}
+                ${canEdit ? `<select data-replaces><option value="">两个都保留</option>${l.same_day.map(o => `<option value="${o.id}"${l.replaces === o.id ? ' selected' : ''}>这是更正：替换 ${esc(stdValue(o))}</option>`).join('')}</select>` : ''}</td></tr>` : ''}`).join('')}</tbody></table>` : busy ? '' : '<div class="muted small">没有提取到化验项。</div>'}
           ${canEdit && !busy ? '<button class="quiet small-btn" data-recx="addrow" title="自动提取漏了某项，或不能自动提取时：对照左边的原件补上">＋ 对照原件补一项</button>' : ''}
           ${canEdit && !busy ? '<div class="row end"><button class="danger" data-recx="reject">驳回整份</button><button class="primary" data-recx="confirm">确认这份报告</button></div>' : ''}
         </div></div>`
@@ -220,41 +243,47 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
   /** 趋势：一条折线 + 参考范围色带（SVG）。 */
   async function showTrend(key: string, after: HTMLElement): Promise<void> {
-    const labs = (await api<Lab[]>(`/api/patients/${current}/labs?tests=${encodeURIComponent(key)}`)).filter(l => l.value_num !== null && l.collected_on)
+    const all = (await api<Lab[]>(`/api/patients/${current}/labs?tests=${encodeURIComponent(key)}`)).filter(l => l.std_value !== null && l.collected_on)
     document.getElementById('ptTrendBox')?.remove()
+    // 单位无法换算的点不画（和其他次不可比），在图下说明
+    const labs = all.filter(l => !l.unknown_unit)
+    const skipped = all.length - labs.length
     if (labs.length === 0) return
     const W = 560, H = 180, P = 36
-    const xs = labs.map(l => Date.parse(l.collected_on!)), ys = labs.map(l => l.value_num!)
-    const lo = Math.min(...ys, labs[0]!.ref_low ?? Infinity), hi = Math.max(...ys, labs[0]!.ref_high ?? -Infinity)
+    const t = (l: Lab) => Date.parse((l.collected_at ?? l.collected_on!).replace(' ', 'T'))
+    const xs = labs.map(t), ys = labs.map(l => l.std_value!)
+    const lows = labs.map(l => l.std_ref_low).filter((v): v is number => v !== null), highs = labs.map(l => l.std_ref_high).filter((v): v is number => v !== null)
+    const lo = Math.min(...ys, ...lows), hi = Math.max(...ys, ...highs)
     const pad = (hi - lo) * 0.15 || 1
     const [y0, y1] = [lo - pad, hi + pad]
-    const x = (t: number) => xs.length === 1 ? W / 2 : P + (t - xs[0]!) / (xs.at(-1)! - xs[0]!) * (W - 2 * P)
+    const x = (ts: number) => xs.length === 1 || xs.at(-1) === xs[0] ? W / 2 : P + (ts - xs[0]!) / (xs.at(-1)! - xs[0]!) * (W - 2 * P)
     const y = (v: number) => H - P / 2 - (v - y0) / (y1 - y0) * (H - P)
-    const band = labs[0]!.ref_low !== null || labs[0]!.ref_high !== null
-      ? `<rect x="${P}" width="${W - 2 * P}" y="${y(labs[0]!.ref_high ?? y1)}" height="${y(labs[0]!.ref_low ?? y0) - y(labs[0]!.ref_high ?? y1)}" class="trend-band"/>` : ''
-    const pts = labs.map(l => `${x(Date.parse(l.collected_on!))},${y(l.value_num!)}`).join(' ')
+    // 参考范围色带：每段用该段起点那次化验的参考范围（不同医院范围不同）
+    const seg = (l: Lab, x0: number, x1: number) => l.std_ref_low === null && l.std_ref_high === null ? ''
+      : `<rect x="${x0}" width="${Math.max(2, x1 - x0)}" y="${y(l.std_ref_high ?? y1)}" height="${y(l.std_ref_low ?? y0) - y(l.std_ref_high ?? y1)}" class="trend-band"/>`
+    const band = labs.length === 1 ? seg(labs[0]!, P, W - P) : labs.slice(0, -1).map((l, i) => seg(l, x(xs[i]!), x(xs[i + 1]!))).join('') + seg(labs.at(-1)!, x(xs.at(-1)!) - 1, W - P)
+    const pts = labs.map(l => `${x(t(l))},${y(l.std_value!)}`).join(' ')
     const box = document.createElement('div')
     box.id = 'ptTrendBox'
     box.className = 'pt-trend'
-    box.innerHTML = `<div class="row"><b>${esc(labs[0]!.test_name)}</b><span class="muted small">${esc(labs[0]!.unit ?? '')} · 参考 ${esc(ref(labs[0]!))}</span><span class="grow"></span><button class="quiet small-btn" data-trend-close>✕</button></div>
+    box.innerHTML = `<div class="row"><b>${esc(labs[0]!.test_name)}</b><span class="muted small">${esc(labs[0]!.std_unit ?? '')}${labs.some(l => l.converted) ? ' · 部分数值已从其他单位换算' : ''} · 色带为各次报告的参考范围</span><span class="grow"></span><button class="quiet small-btn" data-trend-close>✕</button></div>
       <svg viewBox="0 0 ${W} ${H}" class="trend-svg">${band}<polyline points="${pts}" class="trend-line"/>
-        ${labs.map(l => `<circle cx="${x(Date.parse(l.collected_on!))}" cy="${y(l.value_num!)}" r="3.5" class="trend-dot flag-${l.flag ?? 'n'}"><title>${esc(l.collected_on)}：${l.value_num}</title></circle>
-          <text x="${x(Date.parse(l.collected_on!))}" y="${y(l.value_num!) - 8}" class="trend-label">${l.value_num}</text>`).join('')}
-        <text x="${P}" y="${H - 4}" class="trend-axis">${esc(labs[0]!.collected_on)}</text><text x="${W - P}" y="${H - 4}" class="trend-axis" text-anchor="end">${esc(labs.at(-1)!.collected_on)}</text></svg>`
+        ${labs.map(l => `<circle cx="${x(t(l))}" cy="${y(l.std_value!)}" r="3.5" class="trend-dot flag-${l.flag ?? 'n'}"><title>${esc(when(l))}：${l.std_value} ${esc(l.std_unit ?? '')}${l.converted ? `（原值 ${l.value_num} ${esc(l.unit ?? '')}）` : ''}</title></circle>
+          <text x="${x(t(l))}" y="${y(l.std_value!) - 8}" class="trend-label">${l.std_value}</text>`).join('')}
+        <text x="${P}" y="${H - 4}" class="trend-axis">${esc(labs[0]!.collected_on)}</text><text x="${W - P}" y="${H - 4}" class="trend-axis" text-anchor="end">${esc(labs.at(-1)!.collected_on)}</text></svg>
+      ${skipped ? `<div class="muted small">另有 ${skipped} 次的单位无法换算，没有画进趋势（见化验表）。</div>` : ''}`
     after.after(box)
   }
 
+  /** 写病例报告：新建文档并关联到患者，打开后把建议的指令填进对话框（不自动发送，由医生改好后自己发送）。 */
   async function writeReport(d: Patient): Promise<void> {
     try {
       const doc = await api<{ id: string }>('/api/docs', { method: 'POST', body: JSON.stringify({ title: `${d.code} 病例报告 ${new Date().toLocaleDateString('sv-SE')}` }) })
       await api(`/api/patients/${d.id}/docs`, { method: 'POST', body: JSON.stringify({ doc_id: doc.id, kind: 'case_report' }) })
       current = null
       await hooks.openDoc(doc.id)
-      await api(`/api/docs/${doc.id}/chat?async=1`, { method: 'POST', body: JSON.stringify({
-        message: `请依据患者 ${d.code} 的已确认数据写一份病例报告（参考 CARE 指南：病史、检查、诊断、治疗与随访、讨论）。化验值写明日期并标出异常；只用代号或去标识写法，不写姓名；数据里没有的内容留「待补充」，不要编造。需要时画关键化验的趋势图。`,
-        patients: [d.id],
-      }) })
-      notice('已新建文档并关联到患者（患者页「病例报告」里可以找到），AI 正在起草')
+      hooks.prefillChat(`请依据患者 ${d.code} 的已确认数据写一份病例报告（参考 CARE 指南：病史、检查、诊断、治疗与随访、讨论）。化验值写明日期并标出异常；只用代号或去标识写法，不写姓名；数据里没有的内容留「待补充」，不要编造。需要时画关键化验的趋势图。`)
+      notice('已新建病例报告并关联到患者。对话框里填好了建议的指令，可以修改后点「发送」')
     } catch (err) { notice((err as Error).message, true) }
   }
 
@@ -309,7 +338,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
       } else if (act === 'delete') {
         if (await askConfirm({ title: `删除 ${d.code}`, message: '删除这位患者的全部记录、化验和上传的报告，不可恢复。', confirm: '删除', danger: true })) {
-          await api(`/api/patients/${id}`, { method: 'DELETE' }); setName(id, ''); current = null; await loadList(); hooks.leaveDoc()
+          await api(`/api/patients/${id}`, { method: 'DELETE' }); setName(id, ''); current = null; await loadList(); hooks.leaveDoc(); showWelcome()
         }
       }
       // 审核
@@ -343,14 +372,27 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const input = e.target as HTMLInputElement
     const id = current
     if (input.id === 'ptUpload' && input.files?.length) {
+      const failed: string[] = []
+      let ok = 0
       for (const f of Array.from(input.files)) {
         const fd = new FormData()
         fd.append('file', f)
-        try { await api(`/api/patients/${id}/files`, { method: 'POST', body: fd }) } catch (err) { notice(`${f.name}：${(err as Error).message}`, true) }
+        try { await api(`/api/patients/${id}/files`, { method: 'POST', body: fd }); ok++ } catch (err) { failed.push(`${f.name}：${(err as Error).message}`) }
       }
-      notice('已上传，正在自动提取，完成后在「待确认」里审核')
+      input.value = ''
+      // 被拦下的（重复上传等）单独说清楚，不被「已上传」覆盖
+      if (failed.length) notice((ok ? `已上传 ${ok} 份，正在自动提取。` : '') + failed.join('；'), true)
+      else notice('已上传，正在自动提取，完成后在「待确认」里审核')
+      if (!ok) return
       tab = 'review'
       void openPatient(id, true)
+      return
+    }
+    const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('select[data-replaces]')
+    const srow = sel?.closest<HTMLElement>('tr[data-lab]')
+    if (sel && srow) {
+      try { await api(`/api/patients/${id}/labs/${srow.dataset.lab}`, { method: 'PATCH', body: JSON.stringify({ replaces: sel.value || null }) }); notice(sel.value ? '确认这份报告时，旧值会标为已被更正' : '两个都保留') }
+      catch (err) { notice((err as Error).message, true) }
       return
     }
     const row = input.closest<HTMLElement>('tr[data-lab]')
@@ -365,6 +407,32 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     try { await api(`/api/patients/${current}`, { method: 'PATCH', body: JSON.stringify({ summary: ta.value }) }) } catch (err) { notice((err as Error).message, true) }
   }, true)
 
+  /** 患者模式下还没选患者：中间显示患者模块的引导（不显示文档的欢迎页）。 */
+  function showWelcome(): void {
+    const page = $('page')
+    page.className = 'page patient-page pt-welcome'
+    $('docTitle').textContent = '患者'
+    page.innerHTML = `<div class="pt-welcome-body">
+      <span class="pt-code big">P-····</span>
+      <h1>${list.length ? '选择一位患者' : '新建第一位患者'}</h1>
+      <p class="muted">患者在系统里只有代号，不存姓名；姓名可以在患者页「本机备注」里记，只保存在这台电脑上。</p>
+      <ol class="pt-steps">
+        <li><b>新建患者</b><span>填性别、出生年份、诊断标签。</span></li>
+        <li><b>上传化验单 / 报告</b><span>PDF、扫描件、手机照片都行；自动识别报告日期和化验项，异常值自动标出。</span></li>
+        <li><b>审核</b><span>在「待确认」里对照原件核对，确认后进入化验表和趋势。</span></li>
+        <li><b>写病例报告</b><span>依据已确认的数据起草，报告保存在患者的「病例报告」里。</span></li>
+      </ol>
+      <div class="row"><button class="primary" data-pw="new">＋ 新建患者</button>${list[0] ? `<button data-pw="open">打开 ${esc(label(list[0]))}</button>` : ''}</div>
+    </div>`
+  }
+
+  document.getElementById('page')!.addEventListener('click', e => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-pw]')
+    if (!b || !document.getElementById('page')!.classList.contains('pt-welcome')) return
+    if (b.dataset.pw === 'new') void createPatient()
+    else if (list[0]) void openPatient(list[0].id)
+  })
+
   // —— 左栏页签 ——
 
   const setMode = (mode: 'docs' | 'patients') => {
@@ -376,14 +444,18 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     $('docList').hidden = mode !== 'docs'
     $('patientList').hidden = mode !== 'patients'
     $('newProject').hidden = mode !== 'docs'
-    $('newPatient').hidden = mode !== 'patients'
+    $('docActions').hidden = mode !== 'docs'
+    $('ptActions').hidden = mode !== 'patients'
     ;(document.getElementById('docSearch') as HTMLInputElement).placeholder = mode === 'docs' ? '搜索文档（标题与正文）' : '按代号、本机备注、标签筛选'
     try { localStorage.setItem('heurion.navMode', mode) } catch { /* 忽略 */ }
-    if (mode === 'patients') void loadList()
+    const page = $('page')
+    const idle = page.classList.contains('welcome-page') || page.classList.contains('pt-welcome') || page.childElementCount === 0
+    if (mode === 'patients') void loadList().then(() => { if (idle && !current) showWelcome() })
+    else if (idle || (page.classList.contains('patient-page') && current)) { current = null; hooks.showDocWelcome() }
   }
   $('navDocs').onclick = () => setMode('docs')
   $('navPatients').onclick = () => setMode('patients')
-  $('newPatient').onclick = () => void createPatient()
+  $('newPatientBig').onclick = () => void createPatient()
   $('patientList').onclick = e => {
     const t = e.target as HTMLElement
     if (t.closest('#breakGlassBtn')) { void breakGlass(); return }
@@ -398,6 +470,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
     /** 打开患者页（从病例报告回到患者） */
     async open(id: string): Promise<void> { setMode('patients'); await openPatient(id) },
+    /** 当前左栏是不是患者页签（启动时决定显示哪个欢迎页） */
+    isPatientMode(): boolean { return !$('patientList').hidden },
     /** 机构没开患者模块时隐藏页签 */
     setEnabled(on: boolean): void { $('navPatients').closest<HTMLElement>('.nav-switch')!.hidden = !on; if (!on) setMode('docs') },
   }

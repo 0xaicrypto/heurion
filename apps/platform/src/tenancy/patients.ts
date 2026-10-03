@@ -7,6 +7,7 @@ import type { Store } from '../store/db.ts'
 import type { TenantKeys } from './keys.ts'
 import type { Complete } from '../memory/evolve.ts'
 import { extractReport, redact } from './extract-report.ts'
+import { standardize, standardizeRange } from './units.ts'
 
 /**
  * 患者数据（docs/design/TENANCY.md §2、§4；患者模块第二期的底座）。
@@ -35,8 +36,14 @@ export interface LabRow {
   value_num: number | null; value_text: string | null; unit: string | null
   ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null
   /** 报告上的日期；提取时报告上没写日期的为 null，确认报告时由医生补填 */
-  collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected'; source: 'manual' | 'extracted' | 'ai'
+  collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected' | 'superseded'; source: 'manual' | 'extracted' | 'ai'
   locator: { page?: number; bbox?: number[]; verified?: boolean } | null
+  /** 采样时间（报告上有时间时，YYYY-MM-DD HH:MM），同一天多次检查按它排序 */
+  collected_at: string | null
+  /** 审核时医生选择「用这个替换」的旧值（同日同项的已确认化验）；确认后旧值标为 superseded */
+  replaces: string | null
+  /** 换算到标准单位后的值、单位、参考范围（原始值不变，见 units.ts） */
+  std_value: number | null; std_unit: string | null; std_ref_low: number | null; std_ref_high: number | null; converted: boolean; unknown_unit: boolean
   created_by: string; created_at: string; confirmed_by: string | null; confirmed_at: string | null
 }
 export interface RecordRow {
@@ -109,13 +116,14 @@ class TenantPatientDb {
       );
       CREATE TABLE IF NOT EXISTS records (
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, kind TEXT NOT NULL, title TEXT NOT NULL,
-        report_date TEXT, file_id TEXT, status TEXT NOT NULL, text_enc TEXT, extraction TEXT, extraction_note TEXT,
+        report_date TEXT, report_time TEXT, file_id TEXT, status TEXT NOT NULL, text_enc TEXT, extraction TEXT, extraction_note TEXT,
         created_by TEXT NOT NULL, created_at TEXT NOT NULL, confirmed_by TEXT, confirmed_at TEXT
       );
       CREATE TABLE IF NOT EXISTS labs (
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE, record_id TEXT, test_key TEXT NOT NULL, test_name TEXT NOT NULL,
         value_num REAL, value_text TEXT, unit TEXT, ref_low REAL, ref_high REAL, ref_text TEXT, flag TEXT, collected_on TEXT,
-        status TEXT NOT NULL, source TEXT NOT NULL, locator TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, confirmed_by TEXT, confirmed_at TEXT
+        status TEXT NOT NULL, source TEXT NOT NULL, locator TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, confirmed_by TEXT, confirmed_at TEXT,
+        collected_at TEXT, replaces TEXT
       );
       CREATE INDEX IF NOT EXISTS labs_patient ON labs (patient_id, test_key, collected_on);
       CREATE TABLE IF NOT EXISTS proposals (
@@ -134,6 +142,12 @@ class TenantPatientDb {
         id TEXT PRIMARY KEY, patient_id TEXT NOT NULL, user_id TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL, expires_at TEXT NOT NULL
       );
     `)
+    // 旧库补列
+    const cols = (t: string) => (this.db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>).map(c => c.name)
+    const labCols = cols('labs')
+    if (!labCols.includes('collected_at')) this.db.exec('ALTER TABLE labs ADD COLUMN collected_at TEXT')
+    if (!labCols.includes('replaces')) this.db.exec('ALTER TABLE labs ADD COLUMN replaces TEXT')
+    if (!cols('records').includes('report_time')) this.db.exec('ALTER TABLE records ADD COLUMN report_time TEXT')
   }
 
   nextCode(): string {
@@ -149,7 +163,13 @@ const patientOf = (r: Record<string, unknown>): PatientRow => ({
   tags: JSON.parse((r.tags as string) || '[]') as string[], status: r.status as PatientRow['status'],
   created_by: r.created_by as string, created_at: r.created_at as string, updated_at: r.updated_at as string,
 })
-const labOf = (r: Record<string, unknown>): LabRow => ({ ...(r as unknown as LabRow), locator: r.locator ? JSON.parse(r.locator as string) : null })
+const labOf = (r: Record<string, unknown>): LabRow => {
+  const l = r as unknown as LabRow
+  const std = standardize(l.test_key, l.value_num, l.unit)
+  const range = standardizeRange(l.test_key, l.ref_low, l.ref_high, l.unit)
+  return { ...l, locator: r.locator ? JSON.parse(r.locator as string) : null, collected_at: (r.collected_at as string | null) ?? null, replaces: (r.replaces as string | null) ?? null,
+    std_value: std.value, std_unit: std.unit, std_ref_low: range.low, std_ref_high: range.high, converted: std.converted, unknown_unit: std.unknown_unit }
+}
 const proposalOf = (r: Record<string, unknown>): ProposalRow => ({ ...(r as unknown as ProposalRow), payload: JSON.parse(r.payload as string) })
 
 export interface Actor {
@@ -256,8 +276,9 @@ export class PatientService {
       .map(m => ({ ...m, name: this.store.getUser(m.user_id)?.display_name ?? m.user_id }))
     const records = (c.db.db.prepare('SELECT * FROM records WHERE patient_id = ? ORDER BY COALESCE(report_date, created_at) DESC').all(patientId) as unknown as RecordRow[])
       .map(r => ({ ...r, text_enc: undefined }))
-    const latest = (c.db.db.prepare(`SELECT l.* FROM labs l WHERE l.patient_id = ? AND l.status = 'confirmed' AND l.collected_on = (
-        SELECT MAX(collected_on) FROM labs WHERE patient_id = l.patient_id AND test_key = l.test_key AND status = 'confirmed') ORDER BY l.test_key`).all(patientId) as Array<Record<string, unknown>>).map(labOf)
+    // 每项最近一次（同一天多次时取采样时间最晚、再取录入最晚的）
+    const all = (c.db.db.prepare("SELECT * FROM labs WHERE patient_id = ? AND status = 'confirmed' ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at").all(patientId) as Array<Record<string, unknown>>).map(labOf)
+    const latest = [...new Map(all.map(l => [l.test_key, l])).values()]
     this.log(c, a, patientId, 'view')
     return { ...p, access: role, documents: this.documents(c, patientId, a.userId), summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
   }
@@ -374,15 +395,23 @@ export class PatientService {
     this.log(c, a, patientId, status === 'confirmed' ? 'lab_confirm' : 'lab_reject', labId)
   }
 
+  /** 同日同项的已确认化验（审核时提示冲突、确认时去重）。 */
+  private sameDay(db: TenantPatientDb, patientId: string, l: { id: string; test_key: string; collected_on: string | null }): LabRow[] {
+    if (!l.collected_on) return []
+    return (db.db.prepare("SELECT * FROM labs WHERE patient_id = ? AND test_key = ? AND collected_on = ? AND status = 'confirmed' AND id != ?").all(patientId, l.test_key, l.collected_on, l.id) as Array<Record<string, unknown>>).map(labOf)
+  }
+
   /** 化验长表（只含已确认的；includePending 给审核界面用）。 */
-  labs(a: Actor, patientId: string, f: { tests?: string[]; from?: string; to?: string; includePending?: boolean } = {}): LabRow[] {
+  labs(a: Actor, patientId: string, f: { tests?: string[]; from?: string; to?: string; includePending?: boolean } = {}): Array<LabRow & { same_day?: LabRow[] }> {
     const { c } = this.visible(a, patientId)
     const where = ['patient_id = ?', f.includePending ? "status IN ('confirmed', 'pending')" : "status = 'confirmed'"]
     const args: string[] = [patientId]
     if (f.from && DATE.test(f.from)) { where.push('collected_on >= ?'); args.push(f.from) }
     if (f.to && DATE.test(f.to)) { where.push('collected_on <= ?'); args.push(f.to) }
-    let rows = (c.db.db.prepare(`SELECT * FROM labs WHERE ${where.join(' AND ')} ORDER BY test_key, collected_on`).all(...args) as Array<Record<string, unknown>>).map(labOf)
+    let rows: Array<LabRow & { same_day?: LabRow[] }> = (c.db.db.prepare(`SELECT * FROM labs WHERE ${where.join(' AND ')} ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at`).all(...args) as Array<Record<string, unknown>>).map(labOf)
     if (f.tests?.length) { const keys = new Set(f.tests.map(testKey)); rows = rows.filter(r => keys.has(r.test_key)) }
+    // 待确认的项：带上同日同项已确认的值（审核时决定替换还是都保留）
+    if (f.includePending) rows = rows.map(r => r.status === 'pending' ? { ...r, same_day: this.sameDay(c.db, patientId, r) } : r)
     this.log(c, a, patientId, 'labs_read', f.tests?.join(',') ?? null)
     return rows
   }
@@ -392,8 +421,9 @@ export class PatientService {
     const { p } = this.visible(a, patientId)
     const rows = this.labs(a, patientId)
     const q = (v: unknown) => v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v)
-    const head = 'patient,test_key,test_name,value,value_text,unit,ref_low,ref_high,flag,collected_on'
-    const body = rows.map(r => [p.code, r.test_key, r.test_name, r.value_num, r.value_text, r.unit, r.ref_low, r.ref_high, r.flag, r.collected_on].map(q).join(','))
+    // value / unit 是换算到标准单位后的（便于画趋势、做统计）；orig_value / orig_unit 是报告上的原样
+    const head = 'patient,test_key,test_name,value,unit,ref_low,ref_high,flag,collected_on,collected_at,orig_value,orig_unit,value_text'
+    const body = rows.map(r => [p.code, r.test_key, r.test_name, r.std_value, r.std_unit, r.std_ref_low, r.std_ref_high, r.flag, r.collected_on, r.collected_at, r.value_num, r.unit, r.value_text].map(q).join(','))
     return { code: p.code, csv: [head, ...body].join('\n') + '\n', rows: rows.length }
   }
 
@@ -403,10 +433,14 @@ export class PatientService {
   addFile(a: Actor, patientId: string, input: { name: string; mime: string; bytes: Uint8Array; kind?: RecordRow['kind']; report_date?: string | null; title?: string }): { file_id: string; record: RecordRow } {
     const { c } = this.requireTeam(a, patientId)
     if (input.bytes.byteLength > 30 * 1024 * 1024) throw new PatientError('too_large', '文件超过 30 MB')
+    // 同一份报告重复上传：拦下并说明是哪次传过的（不再重复提取）
+    const sha = createHash('sha256').update(input.bytes).digest('hex')
+    const dup = c.db.db.prepare(`SELECT r.title, r.report_date, f.created_at FROM files f LEFT JOIN records r ON r.file_id = f.id WHERE f.patient_id = ? AND f.sha256 = ? AND COALESCE(r.status, '') != 'rejected'`).get(patientId, sha) as { title: string | null; report_date: string | null; created_at: string } | undefined
+    if (dup) throw new PatientError('duplicate', `这份报告已经上传过（${dup.created_at.slice(0, 10)} 上传${dup.title ? `，「${dup.title}」` : ''}${dup.report_date ? `，报告日期 ${dup.report_date}` : ''}）`, 409)
     const fid = rid('pf')
     writeFileSync(join(c.db.files, fid), this.keys.encrypt(c.tenantId, Buffer.from(input.bytes)))
     c.db.db.prepare('INSERT INTO files (id, patient_id, name_enc, mime, size, sha256, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(fid, patientId, this.keys.encryptText(c.tenantId, input.name)!, input.mime, input.bytes.byteLength, createHash('sha256').update(input.bytes).digest('hex'), a.userId, now())
+      .run(fid, patientId, this.keys.encryptText(c.tenantId, input.name)!, input.mime, input.bytes.byteLength, sha, a.userId, now())
     const recId = rid('rc')
     const kind = input.kind && ['lab_report', 'discharge', 'pathology', 'imaging', 'note', 'other'].includes(input.kind) ? input.kind : 'other'
     // 自动提取：机构允许交给外部模型、配置了模型时排队；否则跳过，由医生手工录入
@@ -447,14 +481,15 @@ export class PatientService {
       db.db.prepare('UPDATE records SET text_enc = ? WHERE id = ?').run(this.keys.encryptText(tenantId, pages.join('\f')), recordId)
       const r = await extractReport(pages, this.extractor.complete)
       const date = rec.report_date ?? r.report_date
-      db.db.prepare("UPDATE records SET kind = CASE WHEN kind = 'other' THEN ? ELSE kind END, title = CASE WHEN title = '未命名报告' THEN ? ELSE title END, report_date = ? WHERE id = ?").run(r.kind, r.title, date, recordId)
-      const ins = db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, status, source, locator, created_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'extracted', ?, ?, ?)`)
+      const time = r.report_date && date === r.report_date ? r.report_time : null
+      db.db.prepare("UPDATE records SET kind = CASE WHEN kind = 'other' THEN ? ELSE kind END, title = CASE WHEN title = '未命名报告' THEN ? ELSE title END, report_date = ?, report_time = ? WHERE id = ?").run(r.kind, r.title, date, time, recordId)
+      const ins = db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, collected_at, status, source, locator, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'extracted', ?, ?, ?)`)
       for (const l of r.labs) {
         const parsed = parseValue(l.value)
         const flag = parsed.num === null ? (/[↑]|(?<![A-Za-z])H$/.test(l.value) ? 'H' : /[↓]|(?<![A-Za-z])L$/.test(l.value) ? 'L' : null)
           : l.ref_high !== null && parsed.num > l.ref_high ? 'H' : l.ref_low !== null && parsed.num < l.ref_low ? 'L' : null
-        ins.run(rid('lb'), patientId, recordId, testKey(l.test_name), l.test_name, parsed.num, parsed.num === null ? l.value : null, l.unit, l.ref_low, l.ref_high, l.ref_text, flag, date,
+        ins.run(rid('lb'), patientId, recordId, testKey(l.test_name), l.test_name, parsed.num, parsed.num === null ? l.value : null, l.unit, l.ref_low, l.ref_high, l.ref_text, flag, date, date && time ? `${date} ${time}` : null,
           JSON.stringify({ page: l.page, verified: l.verified }), userId, now())
       }
       const unverified = r.labs.filter(l => !l.verified).length
@@ -495,6 +530,14 @@ export class PatientService {
     if (!date && undated) throw new PatientError('date_required', '这份报告没有日期，请填写报告上的日期（YYYY-MM-DD）')
     c.db.db.prepare("UPDATE records SET status = 'confirmed', report_date = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?").run(date, a.userId, now(), recordId)
     c.db.db.prepare("UPDATE labs SET collected_on = COALESCE(collected_on, ?) WHERE record_id = ? AND status = 'pending'").run(date, recordId)
+    // 同日同项已有确认值：医生选了「替换」的，旧值标为已被更正；数值完全相同的（同一结果重复出现）去掉这条；其余都保留
+    let dups = 0
+    for (const l of (c.db.db.prepare("SELECT * FROM labs WHERE record_id = ? AND status = 'pending'").all(recordId) as Array<Record<string, unknown>>).map(labOf)) {
+      if (l.replaces) { c.db.db.prepare("UPDATE labs SET status = 'superseded' WHERE id = ? AND patient_id = ? AND status = 'confirmed'").run(l.replaces, patientId); continue }
+      const same = this.sameDay(c.db, patientId, l).find(o => o.std_value === l.std_value && o.value_text === l.value_text)
+      if (same) { c.db.db.prepare("UPDATE labs SET status = 'rejected', confirmed_by = ?, confirmed_at = ? WHERE id = ?").run(a.userId, now(), l.id); dups++ }
+    }
+    if (dups) this.log(c, a, patientId, 'lab_duplicate_skip', String(dups))
     c.db.db.prepare("UPDATE labs SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE record_id = ? AND status = 'pending'").run(a.userId, now(), recordId)
     c.db.db.prepare('UPDATE patients SET updated_at = ? WHERE id = ?').run(now(), patientId)
     this.log(c, a, patientId, 'record_confirm', recordId)
@@ -509,6 +552,14 @@ export class PatientService {
     const lab = labInput(merged)
     c.db.db.prepare('UPDATE labs SET test_key = ?, test_name = ?, value_num = ?, value_text = ?, unit = ?, ref_low = ?, ref_high = ?, ref_text = ?, flag = ?, collected_on = ? WHERE id = ?')
       .run(testKey(lab.test_name), lab.test_name, lab.value_num, lab.value_text, lab.unit, lab.ref_low, lab.ref_high, lab.ref_text, flagOf(lab), input.collected_on ? lab.collected_on : (cur.collected_on as string | null), labId)
+    // 「用这个替换」同日同项的某条已确认值（null 取消）
+    if (input.replaces !== undefined) {
+      const target = input.replaces === null || input.replaces === '' ? null : String(input.replaces)
+      if (target && !this.sameDay(c.db, patientId, labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(labId) as Record<string, unknown>)).some(o => o.id === target)) {
+        throw new PatientError('bad_replaces', '只能替换同一天、同一项目的已确认化验')
+      }
+      c.db.db.prepare('UPDATE labs SET replaces = ? WHERE id = ?').run(target, labId)
+    }
     this.log(c, a, patientId, 'lab_edit', labId)
     return labOf(c.db.db.prepare('SELECT * FROM labs WHERE id = ?').get(labId) as Record<string, unknown>)
   }

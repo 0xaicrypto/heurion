@@ -655,7 +655,14 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   }, async ({ patient_id, include_pending, tests, from, to }) => {
     if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
     try {
-      return json(deps.patients.labs(aiActor(), patient_id, { tests, from, to, includePending: include_pending }).map(l => ({ lab_id: l.id, record_id: l.record_id, status: l.status, source: l.source, test: l.test_name, key: l.test_key, value: l.value_num ?? l.value_text, unit: l.unit, flag: l.flag, ref_low: l.ref_low, ref_high: l.ref_high, date: l.collected_on, page: l.locator?.page ?? null, found_in_original: l.locator?.verified ?? null })))
+      return json(deps.patients.labs(aiActor(), patient_id, { tests, from, to, includePending: include_pending }).map(l => ({
+        lab_id: l.id, record_id: l.record_id, status: l.status, source: l.source, test: l.test_name, key: l.test_key,
+        // value / unit：换算到标准单位后的（跨医院可比）；orig_*：报告上的原样
+        value: l.std_value ?? l.value_text, unit: l.std_unit, ref_low: l.std_ref_low, ref_high: l.std_ref_high, flag: l.flag,
+        ...(l.converted ? { orig_value: l.value_num, orig_unit: l.unit } : {}), ...(l.unknown_unit ? { unit_warning: `单位 ${l.unit} 无法换算到标准单位，和其他次的数值不能直接比较` } : {}),
+        date: l.collected_on, time: l.collected_at, page: l.locator?.page ?? null, found_in_original: l.locator?.verified ?? null,
+        ...(l.same_day?.length ? { same_day_confirmed: l.same_day.map(o => ({ lab_id: o.id, value: o.std_value, unit: o.std_unit })) } : {}),
+      })))
     } catch (err) { return patientFail(err) }
   })
 
@@ -670,7 +677,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
       const rel = `data/patient-${r.code}-labs.csv`
       writeFileSync(join(deps.workspaceDir(claims.u), rel), r.csv, { mode: 0o644 })
-      return json({ path: rel, rows: r.rows, columns: ['patient', 'test_key', 'test_name', 'value', 'value_text', 'unit', 'ref_low', 'ref_high', 'flag', 'collected_on'] })
+      return json({ path: rel, rows: r.rows, columns: ['patient', 'test_key', 'test_name', 'value', 'unit', 'ref_low', 'ref_high', 'flag', 'collected_on', 'collected_at', 'orig_value', 'orig_unit', 'value_text'], note: 'value / unit 已换算到标准单位，orig_* 是报告原样' })
     } catch (err) { return patientFail(err) }
   })
 
@@ -750,9 +757,9 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   }, async ({ patient_id, record_id, ...lab }) => pt(svc => { const l = svc.addRecordLab(aiActor(), patient_id, record_id, lab); return { lab_id: l.id, status: l.status, flag: l.flag } }))
 
   server.registerTool('lab_edit', {
-    description: '改一条待确认的化验（修正提取错误：项目名、数值、单位、参考范围、日期）。',
+    description: '改一条待确认的化验（修正提取错误：项目名、数值、单位、参考范围、日期）。replaces：同一天同一项目已有确认值、而这一条是更正报告时，填旧值的 lab_id，确认后旧值标为已被更正；填 null 取消。',
     inputSchema: {
-      patient_id: z.string(), lab_id: z.string(), test_name: z.string().optional(), value: z.union([z.string(), z.number()]).optional(), unit: z.string().optional(),
+      patient_id: z.string(), lab_id: z.string(), replaces: z.string().nullable().optional(), test_name: z.string().optional(), value: z.union([z.string(), z.number()]).optional(), unit: z.string().optional(),
       ref_low: z.number().optional(), ref_high: z.number().optional(), collected_on: z.string().optional(),
     },
   }, async ({ patient_id, lab_id, ...patch }) => pt(svc => { const l = svc.editLab(aiActor(), patient_id, lab_id, patch); return { lab_id: l.id, value: l.value_num ?? l.value_text, flag: l.flag } }))

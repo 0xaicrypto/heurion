@@ -7,6 +7,7 @@ import { Store } from '../src/store/db.ts'
 import { kekFrom, KeyDestroyedError, TenantKeys } from '../src/tenancy/keys.ts'
 import { PatientError, PatientService, testKey, type Actor } from '../src/tenancy/patients.ts'
 import { extractReport, redact } from '../src/tenancy/extract-report.ts'
+import { normUnit, standardize } from '../src/tenancy/units.ts'
 
 function env() {
   const store = new Store(':memory:')
@@ -85,7 +86,8 @@ describe('患者：化验', () => {
     t.svc.setLabStatus(a, p.id, pending.id, 'confirmed')
     expect(t.svc.read(a, p.id).latest_labs.map(l => l.test_key)).toEqual(['creatinine', 'hemoglobin'])
     const csv = t.svc.labsCsv(a, p.id)
-    expect(csv.csv.split('\n')[1]).toBe('P-0001,creatinine,Cr,98,,µmol/L,57,111,,2025-03-02')
+    expect(csv.csv.split('\n')[0]).toBe('patient,test_key,test_name,value,unit,ref_low,ref_high,flag,collected_on,collected_at,orig_value,orig_unit,value_text')
+    expect(csv.csv.split('\n')[1]).toBe('P-0001,creatinine,Cr,98,µmol/L,57,111,,2025-03-02,,98,µmol/L,')
   })
 })
 
@@ -290,5 +292,71 @@ describe('患者：报告自动提取', () => {
     const lab = t.svc.addRecordLab(a, p.id, up.record.id, { test_name: '肌酐(Cr)', value: '168', unit: 'µmol/L', ref_low: 57, ref_high: 111 })
     expect([lab.record_id, lab.status, lab.test_key, lab.flag]).toEqual([up.record.id, 'pending', 'creatinine', 'H'])
     expect(t.sent).toEqual([])
+  })
+})
+
+describe('患者：多次化验单', () => {
+  const up = (t: ReturnType<typeof env>, pid: string, name: string, date: string, time?: string) =>
+    t.svc.addFile(t.as(t.u.drA), pid, { name, mime: 'application/pdf', bytes: Buffer.from(name + date + (time ?? '')), report_date: date })
+
+  it('单位换算：mg/dL 的肌酐、mmol/mol 的 HbA1c 换到标准单位；不认识的单位标出来；写法归一', () => {
+    expect(standardize('creatinine', 1.6, 'mg/dl')).toEqual({ value: 141.5, unit: 'µmol/L', converted: true, unknown_unit: false })
+    expect(standardize('hba1c', 64, 'mmol/mol')).toMatchObject({ value: 8.006, unit: '%', converted: true })
+    expect(standardize('glucose', 126, 'mg/dL').value).toBeCloseTo(6.99, 2)
+    expect(standardize('creatinine', 141, 'umol/L')).toMatchObject({ value: 141, unit: 'µmol/L', converted: false })
+    expect(standardize('creatinine', 1.6, 'mmol/L')).toMatchObject({ unknown_unit: true })
+    expect([normUnit('μmol/l'), normUnit('10^9/l'), normUnit('mL/min/1.73m2')]).toEqual(['µmol/L', '10^9/L', 'mL/min/1.73m²'])
+  })
+
+  it('同一份报告重复上传被拦下，并说明是哪次传过的', () => {
+    const t = env()
+    const p = t.svc.create(t.as(t.u.drA), {})
+    up(t, p.id, '肝肾功能.pdf', '2025-06-10')
+    expect(() => up(t, p.id, '肝肾功能.pdf', '2025-06-10')).toThrow('已经上传过')
+  })
+
+  it('不同医院不同单位：换算后可比（原值保留）', () => {
+    const t = env()
+    const dr = t.as(t.u.drA)
+    const p = t.svc.create(dr, {})
+    const r1 = up(t, p.id, 'A 医院.pdf', '2025-03-02')
+    t.svc.addRecordLab(dr, p.id, r1.record.id, { test_name: '肌酐', value: 112, unit: 'µmol/L', ref_low: 57, ref_high: 111 })
+    t.svc.resolveRecord(dr, p.id, r1.record.id, { accept: true })
+    const r2 = up(t, p.id, 'B 医院.pdf', '2025-06-10')
+    t.svc.addRecordLab(dr, p.id, r2.record.id, { test_name: 'Creatinine', value: 1.9, unit: 'mg/dL', ref_low: 0.7, ref_high: 1.3 })
+    t.svc.resolveRecord(dr, p.id, r2.record.id, { accept: true })
+    const labs = t.svc.labs(dr, p.id)
+    expect(labs.map(l => [l.std_value, l.std_unit, l.converted, l.flag])).toEqual([[112, 'µmol/L', false, 'H'], [168, 'µmol/L', true, 'H']])
+    expect(labs[1]).toMatchObject({ value_num: 1.9, unit: 'mg/dL', std_ref_high: 114.9 })
+  })
+
+  it('同一天：更正报告选「替换」后旧值标为已被更正；完全相同的重复值自动去掉；不同的值都保留', () => {
+    const t = env()
+    const dr = t.as(t.u.drA)
+    const p = t.svc.create(dr, {})
+    const r1 = up(t, p.id, '首份.pdf', '2025-06-10')
+    t.svc.addRecordLab(dr, p.id, r1.record.id, { test_name: '肌酐', value: 186, unit: 'µmol/L' })
+    t.svc.addRecordLab(dr, p.id, r1.record.id, { test_name: '钾', value: 5.3, unit: 'mmol/L' })
+    t.svc.resolveRecord(dr, p.id, r1.record.id, { accept: true })
+    const [creat] = t.svc.labs(dr, p.id, { tests: ['肌酐'] })
+
+    // 同日更正报告：肌酐 168（更正）、钾 5.3（与已确认相同）、尿酸（新项）
+    const r2 = up(t, p.id, '更正.pdf', '2025-06-10')
+    const fix = t.svc.addRecordLab(dr, p.id, r2.record.id, { test_name: '肌酐(Cr)', value: 168, unit: 'µmol/L' })
+    t.svc.addRecordLab(dr, p.id, r2.record.id, { test_name: 'K', value: 5.3, unit: 'mmol/L' })
+    t.svc.addRecordLab(dr, p.id, r2.record.id, { test_name: '尿酸', value: 498, unit: 'µmol/L' })
+    const pending = t.svc.labs(dr, p.id, { includePending: true }).filter(l => l.status === 'pending')
+    expect(pending.find(l => l.id === fix.id)!.same_day!.map(o => o.std_value)).toEqual([186])
+    expect(() => t.svc.editLab(dr, p.id, fix.id, { replaces: 'lbnope' })).toThrow('同一天')
+    t.svc.editLab(dr, p.id, fix.id, { replaces: creat!.id })
+    t.svc.resolveRecord(dr, p.id, r2.record.id, { accept: true })
+    expect(t.svc.labs(dr, p.id).map(l => [l.test_key, l.std_value])).toEqual([['creatinine', 168], ['potassium', 5.3], ['uric_acid', 498]])
+    expect(t.svc.read(dr, p.id).latest_labs.find(l => l.test_key === 'creatinine')!.std_value).toBe(168)
+
+    // 同日另一份、不同的值，没选替换：两个都保留
+    const r3 = up(t, p.id, '下午复查.pdf', '2025-06-10')
+    t.svc.addRecordLab(dr, p.id, r3.record.id, { test_name: '钾', value: 4.9, unit: 'mmol/L' })
+    t.svc.resolveRecord(dr, p.id, r3.record.id, { accept: true })
+    expect(t.svc.labs(dr, p.id, { tests: ['钾'] }).map(l => l.std_value)).toEqual([5.3, 4.9])
   })
 })
