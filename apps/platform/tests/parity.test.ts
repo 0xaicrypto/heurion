@@ -71,6 +71,8 @@ const IMAGE_PARITY: Record<string, string> = {
 const NOT_FOR_AI: Record<string, string> = {
   'GET /api/images': '界面用来决定是否显示搜图入口；AI 从 image_search 返回的 unsplash_unconfigured 得知图库没配置',
   'DELETE /api/patients/:ptid': '删除患者不可恢复（与文档一致，AI 没有删除工具）',
+  // 知家（PATIENT.md）：手动录入是家人自己填的数值，直接为已确认；AI 的化验只能来自报告提取（report_upload / report_lab_add）
+  'POST /api/patients/:ptid/labs': '手动录入化验是家人本人的操作（AI 的化验来自上传报告的提取与补项）',
   'POST /api/patients/:ptid/break-glass': '紧急访问由机构管理员以个人名义承担，理由须本人填写',
   'GET /api/patients-directory': '只用于紧急访问时选代号',
   'POST /api/patients/:ptid/proposals/:prid/:action{accept|reject}': '审核 AI 的提议是人的事（AI 不能采纳自己的提议）',

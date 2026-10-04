@@ -27,8 +27,10 @@ export class PatientError extends Error {
   constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 400) { super(message) }
 }
 
-export interface PatientRow {
-  id: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+/** 成员标记（知家红线守卫用；与 ops/phr-guard.ts 的 PhrMember 同形）。 */
+export interface PhrMemberLike { tags: string[]; birth_year: number | null }
+
+export interface PatientRow {  id: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
   /** 称呼（家人档案里的叫法，加密存储；机构端为 null，患者端用称呼不用代号） */
   name: string | null
   status: 'active' | 'archived'; created_by: string; created_at: string; updated_at: string
@@ -205,6 +207,8 @@ export class PatientService {
     private readonly store: Store,
     /** 报告自动提取（没有时上传的报告只能手工录入）。 */
     private readonly extractor: { pages: ReportPages; complete: Complete | null } | null = null,
+    /** 成员建档即建「健康档案」文档（知家 V0，PATIENT.md §12）：人 / AI 建档同路径；没有时建档不产文档。 */
+    private readonly archiveDoc?: (input: { owner: string; title: string; patientId: string }) => string | null,
   ) {}
 
   /** 等后台提取完（测试用）。 */
@@ -265,8 +269,12 @@ export class PatientService {
     c.db.db.prepare('INSERT INTO patients (id, code, name_enc, sex, birth_year, tags, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, c.db.nextCode(), this.keys.encryptText(c.tenantId, name(input.name)), sex(input.sex), birthYear(input.birth_year), JSON.stringify(tags(input.tags)), a.userId, t, t)
     c.db.db.prepare('INSERT INTO care_team (patient_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)').run(id, a.userId, 'owner', a.userId, t)
+    const p = this.visible(a, id).p
+    // 成员的「健康档案」文档：建档即建并关联（归属 doc_kind=archive，AI 的写入受患者红线守卫）
+    const docId = this.archiveDoc?.({ owner: a.userId, patientId: id, title: `${p.name ?? p.code} 的健康档案` })
+    if (docId) this.linkDoc(a, id, docId, 'archive')
     this.log(c, a, id, 'create')
-    return this.visible(a, id).p
+    return p
   }
 
   list(a: Actor): Array<PatientRow & { role: string; labs: number; last_lab: string | null; pending: number }> {
@@ -432,6 +440,16 @@ export class PatientService {
     return rows
   }
 
+  /** 守卫用的成员标记（特殊人群判定）：内部读取，不记访问日志、不做诊疗组校验——调用方是写前守卫。 */
+  memberMarkers(ownerUserId: string, patientId: string): PhrMemberLike | null {    try {
+      const c = this.ctx({ userId: ownerUserId, via: 'user' })
+      const r = c.db.db.prepare('SELECT birth_year, tags FROM patients WHERE id = ?').get(patientId) as Record<string, unknown> | undefined
+      if (!r) return null
+      return { tags: JSON.parse((r.tags as string) || '[]') as string[], birth_year: (r.birth_year as number | null) ?? null }
+    } catch { /* 患者模块未开等：守卫按无标记处理 */ }
+    return null
+  }
+
   /** 化验长表导出成 CSV（AI 放进工作区分析用；不含任何身份信息）。 */
   labsCsv(a: Actor, patientId: string): { code: string; csv: string; rows: number } {
     const { p } = this.visible(a, patientId)
@@ -588,7 +606,7 @@ export class PatientService {
     const doc = this.store.getDoc(docId)
     if (!doc || doc.owner !== a.userId || doc.deleted_at) throw new PatientError('not_found', '文档不存在', 404)
     if (doc.context && (JSON.parse(doc.context) as { kind?: string }).kind === 'study') throw new PatientError('in_study', '这份文档归在一个研究项目里，不能再关联到患者', 409)
-    const k = kind === 'followup' || kind === 'discussion' || kind === 'other' ? kind : 'case_report'
+    const k = kind === 'followup' || kind === 'discussion' || kind === 'archive' || kind === 'other' ? kind : 'case_report'
     c.db.db.prepare('INSERT OR IGNORE INTO patient_docs (patient_id, doc_id, kind, created_by, created_at) VALUES (?, ?, ?, ?, ?)').run(patientId, docId, k, a.userId, now())
     // 属于患者的文档：不出现在文档列表里，打开时显示归属并能回到患者页
     const p = c.db.db.prepare('SELECT code FROM patients WHERE id = ?').get(patientId) as { code: string }

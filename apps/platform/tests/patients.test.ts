@@ -53,6 +53,17 @@ describe('患者：机构隔离与可见范围', () => {
     expect(q.name).toBeNull()
   })
 
+  it('成员建档即建「健康档案」文档（知家）：钩子收到 owner / 称呼标题 / 患者归属；钩子缺席时建档不受影响', () => {
+    const t = env()
+    const calls: Array<{ owner: string; title: string; patientId: string }> = []
+    const svc2 = new PatientService(t.root, t.tenants, t.keys, t.store, null, input => { calls.push(input); return null })
+    const p = svc2.create(t.as(t.u.drA), { name: '宝宝', birth_year: 2023 })
+    expect(calls).toEqual([{ owner: t.u.drA, title: '宝宝 的健康档案', patientId: p.id }])
+    // 没有 hooks 的原路径照常
+    const q = t.svc.create(t.as(t.u.drA), { name: '妈妈' })
+    expect(q.name).toBe('妈妈')
+  })
+
   it('诊疗组：同机构的人默认看不到，加进诊疗组后能看能改；机构设置「全员可见」时只能看不能改', () => {
     const t = env()
     const p = t.svc.create(t.as(t.u.drA), {})

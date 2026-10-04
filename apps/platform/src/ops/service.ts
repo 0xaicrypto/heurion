@@ -8,6 +8,7 @@ import type { Actor } from '../store/db.ts'
 import { randomBytes } from 'node:crypto'
 import { applyOps, type OpResult } from './apply.ts'
 import { toSuggestion } from './suggest.ts'
+import { guardPhrRedlines, type PhrMember } from './phr-guard.ts'
 import { DOI, manualCitation } from './citation-check.ts'
 import { OpError, opTexts, targetIds, type DocOp, type EditBatch } from './types.ts'
 import { applyDeckOps, deckOpTexts, deckTargetIds, type DeckEditBatch, type DeckOp } from './deck.ts'
@@ -33,7 +34,11 @@ export interface EditResult {
  * 守卫只对 AI（MCP）硬拦截；用户写入不受冲突、引用、锚点守卫阻挡（用户优先）。
  */
 export class OpService {
-  constructor(private readonly docs: Documents) {}
+  constructor(
+    private readonly docs: Documents,
+    /** 知家红线守卫（PATIENT.md §3）：按归属查成员标记（孕产 / 哺乳 / 儿童年龄）；没有接入时特殊人群规则不启用。 */
+    private readonly phrMember?: (owner: string, patientId: string) => PhrMember | null,
+  ) {}
 
   /** deck 的版式与页面尺寸（来自原始文件包；按文档缓存）。 */
   private readonly deckInfo = new Map<string, DeckInfo>()
@@ -81,6 +86,7 @@ export class OpService {
     if (ai) {
       this.guardConflicts(batch, before, targetsOf)
       this.guardCitations(batch, textsOf)
+      this.guardPatientRedlines(batch, textsOf, row)
     }
 
     const taken = this.docs.takenIds(batch.doc_id)
@@ -172,6 +178,17 @@ export class OpService {
           }
         }
       }
+    })
+  }
+
+  /** 患者红线守卫（知家成员的「健康档案」，doc context doc_kind=archive）：只对 AI。 */
+  private guardPatientRedlines(batch: EditBatch | DeckEditBatch, textsOf: (op: unknown) => string[], row: { owner: string; context: string | null }): void {
+    let ctx: { kind?: string; doc_kind?: string; patient_id?: string } | null = null
+    try { ctx = row.context ? JSON.parse(row.context) : null } catch { /* 无归属：不适用 */ }
+    if (ctx?.kind !== 'patient' || ctx.doc_kind !== 'archive') return
+    const member = ctx.patient_id && this.phrMember ? this.phrMember(row.owner, ctx.patient_id) : null
+    batch.ops.forEach((op, i) => {
+      for (const text of textsOf(op)) guardPhrRedlines(text, i, member)
     })
   }
 

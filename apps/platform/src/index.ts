@@ -46,7 +46,9 @@ import { Unsplash } from './images/unsplash.ts'
 
 const store = new Store(config.dbPath)
 const docs = new Documents(store)
-const ops = new OpService(docs)
+// 知家红线守卫的成员标记：patients 在下面才创建，晚绑定（OpService 里可选调用）
+let phrMemberLookup: ((owner: string, patientId: string) => { tags: string[]; birth_year: number | null } | null) | null = null
+const ops = new OpService(docs, (owner, pid) => phrMemberLookup?.(owner, pid) ?? null)
 const registry = new TurnRegistry()
 const pool = new HarnessPool(config, userId => store.sandboxUid(userId))
 const postcheck = new PostCheck(docs)
@@ -84,7 +86,10 @@ const reportPages = async (name: string, mime: string, bytes: Uint8Array): Promi
   return (await extractText(name, bytes, { ocr: reportOcr })).pages
 }
 const patients = new PatientService(config.tenantsDir, new TenantService(store, { devMode: config.devMode }), new TenantKeys(store, kekFrom({ kek: config.kek, secret: config.secret })), store,
-  { pages: reportPages, complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }) })
+  { pages: reportPages, complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }) },
+  // 成员的「健康档案」文档：建档即建并关联（知家 V0，PATIENT.md §12）
+  ({ owner, title, patientId }) => docs.create({ owner, title }).id)
+phrMemberLookup = (owner, pid) => patients.memberMarkers(owner, pid)
 // 访问判定（研究团队协作）：研究里的文档、数据集、分析图按成员角色共享；接口、MCP、协同、服务层共用这一个
 const access = new Access(store)
 access.docText = id => JSON.stringify(docs.get(id).toJSON())
