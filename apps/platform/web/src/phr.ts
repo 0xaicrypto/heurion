@@ -486,7 +486,12 @@ async function recordsTab(main: HTMLElement, id: string, detail: Detail): Promis
     <button class="btn block" id="upBtn" style="margin-top:12px">📷 上传报告 / 化验单（拍照或相册）</button>
     <div class="card" id="recs">${detail.records.length ? '' : '<div class="empty">还没有记录</div>'}</div>
     ${detail.documents.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">关联文档</div>
-      ${detail.documents.map(doc => `<div class="rec"><div class="info"><div class="t">${esc(DOC_KIND[doc.kind] ? `${display(detail)}的${DOC_KIND[doc.kind]}` : doc.title)}</div><div class="m">${DOC_KIND[doc.kind] ?? doc.kind} · ${esc(doc.updated_at.slice(0, 10))}</div></div></div>`).join('')}</div>` : ''}`
+      ${detail.documents.map(doc => `<button class="rec rec-open" data-doc="${esc(doc.doc_id)}" data-kind="${esc(doc.kind)}"><div class="info"><div class="t">${esc(DOC_KIND[doc.kind] ? `${display(detail)}的${DOC_KIND[doc.kind]}` : doc.title)}</div><div class="m">更新于 ${esc(doc.updated_at.slice(0, 10))}</div></div><span class="go">›</span></button>`).join('')}</div>` : ''}`
+  // 关联文档可以打开：简报 / 档案等用同一个阅读页（健康档案也能从 💬 进入对话）
+  document.querySelectorAll<HTMLElement>('.rec-open').forEach(el => el.addEventListener('click', () => {
+    docViewTitle = DOC_KIND[el.dataset.kind ?? ''] ?? '文档'
+    location.hash = `#/b/${el.dataset.doc}`
+  }))
   $('#upBtn').addEventListener('click', () => $('#upFile').click())
   $('#upFile').addEventListener('change', async () => {
     const files = Array.from(($('#upFile') as HTMLInputElement).files ?? [])
@@ -647,11 +652,14 @@ const TOOL: Record<string, string> = {
 }
 
 /** 就诊简报视图：渲染简报文档（GET /html），SSE 跟写作进度实时刷新。 */
+/** 阅读页的标题（从记录里打开时按文档类型；生成简报后默认是「就诊简报」）。 */
+let docViewTitle = '就诊简报'
+
 async function briefView(docId: string): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
-      <button class="back" id="back">‹</button><div style="flex:1"><h1>就诊简报</h1><div class="sub">看病前给医生看的准备</div></div></div></div>
+      <button class="back" id="back">‹</button><div style="flex:1"><h1>${esc(docViewTitle)}</h1><div class="sub">${docViewTitle === '就诊简报' ? '看病前给医生看的准备' : ''}</div></div></div></div>
     <div class="max"><div id="writenote" class="writenote">知家正在写…</div><div id="doc" class="doc"><div class="loading">…</div></div></div>`
-  $('#back').addEventListener('click', () => { location.hash = '' })
+  $('#back').addEventListener('click', () => { if (history.length > 1) history.back(); else location.hash = '' })
   const note = $('#writenote')
   const setBusy = (b: boolean): void => { note.classList.toggle('on', b) }
   const paint = async (): Promise<void> => {

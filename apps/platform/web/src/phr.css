@@ -205,3 +205,6 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--pri) 45%
 .composer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); z-index: 6; }
 .composer-in { max-width: 720px; margin: 0 auto; display: flex; gap: 8px; }
 .composer input { flex: 1; }
+/* 记录里的关联文档（健康档案、就诊简报）：整行可点开 */
+.rec-open { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.rec-open .go { color: var(--sub); font-size: 20px; }
