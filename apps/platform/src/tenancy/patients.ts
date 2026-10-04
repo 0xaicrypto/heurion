@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { TenantService, TenantSettings } from '../auth/tenants.ts'
+import type { Space, TenantService, TenantSettings } from '../auth/tenants.ts'
 import type { Store } from '../store/db.ts'
 import type { TenantKeys } from './keys.ts'
 import type { Complete } from '../memory/evolve.ts'
@@ -201,6 +201,8 @@ export interface Actor {
   /** ai = AI 经 MCP 代该用户访问（访问日志里区分） */
   via: 'user' | 'ai'
   turnId?: string | null
+  /** 哪个空间的患者库：work = 工作台（医院或个人，默认）；personal = 知家（个人空间）。docs/design/TENANCY.md §双重身份 */
+  space?: Space
 }
 
 export class PatientService {
@@ -228,13 +230,13 @@ export class PatientService {
 
   /** 打开操作者所在机构的患者库。机构不开患者模块时拒绝。 */
   private ctx(a: Actor): { db: TenantPatientDb; tenantId: string; settings: TenantSettings; tenantAdmin: boolean; tenantKind: 'personal' | 'org' } {
-    const t = this.tenants.of(a.userId)
+    const t = this.tenants.of(a.userId, a.space ?? 'work')
     const settings = this.tenants.settings(t)
     if (!settings.patient_module) throw new PatientError('patient_module_off', '本机构没有启用患者模块', 403)
     if (a.via === 'ai' && !settings.external_model_for_patients) throw new PatientError('external_model_off', '本机构设置为患者数据不交给外部模型分析', 403)
     let db = this.dbs.get(t.id)
     if (!db) { db = new TenantPatientDb(this.root, t.id); this.dbs.set(t.id, db) }
-    return { db, tenantId: t.id, settings, tenantAdmin: this.tenants.roleOf(a.userId) === 'admin', tenantKind: t.kind }
+    return { db, tenantId: t.id, settings, tenantAdmin: this.tenants.roleOf(a.userId, a.space ?? 'work') === 'admin', tenantKind: t.kind }
   }
 
   /** 手动录入化验只对个人租户（知家家庭空间）开放；医院端化验一律来自上传报告（追溯原件）。 */
@@ -576,9 +578,9 @@ export class PatientService {
   }
 
   /** 守卫用的成员标记（特殊人群判定）：内部读取，不记访问日志、不做诊疗组校验——调用方是写前守卫。 */
-  memberMarkers(ownerUserId: string, patientId: string): PhrMemberLike | null {
+  memberMarkers(ownerUserId: string, patientId: string, space: Space = 'personal'): PhrMemberLike | null {
     try {
-      const c = this.ctx({ userId: ownerUserId, via: 'user' })
+      const c = this.ctx({ userId: ownerUserId, via: 'user', space })
       const r = c.db.db.prepare('SELECT birth_year, tags FROM patients WHERE id = ?').get(patientId) as Record<string, unknown> | undefined
       if (!r) return null
       return { tags: JSON.parse((r.tags as string) || '[]') as string[], birth_year: (r.birth_year as number | null) ?? null }
@@ -746,7 +748,8 @@ export class PatientService {
     c.db.db.prepare('INSERT OR IGNORE INTO patient_docs (patient_id, doc_id, kind, created_by, created_at) VALUES (?, ?, ?, ?, ?)').run(patientId, docId, k, a.userId, now())
     // 属于患者的文档：不出现在文档列表里，打开时显示归属并能回到患者页
     const p = c.db.db.prepare('SELECT code FROM patients WHERE id = ?').get(patientId) as { code: string }
-    this.store.setDocContext(docId, { kind: 'patient', patient_id: patientId, code: p.code, doc_kind: k })
+    // space / tenant_id：文档属于哪个空间的患者库（AI 在这份文档里的回合按它取空间，不能跨空间读）
+    this.store.setDocContext(docId, { kind: 'patient', patient_id: patientId, code: p.code, doc_kind: k, space: a.space ?? 'work', tenant_id: c.tenantId })
     this.log(c, a, patientId, 'doc_link', docId)
   }
 

@@ -102,7 +102,7 @@ await admin.keyboard.press('Escape')
 // 2. 第二个用户：注册、看不到管理员的文档
 const user = await newPage()
 await register(user, 'lily', '李研究员', 'secret123')
-ok('第二个用户是普通用户', (await user.locator('#userRole').innerText()) === 'lily')
+ok('第二个用户是普通用户（个人空间）', (await user.locator('#userRole').innerText()) === 'lily · 个人空间')
 ok('看不到别人的文档', await user.locator('#docList li:not(.nav-empty)').count() === 0 && await user.locator('#docList .nav-empty').count() === 1)
 const userToken = await user.evaluate(() => localStorage.getItem('heurion.token') ?? '')
 const userTpls = await (await fetch(B + '/api/deck-templates', { headers: { Authorization: `Bearer ${userToken}` } })).json() as Array<{ key: string }>
@@ -300,6 +300,47 @@ let zhaoToken = '', zhaoId = ''
   await f.click('dialog [data-x="1"]')
   await f.waitForFunction(() => document.querySelector('#main')?.textContent?.includes('已撤销'))
   ok('撤销后医生看不到分享、已纳入的仍在', (await call('GET', `/api/shares/${shareId}`, zhaoToken)).status === 404 && (await call('GET', `/api/patients/${after[0]!.id}`, zhaoToken)).status === 200)
+
+  // 已有账户加入医院（双重身份，TENANCY.md）：知家用户小王（已有家人档案）→ 医院管理员按用户名邀请 → 小王在工作台接受
+  // → 管理员把她分进心内科 → 她在工作台「家庭分享」收到发给心内科的分享 → 她自己的知家家人档案仍在（不新注册账号）
+  await admin.goto(B + '/app')
+  await admin.waitForSelector('#userButton', { state: 'visible' })
+  await admin.click('#userButton')
+  await admin.click('#userMenuTenant')
+  await admin.waitForSelector('#inviteUserForm')
+  await admin.fill('#inviteUserForm input[name="username"]', 'mama2026')
+  await admin.click('#inviteUserForm button.primary')
+  await admin.waitForFunction(() => document.querySelector('#inviteList')?.textContent?.includes('mama2026'))
+  ok('管理员按用户名邀请已有账户', true)
+  await shot(admin, 'join-invite-user')
+  await admin.click('#dialog [data-close]')
+  const w = await newPage()
+  await w.goto(B + '/app')
+  await w.evaluate(t => { localStorage.setItem('heurion.token', t); localStorage.setItem('heurion.space', 'write') }, fam.token)
+  await w.reload()
+  await w.waitForSelector('#inviteNudge:not([hidden])')
+  ok('被邀请人登录后看到邀请提醒', (await w.locator('#inviteNudgeText').innerText()).includes(hospital.name))
+  await w.click('#inviteNudge [data-join="view"]')
+  await w.waitForSelector('#dialog [data-j="accept"]')
+  ok('接受前说明工作台按医院、知家不受影响', (await w.locator('#dialog').innerText()).includes('知家'))
+  await shot(w, 'join-accept')
+  await w.click('#dialog [data-j="accept"]')
+  await w.waitForFunction(n => document.querySelector('#userRole')?.textContent?.includes(n), hospital.name, { timeout: 15000 })
+  ok('接受后头像菜单显示医院与个人空间', (await w.locator('#userRole').textContent() ?? '').includes('个人空间'))
+  const depts = (await call('GET', '/api/tenant/departments', adminToken)).json as Array<{ id: string; name: string; members: Array<{ id: string }> }>
+  const cardio = depts.find(d => d.name === '心内科')!
+  await call('PUT', `/api/tenant/departments/${cardio.id}/members`, adminToken, { user_ids: [...cardio.members.map(m => m.id), fam.user.id] })
+  ok('管理员把已加入的账户分进科室', ((await call('GET', '/api/tenant/departments', adminToken)).json as typeof depts).find(d => d.id === cardio.id)!.members.some(m => m.id === fam.user.id))
+  // 她自己的知家：家人档案仍在（个人空间），并能再分享给心内科；工作台「家庭分享」收到
+  const personal = await fetch(B + '/api/patients', { headers: { Authorization: `Bearer ${fam.token}`, 'X-Heurion-Space': 'personal' } }).then(r => r.json()) as Array<{ id: string }>
+  ok('加入医院后知家家人档案仍在', personal.some(p => p.id === member.id))
+  ok('工作台（医院）看不到知家的家人', !((await call('GET', '/api/patients', fam.token)).json as Array<{ id: string }>).some(p => p.id === member.id))
+  const again = (await call('POST', `/api/phr/${member.id}/shares`, fam.token, { tenant_id: hospital.id, department_id: cardio.id })).json
+  await w.evaluate(() => localStorage.setItem('heurion.space', 'patients'))
+  await w.reload()
+  await w.waitForSelector('#patientList [data-shares]')
+  ok('加入后在工作台「家庭分享」收到发给心内科的分享', Boolean(again.id) && ((await call('GET', '/api/shares', fam.token)).json as Array<{ share_id: string }>).some(x => x.share_id === again.id))
+  await shot(w, 'join-shares')
 }
 
 // 5. 邮箱：管理员绑定邮箱 → 另一个浏览器里忘记密码 → 验证码重置并登录 → 原登录失效

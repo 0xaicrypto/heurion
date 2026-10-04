@@ -964,3 +964,6 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 .sh-doc-body { padding: 16px 20px; max-height: 60vh; overflow: auto; }
 .dept-box table td input.dept-name { width: 100%; max-width: 220px; }
 .dept-pick { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0; }
+/* 加入医院确认页 */
+.join-explain { margin: 8px 0 12px; padding-left: 18px; line-height: 1.7; color: var(--text-2); }
+.join-explain li { margin: 2px 0; }

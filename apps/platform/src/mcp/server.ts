@@ -711,7 +711,16 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     if (err instanceof PatientError || err instanceof TenantError) return fail(err.code, err.message, err.code === 'external_model_off' ? { hint: '告诉用户本机构设置为患者数据不交给外部模型分析，需要机构管理员调整。' } : {})
     throw err
   }
-  const aiActor = () => ({ userId: claims.u, via: 'ai' as const, turnId: ctx.turnId })
+  // AI 的患者库空间跟着本轮对话的文档走：知家成员的档案 / 简报（个人空间）→ personal，其余 → 工作空间；不能跨空间读
+  const turnSpace = (): 'work' | 'personal' => {
+    const docId = deps.turns.active(claims.u)?.docId
+    const row = docId ? store.getDoc(docId) : undefined
+    let c: { kind?: string; space?: string; doc_kind?: string } | null = null
+    try { c = row?.context ? JSON.parse(row.context) : null } catch { /* 无归属 */ }
+    if (c?.kind !== 'patient') return 'work'
+    return c.space === 'personal' || (!c.space && (c.doc_kind === 'archive' || c.doc_kind === 'brief')) ? 'personal' : 'work'
+  }
+  const aiActor = () => ({ userId: claims.u, via: 'ai' as const, turnId: ctx.turnId, space: turnSpace() })
 
   server.registerTool('patient_list', {
     description: '列出用户能看到的患者（代号、性别、出生年份、诊断标签、已确认的化验条数、最近化验日期）。患者没有姓名，只有代号。',
