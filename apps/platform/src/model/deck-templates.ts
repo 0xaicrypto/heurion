@@ -10,8 +10,8 @@ import { themePhotoCredit, themePhotoId } from './theme-photos.ts'
  *   1–3 号与早期平台模板（Title Slide / Title and Content / Blank）一一对应，旧 deck 直接沿用。
  * - 装饰：色条、角块、圆形、细线等，作为页上的形状存在（查看器、导出、AI 读到的一致），名字以 deco: 开头；
  *   换模板时整体删掉重加，用户自己加的形状不受影响。装饰不能改字，可以删除。
- * - 带图模板（主题带 photo）：封面 / 致谢铺全幅照片（已压暗，白字），章节页右侧半幅照片；照片也是装饰（kind=image，
- *   引用内置资产 tp_<模板>_cover / _panel），换模板一样整体替换。
+ * - 带图模板（主题带 photo）：封面 / 致谢铺全幅照片（已压暗，白字），章节页铺很淡的全幅照片（与底色混合，深色字照常可读）；照片也是装饰（kind=image，
+ *   引用内置资产 tp_<模板>_cover / _wash），换模板一样整体替换。
  * 坐标单位 pt，页面 960×540（16:9）。
  */
 
@@ -157,14 +157,14 @@ export interface Deco {
   credit?: string
 }
 
-type DecoToken = 'accent' | 'accent2' | 'soft' | 'surface' | 'title' | 'photo:cover' | 'photo:panel'
+type DecoToken = 'accent' | 'accent2' | 'soft' | 'surface' | 'title' | 'photo:cover' | 'photo:panel' | 'photo:wash'
 type D = [string, Box, DecoToken, Deco['geom']?]
 
 /** 每套模板的装饰（按版式）。 */
-/** 带图模板共用的装饰：封面 / 致谢全幅照片，章节页右侧半幅照片，内页顶部一道主色细条。 */
+/** 带图模板共用的装饰：封面 / 致谢全幅照片，章节页很淡的全幅照片，内页顶部一道主色细条。 */
 const photoDecos = (key: LayoutKey): D[] => {
   if (key === 'cover' || key === 'closing') return [['photo', [0, 0, 960, 540], 'photo:cover'], ['rule', [80, 168, 64, 5], 'accent']]
-  if (key === 'section') return [['photo', [540, 0, 420, 540], 'photo:panel'], ['rule', [80, 168, 56, 5], 'accent']]
+  if (key === 'section') return [['photo', [0, 0, 960, 540], 'photo:wash'], ['rule', [80, 168, 56, 5], 'accent']]
   if (key === 'blank' || key === 'image_text') return [['band', [0, 0, 960, 6], 'accent']]
   return [['band', [0, 0, 960, 6], 'accent'], ['rule', [key === 'big_number' ? 60 : 60, 112, 48, 4], 'accent']]
 }
@@ -243,9 +243,9 @@ export function decorations(themeKey: string | null | undefined, key: LayoutKey)
     out.push({ name: `${DECO_PREFIX}${k}:picture`, box: pic.box, fill: theme.soft, geom: k === 'mint' ? 'roundRect' : 'rect' })
   }
   for (const [name, box, token, geom] of DECOS[k]?.(key) ?? []) {
-    if (token === 'photo:cover' || token === 'photo:panel') {
+    if (token === 'photo:cover' || token === 'photo:panel' || token === 'photo:wash') {
       const slug = theme.photo!
-      out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: 'none', geom: 'rect', image: themePhotoId(slug, token === 'photo:cover' ? 'cover' : 'panel'), credit: themePhotoCredit(slug)?.credit ?? 'Photo on Unsplash' })
+      out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: 'none', geom: 'rect', image: themePhotoId(slug, token === 'photo:cover' ? 'cover' : token === 'photo:wash' ? 'wash' : 'panel'), credit: themePhotoCredit(slug)?.credit ?? 'Photo on Unsplash' })
       continue
     }
     out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: resolveColor(token, k)!, geom: geom ?? 'rect' })

@@ -252,11 +252,11 @@ describe('带图模板（Unsplash 照片）', () => {
       const cover = decorations(key, 'cover').find(d => d.image)!
       expect(cover).toMatchObject({ box: [0, 0, 960, 540], image: `tp_${slug}_cover` })
       expect(cover.credit).toMatch(/^Photo by .+ on Unsplash$/)
-      expect(decorations(key, 'section').find(d => d.image)?.image).toBe(`tp_${slug}_panel`)
+      expect(decorations(key, 'section').find(d => d.image)?.image).toBe(`tp_${slug}_wash`)
       expect(decorations(key, 'content').some(d => d.image)).toBe(false)
       expect(layoutSpec(key, 'cover').map(s => s.color)).toEqual(['FFFFFF', 'E5E7EB'])
       expect(layoutSpec(key, 'content')[0]!.color).toBe('title')
-      for (const v of ['cover', 'panel'] as const) {
+      for (const v of ['cover', 'panel', 'wash'] as const) {
         const p = themePhoto(`tp_${slug}_${v}`)!
         expect(p.mime).toBe('image/jpeg')
         expect(p.bytes.byteLength).toBeLessThanOrEqual(400_000)
@@ -270,12 +270,12 @@ describe('带图模板（Unsplash 照片）', () => {
     const cover = t.doc().child(0).attrs.id as string
     expect(images(t.shapes(0))).toEqual(['tp_lab_cover'])
     const sec = t.edit([{ op: 'add_slide', after: cover, layout: '章节页', title: '第一部分' }]).results[0]!.ids[0]!
-    expect(images(t.shapes(1))).toEqual(['tp_lab_panel'])
+    expect(images(t.shapes(1))).toEqual(['tp_lab_wash'])
     const asset = t.store.putAsset({ owner: 'u', mime: 'image/png', name: 'fig.png', bytes: new Uint8Array(pptxTemplate().slice(0, 8)) })
     t.edit([{ op: 'add_image', slide_id: sec, asset_id: asset.id, x: 80, y: 400, w: 100, h: 60 }])
     t.edit([{ op: 'apply_theme', theme: 'library' }])
     expect(images(t.shapes(0))).toEqual(['tp_library_cover'])
-    expect(images(t.shapes(1)).sort()).toEqual([asset.id, 'tp_library_panel'].sort())
+    expect(images(t.shapes(1)).sort()).toEqual([asset.id, 'tp_library_wash'].sort())
     t.edit([{ op: 'apply_theme', theme: 'clinical' }])
     expect(images(t.shapes(0))).toEqual([])
     expect(images(t.shapes(1))).toEqual([asset.id])
