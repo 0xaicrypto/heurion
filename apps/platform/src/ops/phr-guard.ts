@@ -41,6 +41,27 @@ const SPECIAL_MED = /(?:(?:建议|应当?|需要|推荐|不妨)[^。]{0,16}(?:�
 
 const sentences = (text: string): string[] => text.split(/(?<=[。！？；!?])/)
 
+/** 分句之间的连接词：转折、递进、插入的个人判断（引述不跨过它们）。 */
+const CONNECTOR = /(?:但是|不过|然而|可是|另外|而且|并且|同时|此外|其实|所以|因此|我看|我觉得|我认为|个人认为|但)/
+/**
+ * 把一句拆成分句（逗号、顿号与连接词处断开），标出每个分句是否属于引述：
+ * 分句自己含引述（医生说… / 出院诊断：…），或紧跟在引述分句之后且没有另起主语（不以连接词或「我 / 你」开头）。
+ */
+function clauses(s: string): Array<{ text: string; quoted: boolean }> {
+  const parts = s.split(/[，,、]|(?=(?:但是|不过|然而|可是|另外|而且|并且|同时|此外|其实|所以|因此|我看|我觉得|我认为|个人认为))/).map(x => x.trim()).filter(Boolean)
+  const out: Array<{ text: string; quoted: boolean }> = []
+  let lead = false
+  for (const text of parts) {
+    const own = QUOTED.test(text)
+    // 紧跟引述、没有另起主语的分句仍是引述（「医生让停用阿司匹林，改用氯吡格雷」）；
+    // 以连接词或「我 / 你」开头的分句是另起的话（「…，另外建议…」「…，我看…」），不沿用引述
+    const quoted: boolean = own || (lead && !CONNECTOR.test(text.slice(0, 4)) && !/^(?:我|你)/.test(text))
+    out.push({ text, quoted })
+    lead = quoted
+  }
+  return out
+}
+
 /** 单句的越界建议（诊断 / 用药），返回违规信息（合规返回 null）。 */
 function adviceViolation(s: string): 'diag' | 'dosage' | null {
   if (DIAG.test(s)) return 'diag'
@@ -65,15 +86,10 @@ function throwAdvice(kind: 'diag' | 'dosage', opIndex: number): never {
 /** 对一段 AI 拟写入的文字做红线检查；违规抛 OpError（带失败码与 hint）。 */
 export function guardPhrRedlines(text: string, opIndex: number, member: PhrMember | null): void {
   for (const s of sentences(text)) {
-    const advice = adviceViolation(s)
-    if (advice) {
-      if (!QUOTED.test(s)) throwAdvice(advice, opIndex)
-      // 引述只豁免引述的部分：句中带转折（「医生说了…但是我建议你加到…」）时，转折后的从句单独查
-      else if (/(?:但是|不过|但)(?:，|,)?/.test(s)) {
-        for (const part of s.split(/(?:但是|不过|但)(?:，|,)?/)) {
-          if (adviceViolation(part) && !QUOTED.test(part)) throwAdvice(adviceViolation(part)!, opIndex)
-        }
-      }
+    // 引述只豁免它所在的分句：按逗号与连接词拆成分句逐个查（「医生说按时吃药，另外建议加到 2 片」后一句照拦）
+    for (const part of clauses(s)) {
+      const advice = adviceViolation(part.text)
+      if (advice && !part.quoted) throwAdvice(advice, opIndex)
     }
     if (STAT.test(s) && ASSERT.test(s) && !/\[@c:[a-z0-9]+\]/.test(s)) {
       throw new OpError('unsourced_claim', '这句统计性论断没有出处', {

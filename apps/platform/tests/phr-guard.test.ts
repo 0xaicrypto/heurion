@@ -67,6 +67,16 @@ describe('患者红线守卫（PATIENT.md §3）', () => {
     expect(codeOf('医生说了按时吃药，但是我建议你加到每次 2 片。', ADULT)).toBe('health_advice_forbidden')
   })
 
+  it('评测：引述只豁免它所在的分句——换个连接词也拦（评审复测样本）', () => {
+    expect(codeOf('医生说要按时吃药，另外建议加到每次 2 片。', ADULT)).toBe('health_advice_forbidden')
+    expect(codeOf('医生说按时吃药，而且你可以吃布洛芬。', ADULT)).toBe('health_advice_forbidden')
+    expect(codeOf('医生交代多喝水，我看可能是肺炎。', ADULT)).toBe('health_advice_forbidden')
+    expect(codeOf('复查医生说没事，其实怀疑是甲流。', ADULT)).toBe('health_advice_forbidden')
+    // 「医生说，…」「医生交代：…」引出的内容仍是引述
+    expect(codeOf('医生说，可能是支气管炎，先吃三天药观察。', ADULT)).toBeNull()
+    expect(codeOf('医生交代：每天 5mg，饭后服用。', ADULT)).toBeNull()
+  })
+
   it('评测：漏判补齐——可能是 / 是典型的 / 怀疑 / 判断 / 疹', () => {
     expect(codeOf('可能是肺炎，先在家吃药观察。', ADULT)).toBe('health_advice_forbidden')
     expect(codeOf('这是典型的幼儿急疹，不用管。', CHILD)).toBe('health_advice_forbidden')

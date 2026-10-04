@@ -486,7 +486,7 @@ async function recordsTab(main: HTMLElement, id: string, detail: Detail): Promis
     <button class="btn block" id="upBtn" style="margin-top:12px">📷 上传报告 / 化验单（拍照或相册）</button>
     <div class="card" id="recs">${detail.records.length ? '' : '<div class="empty">还没有记录</div>'}</div>
     ${detail.documents.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">关联文档</div>
-      ${detail.documents.map(doc => `<div class="rec"><div class="info"><div class="t">${esc(doc.title)}</div><div class="m">${DOC_KIND[doc.kind] ?? doc.kind} · ${esc(doc.updated_at.slice(0, 10))}</div></div></div>`).join('')}</div>` : ''}`
+      ${detail.documents.map(doc => `<div class="rec"><div class="info"><div class="t">${esc(DOC_KIND[doc.kind] ? `${display(detail)}的${DOC_KIND[doc.kind]}` : doc.title)}</div><div class="m">${DOC_KIND[doc.kind] ?? doc.kind} · ${esc(doc.updated_at.slice(0, 10))}</div></div></div>`).join('')}</div>` : ''}`
   $('#upBtn').addEventListener('click', () => $('#upFile').click())
   $('#upFile').addEventListener('change', async () => {
     const files = Array.from(($('#upFile') as HTMLInputElement).files ?? [])

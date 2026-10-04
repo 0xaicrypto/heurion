@@ -285,7 +285,7 @@ export class PatientService {
     const p = this.visible(a, id).p
     // 成员的「健康档案」文档：只在知家（个人空间）建档时创建；医院端不生成（临床表述不受患者红线约束）
     if (c.tenantKind === 'personal') {
-      const docId = this.archiveDoc?.({ owner: a.userId, patientId: id, title: `${p.name ?? p.code} 的健康档案` })
+      const docId = this.archiveDoc?.({ owner: a.userId, patientId: id, title: `${p.code} 健康档案` })  // 标题只用代号：标题会出现在 AI 读到的内容里，称呼不发给外部模型
       if (docId) this.linkDoc(a, id, docId, 'archive')
     }
     this.log(c, a, id, 'create')
@@ -836,7 +836,7 @@ export class PatientService {
       const pid = r.id as string
       if (!this.teamRole(c.db, pid, a.userId)) { skipped.push(r.subject_id as string); continue }
       // 知家手工录入的化验挂不上报告记录（没有原件可追溯），不进研究数据集
-    const where = ["patient_id = ?", "status = 'confirmed'", 'record_id IS NOT NULL']
+      const where = ["patient_id = ?", "status = 'confirmed'", 'record_id IS NOT NULL']
       const args: string[] = [pid]
       if (opts.from && DATE.test(opts.from)) { where.push('collected_on >= ?'); args.push(opts.from) }
       if (opts.to && DATE.test(opts.to)) { where.push('collected_on <= ?'); args.push(opts.to) }

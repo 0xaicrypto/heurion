@@ -55,12 +55,14 @@ describe('患者：机构隔离与可见范围', () => {
     expect(q.name).toBeNull()
   })
 
-  it('成员建档即建「健康档案」文档（知家）：个人空间建患者钩子收到 owner / 称呼标题 / 归属；医院端不触发；钩子缺席时建档不受影响', () => {
+  it('成员建档即建「健康档案」文档（知家）：个人空间建患者钩子收到 owner / 代号标题 / 归属；医院端不触发；钩子缺席时建档不受影响', () => {
     const t = env()
     const calls: Array<{ owner: string; title: string; patientId: string }> = []
     const svc2 = new PatientService(t.root, t.tenants, t.keys, t.store, null, input => { calls.push(input); return null })
     const p = svc2.create(t.as(t.u.pm), { name: '宝宝', birth_year: 2023 })
-    expect(calls).toEqual([{ owner: t.u.pm, title: '宝宝 的健康档案', patientId: p.id }])
+    // 标题只用代号（AI 会读到文档标题，称呼不发给外部模型）
+    expect(calls).toEqual([{ owner: t.u.pm, title: `${p.code} 健康档案`, patientId: p.id }])
+    expect(calls[0]!.title).not.toContain('宝宝')
     // 医院端建患者不生成健康档案（临床文书不受患者红线约束）
     svc2.create(t.as(t.u.drA), { sex: 'M' })
     expect(calls).toHaveLength(1)

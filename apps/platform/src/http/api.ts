@@ -434,7 +434,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       const detail = svc.read(me(c), c.req.param('ptid'))
       const found = detail.documents.find(d => d.kind === 'archive')
       if (found) return c.json({ doc_id: found.doc_id, existed: true })
-      const row = docs.create({ owner: user, title: `${detail.name ?? detail.code} 的健康档案` })
+      // 标题只用代号（AI 会读到文档标题；称呼不发给外部模型），知家界面按成员称呼显示
+      const row = docs.create({ owner: user, title: `${detail.code} 健康档案` })
       try { svc.linkDoc(me(c), c.req.param('ptid'), row.id, 'archive') } catch (err) { store.trashDoc(row.id, true); throw err }
       return c.json({ doc_id: row.id, existed: false }, 201)
     } catch (err) { return patientFailure(c, err) }
@@ -451,7 +452,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         throw new PatientError('brief_recent', '这个成员刚生成过简报（30 分钟内）；先打开那份看看，需要更新再重新生成', 409)
       }
       const archive = detail.documents.find(d => d.kind === 'archive')
-      const row = docs.create({ owner: user, title: `${detail.name ?? detail.code} 的就诊简报 · ${new Date().toISOString().slice(0, 10)}` })
+      const row = docs.create({ owner: user, title: `${detail.code} 就诊简报 · ${new Date().toISOString().slice(0, 10)}` })
       try { svc.linkDoc(me(c), c.req.param('ptid'), row.id, 'brief') } catch (err) { store.trashDoc(row.id, true); throw err }
       void turns.submit(user, row.id, phrBriefPrompt({
         patientId: detail.id, code: detail.code, sex: detail.sex, birth_year: detail.birth_year, tags: detail.tags,

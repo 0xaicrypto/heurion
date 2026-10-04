@@ -100,6 +100,9 @@ describe('知家：登录后的家庭空间接口', () => {
     const brief = await t.json('POST', `/api/phr/${p.id}/brief`, t.mom.token, {})
     expect(brief.doc_id).toBeTruthy()
     expect(t.store.getDoc(brief.doc_id)!.context).toContain('"doc_kind":"brief"')
+    // 称呼不进文档标题（AI 读到的 patient_read.previous_reports 与回合指令里都有标题）
+    expect(t.store.getDoc(brief.doc_id)!.title).not.toContain('妈妈')
+    expect(t.store.getDoc((await t.json('POST', `/api/phr/${p.id}/archive`, t.mom.token, {})).doc_id)!.title).not.toContain('妈妈')
     const dup = await t.call('POST', `/api/phr/${p.id}/brief`, t.mom.token, {})
     expect(dup.status).toBe(409)
     expect(dup.text).toContain('刚生成过简报')
