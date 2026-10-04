@@ -126,6 +126,7 @@
 | | 手动录入化验接口（source=manual，直接已确认） | `http/api.ts` | ✅ |
 | | 知家移动外壳：家庭首页、成员页（化验 / 记录 / 待确认）、趋势小图、上传报告（拍照 / 相册 / PDF / docx） | `web/phr.html` + `web/src/phr.ts` | ✅ |
 | | 知家自带登录 / 注册（PoW 与主应用共用，抽 `web/src/pow.ts`；邀请码、开发模式入口） | `web/src/phr.ts` + `pow.ts` | ✅ |
+| | 官网首页知家入口（子品牌暖色带：注册 / 登录 → `/phr`） | `apps/site/` | ✅ |
 | | `/phr` 页面路由 + vite 多页构建 | `index.ts` / `web/vite.config.ts` | ✅ |
 | **二：AI 建议 + 红线** | 患者红线守卫（§3 六条规则，写前硬闸；作用域 = 成员健康档案与就诊简报 doc_kind=archive / brief；记录口径放行、AI 越界拦截） | `ops/phr-guard.ts` | ✅ |
 | | 成员档案 doc：建档即建「健康档案」doc 并关联（归属 doc_kind=archive，人 / AI 建档同路径） | `tenancy/patients.ts` | ✅ |

@@ -95,6 +95,22 @@ h1 em { font-style: normal; color: var(--mint); }
 .note-act .ok { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); font-weight: 600; }
 
 /* 四支柱 */
+/* 知家：家庭健康顾问（子品牌入口；暖色带与临床深色主题形成反差） */
+.zhijia { padding: 64px 0; background: linear-gradient(150deg, #fff3ea 0%, #ffe7d9 55%, #ffd9c4 100%); color: #3d2c22; }
+.zj-row { max-width: 1080px; }
+.zj-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.zj-mark { width: 40px; height: auto; }
+.zj-brand b { display: block; font-size: 24px; letter-spacing: .12em; color: #e85a3a; line-height: 1.1; }
+.zj-brand span { display: block; font-size: 13px; color: #9a7a66; letter-spacing: .04em; }
+.zhijia h2 { font-size: clamp(26px, 4vw, 40px); line-height: 1.25; margin: 0 0 14px; color: #33241b; }
+.zhijia h2 br { display: none; }
+.zhijia p { max-width: 620px; margin: 0 0 22px; color: #6d5748; }
+.zj-btn { background: #ff7d5c; color: #fff; border-radius: 999px; height: 52px; padding: 0 28px; }
+.zj-btn:hover { background: #f2643f; }
+.zj-cta { margin-bottom: 14px; }
+.zj-note { font-size: 13px !important; color: #9a7a66 !important; margin: 0 !important; }
+@media (max-width: 720px) { .zhijia h2 br { display: block; } .zhijia { padding: 48px 0; } }
+
 .pillars { border-bottom: 1px solid var(--line); background: var(--bg-deep); }
 .pillar-row { display: grid; grid-template-columns: repeat(4, 1fr); }
 .pillar { padding: 40px 28px 44px; border-left: 1px solid var(--line); }
