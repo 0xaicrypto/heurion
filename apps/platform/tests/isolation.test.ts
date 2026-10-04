@@ -12,6 +12,7 @@ import { PostCheck } from '../src/collab/postcheck.ts'
 import { DatasetService } from '../src/datasets/service.ts'
 import type { HarnessPool } from '../src/harness/pool.ts'
 import { buildApi } from '../src/http/api.ts'
+import { makeInvoker } from '../src/http/invoke.ts'
 import { KbService } from '../src/kb/service.ts'
 import type { CrossrefClient } from '../src/literature/crossref.ts'
 import type { PubMedClient } from '../src/literature/pubmed.ts'
@@ -41,11 +42,11 @@ const SECRET = 'test-secret'
 const MARK = '机密暗号-7f3a91'
 
 /** 机构 A 的资源 → 接口参数（新接口的参数必须在这里登记）。 */
-type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study' | 'orgTemplate', string>
+type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study' | 'orgTemplate' | 'action', string>
 const PARAMS: Record<string, (s: Seed) => string> = {
   id: s => s.doc, did: s => s.dataset, fid: s => s.kb, mid: s => s.memory, cid: s => s.comment, pid: s => s.project,
   uid: s => s.userA, code: s => s.invite, tid: s => s.tenantA, jid: s => s.job, turnId: s => s.turn, seq: () => '1', index: () => '0', group: () => 'g1',
-  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc, otid: s => s.orgTemplate,
+  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc, otid: s => s.orgTemplate, aid: s => s.action, decision: () => 'confirm',
 }
 /** 按设计公开的接口（不需要登录或本身就是给持有链接的人用的）。 */
 const PUBLIC: Record<string, string> = {
@@ -123,11 +124,13 @@ async function setup() {
   const logoRes = await app.request(`/api/tenant/templates/${orgTpl.id}/logo`, { method: 'PUT', headers: { Authorization: `Bearer ${A.token}`, 'Content-Type': 'image/svg+xml' }, body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#004098"/></svg>' })
   if (logoRes.status !== 200) throw new Error(`院徽上传失败 ${logoRes.status}`)
   const proposal = patients.propose({ userId: A.user.id, via: 'ai' }, patient.id, { kind: 'tag', payload: { tag: MARK }, reason: MARK })
+  // A 的 AI 发起的待确认操作（确认卡上有暗号）：别人看不到、确认不了
+  const action = store.addPendingAction({ user_id: A.user.id, tool: 'tenant_admin', action: 'update_settings', method: 'PATCH', path: '/api/tenant', body: JSON.stringify({ json: { name: MARK } }), summary: `改机构名称为 ${MARK}`, reason: MARK, editable: null, doc_id: null, turn_id: null })
 
   const seed: Seed = {
     doc: doc.id, dataset: dataset.id, kb: kbFile.id, memory: mem.memory.id, comment: comment.id ?? comment.comment?.id ?? 'c0', project: project.id,
     userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
-    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id, orgTemplate: orgTpl.id,
+    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id, orgTemplate: orgTpl.id, action: action.id,
   }
   return { app, store, docs, ops, kb, memory, evolution, datasets, patients, studies, images, call, seed, A, B, op }
 }
@@ -232,6 +235,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
     cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0', photo_id: () => 'p0', user_id: s => s.userA,
+    to_user_id: s => s.userA, template_id: s => s.orgTemplate, tenant_id: s => s.tenantA, project_id: s => s.project, turn_id: s => s.turn, memory_id: s => s.memory, job_id: s => s.job, action_id: s => s.action,
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {
@@ -241,7 +245,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     const server = buildMcpServer({
       docs: t.docs, ops: t.ops, turns: new TurnRegistry(), secret: SECRET, claims: new ClaimService(t.docs, {} as PubMedClient), renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'iso-r2-'))),
       pubmed: {} as PubMedClient, crossref: {} as CrossrefClient, workspaceDir: () => mkdtempSync(join(tmpdir(), 'iso-mws-')), isLiveSession: () => true,
-      kb: t.kb, memory: t.memory, evolution: t.evolution, datasets: t.datasets, patients: t.patients, studies: t.studies, images: t.images,
+      kb: t.kb, memory: t.memory, evolution: t.evolution, datasets: t.datasets, patients: t.patients, studies: t.studies, images: t.images, invoke: makeInvoker(t.app),
     }, claims)
     const [a, b] = InMemoryTransport.createLinkedPair()
     await server.connect(a)

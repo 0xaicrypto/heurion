@@ -1,6 +1,7 @@
 import { OrgTemplateService } from '../auth/org-templates.ts'
 import { ORG_BASES, orgLogo, PRESET_AHSLYY, setOrgTenantResolver, themeAllowed, themeKeysFor } from '../model/org-templates.ts'
 import { Hono, type Context } from 'hono'
+import { H_AS, internalVia, makeInvoker, type Invoke, type ViaInfo } from './invoke.ts'
 import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
 import { getConnInfo } from '@hono/node-server/conninfo'
@@ -108,6 +109,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   setOrgTenantResolver(uid => tenants.of(uid).id)
   orgTemplates.loadAll()
   const app = new Hono<{ Variables: { user: string } }>()
+  /** 进程内 AI 调用的来源（审计写 via / confirmed_by；患者操作按来源走审核门） */
+  const viaByReq = new WeakMap<Request, ViaInfo>()
+  const invoke: Invoke = makeInvoker(app)
   // 健康检查（部署脚本、容器 healthcheck、反向代理用）：数据库可读即健康；嵌入服务状态只报告不影响结果
   app.get('/healthz', async c => {
     store.db.prepare('SELECT 1').get()
@@ -133,7 +137,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   /** 审计：谁、什么时候、从哪里、对什么做了什么（M2；管理员在「用户管理 → 审计日志」查看）。 */
   const audit = (c: Context, action: string, e: { actor?: string | null; target?: string | null; detail?: string | null; status?: number } = {}) => {
     try {
-      store.addAudit({ actor: e.actor !== undefined ? e.actor : (c.get('user') as string | undefined) ?? null, action, target: e.target ?? null, detail: e.detail ?? null, ip: clientIp(c), status: e.status ?? null })
+      const v = viaByReq.get(c.req.raw)
+      store.addAudit({ actor: e.actor !== undefined ? e.actor : (c.get('user') as string | undefined) ?? null, action, target: e.target ?? null, detail: e.detail ?? null, ip: v ? 'ai' : clientIp(c), status: e.status ?? null, via: v?.via ?? null, confirmed_by: v?.confirmedBy ?? null })
     } catch (err) { console.error('[audit]', err) }
   }
   const AUDITED: Array<{ method: string; re: RegExp; action: string }> = [
@@ -259,7 +264,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   // 鉴权：账户令牌（开发模式下也接受开发令牌，见 auth/accounts.ts）。EventSource / <img> 用 ?token=。
   app.use('/api/*', async (c, next) => {
-    const user = accounts.userFor(requestToken(c))
+    // AI 以用户身份的进程内调用（MCP 管理类工具、确认后执行的操作）：鉴权与权限判定和界面完全一致
+    const internal = internalVia(n => c.req.header(n))
+    if (internal === 'forged') return c.json({ error: '请先登录', code: 'unauthorized' }, 401)
+    let user: string | null
+    if (internal) {
+      const as = c.req.header(H_AS) ?? ''
+      user = store.getUser(as) || (deps.devMode && as === deps.devUser) ? as : null
+      if (user) viaByReq.set(c.req.raw, internal)
+    } else user = accounts.userFor(requestToken(c))
     if (!user) return c.json({ error: '请先登录', code: 'unauthorized' }, 401)
     c.set('user', user)
     // 审计：按「方法 + 路径」记敏感操作（导出、删除、管理员操作……），目标的标题在操作前取（彻底删除后就查不到了）
@@ -267,6 +280,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const target = rule ? auditTarget(c.req.path, c.get('user') ?? null) : null
     await next()
     if (rule) audit(c, rule.action, { target, status: c.res.status })
+    // AI 做的每一次写操作都进审计（读操作按上面的规则记）
+    else if (internal && c.req.method !== 'GET') audit(c, 'ai.call', { detail: `${c.req.method} ${c.req.path}`, target: auditTarget(c.req.path, user), status: c.res.status })
   })
 
   app.get('/api/me', c => {
@@ -344,7 +359,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (err instanceof TenantError) return c.json({ error: err.message, code: err.code }, err.status)
     throw err
   }
-  const me = (c: Context<{ Variables: { user: string } }>) => ({ userId: c.get('user'), via: 'user' as const })
+  // 患者操作的来源：AI 直接调用按 AI 算（受「AI 写入需确认」等规则约束）；AI 发起、用户确认后执行的按用户本人算
+  const me = (c: Context<{ Variables: { user: string } }>) => ({ userId: c.get('user'), via: viaByReq.get(c.req.raw)?.via === 'ai' ? 'ai' as const : 'user' as const })
   const pt = (c: Context<{ Variables: { user: string } }>) => {
     if (!deps.patients) throw new PatientError('patient_module_off', '患者模块未启用', 403)
     return deps.patients
@@ -1290,6 +1306,55 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const asset = store.getAsset(c.req.param('id'))
     if (!asset || !access.canAsset(c.get('user'), asset)) return c.json({ error: 'not found' }, 404)
     return c.body(Buffer.from(store.getAssetBytes(asset.id)!), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' })
+  })
+
+  // —— AI 发起、等用户确认的高风险操作（docs/design/AI_PERMISSIONS.md）——
+  // 确认 / 拒绝只接受用户本人的登录会话：进程内的 AI 调用（MCP）一律拒绝，AI 不能确认自己发起的操作
+  const ACTION_TTL_MS = 24 * 3600_000
+  const actionView = (a: NonNullable<ReturnType<typeof store.getPendingAction>>) => ({
+    id: a.id, tool: a.tool, action: a.action, summary: a.summary, reason: a.reason, status: a.status, doc_id: a.doc_id,
+    editable: a.editable ? JSON.parse(a.editable) as Record<string, string> : null, result: a.result ? JSON.parse(a.result) as unknown : null,
+    created_at: a.created_at, decided_at: a.decided_at, expires_at: new Date(Date.parse(a.created_at) + ACTION_TTL_MS).toISOString(),
+  })
+  app.get('/api/actions', c => {
+    store.expirePendingActions(ACTION_TTL_MS)
+    const status = c.req.query('status')
+    return c.json(store.listPendingActions(c.get('user'), status || undefined).map(actionView))
+  })
+  app.get('/api/actions/:aid', c => {
+    store.expirePendingActions(ACTION_TTL_MS)
+    const a = store.getPendingAction(c.req.param('aid'))
+    if (!a || a.user_id !== c.get('user')) return c.json({ error: '没有这条待确认操作' }, 404)
+    return c.json(actionView(a))
+  })
+  app.post('/api/actions/:aid/:decision{confirm|reject}', async c => {
+    if (viaByReq.get(c.req.raw)) return c.json({ error: 'AI 不能确认或拒绝操作，只能由用户本人在界面上决定', code: 'human_only' }, 403)
+    store.expirePendingActions(ACTION_TTL_MS)
+    const user = c.get('user')
+    const a = store.getPendingAction(c.req.param('aid'))
+    if (!a || a.user_id !== user) return c.json({ error: '没有这条待确认操作' }, 404)
+    if (a.status !== 'pending') return c.json({ error: a.status === 'expired' ? '已超过 24 小时，操作已过期；需要的话请让 AI 重新发起' : '这条操作已经处理过了', code: a.status }, 409)
+    if (c.req.param('decision') === 'reject') {
+      store.setPendingActionStatus(a.id, 'pending', 'rejected', { decided_by: user })
+      audit(c, 'ai.action_reject', { detail: `${a.tool}.${a.action}：${a.summary}` })
+      return c.json(actionView(store.getPendingAction(a.id)!))
+    }
+    // 用户可以改确认卡上的字段（例如紧急访问的理由）
+    const edits = ((await c.req.json().catch(() => ({}))) as { fields?: Record<string, unknown> }).fields ?? {}
+    const editable = a.editable ? Object.keys(JSON.parse(a.editable) as object) : []
+    const stored = a.body ? JSON.parse(a.body) as { json?: Record<string, unknown>; bytes_b64?: string; mime?: string; form?: Record<string, string>; file?: { b64: string; name: string; mime: string } } : null
+    if (stored?.json && editable.length) for (const k of editable) if (typeof edits[k] === 'string') stored.json[k] = edits[k]
+    // 先占住状态，防止同一条被确认两次
+    if (!store.setPendingActionStatus(a.id, 'pending', 'running', { decided_by: user, body: stored ? JSON.stringify(stored) : null })) return c.json({ error: '这条操作已经处理过了' }, 409)
+    const body = !stored ? undefined
+      : stored.json !== undefined ? { json: stored.json }
+      : stored.bytes_b64 !== undefined ? { bytes: new Uint8Array(Buffer.from(stored.bytes_b64, 'base64')), mime: stored.mime ?? 'application/octet-stream' }
+      : { form: stored.form ?? {}, ...(stored.file ? { file: { bytes: new Uint8Array(Buffer.from(stored.file.b64, 'base64')), name: stored.file.name, mime: stored.file.mime } } : {}) }
+    const r = await invoke(user, a.method, a.path, body, { via: 'ai-confirmed', confirmedBy: user })
+    const result = { status: r.status, ok: r.ok, response: r.json ?? (r.text ? r.text.slice(0, 2000) : null) }
+    store.setPendingActionStatus(a.id, 'running', r.ok ? 'done' : 'failed', { result: JSON.stringify(result), decided_by: user })
+    audit(c, 'ai.action_confirm', { detail: `${a.tool}.${a.action}：${a.summary}（${r.status}）`, status: r.status })
+    return c.json(actionView(store.getPendingAction(a.id)!), r.ok ? 200 : 422)
   })
 
   return app

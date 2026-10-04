@@ -9,6 +9,9 @@
 import { readFileSync } from 'node:fs'
 import { chromium, type Page } from 'playwright'
 import { solveChallenge, type Challenge } from '../src/auth/bot-guard.ts'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { issueToken } from '../src/auth/token.ts'
 
 const B = process.argv[2] ?? 'http://127.0.0.1:8788'
 const SHOTS = process.argv[3]
@@ -207,6 +210,35 @@ await shot(user, 'login-disabled')
 }
 
 // 5. 邮箱：管理员绑定邮箱 → 另一个浏览器里忘记密码 → 验证码重置并登录 → 原登录失效
+// —— AI 的权限 = 用户的权限：平台运营的 AI 发起「新建机构」→ 只生成待确认操作 → 用户在「待确认操作」里确认 → 生效，审计记 via=ai-confirmed ——
+{
+  const meAdmin = await adminApi('/api/me') as { id: string }
+  // 以 AI 的身份（MCP 令牌，签名密钥与本地实例相同：HEURION_SECRET 或开发默认值）调用 platform_admin
+  const mcpToken = issueToken(process.env.HEURION_SECRET ?? 'dev-secret-not-for-production-use!', { u: meAdmin.id, d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 300 })
+  const mcp = new Client({ name: 'ui-accounts', version: '0' })
+  await mcp.connect(new StreamableHTTPClientTransport(new URL(B + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${mcpToken}` } } }))
+  const r = await mcp.callTool({ name: 'platform_admin', arguments: { action: 'create_tenant', name: 'AI 建的医院', reason: '新签约的合作医院' } }) as { content: Array<{ text?: string }> }
+  const pending = JSON.parse(r.content.map(c => c.text ?? '').join('')) as { status: string; action_id: string }
+  ok('AI 发起的高风险操作只生成待确认', pending.status === 'pending_confirmation')
+  ok('确认前没有执行', !((await adminApi('/api/platform/tenants')) as Array<{ name: string }>).some(t => t.name === 'AI 建的医院'))
+  const selfConfirm = await mcp.callTool({ name: 'action_status', arguments: { action_id: pending.action_id } }) as { content: Array<{ text?: string }> }
+  ok('AI 只能查状态', JSON.parse(selfConfirm.content.map(c => c.text ?? '').join('')).status === 'pending')
+  await mcp.close()
+  await admin.reload()
+  await admin.waitForSelector('#userButton.has-pending', { timeout: 10_000 })
+  ok('头像上有待确认红点', true)
+  await admin.click('#userButton')
+  await admin.click('#userMenuActions')
+  await admin.waitForSelector(`.action-card[data-action="${pending.action_id}"]`)
+  await shot(admin, 'ai-action-confirm')
+  await admin.click(`.action-card[data-action="${pending.action_id}"] [data-act="confirm"]`)
+  await admin.waitForSelector(`.action-card[data-action="${pending.action_id}"] .action-status.done`)
+  ok('用户确认后执行', ((await adminApi('/api/platform/tenants')) as Array<{ name: string }>).some(t => t.name === 'AI 建的医院'))
+  const audit = await adminApi('/api/admin/audit?action=platform.tenant_create') as Array<{ via: string | null; confirmed_by: string | null; actor: string | null }>
+  ok('审计记为 AI 发起、用户确认', audit.some(a => a.via === 'ai-confirmed' && a.confirmed_by === meAdmin.id && a.actor === meAdmin.id), JSON.stringify(audit.slice(0, 2)))
+  await admin.click('#dialog [data-close]')
+}
+
 if (SERVER_LOG) {
   ok('没绑邮箱时提醒绑定', await admin.locator('#emailNudge').isVisible())
   await admin.keyboard.press('Escape')

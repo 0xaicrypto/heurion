@@ -924,3 +924,25 @@ button.block { width: 100%; padding: 10px 12px; }
 .banner.rs-readonly { margin-bottom: 14px; }
 .page.read-only .ProseMirror { caret-color: transparent; }
 @media (max-width: 900px) { .doc-collab .collab-avatar:nth-child(n+3) { display: none; } }
+
+/* —— AI 发起、等你确认的高风险操作（actions.ts）—— */
+.action-card { margin: 10px 0; padding: 12px 14px; border: 1px solid var(--line-strong); border-left: 3px solid var(--mint); background: var(--raised); display: flex; flex-direction: column; gap: 8px; }
+.action-card.danger { border-left-color: var(--danger); }
+.action-card-head { font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--mint-text); }
+.action-card.danger .action-card-head { color: var(--danger); }
+.action-summary { font-size: 14px; color: var(--text); line-height: 1.55; }
+.action-reason { font-size: 12.5px; color: var(--text-2); }
+.action-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.action-field textarea { font-size: 13px; }
+.action-card .actions-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.action-card .actions-row button { font-size: 12.5px; padding: 4px 12px; }
+.action-card .actions-row .muted { margin-left: auto; }
+button.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 500; }
+button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
+.action-status { font-size: 12.5px; color: var(--muted); }
+.action-status.done { color: var(--ok); }
+.action-status.failed { color: var(--danger); }
+.action-recent { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.action-recent li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.user-button { position: relative; }
+.user-button.has-pending::after { content: ''; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; background: var(--danger); border: 2px solid var(--bg-deep); border-radius: 50%; }

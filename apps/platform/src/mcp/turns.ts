@@ -5,10 +5,15 @@
 
 import type { MemoryRow } from '../store/db.ts'
 
+/** 确认卡（对话里显示，用户确认 / 拒绝）。 */
+export interface ActionCard { id: string; tool: string; action: string; summary: string; reason: string | null; editable: Record<string, string> | null; status: string; created_at: string }
+
 export type TurnNotice =
   | { type: 'comment_reply'; doc_id: string; comment_id: string }
   /** AI 提议了一条记忆（待确认）或按用户明确要求记下了一条：对话里显示卡片。 */
   | { type: 'memory'; result: 'proposed' | 'active' | 'forgotten'; memory: MemoryRow }
+  /** AI 发起了需要用户确认的高风险操作：对话里显示确认卡。 */
+  | { type: 'action'; action: ActionCard }
 
 export interface ActiveTurn {
   turnId: string

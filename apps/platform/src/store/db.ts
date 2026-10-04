@@ -15,6 +15,19 @@ export type DocKind = 'doc' | 'deck'
 export type Actor = 'ai' | 'user' | 'system'
 export type VersionSource = 'create' | 'import' | 'turn' | 'user' | 'restore'
 
+/** AI 发起、等用户确认的操作（高风险：不可恢复的删除、权限与安全设置、以机构身份对外的标识）。 */
+export interface PendingActionRow {
+  id: string; user_id: string; tool: string; action: string; method: string; path: string
+  /** JSON：请求体（文件类为 {file: {path, name, mime}}） */
+  body: string | null
+  summary: string; reason: string | null
+  /** JSON：确认时用户可以改的字段（例如紧急访问理由） */
+  editable: string | null
+  doc_id: string | null; turn_id: string | null
+  status: 'pending' | 'running' | 'done' | 'failed' | 'rejected' | 'expired'
+  result: string | null; created_at: string; decided_at: string | null; decided_by: string | null
+}
+
 export interface UserRow {
   id: string
   username: string
@@ -491,6 +504,16 @@ export class Store {
     if (!userCols.includes('tenant_role')) this.db.exec("ALTER TABLE users ADD COLUMN tenant_role TEXT NOT NULL DEFAULT 'member'")
     const auditCols = (this.db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>).map(c => c.name)
     if (!auditCols.includes('tenant_id')) this.db.exec('ALTER TABLE audit_events ADD COLUMN tenant_id TEXT')
+    // AI 代表用户操作：via = ai（AI 直接做的）/ ai-confirmed（AI 发起、用户确认后执行的），confirmed_by = 确认人
+    if (!auditCols.includes('via')) this.db.exec('ALTER TABLE audit_events ADD COLUMN via TEXT')
+    if (!auditCols.includes('confirmed_by')) this.db.exec('ALTER TABLE audit_events ADD COLUMN confirmed_by TEXT')
+    // AI 发起、等用户确认的高风险操作（docs/design/AI_PERMISSIONS.md）
+    this.db.exec(`CREATE TABLE IF NOT EXISTS pending_actions (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, tool TEXT NOT NULL, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL,
+      body TEXT, summary TEXT NOT NULL, reason TEXT, editable TEXT, doc_id TEXT, turn_id TEXT, status TEXT NOT NULL,
+      result TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS pending_actions_user ON pending_actions (user_id, status);`)
     this.db.exec('CREATE INDEX IF NOT EXISTS users_tenant ON users (tenant_id)')
     // 研究团队协作之前的研究：负责人补成成员表里的 owner；研究记下所属机构（负责人当时的机构）
     const studyCols = (this.db.prepare('PRAGMA table_info(studies)').all() as Array<{ name: string }>).map(c => c.name)
@@ -849,22 +872,48 @@ export class Store {
 
   // —— 审计日志（M2） ——
 
-  addAudit(e: { actor: string | null; action: string; target?: string | null; detail?: string | null; ip?: string | null; status?: number | null; tenant_id?: string | null }): void {
+  addAudit(e: { actor: string | null; action: string; target?: string | null; detail?: string | null; ip?: string | null; status?: number | null; tenant_id?: string | null; via?: string | null; confirmed_by?: string | null }): void {
     // 租户：显式给的，否则取操作者所在的租户（机构管理员只看本机构的审计）
     const tenant = e.tenant_id !== undefined ? e.tenant_id : e.actor ? this.getUser(e.actor)?.tenant_id ?? null : null
-    this.db.prepare('INSERT INTO audit_events (at, actor, action, target, detail, ip, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(now(), e.actor, e.action, e.target ?? null, e.detail ?? null, e.ip ?? null, e.status ?? null, tenant)
+    this.db.prepare('INSERT INTO audit_events (at, actor, action, target, detail, ip, status, tenant_id, via, confirmed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(now(), e.actor, e.action, e.target ?? null, e.detail ?? null, e.ip ?? null, e.status ?? null, tenant, e.via ?? null, e.confirmed_by ?? null)
+  }
+
+  // —— AI 发起、等用户确认的操作 ——
+  addPendingAction(a: Omit<PendingActionRow, 'id' | 'status' | 'result' | 'created_at' | 'decided_at' | 'decided_by'>): PendingActionRow {
+    const id = 'pa' + randomUUID().replace(/-/g, '').slice(0, 14)
+    this.db.prepare('INSERT INTO pending_actions (id, user_id, tool, action, method, path, body, summary, reason, editable, doc_id, turn_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, a.user_id, a.tool, a.action, a.method, a.path, a.body, a.summary, a.reason, a.editable, a.doc_id, a.turn_id, 'pending', now())
+    return this.getPendingAction(id)!
+  }
+  getPendingAction(id: string): PendingActionRow | undefined {
+    return this.db.prepare('SELECT * FROM pending_actions WHERE id = ?').get(id) as PendingActionRow | undefined
+  }
+  listPendingActions(userId: string, status?: string): PendingActionRow[] {
+    return (status
+      ? this.db.prepare('SELECT * FROM pending_actions WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 100').all(userId, status)
+      : this.db.prepare('SELECT * FROM pending_actions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(userId)) as unknown as PendingActionRow[]
+  }
+  /** 只在 from 状态时改（防止重复确认）；返回是否改到了。 */
+  setPendingActionStatus(id: string, from: PendingActionRow['status'], to: PendingActionRow['status'], extra: { result?: string | null; decided_by?: string | null; body?: string | null } = {}): boolean {
+    const r = this.db.prepare('UPDATE pending_actions SET status = ?, result = COALESCE(?, result), decided_by = COALESCE(?, decided_by), body = COALESCE(?, body), decided_at = ? WHERE id = ? AND status = ?')
+      .run(to, extra.result ?? null, extra.decided_by ?? null, extra.body ?? null, now(), id, from)
+    return Number(r.changes) > 0
+  }
+  /** 超过有效期的待确认操作标为过期，返回条数。 */
+  expirePendingActions(maxAgeMs: number): number {
+    return Number(this.db.prepare("UPDATE pending_actions SET status = 'expired', decided_at = ? WHERE status = 'pending' AND created_at < ?").run(now(), new Date(Date.now() - maxAgeMs).toISOString()).changes)
   }
 
   /** 最新在前；before = 上一页最后一条的 id。 */
-  listAudit(f: { actor?: string; action?: string; before?: number; limit?: number; tenant?: string } = {}): Array<{ id: number; at: string; actor: string | null; action: string; target: string | null; detail: string | null; ip: string | null; status: number | null }> {
+  listAudit(f: { actor?: string; action?: string; before?: number; limit?: number; tenant?: string } = {}): Array<{ id: number; at: string; actor: string | null; action: string; target: string | null; detail: string | null; ip: string | null; status: number | null; via: string | null; confirmed_by: string | null }> {
     const where: string[] = []
     const args: Array<string | number> = []
     if (f.actor) { where.push('actor = ?'); args.push(f.actor) }
     if (f.tenant) { where.push('tenant_id = ?'); args.push(f.tenant) }
     if (f.action) { where.push('action LIKE ?'); args.push(`${f.action}%`) }
     if (f.before) { where.push('id < ?'); args.push(f.before) }
-    return this.db.prepare(`SELECT id, at, actor, action, target, detail, ip, status FROM audit_events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`)
+    return this.db.prepare(`SELECT id, at, actor, action, target, detail, ip, status, via, confirmed_by FROM audit_events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`)
       .all(...args, Math.min(f.limit ?? 100, 500)) as never
   }
 
