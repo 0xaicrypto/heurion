@@ -19,6 +19,7 @@ import { CohortService } from './research/cohort.ts'
 import { TenantService } from './auth/tenants.ts'
 import { kekFrom, TenantKeys } from './tenancy/keys.ts'
 import { PatientService } from './tenancy/patients.ts'
+import { ShareService } from './tenancy/shares.ts'
 import { MemoryEvolution } from './memory/evolve.ts'
 import { MemoryService } from './memory/service.ts'
 import { MemorySignals } from './memory/signals.ts'
@@ -111,6 +112,8 @@ const turns = new TurnService(docs, pool, registry, {
     return patients.memberMarkers(row.owner, ctx.patient_id!)
   },
 })
+// 知家分享给医生（docs/design/SHARING.md）：界面与 MCP 共用一个实例
+const shares = new ShareService(store, patients.tenantService, patients, docs)
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
   pubmed,
@@ -121,6 +124,7 @@ const mcpDeps = {
   evolution,
   datasets,
   patients,
+  shares,
   studies,
   cohort,
   fulltext,
@@ -148,7 +152,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, images, access, workspaceDir: userId => pool.workspaceDir(userId) })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, shares, studies, cohort, images, access, workspaceDir: userId => pool.workspaceDir(userId) })
 // MCP 的管理类工具以用户身份进程内调用同一个 HTTP 应用（AI 的权限 = 用户的权限，见 http/invoke.ts）
 ;(mcpDeps as { invoke?: Invoke }).invoke = makeInvoker(app)
 

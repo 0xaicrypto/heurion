@@ -120,6 +120,14 @@ const ALL_PARITY: Record<string, string> = {
   'DELETE /api/studies/:sid': 'study_admin.delete', 'POST /api/studies/:sid/transfer': 'study_admin.transfer', 'POST /api/studies/:sid/handover': 'tenant_admin.handover',
   // AI 发起的待确认操作：AI 能查状态，确认 / 拒绝只能用户本人（见 NOT_FOR_AI）
   'GET /api/actions': 'action_status', 'GET /api/actions/:aid': 'action_status',
+  // 科室（知家分享按科室投递；docs/design/SHARING.md）
+  'GET /api/tenant/departments': 'tenant_admin.departments', 'POST /api/tenant/departments': 'tenant_admin.create_department',
+  'PATCH /api/tenant/departments/:dpid': 'tenant_admin.rename_department', 'DELETE /api/tenant/departments/:dpid': 'tenant_admin.delete_department',
+  'PUT /api/tenant/departments/:dpid/members': 'tenant_admin.set_department_members',
+  // 知家分享：家人一侧（新建分享是对外披露，需确认）与医生一侧（只读视图、纳入本院）
+  'GET /api/phr/directory': 'phr_share.directory', 'GET /api/phr/:ptid/shares': 'phr_share.list', 'POST /api/phr/:ptid/shares': 'phr_share.create', 'DELETE /api/phr/shares/:shid': 'phr_share.revoke',
+  'GET /api/shares': 'share_list', 'GET /api/shares/:shid': 'share_read', 'GET /api/shares/:shid/docs/:id': 'share_read',
+  'GET /api/shares/:shid/labs': 'share_labs', 'GET /api/shares/:shid/files/:pfid': 'share_file', 'POST /api/shares/:shid/import': 'share_import',
 }
 
 /** AI 发起后要用户在确认卡上确认才执行的动作（不可恢复的删除、权限与安全、以机构身份对外的标识）。 */
@@ -130,6 +138,7 @@ const AI_CONFIRM = [
   'platform_admin.create_tenant', 'platform_admin.set_tenant_status', 'platform_admin.update_user', 'platform_admin.logout_user', 'platform_admin.update_settings',
   'doc_manage.purge', 'comment_manage.delete', 'dataset_manage.delete', 'kb_manage.delete', 'memory_manage.clear_all',
   'patient_admin.break_glass', 'patient_admin.delete', 'study_admin.delete', 'study_admin.transfer',
+  'tenant_admin.delete_department', 'tenant_admin.set_department_members', 'phr_share.create',
 ]
 
 /** 不给 AI 的（只是界面机制，或必须本人亲自做）；每条写清理由。 */

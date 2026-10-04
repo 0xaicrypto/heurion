@@ -1,4 +1,4 @@
-import type { Store, TenantInviteRow, TenantRow, UserRow } from '../store/db.ts'
+import type { DepartmentRow, Store, TenantInviteRow, TenantRow, UserRow } from '../store/db.ts'
 
 /**
  * 租户（机构）：设计见 docs/design/TENANCY.md。
@@ -16,9 +16,11 @@ export interface TenantSettings {
   patient_visibility: 'care_team' | 'tenant'
   /** AI 修改患者记录：review = 进待确认、由医生确认（默认）；direct = 和人一样直接生效 */
   ai_patient_writes: 'review' | 'direct'
+  /** 接受知家家庭分享（家人可在知家里选本院的科室分享档案；docs/design/SHARING.md）。只对机构有意义 */
+  accept_patient_shares: boolean
 }
 
-export const DEFAULT_SETTINGS: TenantSettings = { patient_module: true, external_model_for_patients: true, patient_visibility: 'care_team', ai_patient_writes: 'review' }
+export const DEFAULT_SETTINGS: TenantSettings = { patient_module: true, external_model_for_patients: true, patient_visibility: 'care_team', ai_patient_writes: 'review', accept_patient_shares: true }
 
 export class TenantError extends Error {
   constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 400) { super(message) }
@@ -96,6 +98,7 @@ export class TenantService {
       if (typeof s.external_model_for_patients === 'boolean') cur.external_model_for_patients = s.external_model_for_patients
       if (s.patient_visibility === 'care_team' || s.patient_visibility === 'tenant') cur.patient_visibility = s.patient_visibility
       if (s.ai_patient_writes === 'review' || s.ai_patient_writes === 'direct') cur.ai_patient_writes = s.ai_patient_writes
+      if (typeof s.accept_patient_shares === 'boolean') cur.accept_patient_shares = s.accept_patient_shares
       next.settings = JSON.stringify(cur)
     }
     this.store.updateTenant(t.id, next)
@@ -123,6 +126,53 @@ export class TenantService {
     if (role) this.store.setTenantRole(u.id, role)
     if (status) this.store.updateUser(u.id, { status, bumpTokenVersion: status === 'disabled' })
     return memberView({ ...this.store.getUser(u.id)!, doc_count: 0 })
+  }
+
+  // —— 科室（知家分享的落点；一人可在多个科室）——
+
+  /** 本机构的科室与成员（机构成员都能看：分享收件箱按科室划分，医生要知道自己在哪些科室）。 */
+  departments(actor: string): Array<DepartmentRow & { members: Array<{ id: string; display_name: string }> }> {
+    const t = this.of(actor)
+    return this.store.listDepartments(t.id).map(d => ({ ...d, members: d.members.flatMap(id => { const u = this.store.getUser(id); return u ? [{ id, display_name: u.display_name }] : [] }) }))
+  }
+
+  createDepartment(actor: string, name: unknown): DepartmentRow {
+    const t = this.requireAdmin(actor)
+    const n = typeof name === 'string' ? name.trim().slice(0, 40) : ''
+    if (!n) throw new TenantError('bad_name', '科室名称不能为空')
+    if (this.store.listDepartments(t.id).some(d => d.name === n)) throw new TenantError('duplicate', `已经有「${n}」了`, 409)
+    if (t.kind === 'personal') throw new TenantError('personal', '个人空间没有科室；科室是医院等机构用的', 400)
+    return this.store.addDepartment(t.id, n)
+  }
+
+  private ownDepartment(actor: string, id: string): DepartmentRow {
+    const t = this.requireAdmin(actor)
+    const d = this.store.getDepartment(id)
+    if (!d || d.tenant_id !== t.id) throw new TenantError('not_found', '科室不存在', 404)
+    return d
+  }
+
+  renameDepartment(actor: string, id: string, name: unknown): DepartmentRow {
+    this.ownDepartment(actor, id)
+    const n = typeof name === 'string' ? name.trim().slice(0, 40) : ''
+    if (!n) throw new TenantError('bad_name', '科室名称不能为空')
+    this.store.renameDepartment(id, n)
+    return this.store.getDepartment(id)!
+  }
+
+  /** 删除科室：发给这个科室的分享随之不再可见（家人那边显示「科室已撤销」）。 */
+  deleteDepartment(actor: string, id: string): void {
+    this.ownDepartment(actor, id)
+    this.store.deleteDepartment(id)
+  }
+
+  /** 设置科室成员（只能是本机构的人）。 */
+  setDepartmentMembers(actor: string, id: string, userIds: unknown): DepartmentRow & { members: string[] } {
+    const d = this.ownDepartment(actor, id)
+    const ids = Array.isArray(userIds) ? [...new Set(userIds.filter((u): u is string => typeof u === 'string'))].slice(0, 500) : []
+    for (const u of ids) if (this.store.getUser(u)?.tenant_id !== d.tenant_id) throw new TenantError('not_member', '只能把本机构的成员分进科室', 400)
+    this.store.setDepartmentMembers(id, ids)
+    return this.store.listDepartments(d.tenant_id).find(x => x.id === id)!
   }
 
   // —— 邀请 ——

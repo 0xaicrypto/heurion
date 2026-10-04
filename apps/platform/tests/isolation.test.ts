@@ -42,11 +42,11 @@ const SECRET = 'test-secret'
 const MARK = '机密暗号-7f3a91'
 
 /** 机构 A 的资源 → 接口参数（新接口的参数必须在这里登记）。 */
-type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study' | 'orgTemplate' | 'action', string>
+type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study' | 'orgTemplate' | 'action' | 'department' | 'share', string>
 const PARAMS: Record<string, (s: Seed) => string> = {
   id: s => s.doc, did: s => s.dataset, fid: s => s.kb, mid: s => s.memory, cid: s => s.comment, pid: s => s.project,
   uid: s => s.userA, code: s => s.invite, tid: s => s.tenantA, jid: s => s.job, turnId: s => s.turn, seq: () => '1', index: () => '0', group: () => 'g1',
-  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc, otid: s => s.orgTemplate, aid: s => s.action, decision: () => 'confirm',
+  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc, otid: s => s.orgTemplate, aid: s => s.action, decision: () => 'confirm', dpid: s => s.department, shid: s => s.share,
 }
 /** 按设计公开的接口（不需要登录或本身就是给持有链接的人用的）。 */
 const PUBLIC: Record<string, string> = {
@@ -124,6 +124,14 @@ async function setup() {
   const logoRes = await app.request(`/api/tenant/templates/${orgTpl.id}/logo`, { method: 'PUT', headers: { Authorization: `Bearer ${A.token}`, 'Content-Type': 'image/svg+xml' }, body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#004098"/></svg>' })
   if (logoRes.status !== 200) throw new Error(`院徽上传失败 ${logoRes.status}`)
   const proposal = patients.propose({ userId: A.user.id, via: 'ai' }, patient.id, { kind: 'tag', payload: { tag: MARK }, reason: MARK })
+  // 知家家庭分享：家人（个人空间）把一位成员分享给 A 所在医院的科室（A 在科室里）；暗号在「给医生看的姓名」、标签与化验里
+  const dept = await json('POST', '/api/tenant/departments', A.token, { name: '心内科' })
+  await json('PUT', `/api/tenant/departments/${dept.id}/members`, A.token, { user_ids: [A.user.id] })
+  const fam = await register('family')
+  const famPatient = await json('POST', '/api/patients', fam.token, { name: '妈妈', sex: 'F', birth_year: 1960, tags: [MARK] })
+  await json('POST', `/api/patients/${famPatient.id}/labs`, fam.token, { test_name: MARK, value: 7.2, unit: 'mmol/L', collected_on: '2026-09-01' })
+  const share = await json('POST', `/api/phr/${famPatient.id}/shares`, fam.token, { tenant_id: created.tenant.id, department_id: dept.id, allow_import: true, display_name: MARK })
+  if (!share.id) throw new Error(`分享失败 ${JSON.stringify(share)}`)
   // A 的 AI 发起的待确认操作（确认卡上有暗号）：别人看不到、确认不了
   const action = store.addPendingAction({ user_id: A.user.id, tool: 'tenant_admin', action: 'update_settings', method: 'PATCH', path: '/api/tenant', body: JSON.stringify({ json: { name: MARK } }), summary: `改机构名称为 ${MARK}`, reason: MARK, editable: null, doc_id: null, turn_id: null })
 
@@ -131,6 +139,7 @@ async function setup() {
     doc: doc.id, dataset: dataset.id, kb: kbFile.id, memory: mem.memory.id, comment: comment.id ?? comment.comment?.id ?? 'c0', project: project.id,
     userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
     patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id, orgTemplate: orgTpl.id, action: action.id,
+    department: dept.id, share: share.id,
   }
   return { app, store, docs, ops, kb, memory, evolution, datasets, patients, studies, images, call, seed, A, B, op }
 }
@@ -170,6 +179,9 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     expect((await t.call('GET', `/api/patients/${t.seed.patient}`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/patients/${t.seed.patient}/files/${t.seed.pfile}`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/studies/${t.seed.study}`, t.A.token)).text).toContain(MARK)
+    // 家庭分享：A（在收件科室）能读到
+    expect((await t.call('GET', `/api/shares/${t.seed.share}`, t.A.token)).text).toContain(MARK)
+    expect((await t.call('GET', `/api/shares/${t.seed.share}/labs`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/studies/${t.seed.study}/cohort`, t.A.token)).text).toContain(MARK)
     expect((await t.call('POST', `/api/studies/${t.seed.study}/cohort/preview`, t.A.token, {})).text).toContain(MARK)
     // 机构模板：A 的成员能看到、能取院徽；B 取不到 A 的院徽
@@ -179,7 +191,7 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     expect((await t.call('GET', `/api/assets/ol_${t.seed.orgTemplate}`, t.B.token)).status).toBe(404)
     expect((await t.call('GET', `/api/assets/ol_${t.seed.orgTemplate}`, t.op.token)).status).toBe(404)
     // 列表接口：B 看不到 A 的任何东西
-    for (const p of ['/api/tenant/templates', '/api/deck-templates', '/api/deck-themes', '/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies', '/api/tenant/studies']) {
+    for (const p of ['/api/tenant/templates', '/api/deck-templates', '/api/deck-themes', '/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies', '/api/tenant/studies', '/api/shares', '/api/tenant/departments']) {
       const r = await t.call('GET', p, t.B.token)
       expect(r.text, `B ${p}`).not.toContain(MARK)
       expect(r.text, `B ${p}`).not.toContain('alice')
@@ -235,7 +247,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
     cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0', photo_id: () => 'p0', user_id: s => s.userA,
-    to_user_id: s => s.userA, template_id: s => s.orgTemplate, tenant_id: s => s.tenantA, project_id: s => s.project, turn_id: s => s.turn, memory_id: s => s.memory, job_id: s => s.job, action_id: s => s.action,
+    to_user_id: s => s.userA, template_id: s => s.orgTemplate, share_id: s => s.share, department_id: s => s.department, doctor_id: s => s.userA, user_ids: s => [s.userA], tenant_id: s => s.tenantA, project_id: s => s.project, turn_id: s => s.turn, memory_id: s => s.memory, job_id: s => s.job, action_id: s => s.action,
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {
@@ -264,6 +276,7 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     expect(text(await own.callTool({ name: 'study_read', arguments: { study_id: t.seed.study } }))).toContain(MARK)
     expect(text(await own.callTool({ name: 'study_cohort_list', arguments: { study_id: t.seed.study } }))).toContain(MARK)
     expect(text(await own.callTool({ name: 'study_cohort_preview', arguments: { study_id: t.seed.study } }))).toContain(MARK)
+    expect(text(await own.callTool({ name: 'share_labs', arguments: { share_id: t.seed.share } }))).toContain(MARK)
 
     const client = await connect(t.B.user.id)
     const { tools } = await client.listTools()

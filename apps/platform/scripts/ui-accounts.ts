@@ -144,6 +144,7 @@ await user.waitForFunction(() => document.getElementById('authError')!.textConte
 ok('被停用的账户不能登录', (await user.locator('#authError').innerText()).includes('停用'))
 await shot(user, 'login-disabled')
 
+let zhaoToken = '', zhaoId = ''
 // 研究团队协作：王医生邀请赵医生进本机构 → 建研究加赵为「可编辑」→ 赵看到共享研究并编辑方案 → 改为「只读」→ 赵只能看
 {
   const adminToken = await admin.evaluate(() => localStorage.getItem('heurion.token') ?? '')
@@ -156,6 +157,7 @@ await shot(user, 'login-disabled')
   const pow = solveChallenge(await (await fetch(B + '/api/auth/challenge')).json() as Challenge)
   await new Promise(r => setTimeout(r, 1700)) // 人机校验：签发后至少 1.5 秒才能提交
   const zhao = await (await fetch(B + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'drzhao', display_name: '赵医生', password: 'secret123', invite, pow }) })).json() as { token: string; user: { id: string } }
+  zhaoToken = zhao.token; zhaoId = zhao.user.id
   const study = (await call('POST', '/api/studies', adminToken, { title: 'SGLT2i 真实世界研究' })).json
   const doc = (await call('POST', '/api/docs', adminToken, { title: 'SGLT2i 真实世界研究 · 研究方案', markdown: '# 研究方案\n\n研究背景待补充。' })).json
   await call('POST', `/api/studies/${study.id}/items`, adminToken, { kind: 'doc', ref_id: doc.id, role: 'protocol' })
@@ -207,6 +209,97 @@ await shot(user, 'login-disabled')
   await z.waitForSelector('.banner.rs-readonly')
   ok('只读成员的研究页：只读提示、没有修改类按钮', await z.locator('[data-new="protocol"]').count() === 0 && await z.locator('[data-act="upload"]').count() === 0)
   await shot(z, 'team-study-readonly')
+}
+
+// 知家分享给医生（docs/design/SHARING.md）：医院（王医生的机构）管理员建科室并把赵医生分进去 → 家人（知家）建成员、录化验、分享给该科室
+// → 医生在「家庭分享」里看到并查看 → 家人看到查看记录 → 纳入本院 → 家人撤销后医生看不到分享（已纳入的仍在）
+// （注册每 IP 每小时限 5 个，这里只新注册家人一个账号；平台运营建医院在下面 AI 的流程里覆盖）
+{
+  const call = async (method: string, path: string, token: string, body?: unknown) => {
+    const r = await fetch(B + path, { method, headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body !== undefined ? JSON.stringify(body) : undefined })
+    const text = await r.text()
+    return { status: r.status, text, json: (() => { try { return JSON.parse(text) } catch { return null } })() as any }
+  }
+  const hospital = (await call('GET', '/api/tenant', adminToken)).json as { id: string; name: string }
+  // 医院管理员在「机构管理 → 科室」建心内科、把赵医生分进去
+  await admin.goto(B + '/app')
+  await admin.waitForSelector('#userButton', { state: 'visible' })
+  await admin.click('#userButton')
+  await admin.click('#userMenuTenant')
+  await admin.waitForSelector('#tenantDepts #deptForm')
+  await admin.fill('#deptForm input[name="name"]', '心内科')
+  await admin.click('#deptForm button.primary')
+  await admin.waitForSelector('#tenantDepts [data-dact="members"]')
+  await admin.click('#tenantDepts [data-dact="members"]')
+  await admin.check(`.dept-editor input[value="${zhaoId}"]`)
+  await admin.click('.dept-editor [data-save]')
+  await admin.waitForFunction(() => document.querySelector('#tenantDepts')?.textContent?.includes('赵医生'))
+  ok('医院管理员建科室并分配医生', true)
+  await shot(admin, 'share-departments')
+  await admin.click('#dialog [data-close]')
+
+  // 家人（知家）：建成员、录化验，在成员页「分享」里选医院 → 科室 → 分享
+  const pow = solveChallenge(await (await fetch(B + '/api/auth/challenge')).json() as Challenge)
+  await new Promise(r => setTimeout(r, 1700)) // 人机校验：签发后至少 1.5 秒才能提交
+  const fam = await (await fetch(B + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'mama2026', display_name: '小王', password: 'secret123', pow }) })).json() as { token: string; user: { id: string }; error?: string }
+  ok('家人注册知家账号', Boolean(fam.token), fam.error ?? '')
+  const member = (await call('POST', '/api/patients', fam.token, { name: '妈妈', sex: 'F', birth_year: 1962, tags: ['高血压'] })).json
+  await call('POST', `/api/patients/${member.id}/labs`, fam.token, { test_name: '空腹血糖', value: 7.4, unit: 'mmol/L', collected_on: '2026-09-20' })
+  const f = await browser.newPage({ viewport: { width: 400, height: 860 } })
+  f.on('pageerror', e => errors.push(e.message))
+  await f.goto(B + '/phr')
+  await f.evaluate(t => localStorage.setItem('heurion.token', t), fam.token)
+  await f.goto(`${B}/phr#/m/${member.id}`)
+  await f.reload()
+  await f.waitForSelector('#mShare')
+  await f.click('#mShare')
+  await f.waitForSelector('dialog #sHos')
+  await f.selectOption('dialog #sHos', hospital.id)
+  await f.fill('dialog #sName', '王桂兰')
+  await f.check('dialog #sImport')
+  await shot(f, 'share-phr-dialog')
+  await f.click('dialog [data-x="1"]')
+  await f.waitForSelector('.tab.on[data-tab="share"]')
+  await f.waitForSelector('[data-revoke]')
+  ok('知家：分享给医院科室', (await f.locator('#main').innerText()).includes(`${hospital.name} · 心内科`))
+  await shot(f, 'share-phr-list')
+
+  // 医生在工作台「患者 → 家庭分享」看到并查看
+  const h = await newPage()
+  await h.goto(B + '/app')
+  await h.evaluate(t => { localStorage.setItem('heurion.token', t); localStorage.setItem('heurion.space', 'patients') }, zhaoToken)
+  await h.reload()
+  await h.waitForSelector('#patientList [data-shares]')
+  ok('医生的患者列表出现「家庭分享」', (await h.locator('#patientList [data-shares]').innerText()).includes('1'))
+  await h.click('#patientList [data-shares]')
+  await h.waitForSelector('.sh-card')
+  await h.click('.sh-card')
+  await h.waitForSelector('.pt-labs')
+  ok('医生只读查看：化验与家人给的姓名', (await h.locator('#page').innerText()).includes('空腹血糖') && (await h.locator('#page').innerText()).includes('王桂兰'))
+  await shot(h, 'share-doctor-view')
+
+  // 家人看到查看记录
+  await f.reload()
+  await f.waitForSelector('.tab[data-tab="share"]')
+  await f.click('.tab[data-tab="share"]')
+  await f.waitForFunction(() => document.querySelector('#main')?.textContent?.includes('查看了概况'))
+  ok('知家：看到医生的查看记录', true)
+  await shot(f, 'share-phr-log')
+
+  // 纳入本院 → 打开新患者
+  const before = (await call('GET', '/api/patients', zhaoToken)).json.length as number
+  await h.click('[data-import]')
+  await h.click('#askOk')
+  await h.waitForSelector('.page.patient-page:not(.share-page) .pt-code')
+  const after = (await call('GET', '/api/patients', zhaoToken)).json as Array<{ id: string }>
+  ok('纳入本院：复制成本院患者', after.length === before + 1)
+
+  // 家人撤销 → 医生看不到分享，已纳入的仍在
+  const shareId = (await call('GET', `/api/phr/${member.id}/shares`, fam.token)).json[0].id as string
+  await f.click(`[data-revoke="${shareId}"]`)
+  await f.click('dialog [data-x="1"]')
+  await f.waitForFunction(() => document.querySelector('#main')?.textContent?.includes('已撤销'))
+  ok('撤销后医生看不到分享、已纳入的仍在', (await call('GET', `/api/shares/${shareId}`, zhaoToken)).status === 404 && (await call('GET', `/api/patients/${after[0]!.id}`, zhaoToken)).status === 200)
 }
 
 // 5. 邮箱：管理员绑定邮箱 → 另一个浏览器里忘记密码 → 验证码重置并登录 → 原登录失效

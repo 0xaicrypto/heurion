@@ -41,7 +41,7 @@ export interface LabRow {
   value_num: number | null; value_text: string | null; unit: string | null
   ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null
   /** 报告上的日期；提取时报告上没写日期的为 null，确认报告时由医生补填 */
-  collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected' | 'superseded'; source: 'manual' | 'extracted' | 'ai'
+  collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected' | 'superseded'; source: 'manual' | 'extracted' | 'ai' | 'share'
   locator: { page?: number; bbox?: number[]; verified?: boolean } | null
   /** 采样时间（报告上有时间时，YYYY-MM-DD HH:MM），同一天多次检查按它排序 */
   collected_at: string | null
@@ -160,6 +160,9 @@ class TenantPatientDb {
     if (!labCols.includes('collected_at')) this.db.exec('ALTER TABLE labs ADD COLUMN collected_at TEXT')
     if (!labCols.includes('replaces')) this.db.exec('ALTER TABLE labs ADD COLUMN replaces TEXT')
     if (!cols('records').includes('report_time')) this.db.exec('ALTER TABLE records ADD COLUMN report_time TEXT')
+    // 来源追溯（知家分享纳入本院时记 share:<分享 id>）
+    if (!cols('records').includes('origin')) this.db.exec('ALTER TABLE records ADD COLUMN origin TEXT')
+    if (!labCols.includes('origin')) this.db.exec('ALTER TABLE labs ADD COLUMN origin TEXT')
   }
 
   /** 研究内的研究编号 S001、S002……（递增，移出的不复用） */
@@ -190,6 +193,9 @@ const labOf = (r: Record<string, unknown>): LabRow => {
 }
 const proposalOf = (r: Record<string, unknown>): ProposalRow => ({ ...(r as unknown as ProposalRow), payload: JSON.parse(r.payload as string) })
 
+/** 知家分享的范围：类目（化验 / 报告原件 / 简报与健康档案）与起始日期。 */
+export interface ShareScope { categories: Array<'labs' | 'reports' | 'docs'>; since: string | null }
+
 export interface Actor {
   userId: string
   /** ai = AI 经 MCP 代该用户访问（访问日志里区分） */
@@ -211,6 +217,9 @@ export class PatientService {
     /** 成员建档即建「健康档案」文档（知家 V0，PATIENT.md §12）：人 / AI 建档同路径；没有时建档不产文档。 */
     private readonly archiveDoc?: (input: { owner: string; title: string; patientId: string }) => string | null,
   ) {}
+
+  /** 机构服务（知家分享等需要按机构判断的服务共用这一个实例）。 */
+  get tenantService(): TenantService { return this.tenants }
 
   /** 等后台提取完（测试用）。 */
   idle(): Promise<void> { return this.queue }
@@ -456,6 +465,114 @@ export class PatientService {
     if (f.includePending) rows = rows.map(r => r.status === 'pending' ? { ...r, same_day: this.sameDay(c.db, patientId, r) } : r)
     this.log(c, a, patientId, 'labs_read', f.tests?.join(',') ?? null)
     return rows
+  }
+
+  // —— 知家分享（docs/design/SHARING.md）：医生按分享只读家人个人空间里的数据；权限由 ShareService 判定 ——
+
+  /** 用某个机构（个人空间）的数据密钥加密 / 解密一段短文字（分享里「给医生看的姓名」）。 */
+  sealText(tenantId: string, text: string | null): string | null { return this.keys.encryptText(tenantId, text) }
+  openText(tenantId: string, enc: string | null): string | null { return this.keys.decryptText(tenantId, enc) }
+
+  private dbFor(tenantId: string): TenantPatientDb {
+    let db = this.dbs.get(tenantId)
+    if (!db) { db = new TenantPatientDb(this.root, tenantId); this.dbs.set(tenantId, db) }
+    return db
+  }
+
+  /** 分享视图（只读、按范围过滤，只含已确认的内容）。不给称呼：医生看到的姓名由家人在分享里另填。 */
+  sharedView(tenantId: string, patientId: string, scope: ShareScope) {
+    const db = this.dbFor(tenantId)
+    const r = db.db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId) as Record<string, unknown> | undefined
+    if (!r) throw new PatientError('not_found', '分享的档案已不存在', 404)
+    const p = patientOf(r)
+    const has = (k: ShareScope['categories'][number]) => scope.categories.includes(k)
+    const since = scope.since && DATE.test(scope.since) ? scope.since : null
+    const labs = has('labs')
+      ? (db.db.prepare(`SELECT * FROM labs WHERE patient_id = ? AND status = 'confirmed'${since ? ' AND collected_on >= ?' : ''} ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at`)
+          .all(...(since ? [patientId, since] : [patientId])) as Array<Record<string, unknown>>).map(labOf)
+      : []
+    const records = has('reports')
+      ? (db.db.prepare(`SELECT id, kind, title, report_date, file_id FROM records WHERE patient_id = ? AND status = 'confirmed'${since ? ' AND COALESCE(report_date, created_at) >= ?' : ''} ORDER BY COALESCE(report_date, created_at) DESC`)
+          .all(...(since ? [patientId, since] : [patientId])) as Array<{ id: string; kind: string; title: string; report_date: string | null; file_id: string | null }>)
+      : []
+    const documents = has('docs')
+      ? (db.db.prepare('SELECT doc_id, kind, created_at FROM patient_docs WHERE patient_id = ? ORDER BY created_at DESC').all(patientId) as Array<{ doc_id: string; kind: string; created_at: string }>)
+          .flatMap(d => { const row = this.store.getDoc(d.doc_id); return row && !row.deleted_at ? [{ doc_id: d.doc_id, kind: d.kind, title: row.title, updated_at: row.updated_at }] : [] })
+      : []
+    return { code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, labs, records, documents }
+  }
+
+  /** 分享里的一份报告原件（必须在分享范围内）。 */
+  sharedFile(tenantId: string, patientId: string, scope: ShareScope, fileId: string): { name: string; mime: string; bytes: Buffer } {
+    const db = this.dbFor(tenantId)
+    if (!this.sharedView(tenantId, patientId, scope).records.some(r => r.file_id === fileId)) throw new PatientError('not_found', '文件不存在', 404)
+    const f = db.db.prepare('SELECT * FROM files WHERE id = ? AND patient_id = ?').get(fileId, patientId) as { id: string; name_enc: string; mime: string } | undefined
+    if (!f || !existsSync(join(db.files, f.id))) throw new PatientError('not_found', '文件不存在', 404)
+    return { name: this.keys.decryptText(tenantId, f.name_enc)!, mime: f.mime, bytes: this.keys.decrypt(tenantId, readFileSync(join(db.files, f.id))) }
+  }
+
+  /** 分享里一份报告的文字（已打码，给医生的 AI 读）。 */
+  sharedRecordText(tenantId: string, patientId: string, scope: ShareScope, recordId: string): { title: string; kind: string; report_date: string | null; text: string | null } {
+    const rec = this.sharedView(tenantId, patientId, scope).records.find(r => r.id === recordId)
+    if (!rec) throw new PatientError('not_found', '报告不存在', 404)
+    const r = this.dbFor(tenantId).db.prepare('SELECT text_enc FROM records WHERE id = ?').get(recordId) as { text_enc: string | null }
+    const text = this.keys.decryptText(tenantId, r.text_enc)
+    return { title: rec.title, kind: rec.kind, report_date: rec.report_date, text: text === null ? null : redact(text).slice(0, 20000) }
+  }
+
+  /** 在家人那边记一笔：医生（或医生的 AI）经分享看了什么。家人在成员页看得到。 */
+  sharedLog(tenantId: string, patientId: string, userId: string, via: Actor['via'], action: string, detail: string): void {
+    this.dbFor(tenantId).db.prepare('INSERT INTO access_log (at, user_id, patient_id, action, via, detail) VALUES (?, ?, ?, ?, ?, ?)').run(now(), userId, patientId, action, via, detail)
+  }
+
+  /**
+   * 纳入本院：把分享的成员复制成本院患者（新代号，操作者为负责人）。报告原件重新用本院密钥加密；
+   * 化验按原记录复制：挂在报告上的标来源 share，家人手工录入的仍标 manual（没有原件，不进研究数据集）；文档由调用方复制后关联。
+   * 来源追溯：records / labs 的 origin = share:<分享 id>。AI 纳入受本院「AI 写入患者数据」审核门约束（review 时只能由医生点）。
+   */
+  importShared(a: Actor, src: { tenantId: string; patientId: string; shareId: string; scope: ShareScope }, copyDoc: (docId: string, kind: string) => string | null): PatientRow {
+    const c = this.ctx(a)
+    this.noAiReview(a, c, '纳入本院')
+    if (c.tenantKind === 'personal') throw new PatientError('personal', '纳入本院只在医院端', 400)
+    const view = this.sharedView(src.tenantId, src.patientId, src.scope)
+    const p = this.create(a, { sex: view.sex, birth_year: view.birth_year, tags: view.tags })
+    const origin = `share:${src.shareId}`
+    const srcDb = this.dbFor(src.tenantId)
+    const recordMap = new Map<string, string>()
+    for (const r of view.records) {
+      let fid: string | null = null
+      if (r.file_id) {
+        const f = srcDb.db.prepare('SELECT * FROM files WHERE id = ?').get(r.file_id) as { id: string; name_enc: string; mime: string; size: number; sha256: string } | undefined
+        if (f && existsSync(join(srcDb.files, f.id))) {
+          fid = rid('pf')
+          const bytes = this.keys.decrypt(src.tenantId, readFileSync(join(srcDb.files, f.id)))
+          writeFileSync(join(c.db.files, fid), this.keys.encrypt(c.tenantId, bytes))
+          c.db.db.prepare('INSERT INTO files (id, patient_id, name_enc, mime, size, sha256, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(fid, p.id, this.keys.encryptText(c.tenantId, this.keys.decryptText(src.tenantId, f.name_enc) ?? 'report')!, f.mime, f.size, f.sha256, a.userId, now())
+        }
+      }
+      const srcRec = srcDb.db.prepare('SELECT text_enc, report_time FROM records WHERE id = ?').get(r.id) as { text_enc: string | null; report_time: string | null }
+      const text = this.keys.decryptText(src.tenantId, srcRec.text_enc)
+      const id = rid('rc')
+      c.db.db.prepare(`INSERT INTO records (id, patient_id, kind, title, report_date, report_time, file_id, status, text_enc, extraction, extraction_note, created_by, created_at, confirmed_by, confirmed_at, origin)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, 'skipped', ?, ?, ?, ?, ?, ?)`)
+        .run(id, p.id, r.kind, r.title, r.report_date, srcRec.report_time, fid, this.keys.encryptText(c.tenantId, text), '来自知家家庭分享（家人已确认）', a.userId, now(), a.userId, now(), origin)
+      recordMap.set(r.id, id)
+    }
+    const ins = c.db.db.prepare(`INSERT INTO labs (id, patient_id, record_id, test_key, test_name, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, collected_on, collected_at, status, source, locator, created_by, created_at, confirmed_by, confirmed_at, origin)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?)`)
+    for (const l of view.labs) {
+      const rec = l.record_id ? recordMap.get(l.record_id) ?? null : null
+      ins.run(rid('lb'), p.id, rec, l.test_key, l.test_name, l.value_num, l.value_text, l.unit, l.ref_low, l.ref_high, l.ref_text, l.flag, l.collected_on, l.collected_at,
+        // 有报告原件的 → share；家人手工录入（没有原件）的仍标 manual
+        rec || l.source !== 'manual' ? 'share' : 'manual', l.locator ? JSON.stringify(l.locator) : null, a.userId, now(), a.userId, now(), origin)
+    }
+    for (const d of view.documents) {
+      const id = copyDoc(d.doc_id, d.kind)
+      if (id) this.linkDoc({ ...a, via: 'user' }, p.id, id, 'other')
+    }
+    this.log(c, a, p.id, 'import_share', src.shareId)
+    return p
   }
 
   /** 守卫用的成员标记（特殊人群判定）：内部读取，不记访问日志、不做诊疗组校验——调用方是写前守卫。 */

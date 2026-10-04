@@ -14,6 +14,7 @@ import { DeckOp, newTemplateDeck } from '../ops/deck.ts'
 import { LAYOUTS, layoutSpec, templateCatalog } from '../model/deck-templates.ts'
 import { DECK_THEMES, DEFAULT_THEME } from '../model/deck-themes.ts'
 import type { SlideRenderer } from '../render/slides.ts'
+import { exportMarkdown } from '../views/render.ts'
 import { deckOutline, deckRead, slideRead } from '../views/deck.ts'
 import { checkLayout } from '../views/layout.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
@@ -31,6 +32,7 @@ import type { KbService } from '../kb/service.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
 import { CohortService } from '../research/cohort.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
+import { ShareService } from '../tenancy/shares.ts'
 import { TenantError } from '../auth/tenants.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
@@ -66,6 +68,8 @@ export interface McpDeps {
   patients?: PatientService
   /** 临床研究项目。 */
   studies?: StudyService
+  /** 知家分享给医生（不给时由 patients 组装）。 */
+  shares?: ShareService
   /** 研究入组与研究数据集（不给时由 studies + patients 组装）。 */
   cohort?: CohortService
   /** 开放获取全文（可选）。 */
@@ -893,6 +897,37 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description: '患者的访问记录（谁、何时、做了什么、是不是 AI）。只有负责人能看。',
     inputSchema: { patient_id: z.string() },
   }, async ({ patient_id }) => pt(svc => svc.accessLog(aiActor(), patient_id).slice(0, 200)))
+
+  // —— 知家家庭分享（医生一侧，docs/design/SHARING.md）：AI 与医生本人一致，只读实时视图、纳入本院 ——
+  const shares = deps.shares ?? (deps.patients ? new ShareService(store, deps.patients.tenantService, deps.patients, deps.docs) : null)
+  const sh = (fn: (svc: ShareService) => unknown) => {
+    if (!shares) return fail('patients_unavailable', '患者模块未启用')
+    try { return json(fn(shares)) } catch (err) { return patientFail(err) }
+  }
+  server.registerTool('share_list', {
+    description: '家人从知家分享给本人所在科室（或指定给本人）的档案，只读、有效期内可见。每条有分享编号 share_code（FS-xxxx）、科室、范围、到期时间、是否允许纳入本院。家人的姓名不给 AI，用分享编号称呼。',
+    inputSchema: {},
+  }, async () => sh(svc => svc.inbox(aiActor())))
+  server.registerTool('share_read', {
+    description: '一份家庭分享的概况：性别、出生年份、标签、各项化验的最近值、报告原件清单（record_id）、简报 / 健康档案清单（doc_id）。给 doc_id 时返回那份简报或健康档案的正文（Markdown，只读）。每次读取家人都能在访问记录里看到。',
+    inputSchema: { share_id: z.string(), doc_id: z.string().optional() },
+  }, async ({ share_id, doc_id }) => sh(svc => {
+    if (!doc_id) return svc.read(aiActor(), share_id)
+    const d = svc.doc(aiActor(), share_id, doc_id)
+    return { doc_id: d.doc_id, kind: d.kind, title: d.title, updated_at: d.updated_at, markdown: exportMarkdown(d.node, store.listCitations(d.doc_id)) }
+  }))
+  server.registerTool('share_labs', {
+    description: '家庭分享里的化验长表（家人已确认的；source=manual 是家人手工录入、没有原件）。tests 可按项目名或缩写过滤。',
+    inputSchema: { share_id: z.string(), tests: z.array(z.string()).optional() },
+  }, async ({ share_id, tests }) => sh(svc => svc.labs(aiActor(), share_id, tests)))
+  server.registerTool('share_file', {
+    description: '家庭分享里一份报告原件的文字（已打码：姓名、证件号、电话等换成占位符）。record_id 来自 share_read 的 records。',
+    inputSchema: { share_id: z.string(), record_id: z.string() },
+  }, async ({ share_id, record_id }) => sh(svc => svc.recordText(aiActor(), share_id, record_id)))
+  server.registerTool('share_import', {
+    description: '把一份家庭分享纳入本院（家人允许时）：复制成本院患者（新代号，用户为负责人），化验、报告原件、简报一并复制并标明来自家庭分享。本机构设置「AI 写入患者数据需医生确认」时，AI 不能直接纳入，请提示医生在「家庭分享」里点「纳入本院」。',
+    inputSchema: { share_id: z.string() },
+  }, async ({ share_id }) => sh(svc => { const p = svc.import(aiActor(), share_id); return { patient_id: p.id, code: p.code } }))
 
   // —— 临床研究项目（与界面相同；删除研究由用户在界面上做）——
   const sd = (fn: (svc: StudyService) => unknown) => {
