@@ -5,6 +5,7 @@
  * - 独立于主应用（/app）的页面：手机浏览器优先，桌面浏览器同套。
  */
 import './phr.css'
+import { powDelay, solvePow, type PowSolution } from './pow.ts'
 
 // —— 类型（与 patients.ts 的行结构对应；本页只用到这些字段） ——
 
@@ -43,7 +44,10 @@ class ApiErr extends Error { constructor(message: string, readonly status: numbe
 
 async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(path, { ...opts, headers: { ...(opts.headers ?? {}), Authorization: `Bearer ${token()}` } })
-  if (res.status === 401) { renderGate(); throw new ApiErr('未登录', 401) }
+  if (res.status === 401) {
+    try { localStorage.removeItem('heurion.token') } catch { /* 无痕模式 */ }
+    renderAuth(); throw new ApiErr('未登录', 401)
+  }
   const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string }
   if (!res.ok) throw new ApiErr(body.error ?? `请求失败（${res.status}）`, res.status, body.code ?? '')
   return body as T
@@ -138,6 +142,7 @@ function spark(labs: Lab[]): string {
 // —— 路由 ——
 
 function render(): void {
+  if (!token()) { renderAuth(); return }
   const h = location.hash
   const m = /^#\/m\/([\w-]+)$/.exec(h)
   if (m) void memberView(m[1]!)
@@ -145,16 +150,82 @@ function render(): void {
 }
 window.addEventListener('hashchange', render)
 
-// —— 登录门 ——
+// —— 登录 / 注册（知家自带；人机校验与主应用共用同一套 PoW） ——
 
-function renderGate(): void {
-  const home = location.pathname.endsWith('.html') ? '/' : '/app'  // dev:web 时主应用在 /，构建后在 /app
+let authMode: 'login' | 'register' = 'login'
+let pow: Promise<{ solution: PowSolution; fetchedAt: number }> | null = null
+const armPow = (): void => { pow = solvePow(); pow.catch(() => { /* 失败在提交时呈现 */ }) }
+
+function renderAuth(err = ''): void {
+  if (new URLSearchParams(location.search).get('invite')) authMode = 'register'
   app.innerHTML = `<div class="gate">${MARK('mark')}<div class="logo">知家</div>
     <div class="tag">知家在，合家安</div><div class="brand">Heurion 出品 · 家庭健康顾问</div>
-    <button class="btn block" id="gateGo">去登录</button>
-    <p style="color:var(--sub);font-size:12px">登录在 Heurion 主应用里完成，回来这个页面自动进入。</p></div>`
-  $('#gateGo').addEventListener('click', () => { location.href = home })
-  const iv = setInterval(() => { if (token()) { clearInterval(iv); render() } }, 1000)
+    <div class="card" style="text-align:left">
+      <div class="form">
+        <label>用户名<input id="aUser" autocomplete="username"></label>
+        <label>密码<input id="aPass" type="password" autocomplete="${authMode === 'login' ? 'current-password' : 'new-password'}"></label>
+        ${authMode === 'register' ? '<label>昵称（可留空）<input id="aName" maxlength="24" autocomplete="nickname"></label>' : ''}
+        <div id="aErr" style="color:var(--hi);font-size:13px;min-height:1.2em">${esc(err)}</div>
+        <button class="btn block" id="aGo">${authMode === 'login' ? '登录' : '注册'}</button>
+        <div style="text-align:center;font-size:13px" id="aSwitch"></div>
+        <div id="aDev" hidden style="text-align:center;font-size:12px"><a href="#" id="aDevGo">开发模式直接进入</a></div>
+        ${authMode === 'login' ? '<div style="text-align:center;font-size:12px;color:var(--sub)">忘记密码？在电脑版主应用（/app）里重置</div>' : ''}
+      </div>
+    </div></div>`
+  $('#aSwitch').innerHTML = authMode === 'login' ? '没有账户？<a href="#" data-m="register">注册</a>' : '已有账户？<a href="#" data-m="login">登录</a>'
+  $('#aSwitch').querySelectorAll('a').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault(); authMode = a.getAttribute('data-m') as 'login' | 'register'; renderAuth()
+  }))
+  ;[$('#aUser'), $('#aPass')].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') void submitAuth() }))
+  $('#aGo').addEventListener('click', () => void submitAuth())
+  armPow()
+  void (async () => {
+    const cfg = await fetch('/api/auth/config').then(r => r.json()).catch(() => null) as { has_users?: boolean; dev_mode?: boolean } | null
+    if (!cfg) return
+    if (cfg.has_users === false && authMode === 'login') { authMode = 'register'; renderAuth(); return }
+    if (cfg.dev_mode) {
+      $('#aDev').hidden = false
+      $('#aDevGo').addEventListener('click', e => {
+        e.preventDefault()
+        try { localStorage.setItem('heurion.token', 'dev') } catch { /* 无痕模式 */ }
+        render()
+      })
+    }
+  })()
+}
+
+async function submitAuth(): Promise<void> {
+  const btn = $<HTMLButtonElement>('#aGo')
+  const user = ($('#aUser') as HTMLInputElement).value.trim()
+  const pass = ($('#aPass') as HTMLInputElement).value
+  if (!user || !pass) { $('#aErr').textContent = '用户名和密码都要填'; return }
+  btn.disabled = true
+  const label = btn.textContent
+  btn.textContent = '人机校验中…'
+  try {
+    const { solution, fetchedAt } = await pow!
+    await powDelay(fetchedAt)
+    btn.textContent = authMode === 'login' ? '登录中…' : '注册中…'
+    const body: Record<string, unknown> = { username: user, password: pass, pow: solution }
+    if (authMode === 'register') {
+      body.display_name = ($('#aName') as HTMLInputElement | undefined)?.value.trim() ?? ''
+      const inv = new URLSearchParams(location.search).get('invite')
+      if (inv) body.invite = inv
+    }
+    const res = await fetch(authMode === 'login' ? '/api/auth/login' : '/api/auth/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    const data = await res.json().catch(() => ({})) as { token?: string; error?: string }
+    if (!res.ok || !data.token) throw new Error(data.error ?? '没有成功，请重试')
+    try { localStorage.setItem('heurion.token', data.token) } catch { /* 无痕模式 */ }
+    toast(authMode === 'login' ? '欢迎回来' : '欢迎来到知家 🎉')
+    render()
+  } catch (err) {
+    $('#aErr').textContent = (err as Error).message
+    btn.disabled = false
+    btn.textContent = label
+    armPow()
+  }
 }
 
 // —— 首页：家庭空间 ——

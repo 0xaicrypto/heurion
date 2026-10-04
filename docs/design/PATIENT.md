@@ -125,11 +125,12 @@
 | **一：数据闭环 + 外壳** | 称呼字段（加密存储，建档 / 编辑 / 列表 / 详情） | `tenancy/patients.ts` | ✅ |
 | | 手动录入化验接口（source=manual，直接已确认） | `http/api.ts` | ✅ |
 | | 知家移动外壳：家庭首页、成员页（化验 / 记录 / 待确认）、趋势小图、上传报告（拍照 / 相册 / PDF / docx） | `web/phr.html` + `web/src/phr.ts` | ✅ |
+| | 知家自带登录 / 注册（PoW 与主应用共用，抽 `web/src/pow.ts`；邀请码、开发模式入口） | `web/src/phr.ts` + `pow.ts` | ✅ |
 | | `/phr` 页面路由 + vite 多页构建 | `index.ts` / `web/vite.config.ts` | ✅ |
-| **二：AI 建议 + 红线** | 患者红线守卫（§3 的六条，写前硬闸） | `ops/`（患者规则集） | — |
-| | harness 患者 profile（不放宽 cordis 的外发边界，另建一份） | `harness/profile/heurion-phr.yml` | — |
-| | 成员档案 doc：建档即建「健康档案」doc 并 `patient_docs` 关联；对话按成员绑定 | `patients.ts` + turns | — |
-| | 就诊简报 `visit_brief`（doc_create + 红线守卫，导出 docx） | `http` + turns | — |
+| **二：AI 建议 + 红线** | 患者红线守卫（§3 六条规则，写前硬闸；作用域 = 成员健康档案 doc_kind=archive；记录口径放行、AI 越界拦截） | `ops/phr-guard.ts` | ✅ |
+| | 成员档案 doc：建档即建「健康档案」doc 并关联（归属 doc_kind=archive，人 / AI 建档同路径） | `tenancy/patients.ts` | ✅ |
+| | harness 患者 profile（不放宽 cordis 的外发边界）——与成员对话接入一起做（persona 按进程选择） | `harness/profile/` | — |
+| | 就诊简报 `visit_brief` 与按成员的对话 UI（对话走同一 turns 队列） | `http` + turns + `web/src/phr.ts` | — |
 | **三：硬化与试点** | 越权测试（isolation 框架自动枚举新路由，本批已覆盖） | `tests/isolation.test.ts` | ✅（自动） |
 | | 红线评测集（§8 口径，含儿童 / 孕产诱导样本） | `tests/` | — |
 | | 20 个真实家庭试点「建档 → 上传 → 归档 → 趋势 → 问题清单」 | 试点 | — |

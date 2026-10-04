@@ -1,4 +1,5 @@
 import { mountOrgTemplates } from './org-templates.ts'
+import { powDelay, solvePow } from './pow.ts'
 
 /**
  * 账户界面（MIGRATION_PLAN.md §2.5 R1）：登录 / 注册页（含邀请链接）、左栏底部的用户菜单、个人设置、
@@ -55,26 +56,7 @@ async function post(path: string, body: unknown, token?: string): Promise<any> {
   return data
 }
 
-// —— 防机器人：工作量证明（服务端见 src/auth/bot-guard.ts） ——
-
-interface Challenge { challenge: string; salt: string; maxnumber: number; signature: string }
-
-const hexBytes = (hex: string) => Uint8Array.from(hex.match(/../g)!.map(h => parseInt(h, 16)))
-
-/** 领题并穷举 n 使 SHA-256(salt + n) = challenge（Web Crypto，异步分批，不卡页面）。 */
-async function solvePow(): Promise<{ solution: { challenge: string; salt: string; number: number; signature: string }; fetchedAt: number }> {
-  const fetchedAt = Date.now()
-  const c = await fetch('/api/auth/challenge', { cache: 'no-store' }).then(r => r.json()) as Challenge
-  const target = hexBytes(c.challenge)
-  const enc = new TextEncoder()
-  for (let n = 0; n <= c.maxnumber; n++) {
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(c.salt + n)))
-    let same = true
-    for (let i = 0; i < 32 && same; i++) same = digest[i] === target[i]
-    if (same) return { solution: { challenge: c.challenge, salt: c.salt, number: n, signature: c.signature }, fetchedAt }
-  }
-  throw new Error('人机校验失败，请刷新页面')
-}
+// —— 防机器人：工作量证明（服务端见 src/auth/bot-guard.ts）；实现抽在 pow.ts，与知家共用 ——
 
 // —— 登录 / 注册 ——
 
@@ -143,9 +125,8 @@ export async function showAuthScreen(): Promise<void> {
         website: $<HTMLInputElement>('authWebsite').value,
       }
       const { solution, fetchedAt } = await pow
-      // 服务端要求领题后至少 1.5 秒才提交（拦脚本）：不足时在这里补足（按本机领题时刻计，不受时钟偏差影响）
-      const wait = fetchedAt + 1700 - Date.now()
-      if (wait > 0) await new Promise(r => setTimeout(r, wait))
+      // 服务端要求领题后至少 1.5 秒才提交（拦脚本）：按本机领题时刻补足，不受时钟偏差影响
+      await powDelay(fetchedAt)
       btn.textContent = label
       const r = await post(mode === 'login' ? '/api/auth/login' : '/api/auth/register', { ...body, pow: solution, ...(mode === 'register' && invite ? { invite: code } : {}) })
       saveToken(r.token)
@@ -171,8 +152,7 @@ export async function showAuthScreen(): Promise<void> {
     btn.textContent = '发送中…'
     try {
       const { solution, fetchedAt } = await resetPow
-      const wait = fetchedAt + 1700 - Date.now()
-      if (wait > 0) await new Promise(r => setTimeout(r, wait))
+      await powDelay(fetchedAt)
       await post('/api/auth/password-code', { email: $<HTMLInputElement>('resetEmail').value, pow: solution, website: $<HTMLInputElement>('authWebsite').value })
       $('resetNote').textContent = '如果这个邮箱绑定了账户，验证码已发出（10 分钟内有效）。没收到请检查垃圾邮件。'
       $<HTMLInputElement>('resetCode').focus()
