@@ -51,7 +51,7 @@ export class ShareService {
   // —— 家人一侧 ——
 
   create(a: Actor, patientId: string, input: ShareInput) {
-    const own = this.tenants.of(a.userId)
+    const own = this.tenants.of(a.userId, a.space ?? 'work')
     if (own.kind !== 'personal') throw new PatientError('share_personal_only', '分享给医生只在知家（个人空间）里用；医院之间请走院内流程', 403)
     this.patients.assertEditable(a, patientId)
     const target = typeof input.tenant_id === 'string' ? this.store.getTenant(input.tenant_id) : undefined
@@ -107,7 +107,7 @@ export class ShareService {
 
   /** 本人所在科室收到的、或指定给本人的有效分享。 */
   inbox(a: Actor) {
-    const t = this.tenants.of(a.userId)
+    const t = this.tenants.of(a.userId, 'work')  // 医生一侧：工作空间（医院）
     const settings = this.tenants.settings(t)
     if (!settings.accept_patient_shares) return []
     this.aiGate(a, settings)
@@ -178,7 +178,7 @@ export class ShareService {
   /** 医生能看这份分享：本院收到、有效、本人在科室里（指定了医生时只能是那位医生）；看不到的当不存在。 */
   private forDoctor(a: Actor, shareId: string): PhrShareRow {
     const s = this.store.getShare(shareId)
-    const t = this.tenants.of(a.userId)
+    const t = this.tenants.of(a.userId, 'work')  // 医生一侧：工作空间（医院）
     const settings = this.tenants.settings(t)
     const missing = () => new PatientError('not_found', '分享不存在或已失效', 404)
     if (!s || s.tenant_id !== t.id || !settings.accept_patient_shares) throw missing()

@@ -128,6 +128,9 @@ async function setup() {
   const dept = await json('POST', '/api/tenant/departments', A.token, { name: '心内科' })
   await json('PUT', `/api/tenant/departments/${dept.id}/members`, A.token, { user_ids: [A.user.id] })
   const fam = await register('family')
+  // 按用户名邀请：A 的医院邀请 family（只有 family 本人能看、能接受 / 拒绝）——:code 参数用它测越权
+  const targeted = await json('POST', '/api/tenant/invites', A.token, { username: 'family' })
+  if (!targeted.code) throw new Error(`按用户名邀请失败 ${JSON.stringify(targeted)}`)
   const famPatient = await json('POST', '/api/patients', fam.token, { name: '妈妈', sex: 'F', birth_year: 1960, tags: [MARK] })
   await json('POST', `/api/patients/${famPatient.id}/labs`, fam.token, { test_name: MARK, value: 7.2, unit: 'mmol/L', collected_on: '2026-09-01' })
   const share = await json('POST', `/api/phr/${famPatient.id}/shares`, fam.token, { tenant_id: created.tenant.id, department_id: dept.id, allow_import: true, display_name: MARK })
@@ -137,7 +140,7 @@ async function setup() {
 
   const seed: Seed = {
     doc: doc.id, dataset: dataset.id, kb: kbFile.id, memory: mem.memory.id, comment: comment.id ?? comment.comment?.id ?? 'c0', project: project.id,
-    userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
+    userA: A.user.id, invite: targeted.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
     patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id, orgTemplate: orgTpl.id, action: action.id,
     department: dept.id, share: share.id,
   }

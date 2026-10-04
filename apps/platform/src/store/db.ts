@@ -43,8 +43,10 @@ export interface UserRow {
   imported_from: string | null
   /** 已验证的邮箱（找回密码用）；未绑定为 null。 */
   email: string | null
-  /** 所属租户（机构）；一个用户只属于一个租户。 */
+  /** 工作空间（机构）：加入了医院就是医院，否则是个人空间。工作台（/app）的患者、研究、科室、机构模板按它走。 */
   tenant_id: string | null
+  /** 个人空间（知家的家人档案所在）。加入医院后保留；为 null 时知家用到再建（纯医院账号）。docs/design/TENANCY.md §双重身份 */
+  personal_tenant_id: string | null
   /** 在租户里的角色：admin 机构管理员 / member 成员。role=admin 是平台运营（与租户角色无关）。 */
   tenant_role: 'admin' | 'member'
 }
@@ -59,6 +61,8 @@ export interface TenantRow {
 
 export interface TenantInviteRow {
   code: string; tenant_id: string; role: 'admin' | 'member'; email: string | null; created_by: string
+  /** 按用户名邀请的已有账户（只有这个人能接受）；链接邀请为 null */
+  target_user_id: string | null
   created_at: string; expires_at: string; used_by: string | null; used_at: string | null; revoked_at: string | null
 }
 
@@ -522,6 +526,13 @@ export class Store {
     const tenantCols = (this.db.prepare('PRAGMA table_info(tenants)').all() as Array<{ name: string }>).map(c => c.name)
     if (!tenantCols.includes('dek')) this.db.exec('ALTER TABLE tenants ADD COLUMN dek TEXT')
     if (!userCols.includes('tenant_role')) this.db.exec("ALTER TABLE users ADD COLUMN tenant_role TEXT NOT NULL DEFAULT 'member'")
+    // 双重身份：个人空间单独记一列；老账户在个人租户里的，个人空间就是它
+    if (!userCols.includes('personal_tenant_id')) {
+      this.db.exec('ALTER TABLE users ADD COLUMN personal_tenant_id TEXT')
+      this.db.exec("UPDATE users SET personal_tenant_id = tenant_id WHERE tenant_id IN (SELECT id FROM tenants WHERE kind = 'personal')")
+    }
+    const inviteCols = (this.db.prepare('PRAGMA table_info(tenant_invites)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!inviteCols.includes('target_user_id')) this.db.exec('ALTER TABLE tenant_invites ADD COLUMN target_user_id TEXT')
     const auditCols = (this.db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>).map(c => c.name)
     if (!auditCols.includes('tenant_id')) this.db.exec('ALTER TABLE audit_events ADD COLUMN tenant_id TEXT')
     // AI 代表用户操作：via = ai（AI 直接做的）/ ai-confirmed（AI 发起、用户确认后执行的），confirmed_by = 确认人
@@ -595,9 +606,11 @@ export class Store {
     const id = 'u' + randomUUID().replace(/-/g, '').slice(0, 15)
     const role = input.role ?? (this.countUsers() === 0 ? 'admin' : 'user')
     const tenant = input.tenant ?? { id: this.createTenant({ name: `${input.display_name}（个人）`, kind: 'personal', created_by: id }).id, role: 'admin' as const }
-    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from, email, tenant_id, tenant_role)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null, input.email ?? null, tenant.id, tenant.role)
+    // 个人注册：个人空间就是工作空间；经邀请注册进机构的：个人空间等知家用到再建
+    const personal = input.tenant ? null : tenant.id
+    this.db.prepare(`INSERT INTO users (id, username, username_key, display_name, password_hash, role, status, created_at, imported_from, email, tenant_id, tenant_role, personal_tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, input.username, userKey(input.username), input.display_name, input.password_hash, role, input.status ?? 'active', now(), input.imported_from ?? null, input.email ?? null, tenant.id, tenant.role, personal)
     return this.getUser(id)!
   }
 
@@ -650,11 +663,11 @@ export class Store {
     this.db.prepare('UPDATE users SET tenant_id = ?, tenant_role = ? WHERE id = ?').run(tenantId, role, userId)
   }
 
-  addInvite(input: Pick<TenantInviteRow, 'tenant_id' | 'role' | 'email' | 'created_by'> & { days: number }): TenantInviteRow {
+  addInvite(input: Pick<TenantInviteRow, 'tenant_id' | 'role' | 'email' | 'created_by'> & { days: number; target_user_id?: string | null }): TenantInviteRow {
     const code = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '').slice(0, 8)
     const t = now()
-    this.db.prepare('INSERT INTO tenant_invites (code, tenant_id, role, email, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(code, input.tenant_id, input.role, input.email, input.created_by, t, new Date(Date.now() + input.days * 86_400_000).toISOString())
+    this.db.prepare('INSERT INTO tenant_invites (code, tenant_id, role, email, created_by, created_at, expires_at, target_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(code, input.tenant_id, input.role, input.email, input.created_by, t, new Date(Date.now() + input.days * 86_400_000).toISOString(), input.target_user_id ?? null)
     return this.getInvite(code)!
   }
 
@@ -665,6 +678,16 @@ export class Store {
   listInvites(tenantId: string): TenantInviteRow[] {
     return this.db.prepare('SELECT * FROM tenant_invites WHERE tenant_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC')
       .all(tenantId, now()) as unknown as TenantInviteRow[]
+  }
+
+  /** 发给这个账户、还没处理的邀请（按用户名邀请的）。 */
+  invitesForUser(userId: string): TenantInviteRow[] {
+    return this.db.prepare('SELECT * FROM tenant_invites WHERE target_user_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC')
+      .all(userId, now()) as unknown as TenantInviteRow[]
+  }
+
+  setPersonalTenant(userId: string, tenantId: string | null): void {
+    this.db.prepare('UPDATE users SET personal_tenant_id = ? WHERE id = ?').run(tenantId, userId)
   }
 
   useInvite(code: string, userId: string): void {

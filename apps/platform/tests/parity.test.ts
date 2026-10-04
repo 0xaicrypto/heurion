@@ -103,6 +103,10 @@ const ALL_PARITY: Record<string, string> = {
   // 任务队列、账户
   'GET /api/queue': 'task_queue.list', 'POST /api/queue/:jid/cancel': 'task_queue.cancel',
   'GET /api/me': 'account.view', 'PATCH /api/me': 'account.update_profile', 'POST /api/auth/logout-everywhere': 'account.logout_everywhere',
+  // 已有账户加入医院（双重身份）：本人接受 / 拒绝 / 退出
+  'GET /api/me/invites': 'account.invites', 'GET /api/me/invites/:code': 'account.view_invite',
+  'POST /api/me/invites/:code/accept': 'account.join_tenant', 'POST /api/me/invites/:code/decline': 'account.decline_invite', 'POST /api/tenant/leave': 'account.leave_tenant',
+  'DELETE /api/tenant/members/:uid': 'tenant_admin.remove_member',
   // 机构（机构管理员）
   'GET /api/tenant': 'tenant_admin.view', 'PATCH /api/tenant': 'tenant_admin.update_settings', 'GET /api/tenant/members': 'tenant_admin.members', 'PATCH /api/tenant/members/:uid': 'tenant_admin.set_member',
   'GET /api/tenant/invites': 'tenant_admin.invites', 'POST /api/tenant/invites': 'tenant_admin.invite', 'DELETE /api/tenant/invites/:code': 'tenant_admin.revoke_invite',
@@ -132,7 +136,7 @@ const ALL_PARITY: Record<string, string> = {
 
 /** AI 发起后要用户在确认卡上确认才执行的动作（不可恢复的删除、权限与安全、以机构身份对外的标识）。 */
 const AI_CONFIRM = [
-  'account.logout_everywhere',
+  'account.logout_everywhere', 'account.join_tenant', 'account.leave_tenant', 'tenant_admin.invite_user', 'tenant_admin.remove_member',
   'tenant_admin.update_settings', 'tenant_admin.set_member', 'tenant_admin.invite', 'tenant_admin.handover',
   'org_template.delete', 'org_template.set_logo', 'org_template.clear_logo',
   'platform_admin.create_tenant', 'platform_admin.set_tenant_status', 'platform_admin.update_user', 'platform_admin.logout_user', 'platform_admin.update_settings',

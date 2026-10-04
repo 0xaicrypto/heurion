@@ -125,9 +125,9 @@ describe('知家分享：目录与新建', () => {
     expect((await t.share({ doctor_id: t.neuro.user.id })).status).toBe(400) // 神经科医生不在心内科
     expect((await t.share({ doctor_id: t.cardio.user.id })).status).toBe(201)
     expect((await t.call('POST', `/api/phr/${t.member.id}/shares`, t.other.token, { tenant_id: t.orgA.tenant.id, department_id: t.dCardio.id })).status).toBe(404) // 别的家庭
-    // 医院端的人不能用知家分享
+    // 医院端的患者不能经知家分享：/api/phr/* 按个人空间取患者库，医院患者在那里不存在（双重身份，TENANCY.md）
     const hp = (await t.call('POST', '/api/patients', t.cardio.token, { sex: 'M' })).json
-    expect((await t.call('POST', `/api/phr/${hp.id}/shares`, t.cardio.token, { tenant_id: t.orgA.tenant.id, department_id: t.dCardio.id })).status).toBe(403)
+    expect((await t.call('POST', `/api/phr/${hp.id}/shares`, t.cardio.token, { tenant_id: t.orgA.tenant.id, department_id: t.dCardio.id })).status).toBe(404)
   })
 })
 

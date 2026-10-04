@@ -185,6 +185,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'DELETE', re: /^\/api\/patients\/[^/]+\/team\/[^/]+$/, action: 'patient.team_remove' },
     { method: 'PATCH', re: /^\/api\/tenant\/members\/[^/]+$/, action: 'tenant.member_update' },
     { method: 'POST', re: /^\/api\/tenant\/invites$/, action: 'tenant.invite' },
+    { method: 'POST', re: /^\/api\/me\/invites\/[^/]+\/accept$/, action: 'tenant.join' },
+    { method: 'POST', re: /^\/api\/me\/invites\/[^/]+\/decline$/, action: 'tenant.invite_decline' },
+    { method: 'POST', re: /^\/api\/tenant\/leave$/, action: 'tenant.leave' },
+    { method: 'DELETE', re: /^\/api\/tenant\/members\/[^/]+$/, action: 'tenant.member_remove' },
     { method: 'POST', re: /^\/api\/tenant\/templates$/, action: 'tenant.template_create' },
     { method: 'PATCH', re: /^\/api\/tenant\/templates\/[^/]+$/, action: 'tenant.template_update' },
     { method: 'DELETE', re: /^\/api\/tenant\/templates\/[^/]+$/, action: 'tenant.template_delete' },
@@ -320,7 +324,29 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     try { return c.json(tenants.invites(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
   })
   app.post('/api/tenant/invites', async c => {
-    try { return c.json(tenants.invite(c.get('user'), await c.req.json()), 201) } catch (err) { return tenantFailure(c, err) }
+    try {
+      const body = await c.req.json<{ username?: unknown; role?: unknown; email?: unknown; days?: unknown }>()
+      // 带 username = 按用户名邀请已有账户（对方登录后接受）；否则是邀请链接
+      return c.json(body.username !== undefined ? tenants.inviteUser(c.get('user'), body) : tenants.invite(c.get('user'), body), 201)
+    } catch (err) { return tenantFailure(c, err) }
+  })
+  app.delete('/api/tenant/members/:uid', c => {
+    try { tenants.removeMember(c.get('user'), c.req.param('uid')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
+  })
+  /** 本人退出医院：工作空间回到个人空间（知家不受影响）。 */
+  app.post('/api/tenant/leave', c => {
+    try { return c.json(tenants.leave(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  // —— 发给我的邀请（已有账户加入医院；本人接受 / 拒绝）——
+  app.get('/api/me/invites', c => c.json(tenants.myInvites(c.get('user'))))
+  app.get('/api/me/invites/:code', c => {
+    try { return c.json(tenants.inviteFor(c.get('user'), c.req.param('code'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.post('/api/me/invites/:code/accept', c => {
+    try { return c.json(tenants.accept(c.get('user'), c.req.param('code'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.post('/api/me/invites/:code/decline', c => {
+    try { tenants.decline(c.get('user'), c.req.param('code')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
   })
   app.delete('/api/tenant/invites/:code', c => {
     try { tenants.revokeInvite(c.get('user'), c.req.param('code')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
@@ -389,7 +415,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     throw err
   }
   // 患者操作的来源：AI 直接调用按 AI 算（受「AI 写入需确认」等规则约束）；AI 发起、用户确认后执行的按用户本人算
-  const me = (c: Context<{ Variables: { user: string } }>) => ({ userId: c.get('user'), via: viaByReq.get(c.req.raw)?.via === 'ai' ? 'ai' as const : 'user' as const })
+  // 空间：/api/phr/* 一律是知家（个人空间）；知家调用通用患者接口时带 X-Heurion-Space: personal；其余是工作台（工作空间）
+  const me = (c: Context<{ Variables: { user: string } }>) => ({
+    userId: c.get('user'), via: viaByReq.get(c.req.raw)?.via === 'ai' ? 'ai' as const : 'user' as const,
+    space: c.req.path.startsWith('/api/phr/') || c.req.header('x-heurion-space') === 'personal' ? 'personal' as const : 'work' as const,
+  })
   const pt = (c: Context<{ Variables: { user: string } }>) => {
     if (!deps.patients) throw new PatientError('patient_module_off', '患者模块未启用', 403)
     return deps.patients

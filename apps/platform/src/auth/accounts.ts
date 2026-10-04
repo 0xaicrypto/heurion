@@ -130,7 +130,8 @@ export class Accounts {
     let tenant: { id: string; role: UserRow['tenant_role'] } | undefined
     if (input.invite) {
       const inv = this.store.getInvite(String(input.invite))
-      if (!inv || inv.revoked_at || inv.used_at || Date.parse(inv.expires_at) < Date.now()) throw new AuthError('invite_invalid', '邀请链接无效或已过期，请让管理员重新发一个')
+      // 按用户名邀请的（发给某个已有账户）不能拿来注册新账户
+      if (!inv || inv.revoked_at || inv.used_at || inv.target_user_id || Date.parse(inv.expires_at) < Date.now()) throw new AuthError('invite_invalid', '邀请链接无效或已过期，请让管理员重新发一个')
       if (this.store.getTenant(inv.tenant_id)?.status !== 'active') throw new AuthError('tenant_suspended', '这个机构已停用', 403)
       tenant = { id: inv.tenant_id, role: inv.role }
     }
