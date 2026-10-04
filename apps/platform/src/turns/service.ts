@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { Documents, CommitEvent } from '../model/runtime.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
+import { guardPhrRedlines, type PhrMember } from '../ops/phr-guard.ts'
 import type { MemoryService } from '../memory/service.ts'
 import type { Alerts } from '../ops-alert/alerts.ts'
 import type { HarnessPool } from '../harness/pool.ts'
@@ -24,15 +25,24 @@ export function commentPrompt(docId: string, commentId: string, kind: 'doc' | 'd
 /** 评论 / 回复里召唤 AI 的触发词。 */
 export const wantsAi = (text: string): boolean => /[@＠]heurion\b/i.test(text)
 
+/** 知家红线：绑定健康档案 / 简报的回合里，AI 的对话回复违规时用它替换展示与落库（PATIENT.md §3）。 */
+export const PHR_REPLY_NOTICE = '（知家安全提示）这条回复里有诊疗判断类的内容，知家不能说。建议把症状、检查和日期整理好，当面咨询医生；紧急情况请立即就医。'
+
+/** 知家红线检查：违规返回失败信息（通过返回 null）。 */
+function phrViolation(text: string, member: PhrMember | null): string | null {
+  if (!text) return null
+  try { guardPhrRedlines(text, 0, member); return null } catch (err) { return (err as { message?: string }).message ?? '内容不合规' }
+}
+
 /** 就诊简报（知家，PATIENT.md §6）：服务端组装的生成指令。简报文档是回合的落点；红线守卫在操作层强制。 */
 export function phrBriefPrompt(input: {
-  patientId: string; name: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+  patientId: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
   archiveDocId?: string | null
 }): string {
   const who = [input.sex === 'M' ? '男' : input.sex === 'F' ? '女' : '', input.birth_year ? `${input.birth_year} 年生` : '', ...input.tags].filter(Boolean).join('，')
   return (
     `请为家庭成员生成一份「就诊简报」，用 doc_edit 写进本文档（看病前给医生看的准备，不是病历）。\n` +
-    `成员：${input.name}（${input.code}；${who || '基本信息待补'}）。patient_id=${input.patientId}。\n` +
+    `成员：${input.code}（${who || '基本信息待补'}）。patient_id=${input.patientId}。\n` +
     `步骤：\n` +
     `1. patient_read（patient_id）与 labs_query 看最近的化验与记录（重点近 3 个月与异常项）；` +
     (input.archiveDocId ? `doc_outline / doc_read 读健康档案文档 ${input.archiveDocId}，了解背景与医生交代；\n` : `\n`) +
@@ -106,6 +116,8 @@ export class TurnService {
   private readonly idleTimeoutMs: number
   private readonly memory: MemoryService | null
   private readonly alerts: Alerts | null
+  /** 知家红线（PATIENT.md §3）：返回 undefined = 不是知家文档（不检查）；null = 是知家文档但没有特殊标记；对象 = 有孕产 / 哺乳 / 儿童标记。 */
+  private readonly phrGuard: ((docId: string) => PhrMember | null | undefined) | null
   private readonly queues = new Map<string, Job[]>()
   private readonly running = new Map<string, Running>()
 
@@ -113,11 +125,12 @@ export class TurnService {
     private readonly docs: Documents,
     private readonly pool: HarnessPool,
     private readonly registry: TurnRegistry,
-    opts: { idleTimeoutMs?: number; memory?: MemoryService; alerts?: Alerts } = {},
+    opts: { idleTimeoutMs?: number; memory?: MemoryService; alerts?: Alerts; phrGuard?: (docId: string) => PhrMember | null | undefined } = {},
   ) {
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60_000
     this.memory = opts.memory ?? null
     this.alerts = opts.alerts ?? null
+    this.phrGuard = opts.phrGuard ?? null
   }
 
   /** 服务启动时恢复：上次没跑完的回合标为中断，排队中的任务重新入队。 */
@@ -258,6 +271,9 @@ export class TurnService {
     // 记忆紧挨着本轮消息（放在最前面时模型容易照抄消息里的写法而忽略偏好）
     const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}${memoryNote}\n\n${memoryBlock}${message}`
 
+    // 知家红线只看文档归属，整个回合算一次
+    const phr = this.phrGuard?.(docId)
+
     let status: 'done' | 'error' | 'cancelled' | 'timeout' = 'done'
     let failure: string | null = null
     let modelError: string | null = null
@@ -268,12 +284,21 @@ export class TurnService {
           for (const e of mapNotification(n, sessionId)) {
             // 模型调用失败（认证失败、限流、服务出错等）：dsh 正常结束回合但带错误，按失败记，不算「已完成」
             if (e.type === 'error') modelError = e.message
+            // 知家红线：对话回复在展示前过守卫，违规换成安全提示（不把诊疗判断显示给家人）
+            else if (e.type === 'assistant' && phr !== undefined && phrViolation(e.text, phr)) {
+              emit({ type: 'assistant', text: PHR_REPLY_NOTICE })
+              continue
+            }
             emit(e)
           }
         }),
         aborted,
       ])
-      if (result.finalResponse) store.addMessage(docId, 'assistant', result.finalResponse, turn.id)
+      // 落库的历史同样过守卫：违规回复不进消息记录
+      if (result.finalResponse) {
+        const bad = phr !== undefined && phrViolation(result.finalResponse, phr)
+        store.addMessage(docId, 'assistant', bad ? PHR_REPLY_NOTICE : result.finalResponse, turn.id)
+      }
       if (modelError) { status = 'error'; failure = modelError }
     } catch (err) {
       status = this.timedOut.has(userId) ? 'timeout' : this.cancelling.has(userId) ? 'cancelled' : 'error'

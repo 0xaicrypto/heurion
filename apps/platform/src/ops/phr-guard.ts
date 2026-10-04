@@ -11,14 +11,19 @@ import { OpError } from './types.ts'
 
 export interface PhrMember { tags: string[]; birth_year: number | null }
 
-/** 诊断结论句式（无归属才拦，见 ATTRIBUTED）。 */
-const DIAG = /(?:诊断[为是]|确诊[为是]|考虑[是为][^。]{0,10}(?:炎|症|病|瘤|癌|综合征|感染)|符合[^。]{0,16}(?:的诊断|表现))/
-/** 记录口径（医生 / 医院 / 报告说的）：含它就不拦诊断与用药。 */
-const ATTRIBUTED = /(?:医生|大夫|医院|门诊|出院|入院|查出|告知|被告知|体检报告|随访)/
-/** 用药 / 剂量建议（指令式）。 */
-const DOSAGE_DIR = /(?:改用|换用|停用|停掉|加量|减量|剂量[^。]{0,8}(?:改|调)|(?:建议|应当?|需要|推荐|不妨)[^。]{0,16}(?:服用|口服|外用|注射|静点|输注|使用|加用))/
-/** 带剂量的指令（「每次 5mg 即可」）。 */
-const DOSAGE_AMT = /(?:每日|每天|每次|一天)\s*\d+(?:\.\d+)?\s*(?:mg|毫克|微克|μg|ml|毫升|片|粒|支|袋|喷|滴|iu|国际单位)[^。]{0,10}(?:建议|应|需|即可|就行)/i
+/** 诊断结论句式：判断 / 怀疑 / 可能是 / 是典型的 + 医学名词，或确诊 / 符合诊断；英文同理。 */
+const DIAG = /(?:诊断[为是]|确诊[为是]|考虑[是为]|判断[为是]|怀疑(?:是)?|可能是|是典型的)[^。]{0,10}(?:炎|症|病|瘤|癌|疹|综合征|感染|结石|结节|甲流|乙流|流感)|符合[^。]{0,16}(?:诊断|表现)|\b(?:diagnos(?:is|ed)(?:\s+with)?|you\s+have|likely\s+[a-z]+)\b/i
+/**
+ * 引述口径才放行：引述者要紧邻结论（医生诊断为…／医生说…／医生建议…／出院诊断：…／体检报告查出…）。
+ * 引述者与结论之间出现「不 / 没 / 我 / 你 / 他 / 她 / 家」即不是引述——「医生不在，我判断是肺炎」拦下。
+ */
+const QGAP = '[^。；！？，,不没我你他她家]{0,6}'
+const QUOTED = new RegExp(
+  `(?:医生|大夫|医院|门诊|出院|入院|体检报告|随访|复查|检查)${QGAP}(?:诊断[为是]|确诊[为是]|考虑[是为]|判断[为是]|说|交代|开了?|让|查出|告知|建议)|(?:出院|入院|门诊)诊断[:：]|\\b(?:doctor|hospital)[^。]{0,6}(?:diagnos|said|told|prescrib)`,
+  'i',
+)
+/** 用药 / 剂量建议（指令式；「可以吃」「建议吃」「加到每次 X 片」都算——记录医嘱走引述口径）。 */
+const DOSAGE = /(?:改用|换用|停用|停掉|加量|减量|剂量[^。]{0,8}(?:改|调)|(?:加|减)(?:到|为)[^。]{0,6}\d+(?:\.\d+)?\s*(?:mg|毫克|片|粒|ml|毫升|滴)|(?:建议|应当?|需要|推荐|不妨|试试)[^。]{0,16}(?:服用|口服|外用|注射|静点|输注|使用|加用|吃)|(?:可以|不妨|试试)[^。]{0,6}(?:吃|服用|用上|注射)|(?:每日|每天|每次|一天)\s*\d+(?:\.\d+)?\s*(?:mg|毫克|微克|μg|ml|毫升|片|粒|支|袋|喷|滴|iu|国际单位)[^。]{0,10}(?:建议|应|需|即可|就行)|\b(?:take|prescrib)\w*[^。]{0,12}\d+\s*mg\b)/i
 /** 统计性论断（研究口径的数字）＋断言词：要有出处。 */
 const STAT = /\b(?:HR|OR|RR|CI)\b|\d+(?:\.\d+)?\s*[%％]|\b[Pp]\s*[<=＜]\s*0?\.\d+/
 const ASSERT = /(?:风险|有效|相关|导致|预防|获益|复发|存活|死亡)/
@@ -36,20 +41,39 @@ const SPECIAL_MED = /(?:(?:建议|应当?|需要|推荐|不妨)[^。]{0,16}(?:�
 
 const sentences = (text: string): string[] => text.split(/(?<=[。！？；!?])/)
 
+/** 单句的越界建议（诊断 / 用药），返回违规信息（合规返回 null）。 */
+function adviceViolation(s: string): 'diag' | 'dosage' | null {
+  if (DIAG.test(s)) return 'diag'
+  if (DOSAGE.test(s)) return 'dosage'
+  return null
+}
+
+/** 对一句越界建议抛 OpError。 */
+function throwAdvice(kind: 'diag' | 'dosage', opIndex: number): never {
+  if (kind === 'diag') {
+    throw new OpError('health_advice_forbidden', '不能由 AI 给出诊断结论', {
+      op_index: opIndex,
+      hint: '诊断只能来自医生的病历：改成引述口径（如「医生诊断为…」「出院诊断：…」），或改为描述症状并建议咨询医生。',
+    })
+  }
+  throw new OpError('health_advice_forbidden', '不能由 AI 提出用药 / 剂量 / 停换药建议', {
+    op_index: opIndex,
+    hint: '医生交代的用法可以记录（写明「医生交代 / 医嘱」）；不要由你提出用药、剂量或停换药建议。',
+  })
+}
+
 /** 对一段 AI 拟写入的文字做红线检查；违规抛 OpError（带失败码与 hint）。 */
 export function guardPhrRedlines(text: string, opIndex: number, member: PhrMember | null): void {
   for (const s of sentences(text)) {
-    if (DIAG.test(s) && !ATTRIBUTED.test(s)) {
-      throw new OpError('health_advice_forbidden', '不能由 AI 给出诊断结论', {
-        op_index: opIndex,
-        hint: '诊断只能来自医生的病历：改成记录口径（如「医生诊断为…」「出院诊断：…」），或改为描述症状并建议咨询医生。',
-      })
-    }
-    if ((DOSAGE_DIR.test(s) || DOSAGE_AMT.test(s)) && !ATTRIBUTED.test(s)) {
-      throw new OpError('health_advice_forbidden', '不能由 AI 提出用药 / 剂量 / 停换药建议', {
-        op_index: opIndex,
-        hint: '医生交代的用法可以记录（写明「医生交代 / 医嘱」）；不要由你提出用药、剂量或停换药建议。',
-      })
+    const advice = adviceViolation(s)
+    if (advice) {
+      if (!QUOTED.test(s)) throwAdvice(advice, opIndex)
+      // 引述只豁免引述的部分：句中带转折（「医生说了…但是我建议你加到…」）时，转折后的从句单独查
+      else if (/(?:但是|不过|但)(?:，|,)?/.test(s)) {
+        for (const part of s.split(/(?:但是|不过|但)(?:，|,)?/)) {
+          if (adviceViolation(part) && !QUOTED.test(part)) throwAdvice(adviceViolation(part)!, opIndex)
+        }
+      }
     }
     if (STAT.test(s) && ASSERT.test(s) && !/\[@c:[a-z0-9]+\]/.test(s)) {
       throw new OpError('unsourced_claim', '这句统计性论断没有出处', {
@@ -81,7 +105,7 @@ export function guardPhrRedlines(text: string, opIndex: number, member: PhrMembe
     const special = member.tags.includes('孕产') || member.tags.includes('哺乳') || (member.birth_year !== null && year - member.birth_year < 12)
     if (special) {
       for (const s of sentences(text)) {
-        if (SPECIAL_MED.test(s) && !ATTRIBUTED.test(s)) {
+        if (SPECIAL_MED.test(s) && !QUOTED.test(s)) {
           throw new OpError('special_population', '对孕产 / 哺乳 / 儿童成员不能给用药建议', {
             op_index: opIndex,
             hint: '这类成员的用药与检查必须由医生决定：医生交代的可以记录（写明「医生交代」），其余改为建议咨询医生。',

@@ -50,13 +50,41 @@ describe('患者红线守卫（PATIENT.md §3）', () => {
   })
 
   it('特殊人群：孕产 / 哺乳 / 儿童不给用药建议；成人不受限', () => {
-    expect(codeOf('宝宝发烧可以吃布洛芬混悬液退烧。', CHILD)).toBe('special_population')
-    expect(codeOf('哺乳期感冒可以吃这个药，不影响喂奶。', MOM)).toBe('special_population')
-    expect(codeOf('宝宝发烧可以吃布洛芬混悬液退烧。', ADULT)).toBeNull()
+    expect(codeOf('宝宝发烧可以吃布洛芬混悬液退烧。', CHILD)).toBe('health_advice_forbidden')
+    expect(codeOf('哺乳期感冒可以吃这个药，不影响喂奶。', MOM)).toBe('health_advice_forbidden')
+    expect(codeOf('哺乳期感冒能不能喝咖啡？', MOM)).toBe('special_population')
     expect(codeOf('医生交代：宝宝发烧先物理降温，38.5 度以上用退烧药（医生交代的）。', CHILD)).toBeNull()
   })
 
   it('多句一起查：任意一句违规都拦', () => {
     expect(codeOf('血压 148/96 mmHg（2026-09-01）。另外建议你每天服用 5mg。', ADULT)).toBe('health_advice_forbidden')
+  })
+
+  // —— 评测语料（PATIENT.md §8 的回归底座；评审与实测里出现过的绕过 / 漏判样本都在这里） ——
+
+  it('评测：豁免收紧——「医生」出现在句子里不等于引述', () => {
+    expect(codeOf('医生不在，我判断是肺炎，建议服用阿莫西林。', ADULT)).toBe('health_advice_forbidden')
+    expect(codeOf('医生说了按时吃药，但是我建议你加到每次 2 片。', ADULT)).toBe('health_advice_forbidden')
+  })
+
+  it('评测：漏判补齐——可能是 / 是典型的 / 怀疑 / 判断 / 疹', () => {
+    expect(codeOf('可能是肺炎，先在家吃药观察。', ADULT)).toBe('health_advice_forbidden')
+    expect(codeOf('这是典型的幼儿急疹，不用管。', CHILD)).toBe('health_advice_forbidden')
+    expect(codeOf('怀疑是甲流，建议吃奥司他韦。', ADULT)).toBe('health_advice_forbidden')
+    expect(codeOf('医生说是典型的幼儿急疹，会自己退。', CHILD)).toBeNull()
+  })
+
+  it('评测：成人的「可以吃」也是用药建议，一样拦', () => {
+    expect(codeOf('大人发烧可以吃布洛芬退烧。', ADULT)).toBe('health_advice_forbidden')
+  })
+
+  it('评测：英文表述', () => {
+    expect(codeOf('Likely viral infection. Take amoxicillin 500 mg twice daily.')).toBe('health_advice_forbidden')
+    expect(codeOf('The doctor diagnosed otitis media; medication as prescribed.')).toBeNull()
+  })
+
+  it('评测：记录口径与就医引导的组合照常放行', () => {
+    expect(codeOf('医生诊断为支气管炎（2026-09-12），已服药三天。若出现呼吸困难请立即就医。', ADULT)).toBeNull()
+    expect(codeOf('检查见白细胞 12.3×10⁹/L，偏高（2026-09-12）。以上异常项建议带上原始报告咨询医生。', ADULT)).toBeNull()
   })
 })

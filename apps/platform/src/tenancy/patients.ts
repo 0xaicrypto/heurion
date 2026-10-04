@@ -30,7 +30,8 @@ export class PatientError extends Error {
 /** 成员标记（知家红线守卫用；与 ops/phr-guard.ts 的 PhrMember 同形）。 */
 export interface PhrMemberLike { tags: string[]; birth_year: number | null }
 
-export interface PatientRow {  id: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+export interface PatientRow {
+  id: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
   /** 称呼（家人档案里的叫法，加密存储；机构端为 null，患者端用称呼不用代号） */
   name: string | null
   status: 'active' | 'archived'; created_by: string; created_at: string; updated_at: string
@@ -217,15 +218,24 @@ export class PatientService {
   // —— 机构与权限 ——
 
   /** 打开操作者所在机构的患者库。机构不开患者模块时拒绝。 */
-  private ctx(a: Actor): { db: TenantPatientDb; tenantId: string; settings: TenantSettings; tenantAdmin: boolean } {
+  private ctx(a: Actor): { db: TenantPatientDb; tenantId: string; settings: TenantSettings; tenantAdmin: boolean; tenantKind: 'personal' | 'org' } {
     const t = this.tenants.of(a.userId)
     const settings = this.tenants.settings(t)
     if (!settings.patient_module) throw new PatientError('patient_module_off', '本机构没有启用患者模块', 403)
     if (a.via === 'ai' && !settings.external_model_for_patients) throw new PatientError('external_model_off', '本机构设置为患者数据不交给外部模型分析', 403)
     let db = this.dbs.get(t.id)
     if (!db) { db = new TenantPatientDb(this.root, t.id); this.dbs.set(t.id, db) }
-    return { db, tenantId: t.id, settings, tenantAdmin: this.tenants.roleOf(a.userId) === 'admin' }
+    return { db, tenantId: t.id, settings, tenantAdmin: this.tenants.roleOf(a.userId) === 'admin', tenantKind: t.kind }
   }
+
+  /** 手动录入化验只对个人租户（知家家庭空间）开放；医院端化验一律来自上传报告（追溯原件）。 */
+  requirePersonal(a: Actor): void {
+    const c = this.ctx(a)
+    if (c.tenantKind !== 'personal') throw new PatientError('manual_labs_org', '手工录入化验只在知家（个人空间）开放；医院端请上传报告，在报告上补项', 403)
+  }
+
+  /** 写前断言：操作者能改这位成员（知家建文档 / 简报前调用，避免建了文档关联不上留下孤儿）。 */
+  assertEditable(a: Actor, patientId: string): void { this.requireTeam(a, patientId) }
 
   /** AI 写入要不要先经医生确认（机构设置）。 */
   private aiReview(a: Actor, c: { settings: TenantSettings }): boolean {
@@ -264,15 +274,20 @@ export class PatientService {
 
   create(a: Actor, input: { sex?: unknown; birth_year?: unknown; tags?: unknown; name?: unknown }): PatientRow {
     const c = this.ctx(a)
+    const nm = name(input.name)
+    // 称呼只在知家（个人空间）可用：医院端患者只用代号，避免真名落库后发给外部模型
+    if (nm && c.tenantKind !== 'personal') throw new PatientError('name_org', '医院端患者只用代号；称呼只在知家（个人空间）可用', 400)
     const id = rid('pt')
     const t = now()
     c.db.db.prepare('INSERT INTO patients (id, code, name_enc, sex, birth_year, tags, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, c.db.nextCode(), this.keys.encryptText(c.tenantId, name(input.name)), sex(input.sex), birthYear(input.birth_year), JSON.stringify(tags(input.tags)), a.userId, t, t)
+      .run(id, c.db.nextCode(), this.keys.encryptText(c.tenantId, nm), sex(input.sex), birthYear(input.birth_year), JSON.stringify(tags(input.tags)), a.userId, t, t)
     c.db.db.prepare('INSERT INTO care_team (patient_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)').run(id, a.userId, 'owner', a.userId, t)
     const p = this.visible(a, id).p
-    // 成员的「健康档案」文档：建档即建并关联（归属 doc_kind=archive，AI 的写入受患者红线守卫）
-    const docId = this.archiveDoc?.({ owner: a.userId, patientId: id, title: `${p.name ?? p.code} 的健康档案` })
-    if (docId) this.linkDoc(a, id, docId, 'archive')
+    // 成员的「健康档案」文档：只在知家（个人空间）建档时创建；医院端不生成（临床表述不受患者红线约束）
+    if (c.tenantKind === 'personal') {
+      const docId = this.archiveDoc?.({ owner: a.userId, patientId: id, title: `${p.name ?? p.code} 的健康档案` })
+      if (docId) this.linkDoc(a, id, docId, 'archive')
+    }
     this.log(c, a, id, 'create')
     return p
   }
@@ -308,6 +323,8 @@ export class PatientService {
 
   update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown; name?: unknown }): PatientRow {
     const { c } = this.requireTeam(a, patientId)
+    // 称呼只在知家（个人空间）可改：医院端保持只用代号
+    if (patch.name !== undefined && c.tenantKind !== 'personal' && name(patch.name) !== null) throw new PatientError('name_org', '医院端患者只用代号；称呼只在知家（个人空间）可用', 400)
     if (this.aiReview(a, c)) {
       // 需医生确认：作为一条「修改」提议
       const clean: Record<string, unknown> = {}
@@ -441,7 +458,8 @@ export class PatientService {
   }
 
   /** 守卫用的成员标记（特殊人群判定）：内部读取，不记访问日志、不做诊疗组校验——调用方是写前守卫。 */
-  memberMarkers(ownerUserId: string, patientId: string): PhrMemberLike | null {    try {
+  memberMarkers(ownerUserId: string, patientId: string): PhrMemberLike | null {
+    try {
       const c = this.ctx({ userId: ownerUserId, via: 'user' })
       const r = c.db.db.prepare('SELECT birth_year, tags FROM patients WHERE id = ?').get(patientId) as Record<string, unknown> | undefined
       if (!r) return null
@@ -817,7 +835,8 @@ export class PatientService {
     for (const r of rows) {
       const pid = r.id as string
       if (!this.teamRole(c.db, pid, a.userId)) { skipped.push(r.subject_id as string); continue }
-      const where = ["patient_id = ?", "status = 'confirmed'"]
+      // 知家手工录入的化验挂不上报告记录（没有原件可追溯），不进研究数据集
+    const where = ["patient_id = ?", "status = 'confirmed'", 'record_id IS NOT NULL']
       const args: string[] = [pid]
       if (opts.from && DATE.test(opts.from)) { where.push('collected_on >= ?'); args.push(opts.from) }
       if (opts.to && DATE.test(opts.to)) { where.push('collected_on <= ?'); args.push(opts.to) }

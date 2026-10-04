@@ -100,7 +100,17 @@ const cohort = new CohortService(studies, patients, datasets)
 // Unsplash 图库（幻灯片搜图）：没配 key 时 configured=false，界面隐藏入口、MCP 返回「未配置」
 const images = new ImageService(docs, ops, new Unsplash(config.unsplashAccessKey))
 images.access = access
-const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
+// 知家红线（PATIENT.md §3）：绑定健康档案 / 简报的回合，AI 的对话回复在展示与落库前也过守卫
+const turns = new TurnService(docs, pool, registry, {
+  idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts,
+  phrGuard: docId => {
+    const row = store.getDoc(docId)
+    let ctx: { kind?: string; doc_kind?: string; patient_id?: string } | null = null
+    try { ctx = row?.context ? JSON.parse(row.context) : null } catch { /* 无归属 */ }
+    if (!row || ctx?.kind !== 'patient' || (ctx.doc_kind !== 'archive' && ctx.doc_kind !== 'brief')) return undefined
+    return patients.memberMarkers(row.owner, ctx.patient_id!)
+  },
+})
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
   pubmed,
