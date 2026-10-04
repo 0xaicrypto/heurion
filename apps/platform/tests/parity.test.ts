@@ -115,6 +115,8 @@ const ALL_PARITY: Record<string, string> = {
   'GET /api/admin/settings': 'platform_admin.settings', 'PUT /api/admin/settings': 'platform_admin.update_settings', 'GET /api/admin/audit': 'platform_admin.audit',
   // 患者、研究的高权限操作
   'GET /api/patients-directory': 'patient_admin.directory', 'POST /api/patients/:ptid/break-glass': 'patient_admin.break_glass', 'DELETE /api/patients/:ptid': 'patient_admin.delete',
+  // 知家（PATIENT.md）：成员健康档案的落点；AI 用 doc_create + patient_doc_link（archive）同样能得到
+  'POST /api/phr/:ptid/archive': 'patient_doc_link',
   'DELETE /api/studies/:sid': 'study_admin.delete', 'POST /api/studies/:sid/transfer': 'study_admin.transfer', 'POST /api/studies/:sid/handover': 'tenant_admin.handover',
   // AI 发起的待确认操作：AI 能查状态，确认 / 拒绝只能用户本人（见 NOT_FOR_AI）
   'GET /api/actions': 'action_status', 'GET /api/actions/:aid': 'action_status',
@@ -140,6 +142,7 @@ const NOT_FOR_AI: Record<string, string> = {
   'POST /api/memory/changes/:cid/:action{apply|dismiss}': '采纳 / 忽略 AI 的记忆整理建议是人的事',
   'POST /api/actions/:aid/:decision{confirm|reject}': '确认 / 拒绝 AI 发起的高风险操作只能由用户本人在界面上做',
   'POST /api/docs/:id/chat': '给 AI 发消息的入口（AI 本身就在这轮对话里）',
+  'POST /api/phr/:ptid/brief': '就诊简报的生成入口：服务端组装指令起回合（AI 不自己给自己排队）',
   'POST /api/docs/:id/comments/:cid/ask': '把评论交给 AI 处理的入口（AI 收到后用 comments_list / comment_reply 处理）',
   'POST /api/docs/:id/turns/:turnId/retry': '重跑一轮 AI 对话的入口（AI 不能自己重开对话）',
   'POST /api/cancel': '停止当前 AI 回合的按钮（AI 不能停自己）',

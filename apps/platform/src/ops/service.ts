@@ -185,7 +185,7 @@ export class OpService {
   private guardPatientRedlines(batch: EditBatch | DeckEditBatch, textsOf: (op: unknown) => string[], row: { owner: string; context: string | null }): void {
     let ctx: { kind?: string; doc_kind?: string; patient_id?: string } | null = null
     try { ctx = row.context ? JSON.parse(row.context) : null } catch { /* 无归属：不适用 */ }
-    if (ctx?.kind !== 'patient' || ctx.doc_kind !== 'archive') return
+    if (ctx?.kind !== 'patient' || (ctx.doc_kind !== 'archive' && ctx.doc_kind !== 'brief')) return
     const member = ctx.patient_id && this.phrMember ? this.phrMember(row.owner, ctx.patient_id) : null
     batch.ops.forEach((op, i) => {
       for (const text of textsOf(op)) guardPhrRedlines(text, i, member)

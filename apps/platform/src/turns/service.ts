@@ -24,6 +24,27 @@ export function commentPrompt(docId: string, commentId: string, kind: 'doc' | 'd
 /** 评论 / 回复里召唤 AI 的触发词。 */
 export const wantsAi = (text: string): boolean => /[@＠]heurion\b/i.test(text)
 
+/** 就诊简报（知家，PATIENT.md §6）：服务端组装的生成指令。简报文档是回合的落点；红线守卫在操作层强制。 */
+export function phrBriefPrompt(input: {
+  patientId: string; name: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+  archiveDocId?: string | null
+}): string {
+  const who = [input.sex === 'M' ? '男' : input.sex === 'F' ? '女' : '', input.birth_year ? `${input.birth_year} 年生` : '', ...input.tags].filter(Boolean).join('，')
+  return (
+    `请为家庭成员生成一份「就诊简报」，用 doc_edit 写进本文档（看病前给医生看的准备，不是病历）。\n` +
+    `成员：${input.name}（${input.code}；${who || '基本信息待补'}）。patient_id=${input.patientId}。\n` +
+    `步骤：\n` +
+    `1. patient_read（patient_id）与 labs_query 看最近的化验与记录（重点近 3 个月与异常项）；` +
+    (input.archiveDocId ? `doc_outline / doc_read 读健康档案文档 ${input.archiveDocId}，了解背景与医生交代；\n` : `\n`) +
+    `2. 用 doc_edit 写三节：\n` +
+    `「近况」——最近的数值与变化：照抄数值与单位、注明日期，用记录口径（「检查见…」），不写诊断结论；\n` +
+    `「想请医生看的问题」——2–4 个具体、家人真正关心的问题；\n` +
+    `「要带的材料」——原始报告、正在用的药物清单、既往小结。\n` +
+    `3. 红线：不下诊断；不提用药、剂量或停换药建议；异常数值处写「建议当面咨询医生」；只记录与提问。\n` +
+    `写完用一两句话总结。`
+  )
+}
+
 export interface TurnBusEvent { userId: string; docId: string; event: UiEvent }
 
 export interface TurnOptions {

@@ -88,6 +88,8 @@ const SEX: Record<string, string> = { M: '男', F: '女' }
 const KIND: Record<string, string> = { lab_report: '化验单', discharge: '出院小结', pathology: '病理', imaging: '影像', note: '记录', other: '其他' }
 const EXTRACT: Record<string, string> = { queued: '提取排队中', running: '提取中', done: '已提取', failed: '提取失败', skipped: '未能自动识别' }
 const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回', superseded: '已替换' }
+/** 关联文档的类型（成员页「记录」页签里显示）。 */
+const DOC_KIND: Record<string, string> = { archive: '健康档案', brief: '就诊简报', case_report: '病例报告', followup: '随访小结', discussion: '讨论', other: '其他' }
 
 /** 家人标记（PATIENT.md §3 特殊人群守卫的数据基础）。 */
 const FAMILY_TAGS = ['孕产', '哺乳', '儿童'] as const
@@ -144,9 +146,13 @@ function spark(labs: Lab[]): string {
 function render(): void {
   if (!token()) { renderAuth(); return }
   const h = location.hash
-  const m = /^#\/m\/([\w-]+)$/.exec(h)
-  if (m) void memberView(m[1]!)
-  else void homeView()
+  let m = /^#\/m\/([\w-]+)$/.exec(h)
+  if (m) { void memberView(m[1]!); return }
+  m = /^#\/b\/([\w-]+)$/.exec(h)
+  if (m) { void briefView(m[1]!); return }
+  m = /^#\/chat\/([\w-]+)$/.exec(h)
+  if (m) { void chatView(m[1]!); return }
+  void homeView()
 }
 window.addEventListener('hashchange', render)
 
@@ -288,7 +294,7 @@ function memberDialog(p: Patient | null, done: () => void): void {
 async function memberView(id: string): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
       <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 id="mName">…</h1><div class="sub" id="mMeta"></div></div>
-      <button class="edit" id="mEdit">编辑</button></div></div>
+      <button class="edit" id="mBrief" title="生成给医生看的就诊简报">简报</button><button class="edit" id="mChat" title="问知家">💬</button><button class="edit" id="mEdit">编辑</button></div></div>
     <div class="max"><div class="tabs" id="tabs">
       <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button>
     </div><div id="main" class="loading">加载中…</div></div>`
@@ -301,6 +307,8 @@ async function memberView(id: string): Promise<void> {
   $('#mName').textContent = name
   $('#mMeta').textContent = [detail.sex ? SEX[detail.sex] : '', detail.birth_year ? ageText(detail.birth_year) : '', detail.tags.join(' · ')].filter(Boolean).join(' · ')
   $('#mEdit').addEventListener('click', () => memberDialog(detail, () => void memberView(id)))
+  $('#mBrief').addEventListener('click', () => void makeBrief(id))
+  $('#mChat').addEventListener('click', () => void openChat(id))
 
   const state = { tab: 'labs' as 'labs' | 'records' | 'pending' }
   const show = (tab: 'labs' | 'records' | 'pending'): void => {
@@ -381,8 +389,8 @@ async function recordsTab(main: HTMLElement, id: string, detail: Detail): Promis
   main.innerHTML = `<input type="file" id="upFile" accept="image/*,application/pdf,.docx,.txt" hidden multiple>
     <button class="btn block" id="upBtn" style="margin-top:12px">📷 上传报告 / 化验单（拍照或相册）</button>
     <div class="card" id="recs">${detail.records.length ? '' : '<div class="empty">还没有记录</div>'}</div>
-    ${detail.documents.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">关联文档（AI 整理的档案与病例）</div>
-      ${detail.documents.map(doc => `<div class="rec"><div class="info"><div class="t">${esc(doc.title)}</div><div class="m">${doc.kind === 'archive' ? '健康档案' : '病例报告'} · ${esc(doc.updated_at.slice(0, 10))}</div></div></div>`).join('')}</div>` : ''}`
+    ${detail.documents.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">关联文档</div>
+      ${detail.documents.map(doc => `<div class="rec"><div class="info"><div class="t">${esc(doc.title)}</div><div class="m">${DOC_KIND[doc.kind] ?? doc.kind} · ${esc(doc.updated_at.slice(0, 10))}</div></div></div>`).join('')}</div>` : ''}`
   $('#upBtn').addEventListener('click', () => $('#upFile').click())
   $('#upFile').addEventListener('change', async () => {
     const files = Array.from(($('#upFile') as HTMLInputElement).files ?? [])
@@ -467,8 +475,7 @@ async function pendingTab(main: HTMLElement, id: string, detail: Detail): Promis
   })
 }
 
-const proposalText = (pr: { kind: string; payload: Record<string, unknown> }): string => {
-  const p = pr.payload
+const proposalText = (pr: { kind: string; payload: Record<string, unknown> }): string => {  const p = pr.payload
   if (pr.kind === 'lab') return `补充化验：${String(p.test_name ?? '')} ${String(p.value ?? '')}${p.unit ? ` ${String(p.unit)}` : ''}`
   if (pr.kind === 'tag') return `加标记：${String(p.tag ?? '')}`
   if (pr.kind === 'note') return '补一段健康记录'
@@ -506,6 +513,139 @@ async function resolveProposal(id: string, prid: string, accept: boolean): Promi
     await api(`/api/patients/${id}/proposals/${prid}/${accept ? 'accept' : 'reject'}`, { method: 'POST', body: '{}' })
     toast(accept ? '已接受' : '已拒绝'); void memberView(id)
   } catch (err) { toast((err as Error).message, true) }
+}
+
+// —— 知家：健康档案 doc、就诊简报、问知家对话（同一 turns 队列；写入受红线守卫） ——
+
+/** 成员健康档案 doc（没有就补建）；对话与就诊简报的落点。 */
+async function archiveDocOf(id: string): Promise<string | null> {
+  try {
+    const r = await api<{ doc_id: string }>(`/api/phr/${id}/archive`, { method: 'POST', body: '{}' })
+    return r.doc_id
+  } catch (err) { toast((err as Error).message, true); return null }
+}
+
+async function makeBrief(id: string): Promise<void> {
+  try {
+    const r = await api<{ doc_id: string }>(`/api/phr/${id}/brief`, { method: 'POST', body: '{}' })
+    toast('简报生成中，写完实时显示')
+    location.hash = `#/b/${r.doc_id}`
+  } catch (err) { toast((err as Error).message, true) }
+}
+
+let chatMeta = '成员'
+
+async function openChat(id: string): Promise<void> {
+  const docId = await archiveDocOf(id)
+  if (docId) {
+    chatMeta = $('#mName').textContent || '成员'
+    location.hash = `#/chat/${docId}`
+  }
+}
+
+const TOOL: Record<string, string> = {
+  doc_outline: '看文档结构', doc_read: '读文档', doc_search: '搜文档', doc_edit: '修改文档', doc_history: '看历史', doc_create: '新建文档',
+  comments_list: '看评论', comment_reply: '回复评论', pubmed_search: '检索文献', insert_citation: '登记引用',
+  patient_read: '读健康记录', labs_query: '查化验', kb_search: '查资料', kb_read: '读资料',
+  read_image: '看图片', asset_upload: '放图片进文档', memory_propose: '记一条偏好',
+}
+
+/** 就诊简报视图：渲染简报文档（GET /html），SSE 跟写作进度实时刷新。 */
+async function briefView(docId: string): Promise<void> {
+  app.innerHTML = `<div class="topbar"><div class="topbar-in">
+      <button class="back" id="back">‹</button><div style="flex:1"><h1>就诊简报</h1><div class="sub">看病前给医生看的准备</div></div></div></div>
+    <div class="max"><div id="writenote" class="writenote">知家正在写…</div><div id="doc" class="doc"><div class="loading">…</div></div></div>`
+  $('#back').addEventListener('click', () => { location.hash = '' })
+  const note = $('#writenote')
+  const setBusy = (b: boolean): void => { note.classList.toggle('on', b) }
+  const paint = async (): Promise<void> => {
+    try {
+      const r = await api<{ rev: number; html: string }>(`/api/docs/${docId}/html`)
+      const doc = $('#doc')
+      doc.classList.remove('loading')
+      doc.innerHTML = r.html || '<div class="empty">简报还没内容，稍等…</div>'
+    } catch (err) { if ((err as ApiErr).status !== 401) $('#doc').textContent = (err as Error).message }
+  }
+  void paint()
+  const es = new EventSource(`/api/docs/${docId}/stream?token=${encodeURIComponent(token())}`)
+  es.onmessage = e => {
+    try {
+      const ev = JSON.parse(e.data) as { type: string; busy?: boolean; event?: { type: string; status?: string; message?: string } }
+      if (ev.type === 'hello') setBusy(!!ev.busy)
+      else if (ev.type === 'commit') void paint()
+      else if (ev.type === 'turn_event' && ev.event) {
+        if (ev.event.type === 'status') setBusy(ev.event.status === 'running')
+        else if (ev.event.type === 'turn_done' || ev.event.type === 'done') setBusy(false)
+        else if (ev.event.type === 'error') { setBusy(false); toast(ev.event.message ?? '出错了', true) }
+      }
+    } catch { /* 忽略坏帧 */ }
+  }
+  window.addEventListener('hashchange', () => es.close(), { once: true })
+}
+
+/** 问知家：绑定成员健康档案的对话（同一 turns 队列；对档案的写入受红线守卫）。 */
+async function chatView(docId: string): Promise<void> {
+  app.innerHTML = `<div class="topbar"><div class="topbar-in">
+      <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 style="font-size:17px">问知家 · ${esc(chatMeta)}</h1><div class="sub">建议仅供准备就诊，不构成诊疗</div></div></div></div>
+    <div class="max" style="padding-bottom:96px"><div id="msgs" class="chat"></div></div>
+    <div class="composer"><div class="composer-in">
+      <input id="say" placeholder="问问知家：这项检查要注意什么？" maxlength="500">
+      <button class="btn" id="send" style="min-width:64px">发送</button>
+    </div></div>`
+  $('#back').addEventListener('click', () => { location.hash = '' })
+  const msgs = $('#msgs')
+  const scrollDown = (): void => { msgs.scrollTop = msgs.scrollHeight }
+  const bubble = (role: 'user' | 'ai', text: string): void => {
+    const b = document.createElement('div')
+    b.className = `msg ${role === 'user' ? 'user' : 'ai'}`
+    b.textContent = text
+    msgs.append(b); scrollDown()
+  }
+  const step = (text: string, err = false): void => {
+    const s = document.createElement('div')
+    s.className = `step${err ? ' err' : ''}`
+    s.textContent = text
+    msgs.append(s); scrollDown()
+  }
+  try {
+    const hist = await api<{ messages?: Array<{ role: string; text: string }> }>(`/api/docs/${docId}`)
+    const ms = hist.messages ?? []
+    for (const m of ms) if (m.role === 'user' || m.role === 'assistant') bubble(m.role === 'user' ? 'user' : 'ai', m.text)
+    if (!ms.length) step('检查报告、化验单里不明白的地方，直接问。AI 的回答帮你准备就诊，不是诊断。')
+  } catch (err) { if ((err as ApiErr).status !== 401) toast((err as Error).message, true) }
+
+  let busy = false
+  const send = $<HTMLButtonElement>('#send')
+  const say = $<HTMLInputElement>('#say')
+  const submit = async (): Promise<void> => {
+    const text = say.value.trim()
+    if (!text || busy) return
+    busy = true; send.disabled = true
+    try {
+      await api(`/api/docs/${docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: text }) })
+      say.value = ''
+    } catch (err) { toast((err as Error).message, true); busy = false; send.disabled = false }
+  }
+  send.addEventListener('click', () => void submit())
+  say.addEventListener('keydown', e => { if (e.key === 'Enter') void submit() })
+
+  const es = new EventSource(`/api/docs/${docId}/stream?token=${encodeURIComponent(token())}`)
+  es.onmessage = e => {
+    try {
+      const ev = JSON.parse(e.data) as { type: string; busy?: boolean; event?: { type: string; text?: string; status?: string; message?: string; name?: string; isError?: boolean } }
+      if (ev.type === 'hello') { busy = !!ev.busy; send.disabled = busy; return }
+      if (ev.type !== 'turn_event' || !ev.event) return
+      const t = ev.event
+      if (t.type === 'turn') bubble('user', t.message ?? '')
+      else if (t.type === 'queued') step('排队中…')
+      else if (t.type === 'assistant') bubble('ai', t.text ?? '')
+      else if (t.type === 'tool_call') step(`${TOOL[t.name ?? ''] ?? t.name ?? '工具'}…`)
+      else if (t.type === 'tool_result' && t.isError) step(`有一步没成：${t.message ?? ''}`, true)
+      else if (t.type === 'turn_done' || t.type === 'done') { busy = false; send.disabled = false; scrollDown() }
+      else if (t.type === 'error') { busy = false; send.disabled = false; toast(t.message ?? '出错了', true) }
+    } catch { /* 忽略坏帧 */ }
+  }
+  window.addEventListener('hashchange', () => es.close(), { once: true })
 }
 
 // —— 启动 ——

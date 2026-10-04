@@ -10,6 +10,7 @@
   --ink: #3d3a38;           /* 暖深灰 */
   --sub: #9a8f85;
   --pri: #ff7d5c;           /* 珊瑚主色 */
+  --pri-deep: #e85a3a;
   --pri-ink: #ffffff;
   --mint: #00bf7a;          /* 正常 / 成功（Heurion 品牌绿在浅色底的可用档） */
   --hi: #ef4444;            /* 偏高 */
@@ -155,3 +156,34 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--pri) 45%
 
 /* 顶栏的品牌标志 */
 .mark-sm { width: 26px; height: auto; flex: none; }
+
+/* 就诊简报 / 健康档案的文档渲染（renderHtml 的输出） */
+.doc { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-top: 12px; box-shadow: var(--shadow); overflow-wrap: break-word; }
+.doc.loading, .doc .loading { color: var(--sub); }
+.doc h1 { font-size: 19px; margin: 6px 0 8px; }
+.doc h2 { font-size: 16px; margin: 16px 0 6px; }
+.doc h3 { font-size: 15px; margin: 12px 0 4px; }
+.doc p { margin: 8px 0; }
+.doc ul, .doc ol { margin: 8px 0; padding-left: 20px; }
+.doc table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+.doc th, .doc td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+.doc img { max-width: 100%; border-radius: 10px; }
+.doc sup { color: var(--pri); font-weight: 700; }
+.doc .references { font-size: 12px; color: var(--sub); border-top: 1px dashed var(--line); margin-top: 16px; padding-top: 8px; }
+
+/* 写作状态（回合进行中） */
+.writenote { display: none; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 14px; background: var(--card2); color: var(--pri-deep); border-radius: 999px; font-size: 13px; }
+.writenote.on { display: flex; }
+.writenote::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--pri); animation: blink 1s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+
+/* 问知家：对话 */
+.chat { display: flex; flex-direction: column; padding-top: 4px; }
+.msg { max-width: 84%; padding: 10px 14px; border-radius: 16px; margin: 5px 0; white-space: pre-wrap; word-break: break-word; font-size: 14.5px; }
+.msg.user { align-self: flex-end; background: var(--pri); color: var(--pri-ink); border-bottom-right-radius: 5px; }
+.msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; box-shadow: var(--shadow); }
+.step { align-self: flex-start; color: var(--sub); font-size: 12px; margin: 3px 0 3px 6px; }
+.step.err { color: var(--hi); }
+.composer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); z-index: 6; }
+.composer-in { max-width: 720px; margin: 0 auto; display: flex; gap: 8px; }
+.composer input { flex: 1; }

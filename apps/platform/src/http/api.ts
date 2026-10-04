@@ -42,7 +42,7 @@ import type { OpService } from '../ops/service.ts'
 import { pendingGroups, resolveSuggestions, withoutPending } from '../ops/suggest.ts'
 import { EditBatch, OpError } from '../ops/types.ts'
 import { DeckEditBatch } from '../ops/deck.ts'
-import { commentPrompt, wantsAi, type TurnBusEvent, type TurnOptions, type TurnService } from '../turns/service.ts'
+import { commentPrompt, wantsAi, phrBriefPrompt, type TurnBusEvent, type TurnOptions, type TurnService } from '../turns/service.ts'
 import { citationOrder, diff, read } from '../views/read.ts'
 import { deckRead } from '../views/deck.ts'
 import { exportMarkdown, renderHtml } from '../views/render.ts'
@@ -165,6 +165,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort\/dataset$/, action: 'study.cohort_dataset' },
     { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
     { method: 'POST', re: /^\/api\/patients$/, action: 'patient.create' },
+    { method: 'POST', re: /^\/api\/phr\/[^/]+\/archive$/, action: 'phr.archive_doc' },
+    { method: 'POST', re: /^\/api\/phr\/[^/]+\/brief$/, action: 'phr.brief' },
     { method: 'POST', re: /^\/api\/patients\/[^/]+\/labs$/, action: 'patient.lab_add' },
     { method: 'DELETE', re: /^\/api\/patients\/[^/]+$/, action: 'patient.delete' },
     { method: 'GET', re: /^\/api\/patients\/[^/]+\/files\/[^/]+$/, action: 'patient.file_download' },
@@ -418,6 +420,36 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return patientFailure(c, err) }
   })
   app.delete('/api/patients/:ptid/docs/:id', c => { try { pt(c).unlinkDoc(me(c), c.req.param('ptid'), c.req.param('id')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
+  // —— 知家（docs/design/PATIENT.md）：成员的健康档案与就诊简报 ——
+
+  /** 成员的健康档案 doc（没有就补建；知家对话与就诊简报的落点）。 */
+  app.post('/api/phr/:ptid/archive', async c => {
+    try {
+      const user = c.get('user')
+      const detail = pt(c).read(me(c), c.req.param('ptid'))
+      const found = detail.documents.find(d => d.kind === 'archive')
+      if (found) return c.json({ doc_id: found.doc_id, existed: true })
+      const row = docs.create({ owner: user, title: `${detail.name ?? detail.code} 的健康档案` })
+      pt(c).linkDoc(me(c), c.req.param('ptid'), row.id, 'archive')
+      return c.json({ doc_id: row.id, existed: false }, 201)
+    } catch (err) { return patientFailure(c, err) }
+  })
+
+  /** 就诊简报：建简报文档 + 起一个 AI 回合填写（指令由服务端组装；红线守卫在操作层强制）。 */
+  app.post('/api/phr/:ptid/brief', async c => {
+    try {
+      const user = c.get('user')
+      const detail = pt(c).read(me(c), c.req.param('ptid'))
+      const archive = detail.documents.find(d => d.kind === 'archive')
+      const row = docs.create({ owner: user, title: `${detail.name ?? detail.code} 的就诊简报 · ${new Date().toISOString().slice(0, 10)}` })
+      pt(c).linkDoc(me(c), c.req.param('ptid'), row.id, 'brief')
+      void turns.submit(user, row.id, phrBriefPrompt({
+        patientId: detail.id, name: detail.name ?? detail.code, code: detail.code, sex: detail.sex, birth_year: detail.birth_year, tags: detail.tags,
+        archiveDocId: archive?.doc_id ?? null,
+      }))
+      return c.json({ doc_id: row.id }, 202)
+    } catch (err) { return patientFailure(c, err) }
+  })
   app.patch('/api/patients/:ptid/labs/:lid', async c => {
     try { return c.json(pt(c).editLab(me(c), c.req.param('ptid'), c.req.param('lid'), await c.req.json())) } catch (err) { return patientFailure(c, err) }
   })
