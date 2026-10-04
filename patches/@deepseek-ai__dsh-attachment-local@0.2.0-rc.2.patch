@@ -1,0 +1,20 @@
+diff --git a/lib/index.js b/lib/index.js
+index 882005fc045c07a4d51a47c3783f4e48d5af95d3..625677a14b2b208385dd3133910139a72e6952d9 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -358,7 +358,14 @@ async function syncDirectory(path) {
+ 	/* v8 ignore next -- Windows cannot open directory handles; NTFS metadata journaling owns entry durability there. */
+ 	if (process.platform === "win32") return;
+ 	/* v8 ignore start -- Windows cannot exercise directory fsync; POSIX behavior tests enforce this peer. */
+-	const handle = await open(path, constants.O_RDONLY);
++	let handle;
++	try {
++		handle = await open(path, constants.O_RDONLY);
++	} catch (error) {
++		// Heurion：沙箱用户对上层目录只有通行权限（/app/data、dsh-homes 不可列出），打不开就跳过——这些目录早已存在并持久
++		if (error?.code === "EACCES" || error?.code === "EPERM") return;
++		throw error;
++	}
+ 	try {
+ 		await handle.sync();
+ 	} finally {

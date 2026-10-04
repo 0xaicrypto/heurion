@@ -43,6 +43,12 @@ run_as 59999 "$A" "python3 /app/apps/platform/scripts/dataset_ingest.py $STAGE/i
 grep -q '"ok": true' "$STAGE/out/profile.json" 2>/dev/null && head -1 "$STAGE/out/data.csv" | grep -q 'grp,val' && rm -rf "$STAGE" && [ ! -e "$STAGE" ] \
   && ok "数据导入在隔离环境里运行，平台能读结果并清理" || bad "数据导入在隔离环境里失败"
 
+# 图片附件（AI 的 read_image 走这条路）：dsh 保存附件时会对上层目录逐级 fsync，/app/data、dsh-homes 对隔离用户不可读，
+# 必须能跳过（patches/@deepseek-ai__dsh-attachment-local），否则 read_image 报 EACCES
+ATT=$(ls -d /app/node_modules/.pnpm/@deepseek-ai+dsh-attachment-local@*/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js 2>/dev/null | head -1)
+run_as 59999 "$A" "node --input-type=module -e \"import { saveImageFile } from '$ATT'; const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'); const r = await saveImageFile('$ROOT/dsh-homes/$A/attachments/v1', { data: png, mediaType: 'image/png' }, { maxImageBytes: 2e7, maxMessageImageBytes: 2e8, maxImagePixels: 64e6, maxImageDimension: 8192, mediaTypes: ['image/png'] }, { maxPixels: 4194304, maxDimension: 8192, maxBytes: 4194304 }); console.log('saved', r.attachmentId)\"" | grep -q '^saved ' \
+  && ok "隔离环境里能保存图片附件（read_image）" || bad "隔离环境里保存图片附件失败（read_image 会报 EACCES）"
+
 rm -rf "$ROOT/workspaces/$A" "$ROOT/workspaces/$B" "$ROOT/dsh-homes/$A" "$ROOT/dsh-homes/$B" 2>/dev/null \
   || sudo -n /usr/local/bin/heurion-sandbox-exec 59999 "$ROOT/workspaces/$A" "$ROOT/dsh-homes/$A" -- bash -c 'rm -rf ./* ./.tmp' >/dev/null 2>&1
 exit $fail

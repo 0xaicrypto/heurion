@@ -11,3 +11,5 @@ allowBuilds:
   # onnxruntime-node 的安装脚本只下载 CUDA 扩展（CPU 版二进制已在包里）；tesseract.js 的只是打印赞助信息
   onnxruntime-node: false
   tesseract.js: false
+patchedDependencies:
+  '@deepseek-ai/dsh-attachment-local@0.2.0-rc.2': patches/@deepseek-ai__dsh-attachment-local@0.2.0-rc.2.patch
