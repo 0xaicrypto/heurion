@@ -144,7 +144,7 @@ function spark(labs: Lab[]): string {
 // —— 路由 ——
 
 function render(): void {
-  if (!token()) { renderAuth(); return }
+  if (!token()) { renderLanding(); return }
   const h = location.hash
   let m = /^#\/m\/([\w-]+)$/.exec(h)
   if (m) { void memberView(m[1]!); return }
@@ -157,6 +157,26 @@ function render(): void {
 window.addEventListener('hashchange', render)
 
 // —— 登录 / 注册（知家自带；人机校验与主应用共用同一套 PoW） ——
+
+/** 知家落地页（未登录首屏）：介绍 + 三步用法 + 注册 / 登录入口；登录后直接进家庭空间。 */
+function renderLanding(): void {
+  app.innerHTML = `<div class="land">
+    <header class="land-top">${MARK('mark-sm')}<span class="land-brand">知家</span><span class="land-sub">Heurion 家庭健康顾问</span></header>
+    <div class="land-hero">
+      <h1>家人的化验单、检查报告，<br>一份档案管明白。</h1>
+      <p>拍照上传化验单，AI 帮你把每项指标讲清楚（讲法带文献出处）；异常值提醒就医，就诊前自动生成简报和要问医生的问题。给爸妈、孩子和自己，每人一份。</p>
+      <div class="land-cta"><button class="btn" id="landGo">为家人建档 · 注册 / 登录 <span aria-hidden="true">→</span></button></div>
+      <p class="land-note">提供建议与整理，不构成诊疗 · 数据加密存储，只有你和授权的人能看到</p>
+    </div>
+    <div class="land-steps">
+      <div><span>1</span><b>建档</b><p>给每位家人一份档案（称呼不用实名）</p></div>
+      <div><span>2</span><b>上传 / 录入</b><p>拍照传报告，或手动记一笔化验</p></div>
+      <div><span>3</span><b>看懂再就诊</b><p>趋势与解读带出处，简报带给医生</p></div>
+    </div>
+    <p class="land-foot">Heurion 出品 · 知家在，合家安</p>
+  </div>`
+  $('#landGo').addEventListener('click', () => renderAuth())
+}
 
 let authMode: 'login' | 'register' = 'login'
 let pow: Promise<{ solution: PowSolution; fetchedAt: number }> | null = null
