@@ -5,6 +5,8 @@ FROM node:24-bookworm-slim
 RUN npm install -g pnpm@12.5.1
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+# pnpm-workspace.yaml 登记了依赖补丁（patchedDependencies），安装时要读到补丁文件
+COPY patches ./patches
 COPY apps/embedder ./apps/embedder
 RUN pnpm install --frozen-lockfile --filter @heurion2/embedder...
 
