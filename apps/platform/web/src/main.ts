@@ -15,6 +15,7 @@ import { initResearch } from './research.ts'
 import { initSpaces } from './spaces.ts'
 import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
+import { initActions } from './actions.ts'
 import { Provider, type ProviderStatus } from './provider.ts'
 import { applyTheme, mountThemeSwitch } from './theme.ts'
 import { photoFigure } from './photos.ts'
@@ -196,6 +197,7 @@ $('newProject').onclick = async () => {
 $('trashBtn').onclick = () => void openTrash()
 const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e), { showPage: (cls, title) => showPage(cls, title) })
 const memory = initMemory(api, (m, e) => showNotice(m, e), id => void open(id))
+const actions = initActions(api, (m, e) => showNotice(m, e))
 const datasets = initDatasets(api, (m, e) => showNotice(m, e), {
   showPage: (cls, title) => showPage(cls, title),
   openStudy: id => void researchUi.open(id),
@@ -1105,6 +1107,7 @@ function renderTurnEvent(ev: any): void {
     case 'doc_updated': addStep(`  已写入文档（${ev.changes} 处）`, 'ok'); break
     case 'comment_reply': scheduleRefresh(); break
     case 'memory': $('chatLog').appendChild(memory.memoryCard(ev)); $('chatLog').scrollTop = 1e9; break
+    case 'action': $('chatLog').appendChild(actions.card(ev.action)); $('chatLog').scrollTop = 1e9; break
     case 'version': addStep(`  ✓ 已保存为 v${ev.seq}`, 'ok'); break
     case 'error': {
       addStep(ev.message, 'err')
@@ -1517,6 +1520,7 @@ async function boot(): Promise<void> {
   initUserMenu(me, api, showNotice)
   // 回到上次停留的工作空间（显示该空间的开始页）
   spaces.setEnabled('patients', me.tenant?.settings.patient_module !== false)
+  void actions.refreshBadge()
   patientsUi.setPickEnabled(me.tenant?.settings.patient_module !== false)
   leaveDoc()
   spaces.set(spaces.saved())
