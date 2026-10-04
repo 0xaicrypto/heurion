@@ -1,0 +1,436 @@
+/**
+ * 知家（患者个人应用 V0，docs/design/PATIENT.md）：家庭健康顾问的移动 Web 外壳。
+ * - 家人建档 = 登录用户（个人租户）患者库里的患者；接口全部复用 /api/patients*，本页不引入新权限。
+ * - 本批立起数据闭环：建档 → 上传报告 / 手动录入化验 → 待确认 → 化验趋势；AI 建议与红线守卫是下一批。
+ * - 独立于主应用（/app）的页面：手机浏览器优先，桌面浏览器同套。
+ */
+import './phr.css'
+
+// —— 类型（与 patients.ts 的行结构对应；本页只用到这些字段） ——
+
+interface Patient {
+  id: string; code: string; name: string | null; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+  status: string; labs?: number; last_lab?: string | null; pending?: number
+}
+interface Lab {
+  id: string; test_key: string; test_name: string
+  value_num: number | null; value_text: string | null; unit: string | null
+  ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null
+  collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected' | 'superseded'; source: string
+  locator: { page?: number; verified?: boolean } | null
+  std_value: number | null; std_unit: string | null; std_ref_low: number | null; std_ref_high: number | null
+  same_day?: Lab[]
+}
+interface RecordRow {
+  id: string; kind: string; title: string; report_date: string | null; file_id: string | null
+  status: 'pending' | 'confirmed' | 'rejected'; extraction: string | null; extraction_note: string | null; created_at: string
+}
+interface Detail extends Patient {
+  records: RecordRow[]; latest_labs: Lab[]
+  documents: Array<{ doc_id: string; kind: string; title: string; updated_at: string; can_open: boolean }>
+  pending_proposals: Array<{ id: string; kind: string; payload: Record<string, unknown>; reason: string }>
+}
+
+// —— 基础 ——
+
+const app = document.getElementById('phr')!
+const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document): T => root.querySelector(sel) as T
+
+const token = (): string => { try { return localStorage.getItem('heurion.token') ?? '' } catch { return '' } }
+
+class ApiErr extends Error { constructor(message: string, readonly status: number, readonly code = '') { super(message) } }
+
+async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, { ...opts, headers: { ...(opts.headers ?? {}), Authorization: `Bearer ${token()}` } })
+  if (res.status === 401) { renderGate(); throw new ApiErr('未登录', 401) }
+  const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string }
+  if (!res.ok) throw new ApiErr(body.error ?? `请求失败（${res.status}）`, res.status, body.code ?? '')
+  return body as T
+}
+
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function toast(msg: string, error = false): void {
+  document.querySelector('.toast')?.remove()
+  const el = document.createElement('div')
+  el.className = `toast${error ? ' err' : ''}`
+  el.textContent = msg
+  document.body.append(el)
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => el.remove(), error ? 4200 : 2600)
+}
+
+/** 打开一个 <dialog> 弹层（手机浏览器原生支持），返回弹层元素供取值。 */
+function dlg(html: string): HTMLDialogElement {
+  const d = document.createElement('dialog')
+  d.innerHTML = html
+  document.body.append(d)
+  d.addEventListener('click', e => { if (e.target === d) d.close() })
+  d.showModal()
+  return d
+}
+
+function confirmDlg(text: string, okLabel = '确定'): Promise<boolean> {
+  return new Promise(resolve => {
+    const d = dlg(`<h3>${esc(text)}</h3><div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">${esc(okLabel)}</button></div>`)
+    d.addEventListener('close', () => resolve(false))
+    d.querySelectorAll('button[data-x]').forEach(b => b.addEventListener('click', () => { resolve(b.getAttribute('data-x') === '1'); d.close() }))
+  })
+}
+
+// —— 小工具 ——
+
+const SEX: Record<string, string> = { M: '男', F: '女' }
+const KIND: Record<string, string> = { lab_report: '化验单', discharge: '出院小结', pathology: '病理', imaging: '影像', note: '记录', other: '其他' }
+const EXTRACT: Record<string, string> = { queued: '提取排队中', running: '提取中', done: '已提取', failed: '提取失败', skipped: '未能自动识别' }
+const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回', superseded: '已替换' }
+
+/** 家人标记（PATIENT.md §3 特殊人群守卫的数据基础）。 */
+const FAMILY_TAGS = ['孕产', '哺乳', '儿童'] as const
+
+const display = (p: { name: string | null; code: string }): string => p.name || p.code
+const ageText = (birthYear: number | null): string => {
+  if (!birthYear) return '—'
+  const y = new Date().getFullYear()
+  const months = (new Date().getFullYear() - birthYear) * 12 + new Date().getMonth() - (new Date().getMonth())
+  if (birthYear === y) return `${Math.max(months, 0) || 1} 个月`
+  return `${y - birthYear} 岁`
+}
+const dayShort = (s: string | null): string => s ? s.slice(5) : ''
+
+/** 化验值展示：优先数值 + 单位，文字值（如「<40」）照抄。 */
+function valText(l: Lab): string {
+  return l.value_num !== null ? `${l.value_num}${l.unit ? ` ${l.unit}` : ''}` : (l.value_text ?? '—')
+}
+/** 趋势点上的单位：用标准单位（同一项目画在一起才有意义）。 */
+const trendUnit = (l: Lab): string => l.std_unit ?? l.unit ?? ''
+
+/**
+ * 单项趋势小图：标准单位的点连线 + 参考范围带；异常点按 H/L 着色。
+ * labs 按 collected_on 升序（labs() 的排序就是升序）。
+ */
+function spark(labs: Lab[]): string {
+  const pts = labs.filter(l => l.std_value !== null && l.collected_on)
+  if (!pts.length) return ''
+  const ys = pts.map(l => l.std_value!)
+  const lows = pts.map(l => l.std_ref_low).filter((x): x is number => x !== null)
+  const highs = pts.map(l => l.std_ref_high).filter((x): x is number => x !== null)
+  const lo = Math.min(...ys, ...lows)
+  const hi = Math.max(...ys, ...highs)
+  const pad = (hi - lo) * 0.18 || Math.abs(hi) * 0.1 || 1
+  const min = lo - pad, max = hi + pad
+  const W = 320, H = 92, L = 6, R = W - 6, T = 8, B = H - 18
+  const x = (i: number): number => pts.length === 1 ? (L + R) / 2 : L + (i * (R - L)) / (pts.length - 1)
+  const y = (v: number): number => T + (1 - (v - min) / (max - min)) * (B - T)
+  const band = lows.length && highs.length
+    ? `<rect x="${L}" y="${y(Math.max(...highs))}" width="${R - L}" height="${Math.max(y(Math.min(...lows)) - y(Math.max(...highs)), 2)}" fill="currentColor" opacity=".08" stroke="none"/>` : ''
+  const line = pts.length > 1 ? `<polyline points="${pts.map((_, i) => `${x(i)},${y(ys[i]!)}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>` : ''
+  const dots = pts.map((l, i) => `<circle cx="${x(i)}" cy="${y(ys[i]!)}" r="3.4" fill="${l.flag === 'H' ? 'var(--hi)' : l.flag === 'L' ? 'var(--lo)' : 'var(--ok)'}"/>`).join('')
+  const label = (s: string, a: string): string => `<text x="${a}" y="${H - 4}" font-size="10" fill="var(--sub)" text-anchor="${a === 'start' ? 'start' : 'end'}">${esc(s.slice(5))}</text>`
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="趋势图">${band}${line}${dots}${label(pts[0]!.collected_on!, 'start')}${label(pts[pts.length - 1]!.collected_on!, 'end')}</svg>`
+}
+
+// —— 路由 ——
+
+function render(): void {
+  const h = location.hash
+  const m = /^#\/m\/([\w-]+)$/.exec(h)
+  if (m) void memberView(m[1]!)
+  else void homeView()
+}
+window.addEventListener('hashchange', render)
+
+// —— 登录门 ——
+
+function renderGate(): void {
+  const home = location.pathname.endsWith('.html') ? '/' : '/app'  // dev:web 时主应用在 /，构建后在 /app
+  app.innerHTML = `<div class="gate"><div class="logo">知家</div><div class="tag">知家在，合家安 · 家庭健康顾问</div>
+    <button class="btn block" id="gateGo">去登录</button>
+    <p style="color:var(--sub);font-size:12px">登录在 Heurion 主应用里完成，回来这个页面自动进入。</p></div>`
+  $('#gateGo').addEventListener('click', () => { location.href = home })
+  const iv = setInterval(() => { if (token()) { clearInterval(iv); render() } }, 1000)
+}
+
+// —— 首页：家庭空间 ——
+
+async function homeView(): Promise<void> {
+  app.innerHTML = `<div class="topbar"><div class="topbar-in">
+      <div style="flex:1"><h1>知家</h1><div class="sub">知家在，合家安 · 每位家人一份循证健康档案</div></div>
+      <button class="btn" id="addMember" style="min-height:40px;padding:0 14px">＋ 添加家人</button>
+    </div></div><div class="max"><div id="main" class="loading">加载中…</div></div>`
+  const list = await api<Array<Patient>>('/api/patients').catch(err => { if ((err as ApiErr).status !== 401) toast((err as Error).message, true); return null })
+  if (!list) return
+  const cards = list.map(p => `<button class="member" data-id="${esc(p.id)}">
+      <div class="nm">${esc(display(p))}<span class="sex">${p.sex ? SEX[p.sex] : ''}</span>${p.pending ? `<span class="pend" style="margin-left:auto">${p.pending} 待确认</span>` : ''}</div>
+      <div class="meta">${p.birth_year ? `${p.birth_year} 年生 · ${ageText(p.birth_year)}` : ''}${p.birth_year && p.sex ? ' · ' : ''}${p.sex ? SEX[p.sex] : ''}</div>
+      ${p.tags.length ? `<div style="margin-top:6px">${p.tags.map(t => `<span class="chip${(FAMILY_TAGS as readonly string[]).includes(t) ? ' on' : ''}">${esc(t)}</span>`).join('')}</div>` : ''}
+      <div class="meta">化验 ${p.labs ?? 0} 次${p.last_lab ? ` · 最近 ${esc(p.last_lab)}` : ''}</div>
+    </button>`).join('')
+  $('#main').innerHTML = list.length
+    ? `<div class="member-grid">${cards}</div>`
+    : `<div class="empty"><div class="big">🏠</div>还没有家人的档案<br><span style="font-size:12px">把报告、化验单管起来，先给每位家人建一份档案</span></div>`
+  $('#addMember').addEventListener('click', () => void memberDialog(null, () => void homeView()))
+  document.querySelectorAll('.member').forEach(b => b.addEventListener('click', () => { location.hash = `#/m/${b.getAttribute('data-id')}` }))
+}
+
+// —— 建档 / 编辑成员 ——
+
+function memberDialog(p: Patient | null, done: () => void): void {
+  const tags = p?.tags ?? []
+  const d = dlg(`<h3>${p ? '编辑家人' : '添加家人'}</h3><div class="form">
+      <label>称呼（如：妈妈、宝宝）<input id="fName" maxlength="24" value="${esc(p?.name ?? '')}" placeholder="称呼"></label>
+      <label>性别<select id="fSex"><option value="">保密</option><option value="F" ${p?.sex === 'F' ? 'selected' : ''}>女</option><option value="M" ${p?.sex === 'M' ? 'selected' : ''}>男</option></select></label>
+      <label>出生年份<input id="fYear" type="number" inputmode="numeric" value="${p?.birth_year ?? ''}" placeholder="如 1990 / 2023（可留空）"></label>
+      <label>标记<span id="fTags">${FAMILY_TAGS.map(t => `<button type="button" class="chip pick${tags.includes(t) ? ' on' : ''}" data-t="${t}">${t}</button>`).join('')}</span></label>
+      <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">${p ? '保存' : '建档'}</button></div>
+    </div>`)
+  let chosen = new Set(tags)
+  d.querySelectorAll('.pick').forEach(b => b.addEventListener('click', () => {
+    const t = b.getAttribute('data-t')!
+    chosen.has(t) ? chosen.delete(t) : chosen.add(t)
+    b.classList.toggle('on')
+  }))
+  d.querySelector('[data-x="0"]')!.addEventListener('click', () => d.close())
+  d.querySelector('[data-x="1"]')!.addEventListener('click', async () => {
+    const body = {
+      name: ($('#fName', d) as HTMLInputElement).value,
+      sex: ($('#fSex', d) as HTMLSelectElement).value || null,
+      birth_year: ($('#fYear', d) as HTMLInputElement).value,
+      tags: [...chosen],
+    }
+    try {
+      if (p) await api(`/api/patients/${p.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+      else await api('/api/patients', { method: 'POST', body: JSON.stringify(body) })
+      d.close(); toast(p ? '已保存' : '已建档'); done()
+    } catch (err) { toast((err as Error).message, true) }
+  })
+}
+
+// —— 成员页 ——
+
+async function memberView(id: string): Promise<void> {
+  app.innerHTML = `<div class="topbar"><div class="topbar-in">
+      <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 id="mName">…</h1><div class="sub" id="mMeta"></div></div>
+      <button class="edit" id="mEdit">编辑</button></div></div>
+    <div class="max"><div class="tabs" id="tabs">
+      <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button>
+    </div><div id="main" class="loading">加载中…</div></div>`
+  $('#back').addEventListener('click', () => { location.hash = '' })
+  let detail: Detail
+  try {
+    detail = await api<Detail>(`/api/patients/${id}`)
+  } catch (err) { if ((err as ApiErr).status !== 401) toast((err as Error).message, true); $('#mName').textContent = '加载失败'; return }
+  const name = display(detail)
+  $('#mName').textContent = name
+  $('#mMeta').textContent = [detail.sex ? SEX[detail.sex] : '', detail.birth_year ? ageText(detail.birth_year) : '', detail.tags.join(' · ')].filter(Boolean).join(' · ')
+  $('#mEdit').addEventListener('click', () => memberDialog(detail, () => void memberView(id)))
+
+  const state = { tab: 'labs' as 'labs' | 'records' | 'pending' }
+  const show = (tab: 'labs' | 'records' | 'pending'): void => {
+    state.tab = tab
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.getAttribute('data-tab') === tab))
+    const main = $('#main')
+    if (tab === 'labs') void labsTab(main, id, detail)
+    else if (tab === 'records') void recordsTab(main, id, detail)
+    else void pendingTab(main, id, detail)
+  }
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => show(t.getAttribute('data-tab') as never)))
+  show('labs')
+}
+
+/** 化验页签：最近值 + 每项展开全史与趋势。 */
+async function labsTab(main: HTMLElement, id: string, detail: Detail): Promise<void> {
+  main.innerHTML = `<div style="display:flex;justify-content:flex-end"><button class="btn sec" id="addLab" style="min-height:36px;padding:0 12px">＋ 手动录入</button></div>
+    <div class="card" id="latest">${detail.latest_labs.length ? '' : '<div class="empty">还没有化验值<br><span style="font-size:12px">上传化验单，或右上角手动录入</span></div>'}</div>`
+  $('#addLab').addEventListener('click', () => void labDialog(id, () => void memberView(id)))
+  const box = $('#latest')
+  detail.latest_labs.forEach(l => {
+    const b = document.createElement('div')
+    b.innerHTML = `<button class="labrow" data-key="${esc(l.test_key)}">
+      <span class="nm"><span class="t">${esc(l.test_name)}</span><span class="r">${esc(l.ref_text ?? '')}</span></span>
+      <span class="v">${esc(valText(l))}</span>
+      ${l.flag ? `<span class="flag ${l.flag}">${l.flag === 'H' ? '↑' : '↓'}</span>` : ''}
+      <span class="d">${esc(dayShort(l.collected_on))}</span></button><div class="hist" hidden></div>`
+    box.append(b)
+    b.querySelector('.labrow')!.addEventListener('click', () => void toggleHistory(b, id, l))
+  })
+}
+
+/** 展开 / 收起一项的全史（懒加载，同 key 缓存在元素上）。 */
+async function toggleHistory(block: HTMLElement, id: string, l: Lab): Promise<void> {
+  const hist = block.querySelector('.hist') as HTMLElement
+  if (!hist.hidden) { hist.hidden = true; return }
+  if (!hist.dataset.loaded) {
+    hist.innerHTML = '<div class="loading">…</div>'
+    try {
+      const rows = await api<Lab[]>(`/api/patients/${id}/labs?tests=${encodeURIComponent(l.test_key)}`)
+      hist.innerHTML = `${spark(rows)}` + rows.slice().reverse().map(r => `<div class="row">
+        <span class="d">${esc(r.collected_on ?? '')}</span><span style="flex:1">${esc(valText(r))}${r.source === 'manual' ? ' <span class="chip">手录</span>' : ''}</span>
+        ${r.flag ? `<span class="flag ${r.flag}">${r.flag === 'H' ? '↑' : '↓'}</span>` : ''}</div>`).join('')
+      hist.dataset.loaded = '1'
+    } catch (err) { hist.innerHTML = `<div class="loading">${esc((err as Error).message)}</div>` }
+  }
+  hist.hidden = false
+}
+
+/** 手动录入一项化验（数值直接为已确认；AI 不能手动录入，服务端拒绝 via=ai）。 */
+function labDialog(id: string, done: () => void): void {
+  const d = dlg(`<h3>手动录入化验</h3><div class="form">
+      <label>项目名（如：空腹血糖）<input id="lName" maxlength="60"></label>
+      <label>数值（可含符号，如 &lt;40）<input id="lVal" inputmode="decimal"></label>
+      <label>单位<input id="lUnit" maxlength="20" placeholder="如 mmol/L（可留空）"></label>
+      <div style="display:flex;gap:8px"><label style="flex:1">参考下限<input id="lLow" inputmode="decimal"></label><label style="flex:1">参考上限<input id="lHigh" inputmode="decimal"></label></div>
+      <label>采样日期<input id="lDate" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+      <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">保存</button></div>
+    </div>`)
+  d.querySelector('[data-x="0"]')!.addEventListener('click', () => d.close())
+  d.querySelector('[data-x="1"]')!.addEventListener('click', async () => {
+    try {
+      await api(`/api/patients/${id}/labs`, { method: 'POST', body: JSON.stringify({
+        test_name: ($('#lName', d) as HTMLInputElement).value,
+        value: ($('#lVal', d) as HTMLInputElement).value,
+        unit: ($('#lUnit', d) as HTMLInputElement).value,
+        ref_low: ($('#lLow', d) as HTMLInputElement).value || null,
+        ref_high: ($('#lHigh', d) as HTMLInputElement).value || null,
+        collected_on: ($('#lDate', d) as HTMLInputElement).value,
+      }) })
+      d.close(); toast('已录入'); done()
+    } catch (err) { toast((err as Error).message, true) }
+  })
+}
+
+/** 记录页签：上传报告 + 记录列表（含关联文档）。 */
+async function recordsTab(main: HTMLElement, id: string, detail: Detail): Promise<void> {
+  main.innerHTML = `<input type="file" id="upFile" accept="image/*,application/pdf,.docx,.txt" hidden multiple>
+    <button class="btn block" id="upBtn" style="margin-top:12px">📷 上传报告 / 化验单（拍照或相册）</button>
+    <div class="card" id="recs">${detail.records.length ? '' : '<div class="empty">还没有记录</div>'}</div>
+    ${detail.documents.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">关联文档（AI 整理的档案与病例）</div>
+      ${detail.documents.map(doc => `<div class="rec"><div class="info"><div class="t">${esc(doc.title)}</div><div class="m">${doc.kind === 'archive' ? '健康档案' : '病例报告'} · ${esc(doc.updated_at.slice(0, 10))}</div></div></div>`).join('')}</div>` : ''}`
+  $('#upBtn').addEventListener('click', () => $('#upFile').click())
+  $('#upFile').addEventListener('change', async () => {
+    const files = Array.from(($('#upFile') as HTMLInputElement).files ?? [])
+    if (!files.length) return
+    for (const f of files) {
+      const fd = new FormData(); fd.append('file', f)
+      try { await api(`/api/patients/${id}/files`, { method: 'POST', body: fd }); toast(`已上传：${f.name}`) }
+      catch (err) { toast((err as Error).message, true) }
+    }
+    ($('#upFile') as HTMLInputElement).value = ''
+    // 提取在后台跑：过一会儿自动刷新，完了去「待确认」
+    toast('已上传，正在自动识别，稍后到「待确认」逐项确认', false)
+    setTimeout(() => void recordsTab(main, id, detail), 2600)
+    setTimeout(() => void recordsTab(main, id, detail), 8000)
+  })
+  const box = $('#recs')
+  detail.records.forEach(r => {
+    const b = document.createElement('div')
+    b.innerHTML = `<div class="rec"><div class="info">
+        <div class="t">${esc(r.title)}</div>
+        <div class="m">${KIND[r.kind] ?? r.kind}${r.report_date ? ` · ${esc(r.report_date)}` : ''} · ${STATUS[r.status] ?? r.status}${r.extraction && r.status === 'pending' ? ` · ${EXTRACT[r.extraction] ?? ''}` : ''}${r.extraction_note ? ` · ${esc(r.extraction_note)}` : ''}</div></div>
+      ${r.file_id ? `<button class="go">原件</button>` : ''}</div>`
+    box.append(b)
+    const go = b.querySelector('.go')
+    if (go) go.addEventListener('click', () => void downloadFile(id, r.file_id!, r.title))
+  })
+}
+
+/** 原件是加密存放的，经授权接口取回再展示（<a> 带不了 Authorization 头）。 */
+async function downloadFile(id: string, fileId: string, title: string): Promise<void> {
+  try {
+    const res = await fetch(`/api/patients/${id}/files/${fileId}`, { headers: { Authorization: `Bearer ${token()}` } })
+    if (!res.ok) throw new Error(`取回失败（${res.status}）`)
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a'); a.href = url; a.download = title; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 4000)
+  } catch (err) { toast((err as Error).message, true) }
+}
+
+/** 待确认页签：AI 提取的化验与报告、AI 的提议，逐项确认。 */
+async function pendingTab(main: HTMLElement, id: string, detail: Detail): Promise<void> {
+  const labs = await api<Lab[]>(`/api/patients/${id}/labs?pending=1`).catch(() => [])
+  const pendingLabs = labs.filter(l => l.status === 'pending')
+  const pendingRecords = detail.records.filter(r => r.status === 'pending')
+  const n = pendingLabs.length + pendingRecords.length + detail.pending_proposals.length
+  document.querySelector('.tab[data-tab="pending"]')!.textContent = `待确认${n ? ` ${n}` : ''}`
+  main.innerHTML = `<div class="card" id="pend">${n ? '' : '<div class="empty">没有待确认的内容<br><span style="font-size:12px">上传报告后，自动识别的结果会在这里等你确认</span></div>'}</div>`
+  const box = $('#pend')
+  pendingLabs.forEach(l => {
+    const b = document.createElement('div')
+    b.innerHTML = `<div class="pendrow"><div class="hd"><span class="t">${esc(l.test_name)}</span><span style="font-weight:600">${esc(valText(l))}</span>
+        ${l.flag ? `<span class="flag ${l.flag}">${l.flag === 'H' ? '↑' : '↓'}</span>` : ''}<span class="d" style="color:var(--sub);font-size:12px">${esc(l.collected_on ?? '')}</span></div>
+      ${l.same_day?.length ? `<div class="same">同日同项已有：${esc(l.same_day.map(x => valText(x)).join('、'))} —— 确认后旧值标记「已替换」</div>` : ''}
+      ${l.locator?.verified === false ? '<div class="same">⚠️ 这个值没能回原文核对上，请对照原件</div>' : ''}
+      <div class="act"><button class="btn ok" data-a="confirm" style="flex:1">✓ 确认</button><button class="btn no" data-a="reject" style="flex:1">✕ 驳回</button></div></div>`
+    box.append(b)
+    b.querySelector('[data-a="confirm"]')!.addEventListener('click', () => void resolveLab(id, l.id, true))
+    b.querySelector('[data-a="reject"]')!.addEventListener('click', () => void resolveLab(id, l.id, false))
+  })
+  pendingRecords.forEach(r => {
+    const b = document.createElement('div')
+    b.innerHTML = `<div class="pendrow"><div class="hd"><span class="t">${esc(r.title)}</span><span class="chip">${KIND[r.kind] ?? r.kind}</span>
+        <span class="d" style="color:var(--sub);font-size:12px">${esc(r.report_date ?? '')}</span></div>
+      ${r.extraction && r.extraction !== 'done' ? `<div class="same">${EXTRACT[r.extraction] ?? r.extraction}${r.extraction_note ? `：${esc(r.extraction_note)}` : ''}（先等识别完成，或直接驳回）</div>` : ''}
+      ${r.extraction === 'done' && !r.report_date ? '<div class="same">报告上没有日期，确认前先补一个</div>' : ''}
+      <div class="act"><button class="btn ok" data-a="confirm" style="flex:1">✓ 确认全部</button><button class="btn no" data-a="reject" style="flex:1">✕ 驳回</button></div></div>`
+    box.append(b)
+    b.querySelector('[data-a="confirm"]')!.addEventListener('click', () => void resolveRecord(id, r))
+    b.querySelector('[data-a="reject"]')!.addEventListener('click', async () => {
+      if (!(await confirmDlg(`驳回「${r.title}」？这份报告的待确认化验一并作废`, '驳回'))) return
+      try { await api(`/api/patients/${id}/records/${r.id}/reject`, { method: 'POST', body: '{}' }); toast('已驳回'); void memberView(id) } catch (err) { toast((err as Error).message, true) }
+    })
+  })
+  detail.pending_proposals.forEach(pr => {
+    const b = document.createElement('div')
+    b.innerHTML = `<div class="pendrow"><div class="hd"><span class="t">${esc(proposalText(pr))}</span><span class="chip">AI 提议</span></div>
+      <div class="same">${esc(pr.reason)}</div>
+      <div class="act"><button class="btn ok" data-a="accept" style="flex:1">✓ 接受</button><button class="btn no" data-a="reject" style="flex:1">✕ 拒绝</button></div></div>`
+    box.append(b)
+    b.querySelector('[data-a="accept"]')!.addEventListener('click', () => void resolveProposal(id, pr.id, true))
+    b.querySelector('[data-a="reject"]')!.addEventListener('click', () => void resolveProposal(id, pr.id, false))
+  })
+}
+
+const proposalText = (pr: { kind: string; payload: Record<string, unknown> }): string => {
+  const p = pr.payload
+  if (pr.kind === 'lab') return `补充化验：${String(p.test_name ?? '')} ${String(p.value ?? '')}${p.unit ? ` ${String(p.unit)}` : ''}`
+  if (pr.kind === 'tag') return `加标记：${String(p.tag ?? '')}`
+  if (pr.kind === 'note') return '补一段健康记录'
+  if (pr.kind === 'update') return '修改基本信息'
+  return `提议：${pr.kind}`
+}
+
+async function resolveLab(id: string, labId: string, ok: boolean): Promise<void> {
+  try {
+    await api(`/api/patients/${id}/labs/${labId}/${ok ? 'confirm' : 'reject'}`, { method: 'POST', body: '{}' })
+    toast(ok ? '已确认' : '已驳回'); void memberView(id)
+  } catch (err) { toast((err as Error).message, true) }
+}
+
+async function resolveRecord(id: string, r: RecordRow): Promise<void> {
+  try {
+    let reportDate: string | null = null
+    if (r.extraction === 'done' && !r.report_date) {
+      const d = dlg(`<h3>「${esc(r.title)}」的日期</h3><div class="form"><label>报告 / 采样日期<input id="rd" type="date"></label>
+        <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">确认</button></div></div>`)
+      const ok = await new Promise<string | null>(res => {
+        d.querySelector('[data-x="0"]')!.addEventListener('click', () => { res(null); d.close() })
+        d.querySelector('[data-x="1"]')!.addEventListener('click', () => { res(($('#rd', d) as HTMLInputElement).value); d.close() })
+      })
+      if (!ok) return
+      reportDate = ok
+    }
+    await api(`/api/patients/${id}/records/${r.id}/confirm`, { method: 'POST', body: JSON.stringify({ report_date: reportDate }) })
+    toast('已确认'); void memberView(id)
+  } catch (err) { toast((err as Error).message, true) }
+}
+
+async function resolveProposal(id: string, prid: string, accept: boolean): Promise<void> {
+  try {
+    await api(`/api/patients/${id}/proposals/${prid}/${accept ? 'accept' : 'reject'}`, { method: 'POST', body: '{}' })
+    toast(accept ? '已接受' : '已拒绝'); void memberView(id)
+  } catch (err) { toast((err as Error).message, true) }
+}
+
+// —— 启动 ——
+
+render()
