@@ -81,6 +81,17 @@ describe('知家：登录后的家庭空间接口', () => {
     expect(denied.text).toContain('只在知家')
   })
 
+  it('「化验 N 次」按化验单份数算：同一天手工录入多项算一次，不同日期各算一次', async () => {
+    const t = await setup()
+    const p = await t.json('POST', '/api/patients', t.mom.token, { name: '爸爸' })
+    for (const [name, v, d] of [['血糖', 5.6, '2026-09-01'], ['肌酐', 80, '2026-09-01'], ['尿酸', 400, '2026-09-01'], ['血糖', 6.1, '2026-10-01']] as const) {
+      await t.json('POST', `/api/patients/${p.id}/labs`, t.mom.token, { test_name: name, value: v, collected_on: d })
+    }
+    const row = (await t.json('GET', '/api/patients', t.mom.token)).find((x: { id: string }) => x.id === p.id)
+    expect(row.labs).toBe(4)
+    expect(row.lab_reports).toBe(2)
+  })
+
   it('健康档案 doc：建档钩子已建并关联（archive），重复请求返回同一份', async () => {
     const t = await setup()
     const p = await t.json('POST', '/api/patients', t.mom.token, { name: '妈妈' })

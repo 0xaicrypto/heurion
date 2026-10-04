@@ -292,7 +292,7 @@ export class PatientService {
     return p
   }
 
-  list(a: Actor): Array<PatientRow & { role: string; labs: number; last_lab: string | null; pending: number }> {
+  list(a: Actor): Array<PatientRow & { role: string; labs: number; lab_reports: number; last_lab: string | null; pending: number }> {
     const c = this.ctx(a)
     const rows = (c.settings.patient_visibility === 'tenant'
       ? c.db.db.prepare('SELECT * FROM patients ORDER BY updated_at DESC').all()
@@ -300,9 +300,10 @@ export class PatientService {
           OR p.id IN (SELECT patient_id FROM break_glass WHERE user_id = ? AND expires_at > ?) ORDER BY p.updated_at DESC`).all(a.userId, a.userId, now())) as Array<Record<string, unknown>>
     return rows.map(r => {
       const p = patientOf(r, this.keys.decryptText(c.tenantId, (r.name_enc as string | null) ?? null))
-      const stats = c.db.db.prepare("SELECT COUNT(*) AS n, MAX(collected_on) AS last FROM labs WHERE patient_id = ? AND status = 'confirmed'").get(p.id) as { n: number; last: string | null }
+      // n = 已确认的化验项数；reports = 化验单份数（同一份报告算一次；手工录入按日期算一次）
+      const stats = c.db.db.prepare("SELECT COUNT(*) AS n, COUNT(DISTINCT COALESCE(record_id, 'manual:' || collected_on)) AS reports, MAX(collected_on) AS last FROM labs WHERE patient_id = ? AND status = 'confirmed'").get(p.id) as { n: number; reports: number; last: string | null }
       const pending = (c.db.db.prepare("SELECT (SELECT COUNT(*) FROM labs WHERE patient_id = ? AND status = 'pending') + (SELECT COUNT(*) FROM proposals WHERE patient_id = ? AND status = 'pending') AS n").get(p.id, p.id) as { n: number }).n
-      return { ...p, role: this.teamRole(c.db, p.id, a.userId) ?? (c.settings.patient_visibility === 'tenant' ? 'tenant' : 'break_glass'), labs: stats.n, last_lab: stats.last, pending }
+      return { ...p, role: this.teamRole(c.db, p.id, a.userId) ?? (c.settings.patient_visibility === 'tenant' ? 'tenant' : 'break_glass'), labs: stats.n, lab_reports: stats.reports, last_lab: stats.last, pending }
     })
   }
 

@@ -715,7 +715,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   }, async () => {
     if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
     try {
-      return json(deps.patients.list(aiActor()).map(p => ({ patient_id: p.id, code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, labs: p.labs, last_lab: p.last_lab, pending_review: p.pending })))
+      return json(deps.patients.list(aiActor()).map(p => ({ patient_id: p.id, code: p.code, sex: p.sex, birth_year: p.birth_year, tags: p.tags, labs: p.labs, lab_reports: p.lab_reports, last_lab: p.last_lab, pending_review: p.pending })))
     } catch (err) { return patientFail(err) }
   })
 

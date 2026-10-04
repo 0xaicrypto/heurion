@@ -11,7 +11,7 @@ import { powDelay, solvePow, type PowSolution } from './pow.ts'
 
 interface Patient {
   id: string; code: string; name: string | null; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
-  status: string; labs?: number; last_lab?: string | null; pending?: number
+  status: string; labs?: number; lab_reports?: number; last_lab?: string | null; pending?: number
 }
 interface Lab {
   id: string; record_id: string | null; test_key: string; test_name: string
@@ -344,7 +344,7 @@ async function homeView(): Promise<void> {
       <div class="nm">${esc(display(p))}<span class="sex">${p.sex ? SEX[p.sex] : ''}</span>${p.pending ? `<span class="pend" style="margin-left:auto">${p.pending} 待确认</span>` : ''}</div>
       <div class="meta">${p.birth_year ? `${p.birth_year} 年生 · ${ageText(p.birth_year)}` : ''}${p.birth_year && p.sex ? ' · ' : ''}${p.sex ? SEX[p.sex] : ''}</div>
       ${p.tags.length ? `<div style="margin-top:6px">${p.tags.map(t => `<span class="chip${(FAMILY_TAGS as readonly string[]).includes(t) ? ' on' : ''}">${esc(t)}</span>`).join('')}</div>` : ''}
-      <div class="meta">化验 ${p.labs ?? 0} 次${p.last_lab ? ` · 最近 ${esc(p.last_lab)}` : ''}</div>
+      <div class="meta">化验 ${p.lab_reports ?? 0} 次${p.last_lab ? ` · 最近 ${esc(p.last_lab)}` : ''}</div>
     </button>`).join('')
   $('#main').innerHTML = list.length
     ? `<div class="member-grid">${cards}</div>`
