@@ -1,6 +1,6 @@
 /**
  * 账户流程的浏览器测试（真实 Chromium）：首个用户注册为管理员、第二个用户注册、两人看不到彼此的文档、
- * 用户菜单与个人设置、管理员停用用户后其登录立即失效、改密码。
+ * 用户菜单与个人设置、管理员停用用户后其登录立即失效、改密码、研究团队协作（同机构同事：可编辑 → 只读）。
  * 需要一个**全新**实例（会注册第一个用户成为管理员）：
  *   HEURION_DATA_DIR=$(mktemp -d) PORT=8788 HEURION_MCP_URL=http://127.0.0.1:8788/mcp pnpm start &
  *   pnpm --filter @heurion2/platform ui:accounts http://127.0.0.1:8788 [截图目录] [服务日志路径]
@@ -8,6 +8,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { chromium, type Page } from 'playwright'
+import { solveChallenge, type Challenge } from '../src/auth/bot-guard.ts'
 
 const B = process.argv[2] ?? 'http://127.0.0.1:8788'
 const SHOTS = process.argv[3]
@@ -101,6 +102,71 @@ await user.click('#authSubmit')
 await user.waitForFunction(() => document.getElementById('authError')!.textContent !== '')
 ok('被停用的账户不能登录', (await user.locator('#authError').innerText()).includes('停用'))
 await shot(user, 'login-disabled')
+
+// 研究团队协作：王医生邀请赵医生进本机构 → 建研究加赵为「可编辑」→ 赵看到共享研究并编辑方案 → 改为「只读」→ 赵只能看
+{
+  const adminToken = await admin.evaluate(() => localStorage.getItem('heurion.token') ?? '')
+  const call = async (method: string, path: string, token: string, body?: unknown) => {
+    const r = await fetch(B + path, { method, headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body !== undefined ? JSON.stringify(body) : undefined })
+    const text = await r.text()
+    return { status: r.status, text, json: (() => { try { return JSON.parse(text) } catch { return null } })() as any }
+  }
+  const invite = (await call('POST', '/api/tenant/invites', adminToken, {})).json.code as string
+  const pow = solveChallenge(await (await fetch(B + '/api/auth/challenge')).json() as Challenge)
+  await new Promise(r => setTimeout(r, 1700)) // 人机校验：签发后至少 1.5 秒才能提交
+  const zhao = await (await fetch(B + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'drzhao', display_name: '赵医生', password: 'secret123', invite, pow }) })).json() as { token: string; user: { id: string } }
+  const study = (await call('POST', '/api/studies', adminToken, { title: 'SGLT2i 真实世界研究' })).json
+  const doc = (await call('POST', '/api/docs', adminToken, { title: 'SGLT2i 真实世界研究 · 研究方案', markdown: '# 研究方案\n\n研究背景待补充。' })).json
+  await call('POST', `/api/studies/${study.id}/items`, adminToken, { kind: 'doc', ref_id: doc.id, role: 'protocol' })
+
+  await admin.goto(B + '/app')
+  await admin.waitForSelector('#userButton', { state: 'visible' })
+  await admin.click('#navResearch')
+  await admin.click(`#studyList li[data-study="${study.id}"]`)
+  await admin.waitForSelector('#rsMembers #rsAddUser')
+  await admin.selectOption('#rsAddUser', zhao.user.id)
+  await admin.selectOption('#rsAddRole', 'editor')
+  await admin.click('[data-act="addmember"]')
+  await admin.waitForSelector(`#rsMembers [data-mrole="${zhao.user.id}"]`)
+  ok('负责人在研究页加本机构同事为「可编辑」', (await admin.locator('#rsMembers').innerText()).includes('赵医生'))
+  await shot(admin, 'team-members')
+
+  const z = await newPage()
+  await z.goto(B + '/app')
+  await z.evaluate(t => { localStorage.setItem('heurion.token', t); localStorage.setItem('heurion.space', 'research') }, zhao.token)
+  await z.reload()
+  await z.waitForSelector(`#studyList li[data-study="${study.id}"]`)
+  ok('同事的研究列表里出现共享研究并标「共享」', (await z.locator(`#studyList li[data-study="${study.id}"]`).innerText()).includes('共享'))
+  await z.click(`#studyList li[data-study="${study.id}"]`)
+  await z.waitForSelector(`[data-opendoc="${doc.id}"]`)
+  ok('可编辑成员看得到「新建方案」等按钮', await z.locator('[data-new="protocol"]').count() === 1)
+  await z.click(`[data-opendoc="${doc.id}"]`)
+  await z.waitForSelector('.ProseMirror')
+  ok('顶栏显示协作者', await z.locator('#docCollab .collab-avatar').count() === 2)
+  await z.click('.ProseMirror p')
+  await z.keyboard.press('End')
+  await z.keyboard.type('赵医生补充的内容')
+  await z.waitForTimeout(2500)
+  const read = await call('GET', `/api/docs/${doc.id}/read`, adminToken)
+  ok('可编辑成员的修改实时进了共享文档', read.text.includes('赵医生补充的内容'))
+
+  await admin.selectOption(`[data-mrole="${zhao.user.id}"]`, 'viewer')
+  await admin.waitForTimeout(800)
+  ok('负责人把同事改为「只读」', (await call('GET', `/api/studies/${study.id}/members`, adminToken)).json.members.find((m: { user_id: string }) => m.user_id === zhao.user.id)?.role === 'viewer')
+  await z.reload()
+  await z.waitForSelector(`#studyList li[data-study="${study.id}"]`)
+  await z.click(`#studyList li[data-study="${study.id}"]`)
+  await z.waitForSelector(`[data-opendoc="${doc.id}"]`)
+  await z.click(`[data-opendoc="${doc.id}"]`)
+  await z.waitForSelector('.ProseMirror')
+  ok('只读成员打开文档：编辑器不可编辑、顶栏标「只读」', (await z.locator('.ProseMirror').getAttribute('contenteditable')) === 'false' && await z.locator('#docCollab .collab-ro').isVisible())
+  ok('只读成员的接口写入被拒绝', (await call('PATCH', `/api/docs/${doc.id}`, zhao.token, { title: 'x' })).status === 403)
+  await shot(z, 'team-doc-readonly')
+  await z.click('#docContext')
+  await z.waitForSelector('.banner.rs-readonly')
+  ok('只读成员的研究页：只读提示、没有修改类按钮', await z.locator('[data-new="protocol"]').count() === 0 && await z.locator('[data-act="upload"]').count() === 0)
+  await shot(z, 'team-study-readonly')
+}
 
 // 5. 邮箱：管理员绑定邮箱 → 另一个浏览器里忘记密码 → 验证码重置并登录 → 原登录失效
 if (SERVER_LOG) {

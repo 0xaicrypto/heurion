@@ -27,6 +27,8 @@ export interface EditorOptions {
   onSelection: (anchor: SelectionAnchor | null) => void
   /** 图是否由数据分析生成（有则显示「来自分析」，点开看代码与数据来源）。 */
   analysis?: { has: (assetId: string) => Promise<boolean>; show: (assetId: string) => void }
+  /** 只读（研究里的只读成员）：能看、能选中文字评论，不能改 */
+  readOnly?: boolean
 }
 
 export interface SelectionAnchor {
@@ -248,6 +250,7 @@ export class Editor {
     const editor = this
     this.view = new EditorView(mount, {
       state,
+      editable: () => !opts.readOnly,
       nodeViews: {
         citation: node => {
           const dom = document.createElement('sup')

@@ -878,3 +878,22 @@ button.block { width: 100%; padding: 10px 12px; }
 .ph-foot { margin-top: 10px; }
 .ph-foot a { color: var(--mint-text); }
 @media (max-width: 900px) { .ph-grid { columns: 2 140px; } }
+
+/* —— 研究团队协作：共享标记、成员卡片、协作者、只读 —— */
+.shared-pill { font-size: 10.5px; padding: 0 6px; margin-left: 6px; border: 1px solid var(--green-line); color: var(--mint-text); background: var(--green-soft); vertical-align: 1px; }
+.collab-avatar { display: inline-grid; place-items: center; width: 24px; height: 24px; flex: none; font-size: 11.5px; font-weight: 600; color: var(--text); background: var(--raised); border: 1px solid var(--line-strong); }
+.collab-avatar.role-owner { background: var(--mint); color: var(--mint-ink); border-color: var(--mint); }
+.collab-avatar.role-viewer { color: var(--muted); border-style: dashed; }
+.doc-collab { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
+.doc-collab .collab-avatar { width: 22px; height: 22px; font-size: 11px; margin-left: -6px; box-shadow: 0 0 0 2px var(--bg); }
+.doc-collab .collab-avatar:first-child { margin-left: 0; }
+.doc-collab .collab-more { font-size: 11px; color: var(--muted); }
+.doc-collab .collab-ro { margin-left: 6px; font-size: 11px; }
+.rs-member { gap: 10px; }
+.rs-member select { padding: 2px 6px; font-size: 12.5px; }
+.rs-addmember { gap: 8px; margin: 10px 0 4px; flex-wrap: wrap; }
+.rs-addmember select { min-width: 160px; }
+.rs-role { margin-left: 4px; }
+.banner.rs-readonly { margin-bottom: 14px; }
+.page.read-only .ProseMirror { caret-color: transparent; }
+@media (max-width: 900px) { .doc-collab .collab-avatar:nth-child(n+3) { display: none; } }

@@ -361,6 +361,8 @@ function leaveDoc(): void {
   $('deckToolbar').hidden = true
   $('docTitle').textContent = ''
   $('docContext').hidden = true
+  $('docCollab').hidden = true
+  $('page').classList.remove('read-only')
   docPatient = null
   setSyncStatus('offline')
   $('syncStatus').textContent = ''
@@ -410,6 +412,7 @@ async function open(docId: string): Promise<void> {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const provider = new Provider(`${proto}://${location.host}/collab/${docId}?token=${encodeURIComponent(TOKEN)}`, ydoc, setSyncStatus)
     const editor = new Editor($('page'), ydoc.getXmlFragment('body'), {
+      readOnly: meta.my_role === 'viewer',
       assetUrl: id => `/api/assets/${id}?token=${encodeURIComponent(TOKEN)}`,
       uploadImage: async file => {
         const fd = new FormData()
@@ -441,8 +444,12 @@ async function open(docId: string): Promise<void> {
     $('docContext').textContent = `← ${ctx.title} · ${({ protocol: '研究方案', manuscript: '论文', slides: '幻灯片' } as Record<string, string>)[ctx.role] ?? '研究文档'}`
     $('docContext').onclick = () => void researchUi.open(ctx.study_id)
   }
-  $('toolbar').hidden = meta.kind === 'deck'
-  $('deckToolbar').hidden = meta.kind !== 'deck'
+  // 研究共享文档：顶栏显示协作者；只读成员不显示编辑工具条
+  const readOnly = meta.my_role === 'viewer'
+  renderCollaborators(meta.collaborators ?? [], readOnly)
+  $('page').classList.toggle('read-only', readOnly)
+  $('toolbar').hidden = meta.kind === 'deck' || readOnly
+  $('deckToolbar').hidden = meta.kind !== 'deck' || readOnly
   if (meta.kind === 'deck') void initDeckToolbar()
   $('exportDocxBtn').hidden = meta.kind === 'deck'
   $('exportMdBtn').hidden = meta.kind === 'deck'
@@ -450,6 +457,16 @@ async function open(docId: string): Promise<void> {
   for (const b of ['exportBtn', 'sendBtn']) $<HTMLButtonElement>(b).disabled = false
   await loadDocs()
   await refresh(true)
+}
+
+/** 顶栏的协作者（研究成员）：头像缩写 + 名字提示；我是只读成员时加一个「只读」标记 */
+function renderCollaborators(list: Array<{ name: string; role: string }>, readOnly: boolean): void {
+  const el = $('docCollab')
+  el.hidden = list.length < 2 && !readOnly
+  const ROLE: Record<string, string> = { owner: '负责人', editor: '可编辑', viewer: '只读' }
+  el.innerHTML = list.slice(0, 5).map(m => `<span class="collab-avatar role-${esc(m.role)}" title="${esc(m.name)} · ${ROLE[m.role] ?? ''}">${esc(m.name.slice(0, 1).toUpperCase())}</span>`).join('')
+    + (list.length > 5 ? `<span class="collab-more">+${list.length - 5}</span>` : '')
+    + (readOnly ? '<span class="pill off collab-ro" title="你在这个研究里是只读成员：能看、能评论，不能修改">只读</span>' : '')
 }
 
 function close(): void {
