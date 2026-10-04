@@ -288,3 +288,23 @@ describe('带图模板（Unsplash 照片）', () => {
     expect(slideRead(t.doc().child(0), 0, 1)).toMatch(/模板装饰 \d+ 个/)
   })
 })
+
+describe('导出给 Keynote：每个形状都写明几何', () => {
+  it('每套模板 × 每个版式导出后，所有 p:sp（含占位符）和版式占位符都有 prstGeom / custGeom（Keynote 不显示没有几何的形状）', () => {
+    for (const key of Object.keys(DECK_THEMES)) {
+      const t = deck(key)
+      let after = t.doc().child(0).attrs.id as string
+      for (const l of LAYOUTS) {
+        const r = t.edit([{ op: 'add_slide', after, layout: l.name, title: `${l.name}标题`, body: '- 要点', body2: '说明' }])
+        after = r.results[0]!.ids[0]!
+      }
+      const files = unzipSync(pptxFor(t.docs, t.docId).bytes)
+      for (const [name, bytes] of Object.entries(files)) {
+        if (!/^ppt\/(slides|slideLayouts|slideMasters)\/[^/]+\.xml$/.test(name)) continue
+        for (const sp of strFromU8(bytes).match(/<p:sp>[\s\S]*?<\/p:sp>/g) ?? []) {
+          expect(/<a:(prstGeom|custGeom)\b/.test(sp), `${key} ${name}: ${sp.slice(0, 160)}`).toBe(true)
+        }
+      }
+    }
+  })
+})

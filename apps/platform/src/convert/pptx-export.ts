@@ -124,6 +124,19 @@ function txBodyInner(shape: PMNode, numbers: Map<string, number>): string {
   return out || '<a:p><a:endParaRPr lang="zh-CN"/></a:p>'
 }
 
+/**
+ * Keynote 不显示 spPr 里没有几何（prstGeom / custGeom）的形状——占位符也一样，文字整块消失；PowerPoint 默认按矩形画。
+ * 导出的每个 p:sp 都写明几何（缺了补矩形）。
+ */
+const GEOM_RECT = '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+export function ensureGeometry(spXml: string): string {
+  if (!/^<p:sp[\s>]/.test(spXml) || /<a:(prstGeom|custGeom)\b/.test(spXml)) return spXml
+  if (/<p:spPr\s*\/>/.test(spXml)) return spXml.replace(/<p:spPr\s*\/>/, `<p:spPr>${GEOM_RECT}</p:spPr>`)
+  // 几何在 xfrm 之后、填充之前（CT_ShapeProperties 的顺序）
+  return spXml.replace(/<p:spPr(\b[^>]*)>([\s\S]*?)<\/p:spPr>/, (_m, attrs: string, inner: string) =>
+    `<p:spPr${attrs}>${/<\/a:xfrm>/.test(inner) ? inner.replace(/<\/a:xfrm>/, `</a:xfrm>${GEOM_RECT}`) : GEOM_RECT + inner}</p:spPr>`)
+}
+
 /** 改过的形状：替换文字体 / 位置，其余原样。 */
 function patchShape(src: string, shape: PMNode, before: PMNode | undefined, numbers: Map<string, number>): string {
   let xml = src
@@ -227,7 +240,7 @@ function newShapeXml(shape: PMNode, nvId: number, numbers: Map<string, number>, 
   // Keynote 对只靠版式继承位置的占位符显示不全
   const xfrm = `<a:xfrm><a:off x="${a.x}" y="${a.y}"/><a:ext cx="${a.w}" cy="${a.h}"/></a:xfrm>`
   const spPr = a.ph
-    ? `<p:spPr>${xfrm}${a.fill ? fillXml(a.fill as string) : ''}</p:spPr>`
+    ? `<p:spPr>${xfrm}${GEOM_RECT}${a.fill ? fillXml(a.fill as string) : ''}</p:spPr>`
     : `<p:spPr>${xfrm}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml((a.fill as string | null) ?? 'none')}</p:spPr>`
   // 占位符的文字与画布一致：顶端、左对齐（版式里标题页常是底端居中，不覆盖会和画布对不上）
   const bodyPr = a.ph ? '<a:bodyPr anchor="t"/>' : '<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr>'
@@ -450,16 +463,18 @@ function rebuildSlide(xml: string, slide: PMNode, before: PMNode | undefined, in
 function shapesXml(slide: PMNode, head: string[], nextId: number, input: PptxExportInput, numbers: Map<string, number>, rels: SlideRels, before?: PMNode): string {
   const prev = new Map<string, PMNode>()
   before?.forEach(s => { if (s.attrs.id) prev.set(s.attrs.id as string, s) })
-  let out = head.join('')
+  let out = head.map(ensureGeometry).join('')
   let id = nextId
   slide.forEach(shape => {
     if (shape.type.name !== 'shape') return
     const src = input.src(shape.attrs.id as string)
     const old = prev.get(shape.attrs.id as string)
-    if (src && old && old.eq(shape)) out += src
-    else if (src && old && shape.attrs.kind === 'table' && tableShape(old) !== tableShape(shape)) out += rebuildTable(patchShape(src, shape, old, numbers), shape, numbers)
-    else if (src) out += patchShape(src, shape, old, numbers)
-    else out += newShapeXml(shape, id++, numbers, rels)
+    let xml: string
+    if (src && old && old.eq(shape)) xml = src
+    else if (src && old && shape.attrs.kind === 'table' && tableShape(old) !== tableShape(shape)) xml = rebuildTable(patchShape(src, shape, old, numbers), shape, numbers)
+    else if (src) xml = patchShape(src, shape, old, numbers)
+    else xml = newShapeXml(shape, id++, numbers, rels)
+    out += ensureGeometry(xml)
   })
   return out
 }
