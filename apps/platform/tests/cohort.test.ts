@@ -55,14 +55,20 @@ function env() {
   const p3 = patients.create(a, { sex: 'M', birth_year: year - 45, tags: ['2型糖尿病'] })
   const p4 = patients.create(a, { sex: 'M', birth_year: year - 70, tags: ['CKD4'] })
   patients.update(a, p4.id, { status: 'archived' })
-  patients.addLab(a, p1.id, { test_name: '肌酐', value: 98, unit: 'µmol/L', collected_on: '2025-03-02' })
-  patients.addLab(a, p1.id, { test_name: '肌酐', value: 2.1, unit: 'mg/dL', collected_on: '2025-06-10' }) // 185.7 µmol/L
-  patients.addLab(a, p1.id, { test_name: 'HbA1c', value: 7.2, unit: '%', collected_on: '2025-06-10' })
-  patients.addLab(a, p2.id, { test_name: 'Cr', value: 160, unit: 'µmol/L', collected_on: '2025-01-05' })
-  patients.addLab(a, p2.id, { test_name: 'Cr', value: 90, unit: 'µmol/L', collected_on: '2025-05-05' })
-  patients.addLab(a, p3.id, { test_name: '糖化血红蛋白', value: 8.1, unit: '%', collected_on: '2025-04-01' })
+  // 化验都挂在能追溯到原件的报告记录上（研究口径：record_id 为空的值不进数据集）
+  let reportSeq = 0
+  const addReport = (pid: string, date: string, items: Array<Record<string, unknown>>) => {
+    const f = patients.addFile(a, pid, { name: `检验报告-${++reportSeq}.pdf`, mime: 'application/pdf', bytes: Uint8Array.from([11, 22, 33, 44, 55, 66, 77, reportSeq]), report_date: date })
+    for (const it of items) patients.addRecordLab(a, pid, f.record.id, it)
+    patients.resolveRecord(a, pid, f.record.id, { accept: true })
+  }
+  addReport(p1.id, '2025-03-02', [{ test_name: '肌酐', value: 98, unit: 'µmol/L' }])
+  addReport(p1.id, '2025-06-10', [{ test_name: '肌酐', value: 2.1, unit: 'mg/dL' }, { test_name: 'HbA1c', value: 7.2, unit: '%' }]) // 肌酐 185.7 µmol/L
+  addReport(p2.id, '2025-01-05', [{ test_name: 'Cr', value: 160, unit: 'µmol/L' }])
+  addReport(p2.id, '2025-05-05', [{ test_name: 'Cr', value: 90, unit: 'µmol/L' }])
+  addReport(p3.id, '2025-04-01', [{ test_name: '糖化血红蛋白', value: 8.1, unit: '%' }])
   const study = studies.create(u.drA, { title: 'CKD 队列', design: 'retrospective_cohort' })
-  return { store, tenants, patients, datasets, studies, cohort, u, as, a, p1, p2, p3, p4, study, year }
+  return { store, tenants, patients, datasets, studies, cohort, u, as, a, p1, p2, p3, p4, study, year, addReport }
 }
 
 describe('研究入组：筛选', () => {
@@ -203,9 +209,9 @@ describe('研究数据集', () => {
     const stale = () => t.cohort.list(t.a, t.study.id).datasets.map(d => [d.version, d.latest, d.stale])
     expect(stale()).toEqual([[1, true, false]])
     // 不相关的项目变化不影响（只取了肌酐）
-    t.patients.addLab(t.a, t.p1.id, { test_name: 'HbA1c', value: 7.5, unit: '%', collected_on: '2025-09-01' })
+    t.addReport(t.p1.id, '2025-09-01', [{ test_name: 'HbA1c', value: 7.5, unit: '%' }])
     expect(stale()).toEqual([[1, true, false]])
-    t.patients.addLab(t.a, t.p1.id, { test_name: '肌酐', value: 200, unit: 'µmol/L', collected_on: '2025-09-01' })
+    t.addReport(t.p1.id, '2025-09-01', [{ test_name: '肌酐', value: 200, unit: 'µmol/L' }])
     expect(stale()).toEqual([[1, true, true]])
     const v2 = await t.cohort.dataset(t.a, t.study.id, { shape: 'long', tests: ['肌酐'] })
     expect([v2.dataset.version, v2.unchanged, v2.dataset.name]).toEqual([2, false, 'CKD 队列 · 队列长表 v2'])

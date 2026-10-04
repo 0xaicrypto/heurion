@@ -387,9 +387,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.json(pt(c).labs(me(c), c.req.param('ptid'), { tests, from: c.req.query('from'), to: c.req.query('to'), includePending: c.req.query('pending') === '1' }))
     } catch (err) { return patientFailure(c, err) }
   })
-  /** 手动录入一项化验（知家：家人自己填的数值直接为已确认；AI 不能用，addLab 拒绝 via=ai）。 */
+  /** 手动录入一项化验（知家：家人自己填的数值直接为已确认；只对个人空间开放，医院端一律来自上传报告；AI 不能用）。 */
   app.post('/api/patients/:ptid/labs', async c => {
-    try { return c.json(pt(c).addLab(me(c), c.req.param('ptid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) }
+    try {
+      pt(c).requirePersonal(me(c))
+      return c.json(pt(c).addLab(me(c), c.req.param('ptid'), await c.req.json()), 201)
+    } catch (err) { return patientFailure(c, err) }
   })
   app.post('/api/patients/:ptid/labs/:lid/:action{confirm|reject}', c => {
     try { pt(c).setLabStatus(me(c), c.req.param('ptid'), c.req.param('lid'), c.req.param('action') === 'confirm' ? 'confirmed' : 'rejected'); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }
@@ -426,25 +429,32 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/phr/:ptid/archive', async c => {
     try {
       const user = c.get('user')
-      const detail = pt(c).read(me(c), c.req.param('ptid'))
+      const svc = pt(c)
+      svc.assertEditable(me(c), c.req.param('ptid'))
+      const detail = svc.read(me(c), c.req.param('ptid'))
       const found = detail.documents.find(d => d.kind === 'archive')
       if (found) return c.json({ doc_id: found.doc_id, existed: true })
       const row = docs.create({ owner: user, title: `${detail.name ?? detail.code} 的健康档案` })
-      pt(c).linkDoc(me(c), c.req.param('ptid'), row.id, 'archive')
+      try { svc.linkDoc(me(c), c.req.param('ptid'), row.id, 'archive') } catch (err) { store.trashDoc(row.id, true); throw err }
       return c.json({ doc_id: row.id, existed: false }, 201)
     } catch (err) { return patientFailure(c, err) }
   })
 
-  /** 就诊简报：建简报文档 + 起一个 AI 回合填写（指令由服务端组装；红线守卫在操作层强制）。 */
+  /** 就诊简报：建简报文档 + 起一个 AI 回合填写（指令由服务端组装；红线守卫在操作层强制）。30 分钟内同一成员只生成一份。 */
   app.post('/api/phr/:ptid/brief', async c => {
     try {
       const user = c.get('user')
-      const detail = pt(c).read(me(c), c.req.param('ptid'))
+      const svc = pt(c)
+      svc.assertEditable(me(c), c.req.param('ptid'))
+      const detail = svc.read(me(c), c.req.param('ptid'))
+      if (detail.documents.some(d => d.kind === 'brief' && Date.now() - Date.parse(d.linked_at) < 30 * 60_000)) {
+        throw new PatientError('brief_recent', '这个成员刚生成过简报（30 分钟内）；先打开那份看看，需要更新再重新生成', 409)
+      }
       const archive = detail.documents.find(d => d.kind === 'archive')
       const row = docs.create({ owner: user, title: `${detail.name ?? detail.code} 的就诊简报 · ${new Date().toISOString().slice(0, 10)}` })
-      pt(c).linkDoc(me(c), c.req.param('ptid'), row.id, 'brief')
+      try { svc.linkDoc(me(c), c.req.param('ptid'), row.id, 'brief') } catch (err) { store.trashDoc(row.id, true); throw err }
       void turns.submit(user, row.id, phrBriefPrompt({
-        patientId: detail.id, name: detail.name ?? detail.code, code: detail.code, sex: detail.sex, birth_year: detail.birth_year, tags: detail.tags,
+        patientId: detail.id, code: detail.code, sex: detail.sex, birth_year: detail.birth_year, tags: detail.tags,
         archiveDocId: archive?.doc_id ?? null,
       }))
       return c.json({ doc_id: row.id }, 202)

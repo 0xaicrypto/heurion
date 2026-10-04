@@ -178,36 +178,67 @@ function renderLanding(): void {
   $('#landGo').addEventListener('click', () => renderAuth())
 }
 
-let authMode: 'login' | 'register' = 'login'
+/** 退出登录：服务端让所有设备的令牌失效（与主应用「退出所有设备」同一口径），回到落地页。 */
+async function signOutPhr(): Promise<void> {
+  if (!(await confirmDlg('退出登录？所有设备上的知家 / 主应用都会下线', '退出'))) return
+  try { await api('/api/auth/logout-everywhere', { method: 'POST', body: '{}' }) } catch { /* 令牌已失效也算退出 */ }
+  try { localStorage.removeItem('heurion.token') } catch { /* 无痕模式 */ }
+  toast('已退出')
+  renderLanding()
+}
+
+type AuthMode = 'login' | 'register' | 'reset'
+let authMode: AuthMode = 'login'
 let pow: Promise<{ solution: PowSolution; fetchedAt: number }> | null = null
 const armPow = (): void => { pow = solvePow(); pow.catch(() => { /* 失败在提交时呈现 */ }) }
+/** 找回密码：验证码已发出 + 60 秒重发冷却。 */
+let resetSent = false
+let resetReadyAt = 0
 
 function renderAuth(err = ''): void {
   if (new URLSearchParams(location.search).get('invite')) authMode = 'register'
+  const mode = authMode
+  const title = mode === 'login' ? '登录' : mode === 'register' ? '注册' : '找回密码'
+  const body = mode === 'reset'
+    ? `<div class="form">
+        <label>绑定过的邮箱<input id="rEmail" type="email" autocomplete="email"></label>
+        <div style="display:flex;gap:8px"><input id="rCode" placeholder="6 位验证码" inputmode="numeric" maxlength="6" style="flex:1" ${resetSent ? '' : 'disabled'}><button class="btn sec" id="rSend" style="flex:none">${resetSent ? '重发' : '发送验证码'}</button></div>
+        <label>新密码<input id="rNew" type="password" autocomplete="new-password" ${resetSent ? '' : 'disabled'}></label>
+        <div id="aErr" style="color:var(--hi);font-size:13px;min-height:1.2em">${esc(err)}</div>
+        <button class="btn block" id="aGo" ${resetSent ? '' : 'disabled'}>重置并登录</button>
+        <div style="text-align:center;font-size:13px" id="aSwitch"><a href="#" data-m="login">想起来了？返回登录</a></div>
+        <div style="text-align:center;font-size:12px;color:var(--sub)">验证码发到账户绑定的邮箱；没绑定邮箱的账户请联系管理员</div>
+      </div>`
+    : `<div class="form">
+        <label>用户名<input id="aUser" autocomplete="username"></label>
+        <label>密码<input id="aPass" type="password" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>
+        ${mode === 'register' ? '<label>昵称（可留空）<input id="aName" maxlength="24" autocomplete="nickname"></label>' : ''}
+        <div id="aErr" style="color:var(--hi);font-size:13px;min-height:1.2em">${esc(err)}</div>
+        <button class="btn block" id="aGo">${mode === 'login' ? '登录' : '注册'}</button>
+        <div style="text-align:center;font-size:13px" id="aSwitch">${mode === 'login'
+          ? '<a href="#" data-m="reset">忘记密码？</a> · 没有账户？<a href="#" data-m="register">注册</a>'
+          : '已有账户？<a href="#" data-m="login">登录</a>'}</div>
+        <div id="aDev" hidden style="text-align:center;font-size:12px"><a href="#" id="aDevGo">开发模式直接进入</a></div>
+      </div>`
   app.innerHTML = `<div class="gate">${MARK('mark')}<div class="logo">知家</div>
     <div class="tag">知家在，合家安</div><div class="brand">Heurion 出品 · 家庭健康顾问</div>
-    <div class="card" style="text-align:left">
-      <div class="form">
-        <label>用户名<input id="aUser" autocomplete="username"></label>
-        <label>密码<input id="aPass" type="password" autocomplete="${authMode === 'login' ? 'current-password' : 'new-password'}"></label>
-        ${authMode === 'register' ? '<label>昵称（可留空）<input id="aName" maxlength="24" autocomplete="nickname"></label>' : ''}
-        <div id="aErr" style="color:var(--hi);font-size:13px;min-height:1.2em">${esc(err)}</div>
-        <button class="btn block" id="aGo">${authMode === 'login' ? '登录' : '注册'}</button>
-        <div style="text-align:center;font-size:13px" id="aSwitch"></div>
-        <div id="aDev" hidden style="text-align:center;font-size:12px"><a href="#" id="aDevGo">开发模式直接进入</a></div>
-        ${authMode === 'login' ? '<div style="text-align:center;font-size:12px;color:var(--sub)">忘记密码？在电脑版主应用（/app）里重置</div>' : ''}
-      </div>
-    </div></div>`
-  $('#aSwitch').innerHTML = authMode === 'login' ? '没有账户？<a href="#" data-m="register">注册</a>' : '已有账户？<a href="#" data-m="login">登录</a>'
+    <div class="card" style="text-align:left"><div class="form"><div style="font-weight:700;font-size:15px">${title}</div></div>${body}</div></div>`
   $('#aSwitch').querySelectorAll('a').forEach(a => a.addEventListener('click', e => {
-    e.preventDefault(); authMode = a.getAttribute('data-m') as 'login' | 'register'; renderAuth()
+    e.preventDefault(); authMode = a.getAttribute('data-m') as AuthMode; if (authMode === 'reset') resetSent = false; renderAuth()
   }))
-  ;[$('#aUser'), $('#aPass')].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') void submitAuth() }))
-  $('#aGo').addEventListener('click', () => void submitAuth())
-  armPow()
+  if (mode === 'reset') {
+    $('#rSend').addEventListener('click', () => void sendResetCode())
+    $('#aGo').addEventListener('click', () => void submitReset())
+    ;[$('#rEmail'), $('#rCode'), $('#rNew')].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault() }))
+    armPow()
+  } else {
+    ;[$('#aUser'), $('#aPass')].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') void submitAuth() }))
+    $('#aGo').addEventListener('click', () => void submitAuth())
+    armPow()
+  }
   void (async () => {
     const cfg = await fetch('/api/auth/config').then(r => r.json()).catch(() => null) as { has_users?: boolean; dev_mode?: boolean } | null
-    if (!cfg) return
+    if (!cfg || mode !== authMode) return
     if (cfg.has_users === false && authMode === 'login') { authMode = 'register'; renderAuth(); return }
     if (cfg.dev_mode) {
       $('#aDev').hidden = false
@@ -220,6 +251,30 @@ function renderAuth(err = ''): void {
   })()
 }
 
+async function sendResetCode(): Promise<void> {
+  const email = ($('#rEmail') as HTMLInputElement).value.trim()
+  if (!email) { $('#aErr').textContent = '先填邮箱'; return }
+  if (Date.now() < resetReadyAt) { $('#aErr').textContent = `验证码 60 秒内只能重发（还剩 ${Math.ceil((resetReadyAt - Date.now()) / 1000)} 秒）`; return }
+  const btn = $<HTMLButtonElement>('#rSend')
+  btn.disabled = true; btn.textContent = '人机校验中…'
+  try {
+    const { solution, fetchedAt } = await pow!
+    await powDelay(fetchedAt)
+    const res = await fetch('/api/auth/password-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, pow: solution, website: '' }) })
+    const data = await res.json().catch(() => ({})) as { error?: string }
+    if (!res.ok) throw new Error(data.error ?? '发送失败')
+    resetSent = true
+    resetReadyAt = Date.now() + 60_000
+    toast('验证码已发出（10 分钟内有效），没收到看看垃圾邮件')
+    renderAuth()
+  } catch (err) {
+    $('#aErr').textContent = (err as Error).message
+    btn.disabled = false; btn.textContent = resetSent ? '重发' : '发送验证码'
+    armPow()
+  }
+}
+
+/** 登录 / 注册提交：人机校验在后台提前算（用户填表期间完成），失败后重新领题。 */
 async function submitAuth(): Promise<void> {
   const btn = $<HTMLButtonElement>('#aGo')
   const user = ($('#aUser') as HTMLInputElement).value.trim()
@@ -254,13 +309,35 @@ async function submitAuth(): Promise<void> {
   }
 }
 
+async function submitReset(): Promise<void> {  const email = ($('#rEmail') as HTMLInputElement).value.trim()
+  const code = ($('#rCode') as HTMLInputElement).value.trim()
+  const pass = ($('#rNew') as HTMLInputElement).value
+  if (!email || !code || !pass) { $('#aErr').textContent = '邮箱、验证码、新密码都要填'; return }
+  const btn = $<HTMLButtonElement>('#aGo')
+  btn.disabled = true; btn.textContent = '重置中…'
+  try {
+    const res = await fetch('/api/auth/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code, new_password: pass }) })
+    const data = await res.json().catch(() => ({})) as { token?: string; error?: string }
+    if (!res.ok || !data.token) throw new Error(data.error ?? '重置没有成功，请重试')
+    try { localStorage.setItem('heurion.token', data.token) } catch { /* 无痕模式 */ }
+    toast('密码已重置，直接进入了 🎉')
+    render()
+  } catch (err) {
+    $('#aErr').textContent = (err as Error).message
+    btn.disabled = false; btn.textContent = '重置并登录'
+  }
+}
+
 // —— 首页：家庭空间 ——
 
 async function homeView(): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
       <div style="flex:1;display:flex;align-items:center;gap:9px">${MARK('mark-sm')}<div><h1 style="flex:none">知家</h1><div class="sub">知家在，合家安</div></div></div>
       <button class="btn" id="addMember" style="min-height:40px;padding:0 16px">＋ 家人</button>
+      <button class="edit" id="logout" title="退出登录">退出</button>
     </div></div><div class="max"><div id="main" class="loading">加载中…</div></div>`
+  $('#addMember').addEventListener('click', () => void memberDialog(null, () => void homeView()))
+  $('#logout').addEventListener('click', () => void signOutPhr())
   const list = await api<Array<Patient>>('/api/patients').catch(err => { if ((err as ApiErr).status !== 401) toast((err as Error).message, true); return null })
   if (!list) return
   const cards = list.map(p => `<button class="member" data-id="${esc(p.id)}">
@@ -272,7 +349,6 @@ async function homeView(): Promise<void> {
   $('#main').innerHTML = list.length
     ? `<div class="member-grid">${cards}</div>`
     : `<div class="empty"><div class="big">🏠</div>还没有家人的档案<br><span style="font-size:12px">把报告、化验单管起来，先给每位家人建一份档案</span></div>`
-  $('#addMember').addEventListener('click', () => void memberDialog(null, () => void homeView()))
   document.querySelectorAll('.member').forEach(b => b.addEventListener('click', () => { location.hash = `#/m/${b.getAttribute('data-id')}` }))
 }
 

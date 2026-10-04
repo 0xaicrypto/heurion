@@ -17,10 +17,11 @@ function env() {
   const svc = new PatientService(root, tenants, keys, store)
   const hospA = store.createTenant({ name: '医院 A', kind: 'org' })
   const hospB = store.createTenant({ name: '医院 B', kind: 'org' })
+  const personal = store.createTenant({ name: 'mom 的个人空间', kind: 'personal' })
   const user = (name: string, tenant: string, role: 'admin' | 'member' = 'member') => store.createUser({ username: name, display_name: name, password_hash: 'x', tenant: { id: tenant, role } }).id
-  const u = { drA: user('drA', hospA.id), nurseA: user('nurseA', hospA.id), adminA: user('adminA', hospA.id, 'admin'), drB: user('drB', hospB.id) }
+  const u = { pm: user('pm', personal.id), drA: user('drA', hospA.id), nurseA: user('nurseA', hospA.id), adminA: user('adminA', hospA.id, 'admin'), drB: user('drB', hospB.id) }
   const as = (userId: string, via: Actor['via'] = 'user'): Actor => ({ userId, via })
-  return { store, tenants, keys, root, svc, hospA, hospB, u, as }
+  return { store, tenants, keys, root, svc, hospA, hospB, personal, u, as }
 }
 
 describe('患者：机构隔离与可见范围', () => {
@@ -34,33 +35,37 @@ describe('患者：机构隔离与可见范围', () => {
     expect(t.svc.list(t.as(t.u.drB)).map(p => p.id)).toEqual([pb.id])
   })
 
-  it('称呼：建档时写入（加密存储），列表与详情读得到，可改可清空；机构端不传就是 null', () => {
+  it('称呼：只在知家（个人空间）可用——个人空间写入（加密存储）、可改可清空；医院端传称呼拒绝', () => {
     const t = env()
-    const a = t.as(t.u.drA)
+    const a = t.as(t.u.pm)
     const p = t.svc.create(a, { name: '妈妈', sex: 'F', birth_year: 1990, tags: ['孕产'] })
     expect(p.name).toBe('妈妈')
     expect(t.svc.list(a).map(x => x.name)).toEqual(['妈妈'])
     // 库文件里看不到明文称呼
-    const raw = readFileSync(join(t.root, t.hospA.id, 'patients.db'))
+    const raw = readFileSync(join(t.root, t.personal.id, 'patients.db'))
     expect(raw.includes(Buffer.from('妈妈'))).toBe(false)
     // 改称呼 / 清空
     t.svc.update(a, p.id, { name: '老妈' })
     expect(t.svc.read(a, p.id).name).toBe('老妈')
     t.svc.update(a, p.id, { name: '' })
     expect(t.svc.read(a, p.id).name).toBeNull()
-    // 机构端原样：不传 name 的患者仍是 null
-    const q = t.svc.create(a, { sex: 'M' })
+    // 医院端：传称呼直接拒绝（真名不落库、也不会发给外部模型）；不传的患者仍是 null
+    expect(() => t.svc.create(t.as(t.u.drA), { name: '张三', sex: 'M' })).toThrow('医院端患者只用代号')
+    const q = t.svc.create(t.as(t.u.drA), { sex: 'M' })
     expect(q.name).toBeNull()
   })
 
-  it('成员建档即建「健康档案」文档（知家）：钩子收到 owner / 称呼标题 / 患者归属；钩子缺席时建档不受影响', () => {
+  it('成员建档即建「健康档案」文档（知家）：个人空间建患者钩子收到 owner / 称呼标题 / 归属；医院端不触发；钩子缺席时建档不受影响', () => {
     const t = env()
     const calls: Array<{ owner: string; title: string; patientId: string }> = []
     const svc2 = new PatientService(t.root, t.tenants, t.keys, t.store, null, input => { calls.push(input); return null })
-    const p = svc2.create(t.as(t.u.drA), { name: '宝宝', birth_year: 2023 })
-    expect(calls).toEqual([{ owner: t.u.drA, title: '宝宝 的健康档案', patientId: p.id }])
+    const p = svc2.create(t.as(t.u.pm), { name: '宝宝', birth_year: 2023 })
+    expect(calls).toEqual([{ owner: t.u.pm, title: '宝宝 的健康档案', patientId: p.id }])
+    // 医院端建患者不生成健康档案（临床文书不受患者红线约束）
+    svc2.create(t.as(t.u.drA), { sex: 'M' })
+    expect(calls).toHaveLength(1)
     // 没有 hooks 的原路径照常
-    const q = t.svc.create(t.as(t.u.drA), { name: '妈妈' })
+    const q = t.svc.create(t.as(t.u.pm), { name: '妈妈' })
     expect(q.name).toBe('妈妈')
   })
 
