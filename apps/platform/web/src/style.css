@@ -849,32 +849,18 @@ button.block { width: 100%; padding: 10px 12px; }
 .slide .shape.ph-empty.editing::after, .slide .shape.ph-empty:has(.editing)::after { content: none; }
 .slide[data-theme="teal"] .shape:is([data-ph="title"], [data-ph="ctrTitle"]), .slide[data-theme="warm"] .shape:is([data-ph="title"], [data-ph="ctrTitle"]) { font-family: 'Songti SC', 'STSong', 'SimSun', serif; }
 
-/* —— 开始页 / 登录页的照片面板（photos.ts；Unsplash，带署名）：宽屏时占右侧四成，窄屏隐藏 —— */
-.start-photo { display: none; margin: 0; background-size: cover; background-position: center; position: relative; }
-.start-photo::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 35%, transparent) 22%, transparent 55%), linear-gradient(0deg, rgba(4, 12, 9, .55) 0%, transparent 22%); }
-.start-photo figcaption { position: absolute; right: 14px; bottom: 10px; font-size: 11px; color: rgba(255, 255, 255, .78); letter-spacing: .01em; }
-.start-photo figcaption a { color: #fff; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: rgba(255, 255, 255, .4); }
-:root:not([data-theme="light"]) .start-photo { filter: saturate(.9) brightness(.82); }
-@media (min-width: 1200px) {
-  .page.welcome-page, .page.patient-page.pt-welcome, .page.study-page.rs-welcome { position: relative; padding-right: calc(40% + clamp(24px, 4vw, 64px)); }
-  .page.welcome-page > .start-photo, .page.pt-welcome > .start-photo, .page.rs-welcome > .start-photo { display: block; position: absolute; top: 0; right: 0; bottom: 0; width: 40%; }
-}
-@media (min-width: 960px) {
-  .auth { grid-template-columns: minmax(0, 1.15fr) minmax(460px, 1fr); place-items: stretch; padding: 0; }
-  .auth > .start-photo-login { display: block; min-height: 100vh; }
-  .auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 30%), linear-gradient(0deg, rgba(4, 12, 9, .55) 0%, transparent 22%); }
-  .auth > .auth-card { place-self: center; }
-}
-/* 浅色主题：照片与页面之间只留很短的过渡，避免大片发白 */
-:root[data-theme="light"] .start-photo::before { background: linear-gradient(90deg, var(--bg) 0%, transparent 10%), linear-gradient(0deg, rgba(4, 12, 9, .5) 0%, transparent 20%); }
-:root[data-theme="light"] .auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 10%), linear-gradient(0deg, rgba(4, 12, 9, .5) 0%, transparent 20%); }
-/* 照片再淡一些：整体盖一层页面底色（深色约 50%、浅色约 45%），署名不受影响 */
-.start-photo::before { background: linear-gradient(90deg, var(--bg) 0%, transparent 30%), linear-gradient(0deg, rgba(4, 12, 9, .45) 0%, transparent 18%), linear-gradient(color-mix(in srgb, var(--bg) 50%, transparent), color-mix(in srgb, var(--bg) 50%, transparent)); }
-.auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 30%), linear-gradient(0deg, rgba(4, 12, 9, .45) 0%, transparent 18%), linear-gradient(color-mix(in srgb, var(--bg) 50%, transparent), color-mix(in srgb, var(--bg) 50%, transparent)); }
-:root[data-theme="light"] .start-photo::before { background: linear-gradient(90deg, var(--bg) 0%, transparent 18%), linear-gradient(0deg, rgba(4, 12, 9, .4) 0%, transparent 16%), linear-gradient(color-mix(in srgb, var(--bg) 45%, transparent), color-mix(in srgb, var(--bg) 45%, transparent)); }
-:root[data-theme="light"] .auth > .start-photo-login::before { background: linear-gradient(270deg, var(--bg) 0%, transparent 18%), linear-gradient(0deg, rgba(4, 12, 9, .4) 0%, transparent 16%), linear-gradient(color-mix(in srgb, var(--bg) 45%, transparent), color-mix(in srgb, var(--bg) 45%, transparent)); }
-:root:not([data-theme="light"]) .start-photo { filter: saturate(.75); }
-:root[data-theme="light"] .start-photo { filter: saturate(.8); }
+/* —— 开始页 / 登录页的照片（photos.ts；Unsplash，带署名）：铺满整个区域的很淡的背景，不分栏 —— */
+.start-photo { display: block; margin: 0; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background-size: cover; background-position: center; filter: grayscale(.35) saturate(.7); }
+.start-photo::before { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 90%, transparent); }
+:root[data-theme="light"] .start-photo::before { background: color-mix(in srgb, var(--bg) 95%, transparent); }
+.start-photo figcaption { position: absolute; right: 14px; bottom: 10px; font-size: 11px; color: var(--faint); pointer-events: auto; }
+.start-photo figcaption a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+.page.welcome-page, .page.patient-page.pt-welcome, .page.study-page.rs-welcome { position: relative; isolation: isolate; }
+.page.welcome-page > :not(.start-photo), .page.pt-welcome > :not(.start-photo), .page.rs-welcome > :not(.start-photo) { position: relative; z-index: 1; }
+.auth { isolation: isolate; }
+.auth > .start-photo-login { position: fixed; }
+.auth > .auth-card { position: relative; z-index: 1; }
 /* —— 带图模板署名、Unsplash 搜图面板 —— */
 .tpl-credit { font-size: 11px; color: var(--muted); }
 .ph-dialog { width: min(920px, calc(100vw - 32px)); }
