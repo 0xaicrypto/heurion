@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { Documents, CommitEvent } from '../model/runtime.ts'
 import { mapNotification, type UiEvent } from '../harness/events.ts'
-import { guardPhrRedlines, type PhrMember } from '../ops/phr-guard.ts'
+import { filterPhrReply, type PhrMember } from '../ops/phr-guard.ts'
 import type { MemoryService } from '../memory/service.ts'
 import type { Alerts } from '../ops-alert/alerts.ts'
 import type { HarnessPool } from '../harness/pool.ts'
@@ -25,14 +25,17 @@ export function commentPrompt(docId: string, commentId: string, kind: 'doc' | 'd
 /** 评论 / 回复里召唤 AI 的触发词。 */
 export const wantsAi = (text: string): boolean => /[@＠]heurion\b/i.test(text)
 
-/** 知家红线：绑定健康档案 / 简报的回合里，AI 的对话回复违规时用它替换展示与落库（PATIENT.md §3）。 */
-export const PHR_REPLY_NOTICE = '（知家安全提示）这条回复里有诊疗判断类的内容，知家不能说。建议把症状、检查和日期整理好，当面咨询医生；紧急情况请立即就医。'
-
-/** 知家红线检查：违规返回失败信息（通过返回 null）。 */
-function phrViolation(text: string, member: PhrMember | null): string | null {
-  if (!text) return null
-  try { guardPhrRedlines(text, 0, member); return null } catch (err) { return (err as { message?: string }).message ?? '内容不合规' }
-}
+/**
+ * 知家的回答口吻（给家人看，不是给医生看）：每一轮绑定健康档案 / 简报的对话都带上。
+ * 简洁、清晰、不专业：先一句话说结论，再最多三点；术语换成大白话（实在要用就括号解释）；短句；不堆数字和文献。
+ */
+export const PHR_STYLE =
+  '［回答口吻］用科普的口吻和普通家庭说话，不是写病历、也不是替医生下结论：\n' +
+  '- 先一句大白话回答问题，再讲清「这个指标 / 情况是什么、一般有哪些常见原因、平时要注意什么、什么情况该去看医生」，最多 3–4 个要点，整段一般不超过 200 字；\n' +
+  '- 讲常识可以用「一般来说」「常见原因有」；说到这位家人自己的情况，只说数值和变化（如「这次 168，比 3 月高」），判断留给医生；\n' +
+  '- 不用专业术语和英文缩写，非用不可时括号里一句话解释；短句，不列长表格、不堆数字，不贴文献编号；\n' +
+  '- 不推荐具体药物和剂量；生活上的注意事项（饮食、作息、喝水、复查）可以说；\n' +
+  '- 需要就医时直接说「建议带上报告去看医生」，紧急情况说「请立即就医或打 120」；写进档案的内容同样用这种口吻。\n\n'
 
 /** 就诊简报（知家，PATIENT.md §6）：服务端组装的生成指令。简报文档是回合的落点；红线守卫在操作层强制。 */
 export function phrBriefPrompt(input: {
@@ -51,6 +54,7 @@ export function phrBriefPrompt(input: {
     `「想请医生看的问题」——2–4 个具体、家人真正关心的问题；\n` +
     `「要带的材料」——原始报告、正在用的药物清单、既往小结。\n` +
     `3. 红线：不下诊断；不提用药、剂量或停换药建议；异常数值处写「建议当面咨询医生」；只记录与提问。\n` +
+    `4. 口吻：家人和医生都要一眼看懂——短句、大白话，术语加括号解释；整份不超过 400 字，「近况」只列和问题有关的几项。\n` +
     `写完用一两句话总结。`
   )
 }
@@ -269,10 +273,11 @@ export class TurnService {
     const memoryBlock = memoryOn ? await this.memory!.forPrompt(userId, docId, message) : ''
     const memoryNote = memoryOn ? '' : opts.memory === false ? '（用户本轮关闭了记忆：不要使用 memory_* 工具，也不要沿用之前回合提到的记忆。）' : ''
     // 记忆紧挨着本轮消息（放在最前面时模型容易照抄消息里的写法而忽略偏好）
-    const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}${memoryNote}\n\n${memoryBlock}${message}`
-
-    // 知家红线只看文档归属，整个回合算一次
+    // 知家红线只看文档归属，整个回合算一次；知家的对话另加家人向的回答口吻
     const phr = this.phrGuard?.(docId)
+    const styleNote = phr !== undefined ? PHR_STYLE : ''
+    const prompt = `${history}（当前文档：doc_id=${docId}，《${doc.title}》，rev=${this.docs.rev(docId)}）${suggestNote}${memoryNote}\n\n${memoryBlock}${styleNote}${message}`
+
 
     let status: 'done' | 'error' | 'cancelled' | 'timeout' = 'done'
     let failure: string | null = null
@@ -285,8 +290,11 @@ export class TurnService {
             // 模型调用失败（认证失败、限流、服务出错等）：dsh 正常结束回合但带错误，按失败记，不算「已完成」
             if (e.type === 'error') modelError = e.message
             // 知家红线：对话回复在展示前过守卫，违规换成安全提示（不把诊疗判断显示给家人）
-            else if (e.type === 'assistant' && phr !== undefined && phrViolation(e.text, phr)) {
-              emit({ type: 'assistant', text: PHR_REPLY_NOTICE })
+            else if (e.type === 'assistant' && phr !== undefined) {
+              // 知家红线（对话比档案宽松）：只去掉越线的句子、补提醒；只记触发的规则，不记内容
+              const f = filterPhrReply(e.text, phr)
+              if (f.codes.length) console.warn(`[知家红线] 回复已过滤：${f.codes.join('、')}（doc ${docId}）`)
+              emit({ type: 'assistant', text: f.text })
               continue
             }
             emit(e)
@@ -296,8 +304,7 @@ export class TurnService {
       ])
       // 落库的历史同样过守卫：违规回复不进消息记录
       if (result.finalResponse) {
-        const bad = phr !== undefined && phrViolation(result.finalResponse, phr)
-        store.addMessage(docId, 'assistant', bad ? PHR_REPLY_NOTICE : result.finalResponse, turn.id)
+        store.addMessage(docId, 'assistant', phr !== undefined ? filterPhrReply(result.finalResponse, phr).text : result.finalResponse, turn.id)
       }
       if (modelError) { status = 'error'; failure = modelError }
     } catch (err) {

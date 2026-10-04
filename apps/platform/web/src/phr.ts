@@ -730,7 +730,18 @@ async function briefView(docId: string): Promise<void> {
       const r = await api<{ rev: number; html: string }>(`/api/docs/${docId}/html`)
       const doc = $('#doc')
       doc.classList.remove('loading')
-      doc.innerHTML = r.html || '<div class="empty">简报还没内容，稍等…</div>'
+      const blank = !r.html || !r.html.replace(/<[^>]+>/g, '').trim()
+      if (!blank) { doc.innerHTML = r.html; return }
+      if (docViewTitle !== '健康档案') { doc.innerHTML = '<div class="empty">简报还没内容，稍等…</div>'; return }
+      // 空的健康档案：说明它记什么，并可以让知家先整理一份（走同一个对话回合，写入受红线守卫）
+      doc.innerHTML = `<div class="empty">健康档案还是空的<br><span style="font-size:13px">这里记病史、用药、医生交代和每次检查的要点。问知家时说过的内容会整理进来；也可以让知家先根据已有的化验和报告整理一份。</span>
+        <div style="margin-top:14px"><button class="btn" id="fillArchive">让知家整理一份</button></div></div>`
+      $('#fillArchive').addEventListener('click', async () => {
+        try {
+          await api(`/api/docs/${docId}/chat?async=1`, { method: 'POST', body: JSON.stringify({ message: '请根据已有的化验和报告，把健康档案整理一份：基本情况、最近的检查要点（只列和健康有关的几项，注明日期）、需要留意的地方。用家人看得懂的大白话，不下诊断、不给用药建议。' }) })
+          setBusy(true); toast('知家正在整理，写好会自动显示')
+        } catch (err) { toast((err as Error).message, true) }
+      })
     } catch (err) { if ((err as ApiErr).status !== 401) $('#doc').textContent = (err as Error).message }
   }
   void paint()

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { guardPhrRedlines, type PhrMember } from '../src/ops/phr-guard.ts'
+import { filterPhrReply, guardPhrRedlines, PHR_REPLY_NOTICE, type PhrMember } from '../src/ops/phr-guard.ts'
 
 /** 跑一次守卫，返回失败码（通过返回 null）。 */
 const codeOf = (text: string, member: PhrMember | null = null): string | null => {
@@ -88,6 +88,15 @@ describe('患者红线守卫（PATIENT.md §3）', () => {
     expect(codeOf('大人发烧可以吃布洛芬退烧。', ADULT)).toBe('health_advice_forbidden')
   })
 
+  it('评测：异常指标的口语化就医引导都算（知家回答要大白话）；自己下诊断仍拦', () => {
+    expect(codeOf('肌酐 168 偏高，说明肾脏排废物的能力下降了，比半年前（112）又高了一些。建议带上报告去看医生。', ADULT)).toBeNull()
+    expect(codeOf('这个数偏高，要当回事，但不用慌。最好尽快带着报告找肾内科医生看看。', ADULT)).toBeNull()
+    expect(codeOf('肌酐（反映肾脏排废物的能力）168 偏高。下次去医院时把这次和上次的报告都带给医生看。', ADULT)).toBeNull()
+    expect(codeOf('偏高，建议去医院查一下。', ADULT)).toBeNull()
+    expect(codeOf('尿酸 498 偏高，平时少吃内脏和海鲜。', ADULT)).toBe('guidance_required')
+    expect(codeOf('肌酐升高提示肾功能不全，可能是慢性肾病，建议就诊。', ADULT)).toBe('health_advice_forbidden')
+  })
+
   it('评测：英文表述', () => {
     expect(codeOf('Likely viral infection. Take amoxicillin 500 mg twice daily.')).toBe('health_advice_forbidden')
     expect(codeOf('The doctor diagnosed otitis media; medication as prescribed.')).toBeNull()
@@ -96,5 +105,38 @@ describe('患者红线守卫（PATIENT.md §3）', () => {
   it('评测：记录口径与就医引导的组合照常放行', () => {
     expect(codeOf('医生诊断为支气管炎（2026-09-12），已服药三天。若出现呼吸困难请立即就医。', ADULT)).toBeNull()
     expect(codeOf('检查见白细胞 12.3×10⁹/L，偏高（2026-09-12）。以上异常项建议带上原始报告咨询医生。', ADULT)).toBeNull()
+  })
+})
+
+describe('知家对话回复：比档案宽松，只去掉越线的句子', () => {
+  const ADULT = { tags: [], birth_year: 1958 }
+  it('科普常识照常显示：一般来说 / 常见原因 不算诊断；只说数值与变化不拦', () => {
+    const t = '肌酐是看肾脏排废物能力的指标。一般来说，肌酐升高常见原因有脱水、肾脏病等。这次 168，比 3 月的 112 高。建议带上报告去看医生。'
+    const r = filterPhrReply(t, ADULT)
+    expect(r.text).toBe(t)
+    expect(r.codes).toEqual([])
+  })
+  it('给这位家人下诊断、给用药建议：只去掉那一句，其余保留并说明', () => {
+    const r = filterPhrReply('尿酸是嘌呤代谢的产物。爸爸这次可能是痛风。平时少吃内脏和海鲜、多喝水。建议每天服用别嘌醇 100mg。建议带上报告去看医生。', ADULT)
+    expect(r.text).toContain('尿酸是嘌呤代谢的产物。')
+    expect(r.text).toContain('少吃内脏和海鲜')
+    expect(r.text).not.toContain('痛风')
+    expect(r.text).not.toContain('别嘌醇')
+    expect(r.text).toContain('有 2 句涉及诊断或用药的判断')
+    expect(r.codes).toEqual(['diagnosis', 'dosage'])
+  })
+  it('提到异常没引导就医、提到急症没让立即就医：不拦，自动补一句提醒', () => {
+    const a = filterPhrReply('尿酸 498 偏高，平时少吃内脏和海鲜。', ADULT)
+    expect(a.text).toContain('建议带上报告找医生看看')
+    const b = filterPhrReply('如果出现剧烈胸痛伴大汗，要特别当心。', ADULT)
+    expect(b.text).toContain('请立即就医或拨打 120')
+  })
+  it('整条都是越线内容：换成安全提示', () => {
+    expect(filterPhrReply('你这是痛风。', ADULT).text).toBe(PHR_REPLY_NOTICE)
+  })
+  it('列表项整行去掉时不留空的列表符号', () => {
+    const r = filterPhrReply('要点：\n- 平时多喝水。\n- 建议每天服用别嘌醇 100mg。\n- 建议带上报告去看医生。', ADULT)
+    expect(r.text).not.toMatch(/^\s*-\s*$/m)
+    expect(r.text).toContain('- 平时多喝水。')
   })
 })
