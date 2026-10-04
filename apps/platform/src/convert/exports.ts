@@ -1,3 +1,4 @@
+import { orgLogo } from '../model/org-templates.ts'
 import type { Documents } from '../model/runtime.ts'
 import { withoutPending } from '../ops/suggest.ts'
 import { exportDocx } from './docx-export.ts'
@@ -43,7 +44,7 @@ export function pptxFor(docs: Documents, docId: string) {
     src: id => store.getNodeSrc(docId, id),
     citations: store.listCitations(docId),
     asset: id => {
-      const builtin = themePhoto(id) // 带图模板的内置照片
+      const builtin = themePhoto(id) ?? orgLogo(id) // 带图模板的内置照片、机构模板的院徽
       if (builtin) return builtin
       const a = store.getAsset(id)
       const bytes = a ? store.getAssetBytes(id) : null

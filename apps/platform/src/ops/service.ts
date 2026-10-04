@@ -1,3 +1,4 @@
+import { isOrgThemeKey, orgLogo, themeAllowed } from '../model/org-templates.ts'
 import type { Node as PMNode } from 'prosemirror-model'
 import { attachComment, locate, threadMarks } from '../model/anchors.ts'
 import { indexById } from '../model/ids.ts'
@@ -69,6 +70,12 @@ export class OpService {
     }
     const before = this.docs.get(batch.doc_id)
     const ai = meta.actor === 'ai'
+    // 机构模板只给本机构成员（按文档所有者判断；别的机构看不到，按「没有这个主题」处理）
+    if (deck) {
+      (batch.ops as DeckOp[]).forEach((op, i) => {
+        if (op.op === 'apply_theme' && isOrgThemeKey(op.theme) && !themeAllowed(op.theme, row.owner)) throw new OpError('theme_not_found', `没有主题「${op.theme}」`, { op_index: i, hint: '本机构模板用 deck_templates 查' })
+      })
+    }
 
     this.guardPending(batch, before, targetsOf)
     if (ai) {
@@ -83,7 +90,7 @@ export class OpService {
         ...this.deckContextInfo(batch.doc_id),
         // 插图只能用文档所有者自己的资产
         asset: id => {
-          const builtin = themePhoto(id)
+          const builtin = themePhoto(id) ?? orgLogo(id, row.owner)
           if (builtin) return builtin
           const a = store.getAsset(id)
           const bytes = a && a.owner === row.owner ? store.getAssetBytes(id) : null

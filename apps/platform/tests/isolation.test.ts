@@ -41,11 +41,11 @@ const SECRET = 'test-secret'
 const MARK = '机密暗号-7f3a91'
 
 /** 机构 A 的资源 → 接口参数（新接口的参数必须在这里登记）。 */
-type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study', string>
+type Seed = Record<'doc' | 'dataset' | 'kb' | 'memory' | 'comment' | 'project' | 'userA' | 'invite' | 'tenantA' | 'job' | 'turn' | 'asset' | 'change' | 'patient' | 'lab' | 'pfile' | 'proposal' | 'record' | 'study' | 'orgTemplate', string>
 const PARAMS: Record<string, (s: Seed) => string> = {
   id: s => s.doc, did: s => s.dataset, fid: s => s.kb, mid: s => s.memory, cid: s => s.comment, pid: s => s.project,
   uid: s => s.userA, code: s => s.invite, tid: s => s.tenantA, jid: s => s.job, turnId: s => s.turn, seq: () => '1', index: () => '0', group: () => 'g1',
-  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc,
+  action: () => 'x', ptid: s => s.patient, lid: s => s.lab, slide: () => 's0', pfid: s => s.pfile, prid: s => s.proposal, rcid: s => s.record, sid: s => s.study, kind: () => 'doc', rid: s => s.doc, otid: s => s.orgTemplate,
 }
 /** 按设计公开的接口（不需要登录或本身就是给持有链接的人用的）。 */
 const PUBLIC: Record<string, string> = {
@@ -119,12 +119,15 @@ async function setup() {
   const study = await json('POST', '/api/studies', A.token, { title: `研究 ${MARK}`, summary: MARK })
   await json('POST', `/api/studies/${study.id}/items`, A.token, { kind: 'dataset', ref_id: dataset.id })
   await json('POST', `/api/studies/${study.id}/cohort`, A.token, { patient_ids: [patient.id] })
+  const orgTpl = await json('POST', '/api/tenant/templates', A.token, { label: `模板 ${MARK}`, org_name: `机构 ${MARK}`, footer: MARK })
+  const logoRes = await app.request(`/api/tenant/templates/${orgTpl.id}/logo`, { method: 'PUT', headers: { Authorization: `Bearer ${A.token}`, 'Content-Type': 'image/svg+xml' }, body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="#004098"/></svg>' })
+  if (logoRes.status !== 200) throw new Error(`院徽上传失败 ${logoRes.status}`)
   const proposal = patients.propose({ userId: A.user.id, via: 'ai' }, patient.id, { kind: 'tag', payload: { tag: MARK }, reason: MARK })
 
   const seed: Seed = {
     doc: doc.id, dataset: dataset.id, kb: kbFile.id, memory: mem.memory.id, comment: comment.id ?? comment.comment?.id ?? 'c0', project: project.id,
     userA: A.user.id, invite: invite.code, tenantA: created.tenant.id, job: 'j-none', turn: 't-none', asset: asset.asset_id, change: change.id,
-    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id,
+    patient: patient.id, lab: lab.id, pfile: pfile.file_id, proposal: proposal.id, record: pfile.record.id, study: study.id, orgTemplate: orgTpl.id,
   }
   return { app, store, docs, ops, kb, memory, evolution, datasets, patients, studies, images, call, seed, A, B, op }
 }
@@ -166,8 +169,14 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     expect((await t.call('GET', `/api/studies/${t.seed.study}`, t.A.token)).text).toContain(MARK)
     expect((await t.call('GET', `/api/studies/${t.seed.study}/cohort`, t.A.token)).text).toContain(MARK)
     expect((await t.call('POST', `/api/studies/${t.seed.study}/cohort/preview`, t.A.token, {})).text).toContain(MARK)
+    // 机构模板：A 的成员能看到、能取院徽；B 取不到 A 的院徽
+    expect((await t.call('GET', '/api/tenant/templates', t.A.token)).text).toContain(MARK)
+    expect((await t.call('GET', '/api/deck-templates', t.A.token)).text).toContain(MARK)
+    expect((await t.call('GET', `/api/assets/ol_${t.seed.orgTemplate}`, t.A.token)).status).toBe(200)
+    expect((await t.call('GET', `/api/assets/ol_${t.seed.orgTemplate}`, t.B.token)).status).toBe(404)
+    expect((await t.call('GET', `/api/assets/ol_${t.seed.orgTemplate}`, t.op.token)).status).toBe(404)
     // 列表接口：B 看不到 A 的任何东西
-    for (const p of ['/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies']) {
+    for (const p of ['/api/tenant/templates', '/api/deck-templates', '/api/deck-themes', '/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies']) {
       const r = await t.call('GET', p, t.B.token)
       expect(r.text, `B ${p}`).not.toContain(MARK)
       expect(r.text, `B ${p}`).not.toContain('alice')

@@ -1,3 +1,4 @@
+import { themeAllowed } from '../model/org-templates.ts'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, join, relative, isAbsolute } from 'node:path'
@@ -151,12 +152,13 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       title: z.string().min(1).max(200),
       kind: z.enum(['doc', 'deck']).default('doc'),
       markdown: z.string().optional().describe('doc 的初始内容'),
-      template: z.enum(Object.keys(DECK_THEMES) as [string, ...string[]]).optional().describe('deck 的模板（deck_templates 列出各模板的风格与版式）；缺省 clinical'),
+      template: z.string().optional().describe('deck 的模板 key（deck_templates 列出：内置模板与本机构模板 org_…）；缺省 clinical'),
     },
   }, async ({ title, kind, markdown, template }) => {
     if (!claims.p.includes('write') || claims.d !== '*') return fail('forbidden', '当前令牌不能新建文档')
     if (kind === 'deck') {
       const key = template ?? DEFAULT_THEME
+      if (!DECK_THEMES[key] || !themeAllowed(key, claims.u)) return fail('theme_not_found', `没有模板「${key}」`, { hint: '用 deck_templates 查可用模板' })
       const row = docs.create({ owner: claims.u, title, kind: 'deck', content: newTemplateDeck(title, key) })
       store.putPackage(row.id, 'pptx', pptxTemplate(key))
       deps.turns.touch(claims.u, row.id)
@@ -302,11 +304,11 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   const deckOnly = (docId: string) => store.getDoc(docId)?.kind === 'deck' ? null : fail('wrong_tool', '这不是幻灯片文档，请用 doc_* 工具')
 
   server.registerTool('deck_templates', {
-    description: '列出幻灯片模板：每套模板的风格说明、适合场合、配色，以及平台版式（封面、章节页、标题和内容、两栏、图文、大数字、致谢、空白）各自的占位符。' +
+    description: '列出幻灯片模板：本机构模板（scope=本机构，带院徽与机构名称，排在最前）和内置模板；每套的风格说明、适合场合、配色，以及平台版式（封面、章节页、标题和内容、两栏、图文、大数字、致谢、空白）各自的占位符。' +
       '新建 deck 用 doc_create 的 template 选模板；已有 deck 用 deck_edit 的 apply_theme 换模板；加页用 add_slide 的 layout 选版式。',
     inputSchema: {},
   }, async () => json({
-    templates: templateCatalog().map(t => ({ key: t.key, label: t.label, description: t.description, tags: t.tags, dark: luminance(t.bg) < 0.4, colors: { bg: t.bg, title: t.title, body: t.body, accent: t.accent, accent2: t.accent2 } })),
+    templates: templateCatalog(claims.u).map(t => ({ key: t.key, label: t.label, description: t.description, tags: t.tags, ...('org' in t ? { scope: '本机构', org_name: t.org_name } : {}), dark: luminance(t.bg) < 0.4, colors: { bg: t.bg, title: t.title, body: t.body, accent: t.accent, accent2: t.accent2 } })),
     layouts: LAYOUTS.map(l => ({ name: l.name, hint: l.hint, placeholders: layoutSpec(DEFAULT_THEME, l.key).map(p => p.role) })),
   }))
 

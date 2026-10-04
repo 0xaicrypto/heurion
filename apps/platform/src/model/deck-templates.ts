@@ -1,5 +1,6 @@
 import { DECK_THEMES, DEFAULT_THEME, resolveColor, type DeckTheme } from './deck-themes.ts'
 import { emu } from './deck-schema.ts'
+import { baseOf, isOrgThemeKey, orgLogoId, orgMeta, themeKeysFor } from './org-templates.ts'
 import { themePhotoCredit, themePhotoId } from './theme-photos.ts'
 
 /**
@@ -12,6 +13,8 @@ import { themePhotoCredit, themePhotoId } from './theme-photos.ts'
  *   换模板时整体删掉重加，用户自己加的形状不受影响。装饰不能改字，可以删除。
  * - 带图模板（主题带 photo）：封面 / 致谢铺全幅照片（已压暗，白字），章节页铺很淡的全幅照片（与底色混合，深色字照常可读）；照片也是装饰（kind=image，
  *   引用内置资产 tp_<模板>_cover / _wash），换模板一样整体替换。
+ * - 机构模板（org_<id>，见 org-templates.ts）：版式与装饰沿用一套内置模板，配色换成机构标准色，
+ *   再加机构装饰：封面 / 章节页 / 致谢的院徽，内容页页脚的主色细线 + 机构名称 + 小院徽（没上传院徽时不放）。
  * 坐标单位 pt，页面 960×540（16:9）。
  */
 
@@ -103,7 +106,7 @@ function baseLayoutSpec(themeKey: string | null | undefined, key: LayoutKey): Ph
   const theme = themeOf(themeKey)
   const key_ = DECK_THEMES[themeKey ?? ''] ? themeKey! : DEFAULT_THEME
   const center = theme.frame === 'center'
-  const o = BOX_OVERRIDES[key_] ?? {}
+  const o = BOX_OVERRIDES[baseOf(key_)] ?? {}
   const box = (role: string, def: Box): Box => o[`${key}.${role}`] ?? def
   const feature = center ? 'ctr' : 'l'
   const title = (b: Box, size = 32): PhSpec => ({ type: 'title', idx: null, role: '标题', box: box('title', b), size, bold: true, color: 'title', align: 'l', bullets: false, fill: 'title' })
@@ -152,9 +155,11 @@ export function phSpecOf(specs: PhSpec[], ph: string | null, idx: string | null)
 
 export interface Deco {
   name: string; box: Box; fill: string; geom: 'rect' | 'roundRect' | 'ellipse'
-  /** 照片装饰：内置资产 id（tp_<模板>_cover / _panel）与署名 */
+  /** 照片装饰：内置资产 id（tp_<模板>_cover / _panel；机构院徽 ol_<模板 id>）与署名 / 说明 */
   image?: string
   credit?: string
+  /** 文字装饰（机构模板页脚的机构名称）：不能改字，换模板时一起替换 */
+  text?: { value: string; size: number; color: string; align: 'l' | 'r' }
 }
 
 type DecoToken = 'accent' | 'accent2' | 'soft' | 'surface' | 'title' | 'photo:cover' | 'photo:panel' | 'photo:wash'
@@ -236,13 +241,14 @@ export const isDecoName = (name: unknown) => typeof name === 'string' && name.st
 /** 一页的装饰（含图文版式的图片区底色），颜色已换成色值。 */
 export function decorations(themeKey: string | null | undefined, key: LayoutKey): Deco[] {
   const k = DECK_THEMES[themeKey ?? ''] ? themeKey! : DEFAULT_THEME
+  const base = baseOf(k)
   const theme = themeOf(k)
   const out: Deco[] = []
   if (key === 'image_text') {
     const pic = layoutSpec(k, key).find(s => s.type === 'pic')!
-    out.push({ name: `${DECO_PREFIX}${k}:picture`, box: pic.box, fill: theme.soft, geom: k === 'mint' ? 'roundRect' : 'rect' })
+    out.push({ name: `${DECO_PREFIX}${k}:picture`, box: pic.box, fill: theme.soft, geom: base === 'mint' ? 'roundRect' : 'rect' })
   }
-  for (const [name, box, token, geom] of DECOS[k]?.(key) ?? []) {
+  for (const [name, box, token, geom] of DECOS[base]?.(key) ?? []) {
     if (token === 'photo:cover' || token === 'photo:panel' || token === 'photo:wash') {
       const slug = theme.photo!
       out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: 'none', geom: 'rect', image: themePhotoId(slug, token === 'photo:cover' ? 'cover' : token === 'photo:wash' ? 'wash' : 'panel'), credit: themePhotoCredit(slug)?.credit ?? 'Photo on Unsplash' })
@@ -250,6 +256,29 @@ export function decorations(themeKey: string | null | undefined, key: LayoutKey)
     }
     out.push({ name: `${DECO_PREFIX}${k}:${name}`, box, fill: resolveColor(token, k)!, geom: geom ?? 'rect' })
   }
+  if (isOrgThemeKey(k)) out.push(...orgDecorations(k, key))
+  return out
+}
+
+/**
+ * 机构装饰：封面 / 致谢右上角院徽（高 72pt），章节页右上角院徽（高 56pt）；
+ * 其余版式页脚一条主色细线 + 机构名称 + 右下小院徽（高 22pt）。院徽按原图比例，最宽 260pt。
+ */
+function orgDecorations(k: string, key: LayoutKey): Deco[] {
+  const m = orgMeta(k)
+  if (!m) return []
+  const t = themeOf(k)
+  const out: Deco[] = []
+  const logo = (name: string, h: number, right: number, y: number) => {
+    if (!m.logo) return
+    const w = Math.min(260, Math.round(h * m.logo.width / Math.max(1, m.logo.height)))
+    out.push({ name: `${DECO_PREFIX}${k}:${name}`, box: [right - w, y, w, h], fill: 'none', geom: 'rect', image: orgLogoId(m.id), credit: `${m.org_name}院徽` })
+  }
+  if (key === 'cover' || key === 'closing') { logo('logo', 72, 904, 40); return out }
+  if (key === 'section') { logo('logo', 56, 904, 40); return out }
+  out.push({ name: `${DECO_PREFIX}${k}:footer-rule`, box: [60, 504, 840, 1.5], fill: t.title, geom: 'rect' })
+  if (m.footer || m.org_name) out.push({ name: `${DECO_PREFIX}${k}:footer-name`, box: [60, 510, 620, 22], fill: 'none', geom: 'rect', text: { value: m.footer || m.org_name, size: 10, color: t.muted, align: 'l' } })
+  logo('footer-logo', 22, 900, 510)
   return out
 }
 
@@ -265,14 +294,15 @@ export function templateLayouts(themeKey: string | null | undefined): Array<{ na
   }))
 }
 
-/** 模板清单（选择器、MCP 用）：配色、说明、每个版式的占位符与装饰（预览图按这些画）。 */
-export function templateCatalog() {
-  return Object.entries(DECK_THEMES).map(([key, t]) => ({
+/** 模板清单（选择器、MCP 用）：配色、说明、每个版式的占位符与装饰（预览图按这些画）。按用户过滤：本机构模板在前，再是内置模板。 */
+export function templateCatalog(userId: string | null = null) {
+  return themeKeysFor(userId).map(key => [key, DECK_THEMES[key]!] as const).map(([key, t]) => ({
     key, ...t,
+    ...(isOrgThemeKey(key) ? { org: true, org_name: orgMeta(key)?.org_name ?? '', base: baseOf(key) } : {}),
     layouts: LAYOUTS.map(l => ({
       key: l.key, name: l.name, hint: l.hint,
       placeholders: layoutSpec(key, l.key).map(s => ({ role: s.role, type: s.type, box: s.box, size: s.size, bold: s.bold, color: resolveColor(s.color, key), align: s.align })),
-      decorations: decorations(key, l.key).map(d => ({ box: d.box, fill: d.fill, geom: d.geom, ...(d.image ? { image: d.image } : {}) })),
+      decorations: decorations(key, l.key).map(d => ({ box: d.box, fill: d.fill, geom: d.geom, ...(d.image ? { image: d.image } : {}), ...(d.text ? { text: d.text } : {}) })),
     })),
     ...(t.photo ? { credit: themePhotoCredit(t.photo) } : {}),
   }))

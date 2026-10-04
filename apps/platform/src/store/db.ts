@@ -134,6 +134,18 @@ export interface StudyRow {
   design: 'retrospective_cohort' | 'prospective_cohort' | 'rct' | 'case_control' | 'cross_sectional' | 'other' | null
   status: 'planning' | 'ongoing' | 'completed'; summary: string | null; created_at: string; updated_at: string
 }
+/** 机构幻灯片模板：机构管理员维护（院徽、机构名称、标准色），只有本机构成员能用；deck 里的模板 key 是 org_<id>。 */
+export interface TenantTemplateRow {
+  id: string; tenant_id: string; label: string; description: string; org_name: string; footer: string
+  /** 版式与装饰骨架沿用的内置模板 */
+  base: string
+  /** JSON：bg / surface / soft / title / body / muted / accent / accent2（6 位十六进制） */
+  colors: string
+  /** JSON：titleFont / bodyFont / serif */
+  fonts: string
+  logo: Uint8Array | null; logo_mime: string | null
+  created_by: string; created_at: string; updated_at: string
+}
 export interface StudyItemRow { study_id: string; kind: 'doc' | 'dataset'; ref_id: string; role: string; added_at: string }
 
 /** 记忆演进的信号：用户改写了 AI 写的段落（edit_ai）、拒绝了 AI 的修订（reject）。整理时交给模型总结规律。 */
@@ -412,6 +424,12 @@ export class Store {
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, design TEXT, status TEXT NOT NULL DEFAULT 'planning', summary TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS tenant_templates (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, label TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', org_name TEXT NOT NULL,
+        footer TEXT NOT NULL DEFAULT '', base TEXT NOT NULL, colors TEXT NOT NULL, fonts TEXT NOT NULL, logo BLOB, logo_mime TEXT,
+        created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS tenant_templates_tenant ON tenant_templates (tenant_id);
       CREATE TABLE IF NOT EXISTS study_items (
         study_id TEXT NOT NULL REFERENCES studies(id) ON DELETE CASCADE, kind TEXT NOT NULL, ref_id TEXT NOT NULL, role TEXT NOT NULL, added_at TEXT NOT NULL,
         PRIMARY KEY (study_id, kind, ref_id), UNIQUE (kind, ref_id)
@@ -926,6 +944,36 @@ export class Store {
     const t = now()
     const st = this.db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?')
     for (const id of ids) st.run(t, id)
+  }
+
+  // —— 机构幻灯片模板 ——
+
+  addTenantTemplate(t: Omit<TenantTemplateRow, 'id' | 'created_at' | 'updated_at' | 'logo' | 'logo_mime'>): TenantTemplateRow {
+    const id = 'ot' + randomUUID().replace(/-/g, '').slice(0, 10)
+    const at = now()
+    this.db.prepare('INSERT INTO tenant_templates (id, tenant_id, label, description, org_name, footer, base, colors, fonts, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, t.tenant_id, t.label, t.description, t.org_name, t.footer, t.base, t.colors, t.fonts, t.created_by, at, at)
+    return this.getTenantTemplate(id)!
+  }
+
+  getTenantTemplate(id: string): TenantTemplateRow | undefined {
+    return this.db.prepare('SELECT * FROM tenant_templates WHERE id = ?').get(id) as unknown as TenantTemplateRow | undefined
+  }
+
+  listTenantTemplates(tenantId?: string): TenantTemplateRow[] {
+    return (tenantId
+      ? this.db.prepare('SELECT * FROM tenant_templates WHERE tenant_id = ? ORDER BY created_at').all(tenantId)
+      : this.db.prepare('SELECT * FROM tenant_templates ORDER BY created_at').all()) as unknown as TenantTemplateRow[]
+  }
+
+  updateTenantTemplate(id: string, patch: Partial<Pick<TenantTemplateRow, 'label' | 'description' | 'org_name' | 'footer' | 'base' | 'colors' | 'fonts' | 'logo' | 'logo_mime'>>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    if (keys.length === 0) return
+    this.db.prepare(`UPDATE tenant_templates SET ${[...keys.map(k => `${k} = ?`), 'updated_at = ?'].join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string | Uint8Array | null), now(), id)
+  }
+
+  deleteTenantTemplate(id: string): void {
+    this.db.prepare('DELETE FROM tenant_templates WHERE id = ?').run(id)
   }
 
   // —— 临床研究 ——

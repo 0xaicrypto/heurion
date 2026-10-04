@@ -68,6 +68,13 @@ const NOT_FOR_AI: Record<string, string> = {
   'GET /api/patients-directory': '只用于紧急访问时选代号',
   'POST /api/patients/:ptid/proposals/:prid/:action{accept|reject}': '审核 AI 的提议是人的事（AI 不能采纳自己的提议）',
   'DELETE /api/studies/:sid': '删除研究项目由用户在界面上做（与删除文档、患者一致）',
+  // 机构幻灯片模板是机构设置（与成员、邀请、机构设置一样只给机构管理员本人）；AI 通过 deck_templates / doc_create / apply_theme 使用模板
+  'GET /api/tenant/templates': '机构设置页的模板管理列表；AI 用 deck_templates 看本机构模板',
+  'POST /api/tenant/templates': '机构模板属于机构设置，由机构管理员本人维护',
+  'PATCH /api/tenant/templates/:otid': '机构模板属于机构设置，由机构管理员本人维护',
+  'DELETE /api/tenant/templates/:otid': '机构模板属于机构设置，由机构管理员本人维护',
+  'PUT /api/tenant/templates/:otid/logo': '院徽由机构用官方文件上传，AI 不代传机构标识',
+  'DELETE /api/tenant/templates/:otid/logo': '院徽由机构管理员本人维护',
 }
 
 describe('人机对等：患者与临床研究', () => {
@@ -78,7 +85,7 @@ describe('人机对等：患者与临床研究', () => {
       docs, ops: new OpService(docs), turns: new TurnService(docs, {} as HarnessPool, new TurnRegistry()), postcheck: new PostCheck(docs), crossref: {} as CrossrefClient,
       renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 'par-'))), accounts: new Accounts(store, { secret: 's', devMode: false, devToken: 'd', devUser: 'd' }), devMode: false, devUser: 'd',
     })
-    const routes = [...new Set(app.routes.filter(r => (/^\/api\/(patients|studies|images)/.test(r.path) || /\/photo$/.test(r.path)) && r.method !== 'ALL').map(r => `${r.method} ${r.path}`))]
+    const routes = [...new Set(app.routes.filter(r => (/^\/api\/(patients|studies|images|tenant\/templates)/.test(r.path) || /\/photo$/.test(r.path)) && r.method !== 'ALL').map(r => `${r.method} ${r.path}`))]
     const MAP = { ...PATIENT_PARITY, ...STUDY_PARITY, ...IMAGE_PARITY }
     expect(routes.filter(r => !MAP[r] && !NOT_FOR_AI[r]), '新的患者 / 研究接口要登记对应的 MCP 工具，或在 NOT_FOR_AI 里写明理由').toEqual([])
 
