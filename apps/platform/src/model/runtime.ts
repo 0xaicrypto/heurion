@@ -19,6 +19,11 @@ export interface CommitEvent {
   actor: Actor
   turnId: string | null
   changes: NodeChange[]
+  /**
+   * 做出这次修改的用户（研究共享文档里可能是任何一位成员）。浏览器协同编辑按连接记；一次合批里有多人的编辑时为 null。
+   * 记忆信号只记在这个人名下（memory/signals.ts）。
+   */
+  user?: string | null
 }
 
 export interface CommitDetail { event: CommitEvent; before: PMNode; after: PMNode; ops: unknown }
@@ -165,7 +170,11 @@ interface Loaded {
   timer: NodeJS.Timeout | null
   /** 回合 id → 该回合的 Yjs 撤销器（只跟踪该回合的提交）。 */
   turnUndo: Map<string, { origin: ServerOrigin; um: Y.UndoManager }>
+  /** 本次合批里做了浏览器编辑的用户（协同连接上标的 heurionUser） */
+  editors: Set<string>
 }
+
+type Meta = { actor: Actor; turnId: string | null; ops: unknown; user?: string | null }
 
 /**
  * 文档运行时：每个文档一个 Y.Doc（内存常驻）。
@@ -203,10 +212,12 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-det
       const ydoc = new Y.Doc()
       Y.applyUpdate(ydoc, state)
       const committed = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schemaFor(row.kind))
-      const loaded: Loaded = { kind: row.kind, ydoc, rev: row.rev, cache: committed, committed, timer: null, turnUndo: new Map() }
+      const loaded: Loaded = { kind: row.kind, ydoc, rev: row.rev, cache: committed, committed, timer: null, turnUndo: new Map(), editors: new Set() }
       ydoc.on('update', (_update: Uint8Array, origin: unknown) => {
         loaded.cache = null
         if (isServerOrigin(origin)) return
+        const who = (origin as { heurionUser?: unknown } | null)?.heurionUser
+        if (typeof who === 'string') loaded.editors.add(who)
         // 浏览器编辑（或回合撤销）：合批落库
         if (loaded.timer) clearTimeout(loaded.timer)
         loaded.timer = setTimeout(() => { this.flush(docId) }, USER_FLUSH_MS)
@@ -252,10 +263,12 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-det
       l.cache = null
       after = this.get(docId)
     }
-    return this.record(docId, l, after, { actor: 'user', turnId: null, ops })
+    const user = l.editors.size === 1 ? [...l.editors][0]! : null
+    l.editors.clear()
+    return this.record(docId, l, after, { actor: 'user', turnId: null, ops, user })
   }
 
-  private record(docId: string, l: Loaded, after: PMNode, meta: { actor: Actor; turnId: string | null; ops: unknown }): CommitEvent {
+  private record(docId: string, l: Loaded, after: PMNode, meta: Meta): CommitEvent {
     const before = l.committed
     const changes = diffNodes(before, after)
     const rev = this.store.commit({
@@ -263,7 +276,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-det
     })
     l.rev = rev
     l.committed = after
-    const event: CommitEvent = { docId, rev, actor: meta.actor, turnId: meta.turnId, changes }
+    const event: CommitEvent = { docId, rev, actor: meta.actor, turnId: meta.turnId, changes, user: meta.user ?? null }
     this.emit('commit', event)
     // 带改前 / 改后文档的版本（服务端内部用，例如记忆演进收集「用户改了 AI 写的段落」；不推给浏览器）
     this.emit('commit-detail', { event, before, after, ops: meta.ops } satisfies CommitDetail)
@@ -274,7 +287,7 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-det
    * 服务端写入：把 next 写成新的当前状态（y-prosemirror 做最小差异更新，未改动的节点在 Yjs 里
    * 保持原样）。先落掉尚未落库的浏览器编辑，冲突守卫才能看到用户最新的改动。没有实际变化时返回 null。
    */
-  commit(docId: string, next: PMNode, meta: { actor: Actor; turnId: string | null; ops: unknown }): CommitEvent | null {
+  commit(docId: string, next: PMNode, meta: Meta): CommitEvent | null {
     const l = this.load(docId)
     this.flush(docId)
     const before = this.get(docId)

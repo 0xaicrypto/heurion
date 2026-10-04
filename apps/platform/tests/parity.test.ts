@@ -54,6 +54,13 @@ const STUDY_PARITY: Record<string, string> = {
   'POST /api/studies/:sid/cohort': 'study_enroll',
   'DELETE /api/studies/:sid/cohort/:ptid': 'study_unenroll',
   'POST /api/studies/:sid/cohort/dataset': 'study_cohort_dataset',
+  // 研究团队成员（研究团队协作）
+  'GET /api/studies/:sid/members': 'study_members',
+  'GET /api/studies/:sid/candidates': 'study_members',
+  'POST /api/studies/:sid/members': 'study_members',
+  'PATCH /api/studies/:sid/members/:uid': 'study_members',
+  'DELETE /api/studies/:sid/members/:uid': 'study_members',
+  'POST /api/studies/:sid/transfer': 'study_members',
 }
 /** 图库：界面「图片 ▾ → 从 Unsplash 搜索」与 AI 同一个服务。 */
 const IMAGE_PARITY: Record<string, string> = {
@@ -68,6 +75,7 @@ const NOT_FOR_AI: Record<string, string> = {
   'GET /api/patients-directory': '只用于紧急访问时选代号',
   'POST /api/patients/:ptid/proposals/:prid/:action{accept|reject}': '审核 AI 的提议是人的事（AI 不能采纳自己的提议）',
   'DELETE /api/studies/:sid': '删除研究项目由用户在界面上做（与删除文档、患者一致）',
+  'POST /api/studies/:sid/handover': '离职交接是机构管理员的人事操作（与机构成员管理一致，不给 AI）',
 }
 
 describe('人机对等：患者与临床研究', () => {

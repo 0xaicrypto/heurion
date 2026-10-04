@@ -167,7 +167,7 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
     expect((await t.call('GET', `/api/studies/${t.seed.study}/cohort`, t.A.token)).text).toContain(MARK)
     expect((await t.call('POST', `/api/studies/${t.seed.study}/cohort/preview`, t.A.token, {})).text).toContain(MARK)
     // 列表接口：B 看不到 A 的任何东西
-    for (const p of ['/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies']) {
+    for (const p of ['/api/docs', '/api/kb', '/api/memory', '/api/datasets', '/api/projects', '/api/tenant/members', '/api/tenant/audit', '/api/queue', '/api/patients', '/api/patients-directory', '/api/tenant/colleagues', '/api/studies', '/api/tenant/studies']) {
       const r = await t.call('GET', p, t.B.token)
       expect(r.text, `B ${p}`).not.toContain(MARK)
       expect(r.text, `B ${p}`).not.toContain('alice')
@@ -177,12 +177,52 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
   })
 })
 
+describe('越权：同机构但不是研究成员 / 已被移出的同事，带着 A 的 id 也碰不到', () => {
+  it('每个带参数的接口', async () => {
+    const t = await setup()
+    // 同机构的同事 C：先是研究的 editor（正向对照：能读能改共享文档），然后被移出
+    const code = JSON.parse((await t.call('POST', '/api/tenant/invites', t.A.token, {})).text).code
+    const reg = { username: 'carol', password: 'passw0rd123', invite: code, pow: solveChallenge((await (await t.app.request('/api/auth/challenge')).json()) as Challenge) }
+    const C = JSON.parse((await t.call('POST', '/api/auth/register', undefined, reg)).text)
+    const sdoc = JSON.parse((await t.call('POST', '/api/docs', t.A.token, { title: `研究文稿 ${MARK}`, markdown: `正文 ${MARK}` })).text)
+    await t.call('POST', `/api/studies/${t.seed.study}/items`, t.A.token, { kind: 'doc', ref_id: sdoc.id, role: 'protocol' })
+    expect((await t.call('POST', `/api/studies/${t.seed.study}/members`, t.A.token, { user_id: C.user.id, role: 'editor' })).status).toBe(201)
+    expect((await t.call('GET', `/api/docs/${sdoc.id}/read`, C.token)).text).toContain(MARK)
+    expect((await t.call('PATCH', `/api/docs/${sdoc.id}`, C.token, { title: `研究文稿 ${MARK} v2` })).status).toBe(200)
+    expect((await t.call('GET', `/api/datasets/${t.seed.dataset}/preview`, C.token)).text).toContain(MARK)
+    // 改成只读：能读，不能写
+    await t.call('PATCH', `/api/studies/${t.seed.study}/members/${C.user.id}`, t.A.token, { role: 'viewer' })
+    expect((await t.call('GET', `/api/docs/${sdoc.id}/read`, C.token)).text).toContain(MARK)
+    expect((await t.call('PATCH', `/api/docs/${sdoc.id}`, C.token, { title: 'x' })).status).toBe(403)
+    expect((await t.call('DELETE', `/api/datasets/${t.seed.dataset}`, C.token)).status).toBeGreaterThanOrEqual(400)
+    // 移出后：每个带参数的接口都碰不到 A 的资源（含研究里的文档）
+    await t.call('DELETE', `/api/studies/${t.seed.study}/members/${C.user.id}`, t.A.token)
+    const seeds = [{ ...t.seed }, { ...t.seed, doc: sdoc.id, rid: sdoc.id }]
+    const routes = [...new Set(t.app.routes.filter(r => r.path.includes(':') && r.method !== 'ALL').map(r => `${r.method} ${r.path}`))]
+    // 同机构同事按设计能做的（机构成员目录、邀请链接本身）
+    const SAME_TENANT_OK = new Set(['GET /api/invites/:code'])
+    const leaks: string[] = []
+    for (const seed of seeds) for (const route of routes) {
+      if (SAME_TENANT_OK.has(route)) continue
+      const [method, pattern] = route.split(' ') as [string, string]
+      const value = (name: string) => pattern.startsWith('/api/assets/') && name === 'id' ? seed.asset : pattern.startsWith('/api/memory/changes/') && name === 'cid' ? seed.change
+        : name === 'action' ? (pattern.includes('suggestions') || pattern.includes('proposals') ? 'accept' : pattern.includes('changes') ? 'apply' : pattern.includes('/labs/') || pattern.includes('/records/') ? 'confirm' : 'resolve')
+        : name === 'uid' ? C.user.id : PARAMS[name]!(seed as Seed)
+      const path = pattern.replace(/:(\w+)(\{[^}]*\})?/g, (_m, name: string) => encodeURIComponent(value(name)))
+      const r = await t.call(method, path, C.token, method === 'GET' || method === 'DELETE' ? undefined : { name: 'x', text: 'x', message: 'x', content: 'x', role: 'editor', user_id: C.user.id, drop: [], keep: ['note'] })
+      if (r.status < 400 || r.text.includes(MARK)) leaks.push(`${method} ${path} → ${r.status} ${r.text.slice(0, 80)}`)
+    }
+    expect(leaks).toEqual([])
+    for (const p of ['/api/docs', '/api/datasets', '/api/studies', '/api/search?q=' + encodeURIComponent(MARK)]) expect((await t.call('GET', p, C.token)).text, p).not.toContain(MARK)
+  })
+})
+
 describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到', () => {
   /** 工具里带 id 的参数 → A 的资源（新工具的 id 参数必须登记）。 */
   const TOOL_PARAMS: Record<string, (s: Seed) => unknown> = {
     doc_id: s => s.doc, dataset_id: s => s.dataset, file_id: s => s.kb, file_ids: s => [s.kb], memory_ids: s => [s.memory], dataset_ids: s => [s.dataset],
     thread_id: s => s.comment, comment_id: s => s.comment, slide_id: () => 's0', block_id: () => 'b0', ids: () => ['b0'], id: () => 'b0', anchor_id: () => 'b0', node_id: () => 'b0',
-    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0', photo_id: () => 'p0',
+    cite_id: () => 'c0', asset_id: s => s.asset, project: s => s.project, patient_id: s => s.patient, patient_ids: s => [s.patient], record_id: s => s.record, lab_id: s => s.lab, study_id: s => s.study, ref_id: s => s.doc, section_id: () => 'b0', slide_ids: () => ['s0'], from_id: () => 'b0', to_id: () => 'b0', claim_id: () => 'k0', photo_id: () => 'p0', user_id: s => s.userA,
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {

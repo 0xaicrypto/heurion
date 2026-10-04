@@ -1,12 +1,14 @@
 import type { DatasetService } from '../datasets/service.ts'
-import type { Store, StudyRow } from '../store/db.ts'
+import type { Store, StudyRole, StudyRow } from '../store/db.ts'
+import { allows, type Access, type Level } from './access.ts'
 
 /**
  * 临床研究项目：把研究方案、数据集、分析、稿件放在一起。
  * - 文档（方案 / 论文 / 幻灯片）与数据集经「归入」进研究，各自只属于一个研究；归入研究的文档不出现在写作的文档列表里（docs.context）。
  * - 分析不用手工维护：用这个研究的数据集画出来的图（带分析来源的资产）自动汇总。
  * - 删除研究：里面的文档一起进回收站（可恢复），数据集仍在「全部数据集」里。
- * - 归属按用户（与文档、数据集一致）；以后加研究团队协作时改按租户 + 成员。
+ * - 研究团队（docs/design/TEAM.md）：负责人 + 同机构成员（editor 可改、viewer 只读）；研究里的文档、数据集、分析按成员角色共享，
+ *   访问判定统一在 access.ts。负责人可加 / 移成员、改角色、转交；成员可退出；机构管理员可做离职交接（只换负责人，不给自己读权限）。
  * 入组患者（从患者库按条件筛选）见 cohort.ts：入组关系在机构的患者库里，不进 study_items。
  */
 
@@ -17,8 +19,10 @@ export const STATUSES: Record<StudyRow['status'], string> = { planning: '筹备�
 export const DOC_ROLES: Record<string, string> = { protocol: '研究方案', manuscript: '论文', slides: '幻灯片', other: '其他文档' }
 
 export class StudyError extends Error {
-  constructor(readonly code: string, message: string, readonly status: 400 | 404 | 409 = 400) { super(message) }
+  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 400) { super(message) }
 }
+
+export const ROLE_LABELS: Record<StudyRole, string> = { owner: '负责人', editor: '可编辑', viewer: '只读' }
 
 const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
@@ -26,22 +30,123 @@ export class StudyService {
   /** 删除研究时的回调（清掉患者库里的入组关系，见 cohort.ts） */
   onRemove: ((owner: string, id: string) => void) | null = null
 
-  constructor(private readonly store: Store, private readonly datasets?: DatasetService) {}
+  constructor(private readonly store: Store, private readonly datasets?: DatasetService, private readonly access?: Access) {}
 
-  /** 研究本身（只能是自己的；别人的当不存在）。 */
-  get(owner: string, id: string): StudyRow { return this.own(owner, id) }
+  /** 研究本身（成员才看得到；level 不够时 403）。 */
+  get(user: string, id: string, level: Level = 'read'): StudyRow { return this.own(user, id, level) }
 
-  private own(owner: string, id: string): StudyRow {
+  /** 我在研究里的角色（不是成员为 null） */
+  role(user: string, id: string): StudyRole | null { return this.store.studyRole(id, user) }
+
+  private own(user: string, id: string, level: Level = 'read'): StudyRow {
     const s = this.store.getStudy(id)
-    if (!s || s.owner !== owner) throw new StudyError('not_found', '研究不存在', 404)
+    const role = s ? this.store.studyRole(id, user) : null
+    if (!s || !role) throw new StudyError('not_found', '研究不存在', 404)
+    if (!allows(role, level)) throw new StudyError('forbidden', level === 'manage' ? '只有研究负责人能做这件事' : '你在这个研究里是只读成员', 403)
     return s
   }
 
-  list(owner: string) {
-    return this.store.listStudies(owner).map(s => {
+  private name = (id: string) => this.store.getUser(id)?.display_name ?? id
+
+  list(user: string) {
+    return this.store.listStudies(user).map(s => {
       const items = this.store.studyItems(s.id)
-      return { ...s, docs: items.filter(i => i.kind === 'doc').length, datasets: items.filter(i => i.kind === 'dataset').length }
+      return {
+        ...s, my_role: s.my_role, shared: s.owner !== user, shared_by: s.owner !== user ? this.name(s.owner) : null,
+        members: this.store.studyMembers(s.id).length,
+        docs: items.filter(i => i.kind === 'doc').length, datasets: items.filter(i => i.kind === 'dataset').length,
+      }
     })
+  }
+
+  // —— 成员 ——
+
+  members(user: string, id: string) {
+    this.own(user, id)
+    return this.store.studyMembers(id).map(m => ({ user_id: m.user_id, name: this.name(m.user_id), role: m.role, role_label: ROLE_LABELS[m.role], added_at: m.added_at, me: m.user_id === user }))
+  }
+
+  /** 可以加进研究的人：与研究同机构、在用、还不是成员（负责人加人时选） */
+  candidates(user: string, id: string) {
+    const s = this.own(user, id, 'manage')
+    if (!s.tenant_id) return []
+    const cur = new Set(this.store.studyMembers(id).map(m => m.user_id))
+    return this.store.listUsers().filter(u => u.tenant_id === s.tenant_id && u.status === 'active' && !cur.has(u.id))
+      .map(u => ({ user_id: u.id, name: u.display_name, username: u.username }))
+  }
+
+  private sameTenant(s: StudyRow, userId: unknown) {
+    const u = typeof userId === 'string' ? this.store.getUser(userId) : undefined
+    if (!u || u.status !== 'active' || !s.tenant_id || u.tenant_id !== s.tenant_id) throw new StudyError('bad_member', '只能加本机构在用的成员', 400)
+    return u
+  }
+
+  addMember(user: string, id: string, input: { user_id?: unknown; role?: unknown }) {
+    const s = this.own(user, id, 'manage')
+    const u = this.sameTenant(s, input.user_id)
+    const role = input.role === 'viewer' ? 'viewer' : 'editor'
+    if (this.store.studyRole(id, u.id) === 'owner') throw new StudyError('bad_member', '负责人不能改成别的角色，先转交', 409)
+    this.store.setStudyMember({ study_id: id, user_id: u.id, role, added_by: user })
+    this.access?.invalidate()
+    return this.members(user, id)
+  }
+
+  setRole(user: string, id: string, target: string, roleIn: unknown) {
+    this.own(user, id, 'manage')
+    const cur = this.store.studyRole(id, target)
+    if (!cur) throw new StudyError('not_found', '研究里没有这位成员', 404)
+    if (cur === 'owner') throw new StudyError('bad_member', '负责人不能改成别的角色，先转交', 409)
+    if (roleIn !== 'editor' && roleIn !== 'viewer') throw new StudyError('bad_role', '角色只能是 editor / viewer')
+    this.store.setStudyMember({ study_id: id, user_id: target, role: roleIn, added_by: user })
+    this.access?.invalidate()
+    return this.members(user, id)
+  }
+
+  /** 移出成员（负责人）；成员自己退出用 leave */
+  removeMember(user: string, id: string, target: string) {
+    if (target === user) return this.leave(user, id)
+    this.own(user, id, 'manage')
+    if (this.store.studyRole(id, target) === 'owner') throw new StudyError('bad_member', '负责人不能被移出，先转交', 409)
+    if (!this.store.removeStudyMember(id, target)) throw new StudyError('not_found', '研究里没有这位成员', 404)
+    this.access?.invalidate()
+    return this.members(user, id)
+  }
+
+  leave(user: string, id: string): { left: true } {
+    this.own(user, id)
+    if (this.store.studyRole(id, user) === 'owner') throw new StudyError('owner_cannot_leave', '负责人不能直接退出：先把研究转交给别人', 409)
+    this.store.removeStudyMember(id, user)
+    this.access?.invalidate()
+    return { left: true }
+  }
+
+  /** 负责人转交（新负责人须同机构；原负责人留作可编辑成员） */
+  transfer(user: string, id: string, to: unknown) {
+    const s = this.own(user, id, 'manage')
+    const u = this.sameTenant(s, to)
+    if (u.id === user) return this.members(user, id)
+    this.store.transferStudy(id, u.id, user, true)
+    this.access?.invalidate()
+    return this.members(user, id)
+  }
+
+  /** 机构管理员看到的本机构研究（只有标题、负责人、成员数——用于离职交接，不含内容） */
+  tenantStudies(admin: string) {
+    const a = this.store.getUser(admin)
+    if (!a?.tenant_id || a.tenant_role !== 'admin') throw new StudyError('forbidden', '只有机构管理员能做交接', 403)
+    return this.store.listTenantStudies(a.tenant_id).map(s => ({ study_id: s.id, title: s.title, owner: s.owner, owner_name: this.name(s.owner), members: this.store.studyMembers(s.id).length, updated_at: s.updated_at }))
+  }
+
+  /** 离职交接（机构管理员）：把研究负责人换成本机构的另一位成员；原负责人移出。管理员自己不因此成为成员。 */
+  handover(admin: string, id: string, to: unknown) {
+    const a = this.store.getUser(admin)
+    const s = this.store.getStudy(id)
+    if (!a?.tenant_id || a.tenant_role !== 'admin' || !s || s.tenant_id !== a.tenant_id) throw new StudyError('not_found', '研究不存在', 404)
+    const u = this.sameTenant(s, to)
+    const from = s.owner
+    if (u.id !== from) this.store.transferStudy(id, u.id, admin, false)
+    this.access?.invalidate()
+    return { study_id: id, from, to: u.id }
   }
 
   create(owner: string, input: { title?: unknown; design?: unknown; status?: unknown; summary?: unknown }): StudyRow {
@@ -51,7 +156,7 @@ export class StudyService {
   }
 
   update(owner: string, id: string, patch: { title?: unknown; design?: unknown; status?: unknown; summary?: unknown }): StudyRow {
-    this.own(owner, id)
+    this.own(owner, id, 'write')
     const next: Parameters<Store['updateStudy']>[1] = {}
     if (patch.title !== undefined) { const t = clean(patch.title, 120); if (!t) throw new StudyError('bad_title', '研究名称不能为空'); next.title = t }
     if (patch.design !== undefined) next.design = design(patch.design)
@@ -65,7 +170,7 @@ export class StudyService {
 
   /** 删除研究：研究里的文档（方案、论文、幻灯片）一起进回收站（可恢复，恢复后在文档列表里）；数据集保留在「全部数据集」。返回进回收站的文档数。 */
   remove(owner: string, id: string): { trashed_docs: number } {
-    this.own(owner, id)
+    this.own(owner, id, 'manage')
     let n = 0
     for (const i of this.store.studyItems(id)) if (i.kind === 'doc') {
       this.store.setDocContext(i.ref_id, null)
@@ -79,7 +184,7 @@ export class StudyService {
 
   /** 把文档或数据集归入研究（只能是自己的；已在别的研究里时要先移出）。 */
   link(owner: string, id: string, input: { kind?: unknown; ref_id?: unknown; role?: unknown }): void {
-    const s = this.own(owner, id)
+    const s = this.own(owner, id, 'write')
     const kind = input.kind === 'doc' || input.kind === 'dataset' ? input.kind : null
     const ref = typeof input.ref_id === 'string' ? input.ref_id : ''
     if (!kind || !ref) throw new StudyError('bad_item', 'kind 只能是 doc / dataset，ref_id 必填')
@@ -98,22 +203,26 @@ export class StudyService {
     const role = kind === 'dataset' ? 'data' : typeof input.role === 'string' && DOC_ROLES[input.role] ? input.role : 'other'
     this.store.addStudyItem({ study_id: id, kind, ref_id: ref, role })
     if (kind === 'doc') this.store.setDocContext(ref, { kind: 'study', study_id: id, title: s.title, role })
+    this.access?.invalidate()
   }
 
+  /** 移出研究：文档回到创建者的文档列表，数据集回到创建者的「全部数据集」。 */
   unlink(owner: string, id: string, kind: unknown, ref: string): void {
-    this.own(owner, id)
+    this.own(owner, id, 'write')
     if (kind !== 'doc' && kind !== 'dataset') throw new StudyError('bad_item', 'kind 只能是 doc / dataset')
     if (!this.store.removeStudyItem(id, kind, ref)) throw new StudyError('not_found', '研究里没有这一项', 404)
     if (kind === 'doc') this.store.setDocContext(ref, null)
+    this.access?.invalidate()
   }
 
   /** 研究的全部内容：文档（按角色）、数据集、自动汇总的分析。 */
   read(owner: string, id: string) {
     const s = this.own(owner, id)
+    const myRole = this.store.studyRole(id, owner)!
     const items = this.store.studyItems(id)
     const docs = items.filter(i => i.kind === 'doc').flatMap(i => {
       const d = this.store.getDoc(i.ref_id)
-      return d && !d.deleted_at ? [{ doc_id: d.id, title: d.title, kind: d.kind, role: i.role, updated_at: d.updated_at, added_at: i.added_at }] : []
+      return d && !d.deleted_at ? [{ doc_id: d.id, title: d.title, kind: d.kind, role: i.role, updated_at: d.updated_at, added_at: i.added_at, created_by: this.name(d.owner) }] : []
     })
     const datasetIds = items.filter(i => i.kind === 'dataset').map(i => i.ref_id)
     const datasets = datasetIds.flatMap(dsId => {
@@ -122,9 +231,11 @@ export class StudyService {
       return d ? [{ dataset_id: d.id, name: d.name, format: d.format, rows: d.rows, cols: d.cols, status: d.status, updated_at: d.updated_at, version: d.version, cohort: o?.kind === 'cohort' ? { shape: o.shape ?? 'wide' } : null }] : []
     })
     const ids = new Set(datasetIds)
-    const analyses = this.store.provenanceAssets(owner).filter(a => a.provenance.datasets.some(d => ids.has(d.id)))
-      .map(a => ({ asset_id: a.id, name: a.name, created_at: a.created_at, datasets: a.provenance.datasets.filter(d => ids.has(d.id)).map(d => d.name), has_code: Boolean(a.provenance.code), code_path: a.provenance.code_path }))
-    return { ...s, design_label: s.design ? DESIGNS[s.design] : null, status_label: STATUSES[s.status], docs, datasets, analyses }
+    // 分析：用研究数据集画的图，不论是哪位成员画的
+    const analyses = this.store.provenanceAssetsUsing([...ids])
+      .map(a => ({ asset_id: a.id, name: a.name, created_at: a.created_at, by: this.name(a.owner), datasets: a.provenance.datasets.filter(d => ids.has(d.id)).map(d => d.name), has_code: Boolean(a.provenance.code), code_path: a.provenance.code_path }))
+    const members = this.store.studyMembers(id).map(m => ({ user_id: m.user_id, name: this.name(m.user_id), role: m.role }))
+    return { ...s, my_role: myRole, owner_name: this.name(s.owner), design_label: s.design ? DESIGNS[s.design] : null, status_label: STATUSES[s.status], members, docs, datasets, analyses }
   }
 
   /** 研究里可分析的数据集（研究文档里对话时自动带上）。 */

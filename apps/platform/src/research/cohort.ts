@@ -8,6 +8,8 @@ import { StudyError, type StudyService } from './service.ts'
  * - 入组关系与研究编号（S001…）在机构的患者库里（patients.ts enrollments）；研究在平台库。同一患者可入多个研究。
  * - 研究数据集：入组受试者的快照（只有研究编号，没有代号 / 备注姓名），宽表或长表，作为一个可用的数据集归入研究。
  *   之后入组名单或受试者化验有变化 → 数据集标「已过期」；刷新生成新版本，旧版本保留（已有分析的来源记录指向旧版本，覆盖会让分析对不上数据）。
+ * - 研究成员：筛选、入组、移出、生成数据集要「可编辑」及以上，且入组仍要求操作者在患者诊疗组里；只读成员能看入组人数与研究编号、读研究数据集
+ *   （代号只给操作者能看到的患者）。
  * - AI 与人相同（MCP study_cohort_*）；AI 入组 / 移出受机构设置 ai_patient_writes 约束（review 时变成待确认提议，由研究负责人确认）。
  */
 
@@ -29,19 +31,19 @@ export class CohortService {
   }
 
   preview(a: Actor, studyId: string, criteria: unknown) {
-    this.studies.get(a.userId, studyId)
+    this.studies.get(a.userId, studyId, 'write')
     return this.patients.screen(a, studyId, criteria)
   }
 
   enroll(a: Actor, studyId: string, input: { patient_ids?: unknown; criteria?: unknown }) {
-    this.studies.get(a.userId, studyId)
+    this.studies.get(a.userId, studyId, 'write')
     const ids = Array.isArray(input.patient_ids) ? input.patient_ids.filter((x): x is string => typeof x === 'string') : []
     if (!ids.length) throw new StudyError('bad_patients', 'patient_ids 不能为空')
     return this.patients.enroll(a, studyId, ids, input.criteria ?? null)
   }
 
   unenroll(a: Actor, studyId: string, patientId: string) {
-    this.studies.get(a.userId, studyId)
+    this.studies.get(a.userId, studyId, 'write')
     return this.patients.unenroll(a, studyId, patientId)
   }
 
@@ -72,7 +74,7 @@ export class CohortService {
    * tests 不填 = 入组受试者有过的全部化验项目；from / to 限定化验日期。数据与上一版完全相同时沿用上一版。
    */
   async dataset(a: Actor, studyId: string, input: { shape?: unknown; tests?: unknown; from?: unknown; to?: unknown }): Promise<{ dataset: DatasetView; unchanged: boolean; skipped: string[] }> {
-    const study = this.studies.get(a.userId, studyId)
+    const study = this.studies.get(a.userId, studyId, 'write')
     if (!this.datasets) throw new StudyError('unavailable', '数据集未启用')
     const shape: Shape = input.shape === 'long' ? 'long' : 'wide'
     const tests = Array.isArray(input.tests) ? input.tests.filter((t): t is string => typeof t === 'string' && t.trim() !== '').slice(0, 50) : []

@@ -9,8 +9,8 @@ import type { MemoryService } from './service.ts'
  *   （用户往往分好几次改完，取最终结果）。
  * - reject：用户拒绝了 AI 的修订——被拒的 AI 版本与用户保留的原文。
  * 用户关了记忆（管理员停用 / 本人暂停）时不收集。
- * 归属：信号记在文档主人名下——现在只有主人能编辑自己的文档（协同连接也只放行主人）。以后加文档共享时，
- * 必须改成记在实际改动的人名下（提交事件要带上用户 id），否则一个人的改法会被总结进另一个人的记忆。
+ * 归属：信号记在实际改动的人名下（提交事件的 user：协同连接上的用户、接口调用者）。研究共享文档里多人同时编辑、
+ * 一次合批里分不清是谁时不记——别人的改法不能被总结进我的记忆。不在研究里的文档只有主人能改，没有 user 时按主人记。
  */
 
 const TEXT_BLOCKS = new Set(['paragraph', 'heading'])
@@ -32,10 +32,13 @@ export class MemorySignals {
   private collect({ event, before, after, ops }: CommitDetail): void {
     if (event.actor !== 'user') return
     const doc = this.store.getDoc(event.docId)
-    if (!doc || doc.kind !== 'doc' || !this.memory.active(doc.owner)) return
+    if (!doc || doc.kind !== 'doc') return
+    const shared = !!doc.context && (JSON.parse(doc.context) as { kind?: string }).kind === 'study'
+    const owner = event.user ?? (shared ? null : doc.owner)
+    if (!owner || !this.memory.active(owner)) return
     const list = Array.isArray(ops) ? ops as Array<{ op?: string; group?: string | null }> : []
     const reject = list.find(o => o.op === 'reject_suggestion')
-    if (reject) { this.rejected(doc.owner, event.docId, event.rev, before, reject.group ?? null); return }
+    if (reject) { this.rejected(owner, event.docId, event.rev, before, reject.group ?? null); return }
     if (list.some(o => o.op === 'accept_suggestion' || o.op === 'revert_turn' || o.op === 'restore')) return
 
     const old = byId(before)
@@ -49,7 +52,7 @@ export class MemorySignals {
       if (!ai || Date.now() - Date.parse(ai.at) > RECENT_MS) continue
       const text = prev.textContent.trim()
       if (text.length < 4) continue
-      this.store.addMemorySignal({ owner: doc.owner, doc_id: event.docId, node_id: c.node_id, kind: 'edit_ai', ai_text: text.slice(0, 1200), user_text: null, ai_rev: ai.rev })
+      this.store.addMemorySignal({ owner, doc_id: event.docId, node_id: c.node_id, kind: 'edit_ai', ai_text: text.slice(0, 1200), user_text: null, ai_rev: ai.rev })
     }
   }
 

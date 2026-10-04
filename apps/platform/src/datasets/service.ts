@@ -1,3 +1,4 @@
+import { allows, type Access, type Level } from '../research/access.ts'
 import { createHash } from 'node:crypto'
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
@@ -40,6 +41,8 @@ const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '_')
 
 export class DatasetService {
   private queue: Promise<void> = Promise.resolve()
+  /** 访问判定（研究团队协作：研究里的数据集按成员角色共享）；没接上时只认主人（测试里常用）。 */
+  access: Access | null = null
 
   constructor(private readonly store: Store, private readonly dir: string, private readonly ingest: Ingest) {
     // 服务重启时没处理完的重新处理
@@ -111,7 +114,7 @@ export class DatasetService {
    * 有要删的列时重新解析（从原文件），删完再检查一遍。
    */
   async resolvePhi(owner: string, id: string, drop: string[], keep: string[]): Promise<DatasetView> {
-    const d = this.own(owner, id)
+    const d = this.own(owner, id, 'write')
     if (d.status !== 'review') throw new DatasetError('not_in_review', '这个数据集不需要处理身份信息')
     const flagged = this.phiOf(d).map(c => c.name)
     const missing = flagged.filter(n => !drop.includes(n) && !keep.includes(n))
@@ -131,12 +134,19 @@ export class DatasetService {
     return this.view(this.store.getDataset(id)!)
   }
 
-  list(owner: string): DatasetView[] { return this.store.listDatasets(owner).map(d => this.view(d)) }
+  /** 我能看到的数据集：自己的（不在我已被移出的研究里）+ 我参与的研究里别人上传的（shared=true） */
+  list(owner: string): Array<DatasetView & { shared: boolean; my_role: string }> {
+    const mine = this.store.listDatasets(owner).filter(d => this.roleOf(owner, d))
+    const seen = new Set(mine.map(d => d.id))
+    const shared = this.store.listStudies(owner).flatMap(st => this.store.studyItems(st.id).filter(i => i.kind === 'dataset' && !seen.has(i.ref_id)))
+      .flatMap(i => { const d = this.store.getDataset(i.ref_id); return d ? [d] : [] })
+    return [...mine, ...shared].map(d => ({ ...this.view(d), shared: d.owner !== owner, my_role: this.roleOf(owner, d) ?? 'viewer' }))
+  }
 
   get(owner: string, id: string): DatasetView { return this.view(this.own(owner, id)) }
 
   update(owner: string, id: string, patch: { name?: string; labels?: Record<string, string> }): DatasetView {
-    const d = this.own(owner, id)
+    const d = this.own(owner, id, 'write')
     const next: Parameters<Store['updateDataset']>[1] = {}
     if (typeof patch.name === 'string' && patch.name.trim()) next.name = patch.name.trim().slice(0, 120)
     if (patch.labels && typeof patch.labels === 'object') {
@@ -155,12 +165,13 @@ export class DatasetService {
 
   /** 改平台生成的数据集的来源记录（研究队列刷新时数据没变，只更新指纹）。 */
   setOrigin(owner: string, id: string, origin: DatasetOrigin): void {
-    this.own(owner, id)
+    this.own(owner, id, 'write')
     this.store.updateDataset(id, { origin: JSON.stringify(origin) })
   }
 
   remove(owner: string, id: string): void {
     const d = this.own(owner, id)
+    if (!(this.access ? this.access.canDelete(owner, d, this.roleOf(owner, d)) : d.owner === owner)) throw new DatasetError('forbidden', '只有上传者或研究负责人能删除这个数据集')
     this.store.deleteDataset(id)
     rmSync(this.folder(d), { recursive: true, force: true })
   }
@@ -181,9 +192,15 @@ export class DatasetService {
     return { dataset: this.view(d), path: this.csvPath(d) }
   }
 
-  private own(owner: string, id: string): DatasetRow {
+  private roleOf(user: string, d: DatasetRow) {
+    return this.access ? this.access.datasetRole(user, d) : d.owner === user ? 'owner' as const : null
+  }
+
+  private own(owner: string, id: string, level: Level = 'read'): DatasetRow {
     const d = this.store.getDataset(id)
-    if (!d || d.owner !== owner) throw new DatasetError('not_found', '数据集不存在')
+    const role = d ? this.roleOf(owner, d) : null
+    if (!d || !role) throw new DatasetError('not_found', '数据集不存在')
+    if (!allows(role, level)) throw new DatasetError('forbidden', '你在这个研究里是只读成员，不能修改数据集')
     return d
   }
 

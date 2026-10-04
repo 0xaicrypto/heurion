@@ -131,10 +131,15 @@ export interface DatasetRow {
 /** 临床研究项目：方案、数据集、分析、稿件放在一起（文档与数据集经 study_items 归入，各自只属于一个研究）。 */
 export interface StudyRow {
   id: string; owner: string; title: string
+  /** 研究所属机构（建研究时负责人的机构；成员必须同机构）。开发模式等没有机构的用户为 null，只能自己用。 */
+  tenant_id: string | null
   design: 'retrospective_cohort' | 'prospective_cohort' | 'rct' | 'case_control' | 'cross_sectional' | 'other' | null
   status: 'planning' | 'ongoing' | 'completed'; summary: string | null; created_at: string; updated_at: string
 }
 export interface StudyItemRow { study_id: string; kind: 'doc' | 'dataset'; ref_id: string; role: string; added_at: string }
+/** 研究成员（研究团队协作，docs/design/TEAM.md）：负责人只有一个（与 studies.owner 同步）；成员与研究同机构。 */
+export type StudyRole = 'owner' | 'editor' | 'viewer'
+export interface StudyMemberRow { study_id: string; user_id: string; role: StudyRole; added_by: string; added_at: string }
 
 /** 记忆演进的信号：用户改写了 AI 写的段落（edit_ai）、拒绝了 AI 的修订（reject）。整理时交给模型总结规律。 */
 export interface MemorySignalRow {
@@ -416,6 +421,11 @@ export class Store {
         study_id TEXT NOT NULL REFERENCES studies(id) ON DELETE CASCADE, kind TEXT NOT NULL, ref_id TEXT NOT NULL, role TEXT NOT NULL, added_at TEXT NOT NULL,
         PRIMARY KEY (study_id, kind, ref_id), UNIQUE (kind, ref_id)
       );
+      CREATE TABLE IF NOT EXISTS study_members (
+        study_id TEXT NOT NULL REFERENCES studies(id) ON DELETE CASCADE, user_id TEXT NOT NULL, role TEXT NOT NULL,
+        added_by TEXT NOT NULL, added_at TEXT NOT NULL, PRIMARY KEY (study_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS study_members_user ON study_members (user_id);
       CREATE TABLE IF NOT EXISTS memory_signals (
         id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc_id TEXT NOT NULL, node_id TEXT, kind TEXT NOT NULL,
         ai_text TEXT NOT NULL, user_text TEXT, ai_rev INTEGER NOT NULL, at TEXT NOT NULL, consumed_at TEXT
@@ -464,11 +474,16 @@ export class Store {
     const auditCols = (this.db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>).map(c => c.name)
     if (!auditCols.includes('tenant_id')) this.db.exec('ALTER TABLE audit_events ADD COLUMN tenant_id TEXT')
     this.db.exec('CREATE INDEX IF NOT EXISTS users_tenant ON users (tenant_id)')
+    // 研究团队协作之前的研究：负责人补成成员表里的 owner；研究记下所属机构（负责人当时的机构）
+    const studyCols = (this.db.prepare('PRAGMA table_info(studies)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!studyCols.includes('tenant_id')) this.db.exec('ALTER TABLE studies ADD COLUMN tenant_id TEXT')
+    this.db.exec(`INSERT OR IGNORE INTO study_members (study_id, user_id, role, added_by, added_at) SELECT id, owner, 'owner', owner, created_at FROM studies`)
     // 租户上线前的用户：各自一个个人租户，本人为机构管理员
     for (const u of this.db.prepare('SELECT id, display_name FROM users WHERE tenant_id IS NULL').all() as Array<{ id: string; display_name: string }>) {
       const t = this.createTenant({ name: `${u.display_name}（个人）`, kind: 'personal', created_by: u.id })
       this.db.prepare("UPDATE users SET tenant_id = ?, tenant_role = 'admin' WHERE id = ?").run(t.id, u.id)
     }
+    this.db.exec('UPDATE studies SET tenant_id = (SELECT tenant_id FROM users WHERE users.id = studies.owner) WHERE tenant_id IS NULL')
     const assetCols = (this.db.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map(c => c.name)
     if (!assetCols.includes('provenance')) this.db.exec('ALTER TABLE assets ADD COLUMN provenance TEXT')
     const dsCols = (this.db.prepare('PRAGMA table_info(datasets)').all() as Array<{ name: string }>).map(c => c.name)
@@ -933,7 +948,9 @@ export class Store {
   addStudy(s: Pick<StudyRow, 'owner' | 'title' | 'design' | 'status' | 'summary'>): StudyRow {
     const id = 'st' + randomUUID().replace(/-/g, '').slice(0, 10)
     const t = now()
-    this.db.prepare('INSERT INTO studies (id, owner, title, design, status, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, s.owner, s.title, s.design, s.status, s.summary, t, t)
+    const tenant = this.getUser(s.owner)?.tenant_id ?? null
+    this.db.prepare('INSERT INTO studies (id, owner, title, design, status, summary, created_at, updated_at, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, s.owner, s.title, s.design, s.status, s.summary, t, t, tenant)
+    this.db.prepare("INSERT INTO study_members (study_id, user_id, role, added_by, added_at) VALUES (?, ?, 'owner', ?, ?)").run(id, s.owner, s.owner, t)
     return this.getStudy(id)!
   }
 
@@ -941,8 +958,46 @@ export class Store {
     return this.db.prepare('SELECT * FROM studies WHERE id = ?').get(id) as unknown as StudyRow | undefined
   }
 
-  listStudies(owner: string): StudyRow[] {
-    return this.db.prepare('SELECT * FROM studies WHERE owner = ? ORDER BY updated_at DESC').all(owner) as unknown as StudyRow[]
+  /** 我参与的研究（负责人或成员），带我的角色。 */
+  listStudies(user: string): Array<StudyRow & { my_role: StudyRole }> {
+    return this.db.prepare('SELECT s.*, m.role AS my_role FROM studies s JOIN study_members m ON m.study_id = s.id AND m.user_id = ? ORDER BY s.updated_at DESC').all(user) as unknown as Array<StudyRow & { my_role: StudyRole }>
+  }
+
+  /** 机构里的全部研究（机构管理员做离职交接用） */
+  listTenantStudies(tenantId: string): StudyRow[] {
+    return this.db.prepare('SELECT * FROM studies WHERE tenant_id = ? ORDER BY updated_at DESC').all(tenantId) as unknown as StudyRow[]
+  }
+
+  studyMembers(studyId: string): StudyMemberRow[] {
+    return this.db.prepare("SELECT * FROM study_members WHERE study_id = ? ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END, added_at").all(studyId) as unknown as StudyMemberRow[]
+  }
+
+  studyRole(studyId: string, userId: string): StudyRole | null {
+    return (this.db.prepare('SELECT role FROM study_members WHERE study_id = ? AND user_id = ?').get(studyId, userId) as { role: StudyRole } | undefined)?.role ?? null
+  }
+
+  /** 加成员或改角色（owner 只经 transferStudy 设置）。 */
+  setStudyMember(m: Omit<StudyMemberRow, 'added_at'>): void {
+    this.db.prepare('INSERT INTO study_members (study_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (study_id, user_id) DO UPDATE SET role = excluded.role')
+      .run(m.study_id, m.user_id, m.role, m.added_by, now())
+  }
+
+  removeStudyMember(studyId: string, userId: string): boolean {
+    return Number(this.db.prepare("DELETE FROM study_members WHERE study_id = ? AND user_id = ? AND role != 'owner'").run(studyId, userId).changes) > 0
+  }
+
+  /** 转交负责人：新负责人成为 owner，原负责人留作 editor（keepOld=false 时移出，例如离职交接）。 */
+  transferStudy(studyId: string, to: string, by: string, keepOld = true): void {
+    const st = this.getStudy(studyId)
+    if (!st) return
+    this.db.exec('BEGIN')
+    try {
+      if (keepOld) this.db.prepare("UPDATE study_members SET role = 'editor' WHERE study_id = ? AND user_id = ?").run(studyId, st.owner)
+      else this.db.prepare('DELETE FROM study_members WHERE study_id = ? AND user_id = ?').run(studyId, st.owner)
+      this.db.prepare("INSERT INTO study_members (study_id, user_id, role, added_by, added_at) VALUES (?, ?, 'owner', ?, ?) ON CONFLICT (study_id, user_id) DO UPDATE SET role = 'owner'").run(studyId, to, by, now())
+      this.db.prepare('UPDATE studies SET owner = ?, updated_at = ? WHERE id = ?').run(to, now(), studyId)
+      this.db.exec('COMMIT')
+    } catch (err) { this.db.exec('ROLLBACK'); throw err }
   }
 
   updateStudy(id: string, patch: Partial<Pick<StudyRow, 'title' | 'design' | 'status' | 'summary'>>): void {
@@ -952,6 +1007,7 @@ export class Store {
 
   deleteStudy(id: string): void {
     this.db.prepare('DELETE FROM study_items WHERE study_id = ?').run(id)
+    this.db.prepare('DELETE FROM study_members WHERE study_id = ?').run(id)
     this.db.prepare('DELETE FROM studies WHERE id = ?').run(id)
   }
 
@@ -971,6 +1027,16 @@ export class Store {
 
   removeStudyItem(studyId: string, kind: StudyItemRow['kind'], refId: string): boolean {
     return Number(this.db.prepare('DELETE FROM study_items WHERE study_id = ? AND kind = ? AND ref_id = ?').run(studyId, kind, refId).changes) > 0
+  }
+
+  /** 用到这些数据集的、带分析来源的图（不论是谁画的：研究成员的分析都汇总到研究里）。 */
+  provenanceAssetsUsing(datasetIds: string[]): Array<{ id: string; owner: string; name: string; created_at: string; provenance: AssetProvenance }> {
+    if (!datasetIds.length) return []
+    const ids = new Set(datasetIds)
+    const clause = datasetIds.map(() => 'instr(provenance, ?) > 0').join(' OR ')
+    return (this.db.prepare(`SELECT id, owner, name, created_at, provenance FROM assets WHERE provenance IS NOT NULL AND (${clause}) ORDER BY created_at DESC`).all(...datasetIds.map(id => `"${id}"`)) as Array<{ id: string; owner: string; name: string; created_at: string; provenance: string }>)
+      .map(r => ({ ...r, provenance: JSON.parse(r.provenance) as AssetProvenance }))
+      .filter(r => r.provenance.datasets.some(d => ids.has(d.id)))
   }
 
   /** 用户带分析来源的图（研究的「分析」从这里按数据集汇总）。 */

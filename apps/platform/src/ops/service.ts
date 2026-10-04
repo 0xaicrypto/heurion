@@ -54,7 +54,7 @@ export class OpService {
    * meta.answering：本回合正在回答的评论线程。它的锚点被改没时（用户要求改的正是被评论的文字），
    * 重新锚定到原来所在的块 / 形状上，而不是拦下（其他线程仍按锚点守卫）。
    */
-  edit(batch: EditBatch | DeckEditBatch, meta: { actor: Actor; turnId: string | null; answering?: string | null }): EditResult {
+  edit(batch: EditBatch | DeckEditBatch, meta: { actor: Actor; turnId: string | null; answering?: string | null; user?: string | null }): EditResult {
     const store = this.docs.store
     const row = store.getDoc(batch.doc_id)
     if (!row) throw new OpError('doc_not_found', `文档 ${batch.doc_id} 不存在`)
@@ -81,12 +81,12 @@ export class OpService {
       ? applyDeckOps(before, batch.ops as DeckOp[], {
         taken,
         ...this.deckContextInfo(batch.doc_id),
-        // 插图只能用文档所有者自己的资产
+        // 插图只能用文档所有者或这次操作者自己的资产（研究共享的幻灯片里，成员插自己的图）
         asset: id => {
           const builtin = themePhoto(id)
           if (builtin) return builtin
           const a = store.getAsset(id)
-          const bytes = a && a.owner === row.owner ? store.getAssetBytes(id) : null
+          const bytes = a && (a.owner === row.owner || (meta.user && a.owner === meta.user)) ? store.getAssetBytes(id) : null
           return a && bytes ? { mime: a.mime, bytes } : null
         },
       })
@@ -101,7 +101,7 @@ export class OpService {
     after = this.keepWholeNode(batch.doc_id, after)
     if (ai) this.guardAnchors(batch, before, after)
 
-    const event = this.docs.commit(batch.doc_id, after, { actor: meta.actor, turnId: meta.turnId, ops: batch.ops })
+    const event = this.docs.commit(batch.doc_id, after, { actor: meta.actor, turnId: meta.turnId, ops: batch.ops, user: meta.user ?? null })
     // 重新锚到整块的线程：记录随之改成整块评论（引用文字清空，之后按整块维护）
     if (reanchored && meta.answering) this.docs.store.setCommentAnchor(meta.answering, reanchored, '')
     return { doc_id: batch.doc_id, rev: event?.rev ?? rev, results, changes: event?.changes ?? [] }

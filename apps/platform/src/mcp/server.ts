@@ -1,3 +1,4 @@
+import { Access, allows } from '../research/access.ts'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, join, relative, isAbsolute } from 'node:path'
@@ -68,6 +69,8 @@ export interface McpDeps {
   fulltext?: FullTextClient
   /** Unsplash 图库（可选；服务器没配 key 时 configured=false）。 */
   images?: ImageService
+  /** 访问判定（研究团队协作：研究里的文档、数据集按成员角色共享）；不给时按 store 新建。 */
+  access?: Access
 }
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
@@ -113,19 +116,29 @@ class Ctx {
     return this.deps.turns.active(this.claims.u)?.turnId ?? null
   }
 
-  /** 文档存在、属于该用户、令牌有权限。 */
-  check(docId: string, perm: Permission): ReturnType<typeof fail> | null {
+  /** 访问判定（AI 代表当前用户：能力随用户在研究里的角色） */
+  get access(): Access { return this.deps.access! }
+
+  /** 文档存在、用户能访问（自己的，或参与的研究里的；写要「可编辑」）、令牌有权限。 */
+  check(docId: string, perm: Permission, roleLevel: 'read' | 'write' = perm === 'write' ? 'write' : 'read'): ReturnType<typeof fail> | null {
     const row = this.deps.docs.store.getDoc(docId)
-    if (!row || row.owner !== this.claims.u || row.deleted_at) return fail('doc_not_found', `文档 ${docId} 不存在`, { hint: '用 doc_list 查看可访问的文档（回收站里的文档不可访问）。' })
+    const role = row && !row.deleted_at ? this.access.docRole(this.claims.u, row) : null
+    if (!row || !role) return fail('doc_not_found', `文档 ${docId} 不存在`, { hint: '用 doc_list 查看可访问的文档（回收站里的文档不可访问）。' })
+    if (roleLevel === 'write' && !allows(role, 'write')) return fail('forbidden', `用户在这份文档所在的研究里是只读成员，不能修改文档 ${docId}`, { hint: '可以读、评论；要修改请研究负责人把用户改成「可编辑」。' })
     if (!canAccess(this.claims, docId, perm)) return fail('forbidden', `没有${perm === 'write' ? '写' : '读'}文档 ${docId} 的权限`)
     return null
   }
 }
 
 export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
-  const ctx = new Ctx(deps, claims)
   const { docs } = deps
   const store = docs.store
+  // 访问判定（与界面同一个）：没注入时按 store 新建，数据集服务也接上
+  if (!deps.access) { deps.access = new Access(store); deps.access.docText = id => JSON.stringify(docs.get(id).toJSON()) }
+  if (deps.datasets && !deps.datasets.access) deps.datasets.access = deps.access
+  if (deps.images && !deps.images.access) deps.images.access = deps.access
+  const access = deps.access
+  const ctx = new Ctx(deps, claims)
   const server = new McpServer({ name: 'heurion', version: '0.1.0' }, { instructions: INSTRUCTIONS })
 
   server.registerTool('doc_list', {
@@ -133,9 +146,16 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     inputSchema: {},
   }, async () => {
     const projects = new Map(store.listProjects(claims.u).map(p => [p.id, p.name]))
-    return json(store.listDocs(claims.u)
+    const mine = store.listDocs(claims.u)
       .filter(d => canAccess(claims, d.id, 'read'))
-      .map(d => ({ doc_id: d.id, title: d.title, kind: d.kind, project: d.project_id ? projects.get(d.project_id) ?? null : null, rev: d.rev, updated_at: d.updated_at })))
+      .map(d => ({ doc_id: d.id, title: d.title, kind: d.kind, project: d.project_id ? projects.get(d.project_id) ?? null : null, rev: d.rev, updated_at: d.updated_at }))
+    // 研究里的文档（自己参与的研究，含别人共享的）：带研究名、我的角色、创建者
+    const inStudies = store.listStudies(claims.u).flatMap(st => store.studyItems(st.id).filter(i => i.kind === 'doc').flatMap(i => {
+      const d = store.getDoc(i.ref_id)
+      if (!d || d.deleted_at || !canAccess(claims, d.id, 'read')) return []
+      return [{ doc_id: d.id, title: d.title, kind: d.kind, study: st.title, study_id: st.id, role: st.my_role, shared_by: d.owner !== claims.u ? store.getUser(d.owner)?.display_name ?? d.owner : null, rev: d.rev, updated_at: d.updated_at }]
+    }))
+    return json([...mine, ...inStudies])
   })
 
   server.registerTool('docs_search', {
@@ -457,7 +477,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description: '在评论线程里回复（身份固定为 AI）：说明改了什么、改在哪，或为什么没改。',
     inputSchema: { doc_id: z.string(), comment_id: z.string(), text: z.string().min(1).max(10_000) },
   }, async ({ doc_id, comment_id, text: body }) => {
-    const denied = ctx.check(doc_id, 'write')
+    const denied = ctx.check(doc_id, 'write', 'read') // 评论：研究里的只读成员也能回复、解决
     if (denied) return denied
     if (!store.getComment(doc_id, comment_id)) return fail('comment_not_found', `评论 ${comment_id} 不存在`)
     const reply = store.addReply(comment_id, 'ai', body, ctx.turnId)
@@ -469,7 +489,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     description: '关闭评论线程：仅用于判断无需修改、并已用 comment_reply 说明原因的情况。做了修改的线程留给用户确认后关闭。',
     inputSchema: { doc_id: z.string(), comment_id: z.string() },
   }, async ({ doc_id, comment_id }) => {
-    const denied = ctx.check(doc_id, 'write')
+    const denied = ctx.check(doc_id, 'write', 'read') // 评论：研究里的只读成员也能回复、解决
     if (denied) return denied
     const c = store.getComment(doc_id, comment_id)
     if (!c) return fail('comment_not_found', `评论 ${comment_id} 不存在`)
@@ -615,7 +635,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
         if (!crel.startsWith('..') && !isAbsolute(crel) && statSync(cf).size <= 50_000) code = readFileSync(cf, 'utf8')
       } catch { /* 找不到脚本就只记数据集 */ }
     }
-    const sets = (dataset_ids ?? []).map(id => store.getDataset(id)).filter(d => d && d.owner === claims.u).map(d => ({ id: d!.id, name: d!.name, version: d!.version, rows: d!.rows }))
+    const sets = (dataset_ids ?? []).map(id => store.getDataset(id)).filter(d => d && access.canDataset(claims.u, d, 'read')).map(d => ({ id: d!.id, name: d!.name, version: d!.version, rows: d!.rows }))
     const provenance = code || sets.length ? { code, code_path: code_path ?? null, datasets: sets, turn_id: ctx.turnId, at: new Date().toISOString() } : null
     const asset = store.putAsset({ owner: claims.u, mime, name: rel, bytes: readFileSync(file), provenance })
     return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id} "图 N 图题")`, ...(provenance ? { provenance: code ? '已记录代码与数据来源' : '已记录数据来源（没找到脚本）' } : {}) })
@@ -876,9 +896,23 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     }
   }
   server.registerTool('study_list', {
-    description: '列出用户的研究项目（名称、设计、状态、文档数、数据集数）。',
+    description: '列出用户参与的研究项目（自己负责的，和同机构同事共享给用户的）：名称、设计、状态、用户的角色（owner 负责人 / editor 可编辑 / viewer 只读）、负责人、成员数、文档数、数据集数。',
     inputSchema: {},
-  }, async () => sd(svc => svc.list(claims.u).map(x => ({ study_id: x.id, title: x.title, design: x.design, status: x.status, docs: x.docs, datasets: x.datasets }))))
+  }, async () => sd(svc => svc.list(claims.u).map(x => ({ study_id: x.id, title: x.title, design: x.design, status: x.status, role: x.my_role, shared_by: x.shared_by, members: x.members, docs: x.docs, datasets: x.datasets }))))
+  server.registerTool('study_members', {
+    description: '研究团队成员（与界面研究页的「成员」相同）。action：list 列成员；candidates 可加的人（同机构在用的同事）；add 加成员（user_id、role=editor 可编辑 / viewer 只读）；set_role 改角色；remove 移出；leave 用户自己退出；transfer 把负责人转交给 user_id（原负责人留作可编辑成员）。加人、改角色、移出、转交只有负责人能做；成员必须与研究同机构。',
+    inputSchema: { study_id: z.string(), action: z.enum(['list', 'candidates', 'add', 'set_role', 'remove', 'leave', 'transfer']), user_id: z.string().optional(), role: z.enum(['editor', 'viewer']).optional() },
+  }, async ({ study_id, action, user_id, role }) => sd(svc => {
+    switch (action) {
+      case 'list': return svc.members(claims.u, study_id)
+      case 'candidates': return svc.candidates(claims.u, study_id)
+      case 'add': return svc.addMember(claims.u, study_id, { user_id, role })
+      case 'set_role': return svc.setRole(claims.u, study_id, user_id ?? '', role)
+      case 'remove': return svc.removeMember(claims.u, study_id, user_id ?? '')
+      case 'leave': return svc.leave(claims.u, study_id)
+      case 'transfer': return svc.transfer(claims.u, study_id, user_id)
+    }
+  }))
   server.registerTool('study_create', {
     description: '新建研究项目。design：retrospective_cohort 回顾性队列 / prospective_cohort 前瞻性队列 / rct / case_control / cross_sectional / other；status：planning / ongoing / completed。',
     inputSchema: { title: z.string().min(1).max(120), design: z.string().optional(), status: z.string().optional(), summary: z.string().max(4000).optional() },
