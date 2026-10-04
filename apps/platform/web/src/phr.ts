@@ -392,7 +392,11 @@ function memberDialog(p: Patient | null, done: () => void): void {
 async function memberView(id: string, tab: 'labs' | 'records' | 'pending' = 'labs'): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
       <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 id="mName">…</h1><div class="sub" id="mMeta"></div></div>
-      <button class="edit" id="mShare" title="把档案分享给医生（选医院 → 科室）">分享</button><button class="edit" id="mBrief" title="生成给医生看的就诊简报">简报</button><button class="edit" id="mChat" title="问知家">💬</button><button class="edit" id="mEdit">编辑</button></div></div>
+      <button class="edit" id="mChat" title="问知家">💬 问知家</button>
+      <div class="more-wrap"><button class="edit" id="mMore" aria-haspopup="menu" aria-label="更多">⋯</button>
+        <div class="more-menu" id="mMenu" role="menu" hidden>
+          <button id="mBrief" role="menuitem">📝 生成就诊简报</button><button id="mShare" role="menuitem">🏥 分享给医生</button><button id="mEdit" role="menuitem">✏️ 编辑资料</button>
+        </div></div></div></div>
     <div class="max"><div class="tabs" id="tabs">
       <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button><button class="tab" data-tab="share">分享</button>
     </div><div id="main" class="loading">加载中…</div></div>`
@@ -405,6 +409,11 @@ async function memberView(id: string, tab: 'labs' | 'records' | 'pending' = 'lab
   $('#mName').textContent = name
   $('#mMeta').textContent = [detail.sex ? SEX[detail.sex] : '', detail.birth_year ? ageText(detail.birth_year) : '', detail.tags.join(' · ')].filter(Boolean).join(' · ')
   $('#mEdit').addEventListener('click', () => memberDialog(detail, () => void memberView(id)))
+  // 顶部只留「问知家」和「⋯」：简报、分享、编辑收进菜单（手机上四个按钮太挤）
+  const menu = $('#mMenu')
+  $('#mMore').addEventListener('click', e => { e.stopPropagation(); menu.hidden = !menu.hidden })
+  document.addEventListener('click', () => { menu.hidden = true }, { once: false })
+  menu.addEventListener('click', () => { menu.hidden = true })
   $('#mBrief').addEventListener('click', () => void makeBrief(id))
   $('#mChat').addEventListener('click', () => void openChat(id))
   $('#mShare').addEventListener('click', () => void shareDialog(id, name, () => show('share')))

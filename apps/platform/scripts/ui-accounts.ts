@@ -251,7 +251,7 @@ let zhaoToken = '', zhaoId = ''
   await f.evaluate(t => localStorage.setItem('heurion.token', t), fam.token)
   await f.goto(`${B}/phr#/m/${member.id}`)
   await f.reload()
-  await f.waitForSelector('#mShare')
+  await f.click('#mMore'); await f.waitForSelector('#mShare')
   await f.click('#mShare')
   await f.waitForSelector('dialog #sHos')
   await f.selectOption('dialog #sHos', hospital.id)
