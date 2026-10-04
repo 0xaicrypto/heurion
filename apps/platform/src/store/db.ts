@@ -150,6 +150,26 @@ export interface StudyRow {
   status: 'planning' | 'ongoing' | 'completed'; summary: string | null; created_at: string; updated_at: string
 }
 /** 机构幻灯片模板：机构管理员维护（院徽、机构名称、标准色），只有本机构成员能用；deck 里的模板 key 是 org_<id>。 */
+/** 机构内的科室（知家分享的落点：分享给某医院的某科室，该科室的医生都能看）。 */
+export interface DepartmentRow { id: string; tenant_id: string; name: string; created_at: string }
+
+/** 知家家人把一位成员的档案分享给医院科室（docs/design/SHARING.md）。 */
+export interface PhrShareRow {
+  id: string
+  /** 家人账号与其个人空间（数据所在的租户） */
+  owner: string; source_tenant_id: string; patient_id: string
+  /** 目标医院、科室，可选指定医生 */
+  tenant_id: string; department_id: string; doctor_id: string | null
+  /** JSON：{ categories: ('labs'|'reports'|'docs')[], since: 'YYYY-MM-DD' | null } */
+  scope: string
+  allow_import: number
+  /** 给医生看的姓名（家人个人空间的密钥加密；只给被授权医生的界面显示） */
+  display_name_enc: string | null
+  expires_at: string; status: 'active' | 'revoked'
+  created_at: string; revoked_at: string | null
+  imported_at: string | null; imported_by: string | null; imported_patient_id: string | null
+}
+
 export interface TenantTemplateRow {
   id: string; tenant_id: string; label: string; description: string; org_name: string; footer: string
   /** 版式与装饰骨架沿用的内置模板 */
@@ -515,6 +535,24 @@ export class Store {
     );
     CREATE INDEX IF NOT EXISTS pending_actions_user ON pending_actions (user_id, status);`)
     this.db.exec('CREATE INDEX IF NOT EXISTS users_tenant ON users (tenant_id)')
+    // 科室与知家分享（docs/design/SHARING.md）
+    this.db.exec(`CREATE TABLE IF NOT EXISTS tenant_departments (
+      id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS tenant_departments_tenant ON tenant_departments (tenant_id);
+    CREATE TABLE IF NOT EXISTS department_members (
+      department_id TEXT NOT NULL REFERENCES tenant_departments(id) ON DELETE CASCADE, user_id TEXT NOT NULL, added_at TEXT NOT NULL,
+      PRIMARY KEY (department_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS department_members_user ON department_members (user_id);
+    CREATE TABLE IF NOT EXISTS phr_shares (
+      id TEXT PRIMARY KEY, owner TEXT NOT NULL, source_tenant_id TEXT NOT NULL, patient_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL, department_id TEXT NOT NULL, doctor_id TEXT, scope TEXT NOT NULL, allow_import INTEGER NOT NULL DEFAULT 0,
+      display_name_enc TEXT, expires_at TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT,
+      imported_at TEXT, imported_by TEXT, imported_patient_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS phr_shares_target ON phr_shares (tenant_id, status);
+    CREATE INDEX IF NOT EXISTS phr_shares_owner ON phr_shares (owner, patient_id);`)
     // 研究团队协作之前的研究：负责人补成成员表里的 owner；研究记下所属机构（负责人当时的机构）
     const studyCols = (this.db.prepare('PRAGMA table_info(studies)').all() as Array<{ name: string }>).map(c => c.name)
     if (!studyCols.includes('tenant_id')) this.db.exec('ALTER TABLE studies ADD COLUMN tenant_id TEXT')
@@ -1038,6 +1076,74 @@ export class Store {
 
   deleteTenantTemplate(id: string): void {
     this.db.prepare('DELETE FROM tenant_templates WHERE id = ?').run(id)
+  }
+
+  // —— 科室 ——
+
+  listDepartments(tenantId: string): Array<DepartmentRow & { members: string[] }> {
+    const rows = this.db.prepare('SELECT * FROM tenant_departments WHERE tenant_id = ? ORDER BY created_at').all(tenantId) as unknown as DepartmentRow[]
+    return rows.map(d => ({ ...d, members: (this.db.prepare('SELECT user_id FROM department_members WHERE department_id = ? ORDER BY added_at').all(d.id) as Array<{ user_id: string }>).map(r => r.user_id) }))
+  }
+
+  getDepartment(id: string): DepartmentRow | undefined {
+    return this.db.prepare('SELECT * FROM tenant_departments WHERE id = ?').get(id) as unknown as DepartmentRow | undefined
+  }
+
+  addDepartment(tenantId: string, name: string): DepartmentRow {
+    const id = 'dp' + randomUUID().replace(/-/g, '').slice(0, 10)
+    this.db.prepare('INSERT INTO tenant_departments (id, tenant_id, name, created_at) VALUES (?, ?, ?, ?)').run(id, tenantId, name, now())
+    return this.getDepartment(id)!
+  }
+
+  renameDepartment(id: string, name: string): void {
+    this.db.prepare('UPDATE tenant_departments SET name = ? WHERE id = ?').run(name, id)
+  }
+
+  deleteDepartment(id: string): void {
+    this.db.prepare('DELETE FROM department_members WHERE department_id = ?').run(id)
+    this.db.prepare('DELETE FROM tenant_departments WHERE id = ?').run(id)
+  }
+
+  /** 科室成员整体替换（一人可在多个科室）。 */
+  setDepartmentMembers(id: string, userIds: string[]): void {
+    this.db.prepare('DELETE FROM department_members WHERE department_id = ?').run(id)
+    const st = this.db.prepare('INSERT OR IGNORE INTO department_members (department_id, user_id, added_at) VALUES (?, ?, ?)')
+    for (const u of userIds) st.run(id, u, now())
+  }
+
+  departmentsOfUser(userId: string): string[] {
+    return (this.db.prepare('SELECT department_id FROM department_members WHERE user_id = ?').all(userId) as Array<{ department_id: string }>).map(r => r.department_id)
+  }
+
+  // —— 知家分享 ——
+
+  addShare(s: Omit<PhrShareRow, 'id' | 'status' | 'created_at' | 'revoked_at' | 'imported_at' | 'imported_by' | 'imported_patient_id'>): PhrShareRow {
+    const id = 'sh' + randomUUID().replace(/-/g, '').slice(0, 12)
+    this.db.prepare(`INSERT INTO phr_shares (id, owner, source_tenant_id, patient_id, tenant_id, department_id, doctor_id, scope, allow_import, display_name_enc, expires_at, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`)
+      .run(id, s.owner, s.source_tenant_id, s.patient_id, s.tenant_id, s.department_id, s.doctor_id, s.scope, s.allow_import, s.display_name_enc, s.expires_at, now())
+    return this.getShare(id)!
+  }
+
+  getShare(id: string): PhrShareRow | undefined {
+    return this.db.prepare('SELECT * FROM phr_shares WHERE id = ?').get(id) as unknown as PhrShareRow | undefined
+  }
+
+  sharesOf(owner: string, patientId: string): PhrShareRow[] {
+    return this.db.prepare('SELECT * FROM phr_shares WHERE owner = ? AND patient_id = ? ORDER BY created_at DESC').all(owner, patientId) as unknown as PhrShareRow[]
+  }
+
+  /** 发给某医院、仍有效的分享（到期在服务层判断）。 */
+  sharesToTenant(tenantId: string): PhrShareRow[] {
+    return this.db.prepare("SELECT * FROM phr_shares WHERE tenant_id = ? AND status = 'active' ORDER BY created_at DESC").all(tenantId) as unknown as PhrShareRow[]
+  }
+
+  revokeShare(id: string): void {
+    this.db.prepare("UPDATE phr_shares SET status = 'revoked', revoked_at = ? WHERE id = ?").run(now(), id)
+  }
+
+  markShareImported(id: string, by: string, patientId: string): void {
+    this.db.prepare('UPDATE phr_shares SET imported_at = ?, imported_by = ?, imported_patient_id = ? WHERE id = ?').run(now(), by, patientId, id)
   }
 
   // —— 临床研究 ——

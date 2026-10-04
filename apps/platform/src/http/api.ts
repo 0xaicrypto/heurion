@@ -14,6 +14,7 @@ import { DatasetError, type DatasetService } from '../datasets/service.ts'
 import { TenantError, TenantService } from '../auth/tenants.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
+import { ShareService } from '../tenancy/shares.ts'
 import { CohortService } from '../research/cohort.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
@@ -82,6 +83,8 @@ export interface ApiDeps {
   workspaceDir?: (userId: string) => string
   /** Unsplash 图库（幻灯片搜图插图）；服务器没配 key 时 configured=false。 */
   images?: ImageService
+  /** 知家分享给医生（不给时由 patients 组装）。 */
+  shares?: ShareService
   /** 访问判定（研究团队协作）；不给时按 store 新建一个。 */
   access?: Access
   devUser: string
@@ -165,6 +168,14 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort\/dataset$/, action: 'study.cohort_dataset' },
     { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
     { method: 'POST', re: /^\/api\/patients$/, action: 'patient.create' },
+    { method: 'POST', re: /^\/api\/tenant\/departments$/, action: 'tenant.department_create' },
+    { method: 'PATCH', re: /^\/api\/tenant\/departments\/[^/]+$/, action: 'tenant.department_rename' },
+    { method: 'DELETE', re: /^\/api\/tenant\/departments\/[^/]+$/, action: 'tenant.department_delete' },
+    { method: 'PUT', re: /^\/api\/tenant\/departments\/[^/]+\/members$/, action: 'tenant.department_members' },
+    { method: 'POST', re: /^\/api\/phr\/[^/]+\/shares$/, action: 'phr.share_create' },
+    { method: 'DELETE', re: /^\/api\/phr\/shares\/[^/]+$/, action: 'phr.share_revoke' },
+    { method: 'POST', re: /^\/api\/shares\/[^/]+\/import$/, action: 'share.import' },
+    { method: 'GET', re: /^\/api\/shares\/[^/]+\/files\/[^/]+$/, action: 'share.file_download' },
     { method: 'POST', re: /^\/api\/phr\/[^/]+\/archive$/, action: 'phr.archive_doc' },
     { method: 'POST', re: /^\/api\/phr\/[^/]+\/brief$/, action: 'phr.brief' },
     { method: 'POST', re: /^\/api\/patients\/[^/]+\/labs$/, action: 'patient.lab_add' },
@@ -314,6 +325,22 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.delete('/api/tenant/invites/:code', c => {
     try { tenants.revokeInvite(c.get('user'), c.req.param('code')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
   })
+  // 科室（知家分享的落点；管理员增删改、分配成员，成员可看）
+  app.get('/api/tenant/departments', c => {
+    try { return c.json(tenants.departments(c.get('user'))) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.post('/api/tenant/departments', async c => {
+    try { return c.json(tenants.createDepartment(c.get('user'), (await c.req.json<{ name?: unknown }>()).name), 201) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.patch('/api/tenant/departments/:dpid', async c => {
+    try { return c.json(tenants.renameDepartment(c.get('user'), c.req.param('dpid'), (await c.req.json<{ name?: unknown }>()).name)) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.delete('/api/tenant/departments/:dpid', c => {
+    try { tenants.deleteDepartment(c.get('user'), c.req.param('dpid')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.put('/api/tenant/departments/:dpid/members', async c => {
+    try { return c.json(tenants.setDepartmentMembers(c.get('user'), c.req.param('dpid'), (await c.req.json<{ user_ids?: unknown }>()).user_ids)) } catch (err) { return tenantFailure(c, err) }
+  })
   // 机构幻灯片模板（管理员增删改、上传院徽；成员可看列表）
   app.get('/api/tenant/templates', c => {
     try { return c.json({ templates: orgTemplates.list(c.get('user')), bases: ORG_BASES.map(k => ({ key: k, label: DECK_THEMES[k]!.label })), presets: [PRESET_AHSLYY] }) } catch (err) { return tenantFailure(c, err) }
@@ -423,6 +450,37 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return patientFailure(c, err) }
   })
   app.delete('/api/patients/:ptid/docs/:id', c => { try { pt(c).unlinkDoc(me(c), c.req.param('ptid'), c.req.param('id')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
+  // —— 知家分享给医生（docs/design/SHARING.md）——
+  const shares = deps.shares ?? (deps.patients ? new ShareService(store, tenants, deps.patients, docs) : null)
+  const sh = () => {
+    if (!shares) throw new PatientError('patient_module_off', '患者模块未启用', 403)
+    return shares
+  }
+  /** 家人一侧：可分享的医院 → 科室 → 医生；某成员的分享（有效 / 撤销 / 过期 / 纳入）；新建；撤销。 */
+  app.get('/api/phr/directory', c => { try { return c.json(sh().directory()) } catch (err) { return patientFailure(c, err) } })
+  app.get('/api/phr/:ptid/shares', c => { try { return c.json(sh().listForPatient(me(c), c.req.param('ptid'))) } catch (err) { return patientFailure(c, err) } })
+  app.post('/api/phr/:ptid/shares', async c => { try { return c.json(sh().create(me(c), c.req.param('ptid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) } })
+  app.delete('/api/phr/shares/:shid', c => { try { sh().revoke(me(c), c.req.param('shid')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
+  /** 医生一侧：收到的分享（只读实时视图）、化验、报告原件、简报 / 健康档案、纳入本院。 */
+  app.get('/api/shares', c => { try { return c.json(sh().inbox(me(c))) } catch (err) { return patientFailure(c, err) } })
+  app.get('/api/shares/:shid', c => { try { return c.json(sh().read(me(c), c.req.param('shid'))) } catch (err) { return patientFailure(c, err) } })
+  app.get('/api/shares/:shid/labs', c => {
+    try { return c.json(sh().labs(me(c), c.req.param('shid'), c.req.query('tests')?.split(',').filter(Boolean))) } catch (err) { return patientFailure(c, err) }
+  })
+  app.get('/api/shares/:shid/files/:pfid', c => {
+    try {
+      const f = sh().file(me(c), c.req.param('shid'), c.req.param('pfid'))
+      return c.body(new Uint8Array(f.bytes), 200, { 'Content-Type': f.mime, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'Cache-Control': 'no-store' })
+    } catch (err) { return patientFailure(c, err) }
+  })
+  app.get('/api/shares/:shid/docs/:id', c => {
+    try {
+      const d = sh().doc(me(c), c.req.param('shid'), c.req.param('id'))
+      return c.json({ doc_id: d.doc_id, kind: d.kind, title: d.title, updated_at: d.updated_at, html: renderHtml(d.node, store.listCitations(d.doc_id), () => '') })
+    } catch (err) { return patientFailure(c, err) }
+  })
+  app.post('/api/shares/:shid/import', c => { try { return c.json(sh().import(me(c), c.req.param('shid')), 201) } catch (err) { return patientFailure(c, err) } })
+
   // —— 知家（docs/design/PATIENT.md）：成员的健康档案与就诊简报 ——
 
   /** 成员的健康档案 doc（没有就补建；知家对话与就诊简报的落点）。 */

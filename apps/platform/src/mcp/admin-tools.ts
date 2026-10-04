@@ -67,9 +67,10 @@ export const ADMIN_TOOLS: ToolSpec[] = [
   },
   {
     name: 'tenant_admin',
-    description: '机构管理（只有机构管理员能做，和界面「机构管理」一致）：view 机构信息与设置；update_settings 改机构名称或设置（patient_module、patient_visibility tenant|care_team、ai_patient_writes review|direct、external_model_for_patients；需用户确认）；members 成员；set_member 改成员角色 admin|member 或停用（需确认）；invites / invite（需确认）/ revoke_invite 邀请；audit 本机构审计日志；colleagues 同事；studies 本机构研究（交接用）；handover 把离职成员负责的研究交给 to_user_id（需确认）。',
+    description: '机构管理（只有机构管理员能做，和界面「机构管理」一致）：view 机构信息与设置；update_settings 改机构名称或设置（patient_module、patient_visibility tenant|care_team、ai_patient_writes review|direct、external_model_for_patients；需用户确认）；members 成员；set_member 改成员角色 admin|member 或停用（需确认）；invites / invite（需确认）/ revoke_invite 邀请；audit 本机构审计日志；colleagues 同事；studies 本机构研究（交接用）；handover 把离职成员负责的研究交给 to_user_id（需确认）。科室（知家家庭分享按科室投递）：departments 列出科室与成员；create_department / rename_department（name）；delete_department（需确认）；set_department_members 设置科室成员 user_ids（权限变更，需确认）。设置项 accept_patient_shares=false 时不再接受家庭分享。',
     input: {
-      action: z.enum(['view', 'update_settings', 'members', 'set_member', 'invites', 'invite', 'revoke_invite', 'audit', 'colleagues', 'studies', 'handover']),
+      action: z.enum(['view', 'update_settings', 'members', 'set_member', 'invites', 'invite', 'revoke_invite', 'audit', 'colleagues', 'studies', 'handover', 'departments', 'create_department', 'rename_department', 'delete_department', 'set_department_members']),
+      department_id: z.string().optional(), user_ids: z.array(z.string()).optional(),
       name: z.string().max(60).optional(), settings: z.record(z.unknown()).optional(),
       user_id: z.string().optional(), tenant_role: z.enum(['admin', 'member']).optional(), status: z.enum(['active', 'disabled']).optional(),
       invite_role: z.enum(['admin', 'member']).optional(), email: z.string().max(120).optional(), days: z.number().int().min(1).max(30).optional(), code: z.string().optional(),
@@ -87,6 +88,11 @@ export const ADMIN_TOOLS: ToolSpec[] = [
       colleagues: { method: 'GET', path: () => '/api/tenant/colleagues' },
       studies: { method: 'GET', path: () => '/api/tenant/studies' },
       handover: { method: 'POST', path: a => `/api/studies/${enc(a.study_id)}/handover`, role: 'tenant_admin', confirm: true, body: a => ({ json: { user_id: a.to_user_id } }), summary: a => `把研究 ${a.study_id} 的负责人交接给 ${a.to_user_id}（原负责人移出研究）` },
+      departments: { method: 'GET', path: () => '/api/tenant/departments' },
+      create_department: { method: 'POST', path: () => '/api/tenant/departments', body: a => ({ json: only(a, ['name']) }) },
+      rename_department: { method: 'PATCH', path: a => `/api/tenant/departments/${enc(a.department_id)}`, body: a => ({ json: only(a, ['name']) }) },
+      delete_department: { method: 'DELETE', path: a => `/api/tenant/departments/${enc(a.department_id)}`, role: 'tenant_admin', confirm: true, summary: a => `删除科室 ${a.department_id}（发给这个科室的家庭分享随之失效）` },
+      set_department_members: { method: 'PUT', path: a => `/api/tenant/departments/${enc(a.department_id)}/members`, role: 'tenant_admin', confirm: true, body: a => ({ json: { user_ids: a.user_ids ?? [] } }), summary: a => `把科室 ${a.department_id} 的成员设为：${(a.user_ids as string[] | undefined)?.join('、') || '（清空）'}（科室成员能看到发给这个科室的家庭分享）` },
     },
   },
   {
@@ -104,6 +110,27 @@ export const ADMIN_TOOLS: ToolSpec[] = [
       delete: { method: 'DELETE', path: a => `/api/tenant/templates/${enc(a.template_id)}`, role: 'tenant_admin', confirm: true, summary: a => `删除机构幻灯片模板 ${a.template_id}（用过它的幻灯片会失去院徽）` },
       set_logo: { method: 'PUT', path: a => `/api/tenant/templates/${enc(a.template_id)}/logo`, role: 'tenant_admin', confirm: true, body: (a, file) => { const f = file(a.file_path); return { bytes: f.bytes, mime: f.mime } }, summary: a => `把工作区文件「${a.file_path}」设为机构模板 ${a.template_id} 的院徽（会出现在本机构所有用这套模板的幻灯片上）` },
       clear_logo: { method: 'DELETE', path: a => `/api/tenant/templates/${enc(a.template_id)}/logo`, role: 'tenant_admin', confirm: true, summary: a => `去掉机构模板 ${a.template_id} 的院徽` },
+    },
+  },
+  {
+    name: 'phr_share',
+    description: '知家「分享给医生」（家人一侧，个人空间）：directory 可分享的医院 → 科室 → 医生；list 某位家人（patient_id）的分享、纳入情况；create 新建分享（tenant_id 医院、department_id 科室、可选 doctor_id、categories 类目 labs|reports|docs、since 起始日期、days 7|30|90、allow_import 是否允许纳入医院病历、display_name 给医生看的姓名）——把家庭数据交给医院属于对外披露，需用户确认；revoke 撤销（share_id）。查看记录用 patient_access_log。',
+    input: {
+      action: z.enum(['directory', 'list', 'create', 'revoke']), patient_id: z.string().optional(), share_id: z.string().optional(),
+      tenant_id: z.string().optional(), department_id: z.string().optional(), doctor_id: z.string().optional(),
+      categories: z.array(z.enum(['labs', 'reports', 'docs'])).optional(), since: z.string().optional().describe('YYYY-MM-DD'),
+      days: z.number().int().optional(), allow_import: z.boolean().optional(), display_name: z.string().max(24).optional(), reason: reasonField,
+    },
+    actions: {
+      directory: { method: 'GET', path: () => '/api/phr/directory' },
+      list: { method: 'GET', path: a => `/api/phr/${enc(a.patient_id)}/shares` },
+      create: {
+        method: 'POST', path: a => `/api/phr/${enc(a.patient_id)}/shares`, confirm: true,
+        body: a => ({ json: { ...only(a, ['tenant_id', 'department_id', 'doctor_id', 'days', 'allow_import', 'display_name']), scope: { categories: a.categories, since: a.since } } }),
+        summary: a => `把家人 ${a.patient_id} 的档案（${(a.categories as string[] | undefined)?.join('、') || '化验、报告原件、简报与健康档案'}${a.since ? `，${a.since} 之后` : ''}）分享给医院 ${a.tenant_id} 的科室 ${a.department_id}${a.doctor_id ? `（医生 ${a.doctor_id}）` : ''}，${a.days ?? 30} 天有效${a.allow_import ? '，允许纳入医院病历' : ''}`,
+        editable: a => ({ display_name: String(a.display_name ?? '') }),
+      },
+      revoke: { method: 'DELETE', path: a => `/api/phr/shares/${enc(a.share_id)}` },
     },
   },
   {
