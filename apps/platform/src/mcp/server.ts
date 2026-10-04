@@ -38,6 +38,8 @@ import { DiagramError, renderSvg } from '../render/diagram.ts'
 import type { TurnRegistry } from './turns.ts'
 import type { ImageService } from '../images/service.ts'
 import { UnsplashError } from '../images/unsplash.ts'
+import type { Invoke } from '../http/invoke.ts'
+import { registerAdminTools } from './admin-tools.ts'
 
 export interface McpDeps {
   claims: ClaimService
@@ -72,6 +74,8 @@ export interface McpDeps {
   images?: ImageService
   /** 访问判定（研究团队协作：研究里的文档、数据集按成员角色共享）；不给时按 store 新建。 */
   access?: Access
+  /** 以用户身份进程内调用平台接口（管理类工具、确认后执行；见 http/invoke.ts）。 */
+  invoke?: Invoke
 }
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
@@ -107,6 +111,7 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
   写病例报告：doc_create 新建文档 → patient_doc_link 关联到患者（这样它出现在患者页的「病例报告」里，不在文档列表里）→ 依据 patient_read / labs_query 写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。
+- 权限：你代表当前用户操作，拥有和用户本人完全一样的权限——用户是机构管理员 / 平台运营，你就能做对应的管理（account 看用户是谁、什么角色；tenant_admin、org_template、platform_admin、doc_manage、dataset_manage、kb_manage、memory_manage、patient_admin、study_admin 等）；用户不能做的你也不能做。高风险操作（不可恢复的删除、机构设置与成员权限、邀请、紧急访问、交接与转交、平台运营的写操作、上传院徽）调用后不会立刻执行，而是返回 pending_confirmation 并在对话里给用户弹出确认卡：先向用户说明要做什么、为什么，然后等用户确认，不要重复提交，结果用 action_status 查。你不能确认自己的操作。
 - 幻灯片配图：image_search 按关键词（英文效果更好）搜 Unsplash 图库 → slide_add_photo 把选中的照片插入某一页（图文版式自动放进图片区）。署名（Photo by 摄影师 on Unsplash）由平台写进图片说明和这一页的演讲备注，不要删；回复用户时也要提到署名。图库没配置时这两个工具返回 unsplash_unconfigured，改用用户上传的图片。`
 
 /** 一次 MCP 请求的上下文。 */
@@ -902,8 +907,8 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     inputSchema: {},
   }, async () => sd(svc => svc.list(claims.u).map(x => ({ study_id: x.id, title: x.title, design: x.design, status: x.status, role: x.my_role, shared_by: x.shared_by, members: x.members, docs: x.docs, datasets: x.datasets }))))
   server.registerTool('study_members', {
-    description: '研究团队成员（与界面研究页的「成员」相同）。action：list 列成员；candidates 可加的人（同机构在用的同事）；add 加成员（user_id、role=editor 可编辑 / viewer 只读）；set_role 改角色；remove 移出；leave 用户自己退出；transfer 把负责人转交给 user_id（原负责人留作可编辑成员）。加人、改角色、移出、转交只有负责人能做；成员必须与研究同机构。',
-    inputSchema: { study_id: z.string(), action: z.enum(['list', 'candidates', 'add', 'set_role', 'remove', 'leave', 'transfer']), user_id: z.string().optional(), role: z.enum(['editor', 'viewer']).optional() },
+    description: '研究团队成员（与界面研究页的「成员」相同）。action：list 列成员；candidates 可加的人（同机构在用的同事）；add 加成员（user_id、role=editor 可编辑 / viewer 只读）；set_role 改角色；remove 移出；leave 用户自己退出。转交负责人用 study_admin（需用户确认）。加人、改角色、移出只有负责人能做；成员必须与研究同机构。',
+    inputSchema: { study_id: z.string(), action: z.enum(['list', 'candidates', 'add', 'set_role', 'remove', 'leave']), user_id: z.string().optional(), role: z.enum(['editor', 'viewer']).optional() },
   }, async ({ study_id, action, user_id, role }) => sd(svc => {
     switch (action) {
       case 'list': return svc.members(claims.u, study_id)
@@ -912,7 +917,6 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       case 'set_role': return svc.setRole(claims.u, study_id, user_id ?? '', role)
       case 'remove': return svc.removeMember(claims.u, study_id, user_id ?? '')
       case 'leave': return svc.leave(claims.u, study_id)
-      case 'transfer': return svc.transfer(claims.u, study_id, user_id)
     }
   }))
   server.registerTool('study_create', {
@@ -1122,6 +1126,9 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     return json({ asset_id: asset.id, width: out.width, height: out.height, markdown: `![${label}](asset:${asset.id})` })
   })
 
+
+  // 用户本人的全部权限（机构管理、平台运营、账户、删除 / 恢复……）：同一套接口，高风险的要用户确认
+  registerAdminTools(server, { store, turns: deps.turns, invoke: deps.invoke, workspaceDir: deps.workspaceDir }, claims.u)
   return server
 }
 

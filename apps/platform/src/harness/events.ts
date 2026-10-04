@@ -19,6 +19,7 @@ export type UiEvent =
   | { type: 'version'; doc_id: string; seq: number }
   | { type: 'comment_reply'; doc_id: string; comment_id: string }
   | { type: 'memory'; result: 'proposed' | 'active' | 'forgotten'; memory: import('../store/db.ts').MemoryRow }
+  | { type: 'action'; action: import('../mcp/turns.ts').ActionCard }
   | { type: 'error'; message: string }
   | { type: 'done' }
 

@@ -30,6 +30,7 @@ import { PostCheck } from './collab/postcheck.ts'
 import { config } from './config.ts'
 import { HarnessPool } from './harness/pool.ts'
 import { handleLlmProxy, LLM_PREFIX } from './harness/llm-proxy.ts'
+import { makeInvoker, type Invoke } from './http/invoke.ts'
 import { buildApi } from './http/api.ts'
 import { CrossrefClient } from './literature/crossref.ts'
 import { FullTextClient } from './literature/fulltext.ts'
@@ -133,6 +134,8 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
   })(), 6 * 3600_000).unref()
 }
 const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, images, access, workspaceDir: userId => pool.workspaceDir(userId) })
+// MCP 的管理类工具以用户身份进程内调用同一个 HTTP 应用（AI 的权限 = 用户的权限，见 http/invoke.ts）
+;(mcpDeps as { invoke?: Invoke }).invoke = makeInvoker(app)
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))
