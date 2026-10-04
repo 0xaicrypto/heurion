@@ -33,6 +33,9 @@
         <button data-action="actions" id="userMenuActions" role="menuitem" title="AI 发起、等你确认的高风险操作">待确认操作</button>
         <button data-action="memory" id="userMenuMemory" role="menuitem" title="AI 记住的写作偏好、术语和常用事实">记忆</button>
         <button data-action="tenant" id="userMenuTenant" role="menuitem" hidden>机构管理</button>
+        <button data-action="invites" id="userMenuInvites" role="menuitem" hidden title="医院发给你的加入邀请">医院邀请</button>
+        <button data-action="phr" id="userMenuPhr" role="menuitem" title="知家：你自己的家人健康档案（个人空间，加入医院也不受影响）">个人空间（知家）</button>
+        <button data-action="leave" id="userMenuLeave" role="menuitem" hidden title="退出当前医院，回到个人空间">退出医院</button>
         <button data-action="admin" id="userMenuAdmin" role="menuitem" hidden title="平台运营：机构、用户、实例设置、审计">平台运营</button>
         <button data-action="claim" id="userMenuClaim" role="menuitem" hidden title="把开发期（开发令牌）的文档转到你的账户">认领开发期文档</button>
         <button data-action="readview" id="userMenuReadView" role="menuitem" hidden title="当前文档在 AI 眼里的样子（块 id、rev、引用标记），排查问题用">开发者：读视图</button>
@@ -178,6 +181,7 @@
       <button data-tact="revert">撤销本轮</button>
       <button data-tact="close" class="quiet" aria-label="关闭">✕</button>
     </div>
+    <div class="nudge" id="inviteNudge" hidden><span id="inviteNudgeText"></span><button data-join="view" class="primary">查看</button><button data-join="later" class="quiet">以后再说</button></div>
     <div class="nudge" id="emailNudge" hidden>还没有绑定邮箱：绑定后忘记密码可以自助找回。<button data-nudge="bind" class="primary">去绑定</button><button data-nudge="later" class="quiet">不再提醒</button></div>
     <div class="notice" id="notice" hidden></div>
     <div class="scroller" id="scroller">

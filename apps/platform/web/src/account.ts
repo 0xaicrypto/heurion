@@ -19,7 +19,7 @@ export interface Me {
   role: 'user' | 'admin'
   dev?: boolean
   dev_mode: boolean
-  tenant: { id: string; name: string; kind: 'personal' | 'org'; role: 'admin' | 'member'; settings: TenantSettings; members: number } | null
+  tenant: { id: string; name: string; kind: 'personal' | 'org'; role: 'admin' | 'member'; settings: TenantSettings; members: number; personal_id?: string | null; in_org?: boolean } | null
 }
 
 interface TenantSettings { patient_module: boolean; external_model_for_patients: boolean; patient_visibility: 'care_team' | 'tenant'; ai_patient_writes: 'review' | 'direct'; accept_patient_shares?: boolean }
@@ -199,15 +199,20 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
   $('userAvatar').textContent = initial
   $('userName').textContent = me.display_name
   const tenantRole = me.tenant?.role === 'admin' ? '管理员' : '成员'
-  $('userRole').textContent = me.dev ? '开发用户' : me.tenant?.kind === 'org' ? `${me.tenant.name} · ${tenantRole}` : me.role === 'admin' ? '平台运营' : me.username
+  // 工作空间（医院或个人）+ 个人空间（知家）
+  $('userRole').textContent = me.dev ? '开发用户' : me.tenant?.kind === 'org' ? `${me.tenant.name} · ${tenantRole}${me.tenant.in_org ? ' · 另有个人空间（知家）' : ''}` : me.role === 'admin' ? '平台运营' : `${me.username} · 个人空间`
   $('userMenuAdmin').hidden = me.role !== 'admin'
   $('userMenuTenant').hidden = me.dev || me.tenant?.role !== 'admin'
   $('userMenuTenant').textContent = me.tenant?.kind === 'org' ? '机构管理' : '机构与邀请'
-  // 已登录时打开别人的邀请链接：一个账号只属于一个机构
-  if (inviteCode() && !me.dev) {
+  // 已登录时打开邀请链接：确认后用现有账户加入（个人空间 / 知家保留）
+  const linkCode = inviteCode()
+  if (linkCode && !me.dev) {
     history.replaceState(null, '', '/app')
-    notify('你已经登录。一个账号只属于一个机构：要加入新机构，请退出后用邀请链接注册新账号。', true)
+    void openJoin(linkCode, api, notify)
   }
+  $('userMenuLeave').hidden = !!me.dev || !me.tenant?.in_org
+  $('userMenuPhr').hidden = !!me.dev
+  if (!me.dev) void refreshInvites(api, notify)
   $('userMenuClaim').hidden = !(me.dev_mode && me.role === 'admin')
   // 读视图是模型看到的文档表示，只在开发模式下作为排查工具提供
   $('userMenuReadView').hidden = !me.dev_mode
@@ -239,6 +244,9 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
       case 'settings': openSettings(me, api, notify); break
       case 'admin': void openAdmin(me, api, notify); break
       case 'tenant': void openTenant(me, api, notify); break
+      case 'invites': void openMyInvites(api, notify); break
+      case 'phr': location.href = '/phr'; break
+      case 'leave': void leaveHospital(me, api, notify); break
       case 'claim': {
         const r = await api('/api/me/claim-dev-data', { method: 'POST' }).catch(err => { notify((err as Error).message, true); return null })
         if (r) { notify(`已把开发期的 ${r.docs} 份文档、${r.assets} 个资产转到你的账户`); setTimeout(() => location.reload(), 900) }
@@ -253,6 +261,93 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
     }
   }
 }
+
+// —— 已有账户加入医院（双重身份：工作台按医院，知家仍是自己的个人空间）——
+
+interface InviteView { code: string; tenant: string; tenant_id: string; role: 'admin' | 'member'; invited_by: string | null; expires_at: string }
+
+/** 发给我的邀请：菜单里显示数目，页面顶部提醒一次（可「以后再说」）。 */
+async function refreshInvites(api: ApiFn, notify: Notify): Promise<void> {
+  const list = await api<InviteView[]>('/api/me/invites').catch(() => [] as InviteView[])
+  const item = $('userMenuInvites')
+  item.hidden = list.length === 0
+  item.textContent = list.length ? `医院邀请（${list.length}）` : '医院邀请'
+  const bar = $('inviteNudge')
+  const key = list.map(i => i.code).join(',')
+  let later = ''
+  try { later = sessionStorage.getItem('heurion.inviteLater') ?? '' } catch { /* 无痕模式 */ }
+  bar.hidden = list.length === 0 || later === key
+  if (!list.length) return
+  $('inviteNudgeText').textContent = list.length === 1 ? `${list[0]!.tenant} 邀请你加入（${list[0]!.role === 'admin' ? '机构管理员' : '成员'}）。` : `有 ${list.length} 家医院邀请你加入。`
+  bar.onclick = e => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-join]')
+    if (!t) return
+    bar.hidden = true
+    if (t.dataset.join === 'view') {
+      void (list.length === 1 ? openJoin(list[0]!.code, api, notify) : openMyInvites(api, notify))
+    } else { try { sessionStorage.setItem('heurion.inviteLater', key) } catch { /* 无痕模式 */ } }
+  }
+}
+
+const JOIN_EXPLAIN = `<ul class="join-explain">
+    <li>加入后，<b>工作台</b>里的患者、临床研究、科室、机构幻灯片模板都按这家医院走；管理员会把你分进科室，你就能收到发给科室的家庭分享。</li>
+    <li>你的<b>个人文档、资料库、记忆</b>仍只属于你，医院管理员看不到。</li>
+    <li><b>知家</b>（个人空间）里的家人健康档案不受影响，照常使用。</li>
+    <li>同一时间只能加入一家医院；随时可以在头像菜单里「退出医院」。</li>
+  </ul>`
+
+/** 接受 / 拒绝一个邀请（邀请链接或按用户名的邀请）。 */
+async function openJoin(code: string, api: ApiFn, notify: Notify): Promise<void> {
+  let inv: InviteView
+  try { inv = await api<InviteView>(`/api/me/invites/${encodeURIComponent(code)}`) } catch (err) { notify((err as Error).message, true); return }
+  const dlg = openDialog(`加入「${inv.tenant}」`, `
+    <p>${inv.invited_by ? `${esc(inv.invited_by)} ` : ''}邀请你以<b>${inv.role === 'admin' ? '机构管理员' : '成员'}</b>身份加入 <b>${esc(inv.tenant)}</b>。</p>
+    ${JOIN_EXPLAIN}
+    <p class="muted small">邀请有效期至 ${esc(when(inv.expires_at))}</p>
+    <div class="row end"><button data-j="decline">拒绝</button><button data-j="later" class="quiet">以后再说</button><button class="primary" data-j="accept">接受加入</button></div>`)
+  dlg.querySelector('.dialog-body')!.addEventListener('click', async e => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-j]')
+    if (!b) return
+    if (b.dataset.j === 'later') { closeDialog(); return }
+    try {
+      if (b.dataset.j === 'accept') {
+        await api(`/api/me/invites/${encodeURIComponent(code)}/accept`, { method: 'POST' })
+        notify(`已加入 ${inv.tenant}`); setTimeout(() => location.reload(), 700)
+      } else {
+        await api(`/api/me/invites/${encodeURIComponent(code)}/decline`, { method: 'POST' })
+        notify('已拒绝'); closeDialog(); void refreshInvites(api, notify)
+      }
+    } catch (err) { notify((err as Error).message, true) }
+  })
+}
+
+async function openMyInvites(api: ApiFn, notify: Notify): Promise<void> {
+  const list = await api<InviteView[]>('/api/me/invites').catch(() => [] as InviteView[])
+  const dlg = openDialog('医院邀请', list.length === 0 ? '<div class="muted">没有待处理的邀请</div>'
+    : `<table class="users"><tbody>${list.map(i => `<tr><td><b>${esc(i.tenant)}</b><div class="muted">${i.invited_by ? `${esc(i.invited_by)} 邀请 · ` : ''}${i.role === 'admin' ? '机构管理员' : '成员'} · 有效期至 ${esc(when(i.expires_at))}</div></td>
+      <td class="actions"><button class="primary" data-open="${esc(i.code)}">查看</button></td></tr>`).join('')}</tbody></table>`)
+  dlg.querySelector('.dialog-body')!.addEventListener('click', e => {
+    const code = (e.target as HTMLElement).closest<HTMLElement>('[data-open]')?.dataset.open
+    if (code) { closeDialog(); void openJoin(code, api, notify) }
+  })
+}
+
+async function leaveHospital(me: Me, api: ApiFn, notify: Notify): Promise<void> {
+  const name = me.tenant?.name ?? '医院'
+  const dlg = openDialog(`退出「${name}」`, `
+    <p>退出后工作台回到你的个人空间：</p>
+    <ul class="join-explain"><li>本院研究里的成员身份、科室归属会去掉；还负责本院研究的，要先转交给同事。</li>
+      <li>本院患者你将看不到（诊疗组记录保留，重新加入后恢复）。</li><li>个人文档和知家不受影响。</li></ul>
+    <div class="row end"><button data-l="cancel" class="quiet">取消</button><button class="danger" data-l="leave">退出医院</button></div>`)
+  dlg.querySelector('.dialog-body')!.addEventListener('click', async e => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-l]')
+    if (!b) return
+    if (b.dataset.l === 'cancel') { closeDialog(); return }
+    try { await api('/api/tenant/leave', { method: 'POST' }); notify('已退出医院'); setTimeout(() => location.reload(), 700) } catch (err) { notify((err as Error).message, true) }
+  })
+}
+
+function closeDialog(): void { const d = $('dialog'); d.hidden = true; d.innerHTML = '' }
 
 function openDialog(title: string, body: string): HTMLElement {
   const dlg = $('dialog')
@@ -573,6 +668,8 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
     <h3 class="mem-h">机构幻灯片模板</h3><div id="orgTemplates" class="muted">加载中…</div>
     <h3 class="mem-h">成员</h3><div id="tenantMembers" class="muted">加载中…</div>
     <h3 class="mem-h">邀请</h3>
+    ${t.kind === 'org' ? `<form class="inline-form" id="inviteUserForm"><input type="text" name="username" placeholder="平台上已有账户的用户名" required autocomplete="off"><select name="role"><option value="member">成员</option><option value="admin">机构管理员</option></select><button class="primary">按用户名邀请</button></form>
+    <div class="muted small">已在平台注册（例如先用知家）的人：按用户名邀请，对方登录后在头像菜单「医院邀请」里接受即加入，他的个人空间（知家）保留。没注册过的人用下面的邀请链接。</div>` : ''}
     <form class="inline-form" id="inviteForm"><select name="role"><option value="member">成员</option><option value="admin">机构管理员</option></select><input type="text" name="email" placeholder="对方邮箱（可选，仅备注）" inputmode="email"><select name="days"><option value="7">7 天内有效</option><option value="1">1 天</option><option value="30">30 天</option></select><button class="primary">生成邀请链接</button></form>
     <div id="inviteLink"></div><div id="inviteList"></div>
     ${AUDIT_HTML}`)
@@ -599,18 +696,27 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
     const box = dlg.querySelector('#tenantMembers')!
     box.className = ''
     box.innerHTML = `<table class="users"><thead><tr><th>成员</th><th>角色</th><th>状态</th><th>文档</th><th>最近登录</th><th></th></tr></thead><tbody>
-      ${list.map(u => `<tr data-mid="${esc(u.id)}" class="${u.status === 'disabled' ? 'disabled' : ''}"><td><b>${esc(u.display_name)}</b><div class="muted">${esc(u.username)}${u.id === me.id ? ' · 我' : ''}</div></td>
+      ${list.map(u => `<tr data-mid="${esc(u.id)}" class="${u.status === 'disabled' ? 'disabled' : ''}"><td><b>${esc(u.display_name)}</b><div class="muted">${esc(u.username)}${u.id === me.id ? ' · 我' : ''}${u.joined ? ' · 已有账户加入' : ''}</div></td>
         <td><select data-mrole><option value="member"${u.tenant_role === 'member' ? ' selected' : ''}>成员</option><option value="admin"${u.tenant_role === 'admin' ? ' selected' : ''}>机构管理员</option></select></td>
         <td>${u.status === 'active' ? '<span class="pill ok">正常</span>' : '<span class="pill off">已停用</span>'}</td><td>${u.doc_count}</td><td class="muted">${when(u.last_login_at)}</td>
-        <td class="actions">${u.id === me.id ? '' : `<button data-mact="${u.status === 'active' ? 'disable' : 'enable'}">${u.status === 'active' ? '停用' : '启用'}</button>`}</td></tr>`).join('')}</tbody></table>`
+        <td class="actions">${u.id === me.id ? '' : `<div class="actions-row"><button data-mact="${u.status === 'active' ? 'disable' : 'enable'}">${u.status === 'active' ? '停用' : '启用'}</button>${t.kind === 'org' ? '<button data-mact="remove" class="danger">移出</button>' : ''}</div>`}</td></tr>`).join('')}</tbody></table>`
   }
   const renderInvites = async () => {
     const list: any[] = await api('/api/tenant/invites')
     dlg.querySelector('#inviteList')!.innerHTML = list.length === 0 ? '' : `<table class="users"><thead><tr><th>待使用的邀请</th><th>角色</th><th>有效期至</th><th></th></tr></thead><tbody>
-      ${list.map(i => `<tr data-code="${esc(i.code)}"><td class="muted">${esc(i.email ?? '（未注明）')} · ${when(i.created_at)} 发出</td><td>${i.role === 'admin' ? '机构管理员' : '成员'}</td><td class="muted">${when(i.expires_at)}</td>
-        <td class="actions"><div class="actions-row"><button data-iact="copy">复制链接</button><button data-iact="revoke" class="danger">撤销</button></div></td></tr>`).join('')}</tbody></table>`
+      ${list.map(i => `<tr data-code="${esc(i.code)}"><td class="muted">${i.target_username ? `发给用户 <b>${esc(i.target_username)}</b>` : esc(i.email ?? '（未注明）')} · ${when(i.created_at)} 发出</td><td>${i.role === 'admin' ? '机构管理员' : '成员'}</td><td class="muted">${when(i.expires_at)}</td>
+        <td class="actions"><div class="actions-row">${i.target_username ? '' : '<button data-iact="copy">复制链接</button>'}<button data-iact="revoke" class="danger">撤销</button></div></td></tr>`).join('')}</tbody></table>`
   }
   await Promise.all([renderMembers(), renderInvites()]).catch(err => notify((err as Error).message, true))
+  const userForm = dlg.querySelector<HTMLFormElement>('#inviteUserForm')
+  if (userForm) userForm.onsubmit = async e => {
+    e.preventDefault()
+    const f = new FormData(userForm)
+    try {
+      await api('/api/tenant/invites', { method: 'POST', body: JSON.stringify({ username: String(f.get('username') ?? '').trim(), role: f.get('role') }) })
+      notify(`已邀请「${String(f.get('username'))}」，对方登录后接受即加入`); userForm.reset(); await renderInvites()
+    } catch (err) { notify((err as Error).message, true) }
+  }
   dlg.querySelector<HTMLFormElement>('#inviteForm')!.onsubmit = async e => {
     e.preventDefault()
     const f = new FormData(e.target as HTMLFormElement)
@@ -631,6 +737,17 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
     const t2 = e.target as HTMLElement
     const mact = t2.closest<HTMLElement>('[data-mact]')
     const uid = mact?.closest<HTMLElement>('[data-mid]')?.dataset.mid
+    if (mact && uid && mact.dataset.mact === 'remove') {
+      // 两步确认（不用浏览器原生对话框）：第一次点变成「确认移出」
+      mact.dataset.mact = 'remove-confirm'; mact.textContent = '确认移出'
+      mact.title = '他回到自己的个人空间（知家不受影响），本院研究成员身份与科室归属会去掉'
+      return
+    }
+    if (mact && uid && mact.dataset.mact === 'remove-confirm') {
+      try { await api(`/api/tenant/members/${uid}`, { method: 'DELETE' }); notify('已移出') } catch (err) { notify((err as Error).message, true) }
+      await renderMembers()
+      return
+    }
     if (mact && uid) {
       try {
         await api(`/api/tenant/members/${uid}`, { method: 'PATCH', body: JSON.stringify({ status: mact.dataset.mact === 'disable' ? 'disabled' : 'active' }) })

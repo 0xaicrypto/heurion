@@ -43,7 +43,8 @@ const token = (): string => { try { return localStorage.getItem('heurion.token')
 class ApiErr extends Error { constructor(message: string, readonly status: number, readonly code = '') { super(message) } }
 
 async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, { ...opts, headers: { ...(opts.headers ?? {}), Authorization: `Bearer ${token()}` } })
+  // 知家一律用个人空间的患者库（加入了医院的账户，工作台用医院、知家仍是自己的家人档案）
+  const res = await fetch(path, { ...opts, headers: { ...(opts.headers ?? {}), Authorization: `Bearer ${token()}`, 'X-Heurion-Space': 'personal' } })
   if (res.status === 401) {
     try { localStorage.removeItem('heurion.token') } catch { /* 无痕模式 */ }
     renderAuth(); throw new ApiErr('未登录', 401)
@@ -602,7 +603,7 @@ async function recordsTab(main: HTMLElement, id: string, detail: Detail): Promis
 /** 原件是加密存放的，经授权接口取回再展示（<a> 带不了 Authorization 头）。 */
 async function downloadFile(id: string, fileId: string, title: string): Promise<void> {
   try {
-    const res = await fetch(`/api/patients/${id}/files/${fileId}`, { headers: { Authorization: `Bearer ${token()}` } })
+    const res = await fetch(`/api/patients/${id}/files/${fileId}`, { headers: { Authorization: `Bearer ${token()}`, 'X-Heurion-Space': 'personal' } })
     if (!res.ok) throw new Error(`取回失败（${res.status}）`)
     const url = URL.createObjectURL(await res.blob())
     const a = document.createElement('a'); a.href = url; a.download = title; a.click()
