@@ -1468,8 +1468,21 @@ $('exportBtn').onclick = e => {
   $('exportMenu').hidden = !$('exportMenu').hidden
 }
 document.addEventListener('click', () => { $('exportMenu').hidden = true })
-$('exportDocxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.docx?token=${encodeURIComponent(TOKEN)}` }
-$('exportPptxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.pptx?token=${encodeURIComponent(TOKEN)}` }
+// 导出字体：Mac（苹方、宋体-简）/ Windows（微软雅黑、等线、宋体）；默认按当前电脑，选过的记在本机
+const FONTS_KEY = 'heurion.exportFonts'
+const exportFonts = (): 'mac' | 'win' => {
+  try { const v = localStorage.getItem(FONTS_KEY); if (v === 'mac' || v === 'win') return v } catch { /* 无痕模式 */ }
+  return /Mac|iPhone|iPad/.test(navigator.userAgent) ? 'mac' : 'win'
+}
+const renderExportFonts = () => $('exportFonts').querySelectorAll<HTMLButtonElement>('[data-fonts]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fonts === exportFonts())))
+renderExportFonts()
+$('exportFonts').onclick = e => {
+  e.stopPropagation()
+  const v = (e.target as HTMLElement).closest<HTMLElement>('[data-fonts]')?.dataset.fonts
+  if (v) { try { localStorage.setItem(FONTS_KEY, v) } catch { /* 无痕模式 */ } renderExportFonts() }
+}
+$('exportDocxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.docx?token=${encodeURIComponent(TOKEN)}&fonts=${exportFonts()}` }
+$('exportPptxBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.pptx?token=${encodeURIComponent(TOKEN)}&fonts=${exportFonts()}` }
 $('exportMdBtn').onclick = () => { if (session) location.href = `/api/docs/${session.docId}/export.md?token=${encodeURIComponent(TOKEN)}` }
 // 开发者：读视图（用户菜单里，仅开发模式）
 document.addEventListener('heurion:readview', async () => {

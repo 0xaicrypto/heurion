@@ -878,3 +878,8 @@ button.block { width: 100%; padding: 10px 12px; }
 .ph-foot { margin-top: 10px; }
 .ph-foot a { color: var(--mint-text); }
 @media (max-width: 900px) { .ph-grid { columns: 2 140px; } }
+/* 导出菜单里的「中文字体」切换 */
+.export-fonts { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.export-fonts .muted { margin-right: auto; }
+.export-fonts button { padding: 2px 8px; font-size: 12px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); }
+.export-fonts button[aria-pressed="true"] { background: var(--mint); color: var(--mint-ink); border-color: var(--mint); }

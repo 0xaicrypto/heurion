@@ -19,6 +19,7 @@ import { verifyPrompt } from '../claims/service.ts'
 import { docxFor, pptxFor } from '../convert/exports.ts'
 import { bindDeckAssets, importPptx, PptxImportError } from '../convert/pptx-import.ts'
 import { pptxTemplate } from '../convert/pptx-template.ts'
+import { exportFontsParam, withFonts } from '../convert/fonts.ts'
 import { templateCatalog } from '../model/deck-templates.ts'
 import { DECK_THEMES, DEFAULT_THEME } from '../model/deck-themes.ts'
 import { newTemplateDeck } from '../ops/deck.ts'
@@ -777,7 +778,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
     const result = docxFor(docs, row.id)
-    return c.body(Buffer.from(result.bytes), 200, {
+    return c.body(Buffer.from(withFonts(result.bytes, exportFontsParam(c.req.query('fonts')))), 200, {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}.docx`,
       ...(result.warnings.length > 0 ? { 'X-Heurion-Warnings': encodeURIComponent(result.warnings.join('；')) } : {}),
@@ -788,7 +789,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const row = owned(c)
     if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
     const result = pptxFor(docs, row.id)
-    return c.body(Buffer.from(result.bytes), 200, {
+    return c.body(Buffer.from(withFonts(result.bytes, exportFontsParam(c.req.query('fonts')))), 200, {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(row.title)}.pptx`,
     })
