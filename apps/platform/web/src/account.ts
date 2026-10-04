@@ -1,3 +1,5 @@
+import { mountOrgTemplates } from './org-templates.ts'
+
 /**
  * 账户界面（MIGRATION_PLAN.md §2.5 R1）：登录 / 注册页（含邀请链接）、左栏底部的用户菜单、个人设置、
  * 机构管理（机构管理员：成员、邀请、设置、本机构审计）、平台运营（机构、用户、实例设置、审计）。
@@ -530,12 +532,16 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
       <label class="toggle">AI 修改患者记录 <select data-set="ai_patient_writes"><option value="review"${t.settings.ai_patient_writes !== 'direct' ? ' selected' : ''}>需医生确认（进待确认）</option><option value="direct"${t.settings.ai_patient_writes === 'direct' ? ' selected' : ''}>直接生效（和人一样）</option></select></label>
       <label class="toggle">患者默认可见范围 <select data-set="patient_visibility"><option value="care_team"${t.settings.patient_visibility === 'care_team' ? ' selected' : ''}>创建者 + 诊疗组</option><option value="tenant"${t.settings.patient_visibility === 'tenant' ? ' selected' : ''}>本机构全员</option></select></label>
     </div>
+    <h3 class="mem-h">机构幻灯片模板</h3><div id="orgTemplates" class="muted">加载中…</div>
     <h3 class="mem-h">成员</h3><div id="tenantMembers" class="muted">加载中…</div>
     <h3 class="mem-h">邀请</h3>
     <form class="inline-form" id="inviteForm"><select name="role"><option value="member">成员</option><option value="admin">机构管理员</option></select><input type="text" name="email" placeholder="对方邮箱（可选，仅备注）" inputmode="email"><select name="days"><option value="7">7 天内有效</option><option value="1">1 天</option><option value="30">30 天</option></select><button class="primary">生成邀请链接</button></form>
     <div id="inviteLink"></div><div id="inviteList"></div>
     ${AUDIT_HTML}`)
   mountAudit(dlg, '/api/tenant/audit', api, notify)
+  const orgBox = dlg.querySelector<HTMLElement>('#orgTemplates')!
+  orgBox.classList.remove('muted')
+  void mountOrgTemplates(orgBox, api, notify, t.role === 'admin').catch(err => { orgBox.textContent = (err as Error).message })
   dlg.querySelector<HTMLFormElement>('#tenantForm')!.onsubmit = async e => {
     e.preventDefault()
     try { await api('/api/tenant', { method: 'PATCH', body: JSON.stringify({ name: new FormData(e.target as HTMLFormElement).get('name') }) }); notify('已保存') } catch (err) { notify((err as Error).message, true) }

@@ -461,6 +461,7 @@ ok('按所选模板新建：封面版式、素白模板、带模板装饰', crea
 await page.keyboard.press('Escape')
 await remove(created.id)
 
+
 // 长文档：三栏各自滚动，对话输入框始终在可视区域内（不被正文撑到页面最底下）
 const long = await api('/api/docs', { method: 'POST', body: JSON.stringify({ title: 'UI 长文档 ' + Date.now(), markdown: '# 长文档\n\n' + Array.from({ length: 80 }, (_, i) => `第 ${i + 1} 段：心力衰竭需要长期管理与随访。`).join('\n\n') }) })
 await page.reload()
