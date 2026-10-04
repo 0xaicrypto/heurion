@@ -88,6 +88,11 @@ const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已�
 /** 家人标记（PATIENT.md §3 特殊人群守卫的数据基础）。 */
 const FAMILY_TAGS = ['孕产', '哺乳', '儿童'] as const
 
+/** Heurion 品牌标志（知家是 Heurion 的家庭健康子品牌，品牌资产随界面露出）。 */
+const MARK = (cls: string): string => `<svg class="${cls}" viewBox="-2 6 96 88" aria-hidden="true">
+  <rect x="0" y="10" width="18" height="80" rx="9" fill="#06110D"/><rect x="62" y="30" width="18" height="60" rx="9" fill="#06110D"/>
+  <rect x="14" y="42" width="52" height="18" rx="9" fill="#00FF93"/><circle cx="80" cy="20" r="11" fill="#00FF93"/></svg>`
+
 const display = (p: { name: string | null; code: string }): string => p.name || p.code
 const ageText = (birthYear: number | null): string => {
   if (!birthYear) return '—'
@@ -144,7 +149,8 @@ window.addEventListener('hashchange', render)
 
 function renderGate(): void {
   const home = location.pathname.endsWith('.html') ? '/' : '/app'  // dev:web 时主应用在 /，构建后在 /app
-  app.innerHTML = `<div class="gate"><div class="logo">知家</div><div class="tag">知家在，合家安 · 家庭健康顾问</div>
+  app.innerHTML = `<div class="gate">${MARK('mark')}<div class="logo">知家</div>
+    <div class="tag">知家在，合家安</div><div class="brand">Heurion 出品 · 家庭健康顾问</div>
     <button class="btn block" id="gateGo">去登录</button>
     <p style="color:var(--sub);font-size:12px">登录在 Heurion 主应用里完成，回来这个页面自动进入。</p></div>`
   $('#gateGo').addEventListener('click', () => { location.href = home })
@@ -155,8 +161,8 @@ function renderGate(): void {
 
 async function homeView(): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
-      <div style="flex:1"><h1>知家</h1><div class="sub">知家在，合家安 · 每位家人一份循证健康档案</div></div>
-      <button class="btn" id="addMember" style="min-height:40px;padding:0 14px">＋ 添加家人</button>
+      <div style="flex:1;display:flex;align-items:center;gap:9px">${MARK('mark-sm')}<div><h1 style="flex:none">知家</h1><div class="sub">知家在，合家安</div></div></div>
+      <button class="btn" id="addMember" style="min-height:40px;padding:0 16px">＋ 家人</button>
     </div></div><div class="max"><div id="main" class="loading">加载中…</div></div>`
   const list = await api<Array<Patient>>('/api/patients').catch(err => { if ((err as ApiErr).status !== 401) toast((err as Error).message, true); return null })
   if (!list) return
