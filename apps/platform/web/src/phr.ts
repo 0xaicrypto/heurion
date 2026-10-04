@@ -14,7 +14,7 @@ interface Patient {
   status: string; labs?: number; last_lab?: string | null; pending?: number
 }
 interface Lab {
-  id: string; test_key: string; test_name: string
+  id: string; record_id: string | null; test_key: string; test_name: string
   value_num: number | null; value_text: string | null; unit: string | null
   ref_low: number | null; ref_high: number | null; ref_text: string | null; flag: 'H' | 'L' | null
   collected_on: string | null; status: 'pending' | 'confirmed' | 'rejected' | 'superseded'; source: string
@@ -387,7 +387,7 @@ function memberDialog(p: Patient | null, done: () => void): void {
 
 // —— 成员页 ——
 
-async function memberView(id: string): Promise<void> {
+async function memberView(id: string, tab: 'labs' | 'records' | 'pending' = 'labs'): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
       <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 id="mName">…</h1><div class="sub" id="mMeta"></div></div>
       <button class="edit" id="mBrief" title="生成给医生看的就诊简报">简报</button><button class="edit" id="mChat" title="问知家">💬</button><button class="edit" id="mEdit">编辑</button></div></div>
@@ -416,7 +416,7 @@ async function memberView(id: string): Promise<void> {
     else void pendingTab(main, id, detail)
   }
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => show(t.getAttribute('data-tab') as never)))
-  show('labs')
+  show(tab)
 }
 
 /** 化验页签：最近值 + 每项展开全史与趋势。 */
@@ -531,48 +531,111 @@ async function downloadFile(id: string, fileId: string, title: string): Promise<
   } catch (err) { toast((err as Error).message, true) }
 }
 
-/** 待确认页签：AI 提取的化验与报告、AI 的提议，逐项确认。 */
+/**
+ * 待确认页签：按报告分组——一份报告一张卡片，「全部确认」一次确认整份（不对的项先点 ✕ 去掉）；
+ * 有多份报告时顶部「全部确认」一次确认所有报告（缺日期的先补、核对不上的先提醒）。AI 的提议单独列出。
+ */
 async function pendingTab(main: HTMLElement, id: string, detail: Detail): Promise<void> {
   const labs = await api<Lab[]>(`/api/patients/${id}/labs?pending=1`).catch(() => [])
   const pendingLabs = labs.filter(l => l.status === 'pending')
   const pendingRecords = detail.records.filter(r => r.status === 'pending')
+  const byRecord = new Map<string, Lab[]>()
+  for (const l of pendingLabs) if (l.record_id) byRecord.set(l.record_id, [...(byRecord.get(l.record_id) ?? []), l])
+  const loose = pendingLabs.filter(l => !l.record_id || !pendingRecords.some(r => r.id === l.record_id))
   const n = pendingLabs.length + pendingRecords.length + detail.pending_proposals.length
   document.querySelector('.tab[data-tab="pending"]')!.textContent = `待确认${n ? ` ${n}` : ''}`
-  main.innerHTML = `<div class="card" id="pend">${n ? '' : '<div class="empty">没有待确认的内容<br><span style="font-size:12px">上传报告后，自动识别的结果会在这里等你确认</span></div>'}</div>`
+  const ready = pendingRecords.filter(r => !r.extraction || r.extraction === 'done')
+  const readyItems = ready.reduce((k, r) => k + (byRecord.get(r.id)?.length ?? 0), 0)
+  main.innerHTML = (ready.length > 1 ? `<div class="bulk"><button class="btn ok" id="allOk">✓ 全部确认（${ready.length} 份报告 · ${readyItems} 项）</button></div>` : '')
+    + `<div id="pend">${n ? '' : '<div class="card"><div class="empty">没有待确认的内容<br><span style="font-size:12px">上传报告后，自动识别的结果会在这里等你确认</span></div></div>'}</div>`
   const box = $('#pend')
-  pendingLabs.forEach(l => {
+  const again = (): void => void memberView(id, 'pending')
+
+  const labLine = (l: Lab, removable = true): string => `<div class="pitem"><span class="t">${esc(l.test_name)}</span>
+      <span class="v">${esc(valText(l))}${l.flag ? ` <span class="flag ${l.flag}">${l.flag === 'H' ? '↑' : '↓'}</span>` : ''}</span>
+      ${l.locator?.verified === false ? '<span class="warn" title="这个值没能回原文核对上，请对照原件">⚠️</span>' : ''}
+      ${l.same_day?.length ? `<span class="warn" title="同日同项已有：${esc(l.same_day.map(x => valText(x)).join('、'))}；确认后旧值标记「已替换」">↺</span>` : ''}
+      ${removable ? `<button class="x" data-x="${esc(l.id)}" title="这一项不对，去掉">✕</button>` : ''}</div>`
+
+  for (const r of pendingRecords) {
+    const items = byRecord.get(r.id) ?? []
+    const unverified = items.filter(l => l.locator?.verified === false).length
+    const waiting = Boolean(r.extraction && r.extraction !== 'done')
     const b = document.createElement('div')
-    b.innerHTML = `<div class="pendrow"><div class="hd"><span class="t">${esc(l.test_name)}</span><span style="font-weight:600">${esc(valText(l))}</span>
-        ${l.flag ? `<span class="flag ${l.flag}">${l.flag === 'H' ? '↑' : '↓'}</span>` : ''}<span class="d" style="color:var(--sub);font-size:12px">${esc(l.collected_on ?? '')}</span></div>
-      ${l.same_day?.length ? `<div class="same">同日同项已有：${esc(l.same_day.map(x => valText(x)).join('、'))} —— 确认后旧值标记「已替换」</div>` : ''}
-      ${l.locator?.verified === false ? '<div class="same">⚠️ 这个值没能回原文核对上，请对照原件</div>' : ''}
-      <div class="act"><button class="btn ok" data-a="confirm" style="flex:1">✓ 确认</button><button class="btn no" data-a="reject" style="flex:1">✕ 驳回</button></div></div>`
+    b.className = 'card pcard'
+    b.innerHTML = `<div class="hd"><span class="t">${esc(r.title)}</span><span class="chip">${KIND[r.kind] ?? r.kind}</span><span class="d">${esc(r.report_date ?? '缺日期')}</span></div>
+      ${waiting ? `<div class="same">${EXTRACT[r.extraction!] ?? r.extraction}${r.extraction_note ? `：${esc(r.extraction_note)}` : ''}（先等识别完成，或直接驳回）</div>` : ''}
+      ${unverified ? `<div class="same">⚠️ 有 ${unverified} 项没能回原文核对上，确认前请对照原件；不对的点 ✕ 去掉</div>` : ''}
+      ${items.length ? `<div class="plist">${items.map(l => labLine(l)).join('')}</div>` : ''}
+      <div class="act"><button class="btn ok" data-a="confirm" style="flex:2" ${waiting ? 'disabled' : ''}>✓ 全部确认${items.length ? `（${items.length} 项）` : ''}</button><button class="btn no" data-a="reject" style="flex:1">驳回整份</button></div>`
+    box.append(b)
+    b.querySelector('[data-a="confirm"]')!.addEventListener('click', async () => {
+      if (await resolveRecord(id, r)) { toast(`已确认${items.length ? ` ${items.length} 项` : ''}`); again() }
+    })
+    b.querySelector('[data-a="reject"]')!.addEventListener('click', async () => {
+      if (!(await confirmDlg(`驳回「${r.title}」？这份报告的待确认化验一并作废`, '驳回'))) return
+      try { await api(`/api/patients/${id}/records/${r.id}/reject`, { method: 'POST', body: '{}' }); toast('已驳回'); again() } catch (err) { toast((err as Error).message, true) }
+    })
+    b.querySelectorAll<HTMLElement>('[data-x]').forEach(x => x.addEventListener('click', async () => {
+      try {
+        await api(`/api/patients/${id}/labs/${x.dataset.x}/reject`, { method: 'POST', body: '{}' })
+        x.closest('.pitem')?.remove()
+        toast('已去掉这一项')
+      } catch (err) { toast((err as Error).message, true) }
+    }))
+  }
+
+  // 不属于某份待确认报告的单项（少见）：逐项确认
+  for (const l of loose) {
+    const b = document.createElement('div')
+    b.className = 'card pcard'
+    b.innerHTML = `<div class="plist">${labLine(l, false)}</div>
+      <div class="act"><button class="btn ok" data-a="confirm" style="flex:1">✓ 确认</button><button class="btn no" data-a="reject" style="flex:1">✕ 驳回</button></div>`
     box.append(b)
     b.querySelector('[data-a="confirm"]')!.addEventListener('click', () => void resolveLab(id, l.id, true))
     b.querySelector('[data-a="reject"]')!.addEventListener('click', () => void resolveLab(id, l.id, false))
-  })
-  pendingRecords.forEach(r => {
-    const b = document.createElement('div')
-    b.innerHTML = `<div class="pendrow"><div class="hd"><span class="t">${esc(r.title)}</span><span class="chip">${KIND[r.kind] ?? r.kind}</span>
-        <span class="d" style="color:var(--sub);font-size:12px">${esc(r.report_date ?? '')}</span></div>
-      ${r.extraction && r.extraction !== 'done' ? `<div class="same">${EXTRACT[r.extraction] ?? r.extraction}${r.extraction_note ? `：${esc(r.extraction_note)}` : ''}（先等识别完成，或直接驳回）</div>` : ''}
-      ${r.extraction === 'done' && !r.report_date ? '<div class="same">报告上没有日期，确认前先补一个</div>' : ''}
-      <div class="act"><button class="btn ok" data-a="confirm" style="flex:1">✓ 确认全部</button><button class="btn no" data-a="reject" style="flex:1">✕ 驳回</button></div></div>`
-    box.append(b)
-    b.querySelector('[data-a="confirm"]')!.addEventListener('click', () => void resolveRecord(id, r))
-    b.querySelector('[data-a="reject"]')!.addEventListener('click', async () => {
-      if (!(await confirmDlg(`驳回「${r.title}」？这份报告的待确认化验一并作废`, '驳回'))) return
-      try { await api(`/api/patients/${id}/records/${r.id}/reject`, { method: 'POST', body: '{}' }); toast('已驳回'); void memberView(id) } catch (err) { toast((err as Error).message, true) }
-    })
-  })
+  }
+
   detail.pending_proposals.forEach(pr => {
     const b = document.createElement('div')
-    b.innerHTML = `<div class="pendrow"><div class="hd"><span class="t">${esc(proposalText(pr))}</span><span class="chip">AI 提议</span></div>
+    b.className = 'card pcard'
+    b.innerHTML = `<div class="hd"><span class="t">${esc(proposalText(pr))}</span><span class="chip">AI 提议</span></div>
       <div class="same">${esc(pr.reason)}</div>
-      <div class="act"><button class="btn ok" data-a="accept" style="flex:1">✓ 接受</button><button class="btn no" data-a="reject" style="flex:1">✕ 拒绝</button></div></div>`
+      <div class="act"><button class="btn ok" data-a="accept" style="flex:1">✓ 接受</button><button class="btn no" data-a="reject" style="flex:1">✕ 拒绝</button></div>`
     box.append(b)
     b.querySelector('[data-a="accept"]')!.addEventListener('click', () => void resolveProposal(id, pr.id, true))
     b.querySelector('[data-a="reject"]')!.addEventListener('click', () => void resolveProposal(id, pr.id, false))
+  })
+
+  // 顶部「全部确认」：缺日期的报告一次补齐，核对不上的先提醒，然后逐份确认
+  document.getElementById('allOk')?.addEventListener('click', async () => {
+    const undated = ready.filter(r => !r.report_date)
+    const unverified = ready.reduce((k, r) => k + (byRecord.get(r.id) ?? []).filter(l => l.locator?.verified === false).length, 0)
+    const dates = new Map<string, string>()
+    if (undated.length || unverified) {
+      const d = dlg(`<h3>确认 ${ready.length} 份报告</h3><div class="form">
+          ${unverified ? `<div class="same">⚠️ 有 ${unverified} 项没能回原文核对上（卡片里标了 ⚠️）。不确定的先取消，点 ✕ 去掉。</div>` : ''}
+          ${undated.map(r => `<label>「${esc(r.title)}」的日期<input type="date" data-rd="${esc(r.id)}"></label>`).join('')}
+          <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">全部确认</button></div></div>`)
+      const ok = await new Promise<boolean>(res => {
+        d.querySelector('[data-x="0"]')!.addEventListener('click', () => { res(false); d.close() })
+        d.querySelector('[data-x="1"]')!.addEventListener('click', () => {
+          for (const inp of d.querySelectorAll<HTMLInputElement>('[data-rd]')) if (inp.value) dates.set(inp.dataset.rd!, inp.value)
+          if (undated.some(r => !dates.has(r.id))) { toast('每份报告都要填日期', true); return }
+          res(true); d.close()
+        })
+      })
+      if (!ok) return
+    }
+    let done = 0
+    for (const r of ready) {
+      try {
+        await api(`/api/patients/${id}/records/${r.id}/confirm`, { method: 'POST', body: JSON.stringify({ report_date: dates.get(r.id) ?? null }) })
+        done++
+      } catch (err) { toast(`「${r.title}」没确认上：${(err as Error).message}`, true) }
+    }
+    if (done) toast(`已确认 ${done} 份报告`)
+    again()
   })
 }
 
@@ -587,11 +650,11 @@ const proposalText = (pr: { kind: string; payload: Record<string, unknown> }): s
 async function resolveLab(id: string, labId: string, ok: boolean): Promise<void> {
   try {
     await api(`/api/patients/${id}/labs/${labId}/${ok ? 'confirm' : 'reject'}`, { method: 'POST', body: '{}' })
-    toast(ok ? '已确认' : '已驳回'); void memberView(id)
+    toast(ok ? '已确认' : '已驳回'); void memberView(id, 'pending')
   } catch (err) { toast((err as Error).message, true) }
 }
 
-async function resolveRecord(id: string, r: RecordRow): Promise<void> {
+async function resolveRecord(id: string, r: RecordRow): Promise<boolean> {
   try {
     let reportDate: string | null = null
     if (r.extraction === 'done' && !r.report_date) {
@@ -601,18 +664,18 @@ async function resolveRecord(id: string, r: RecordRow): Promise<void> {
         d.querySelector('[data-x="0"]')!.addEventListener('click', () => { res(null); d.close() })
         d.querySelector('[data-x="1"]')!.addEventListener('click', () => { res(($('#rd', d) as HTMLInputElement).value); d.close() })
       })
-      if (!ok) return
+      if (!ok) return false
       reportDate = ok
     }
     await api(`/api/patients/${id}/records/${r.id}/confirm`, { method: 'POST', body: JSON.stringify({ report_date: reportDate }) })
-    toast('已确认'); void memberView(id)
-  } catch (err) { toast((err as Error).message, true) }
+    return true
+  } catch (err) { toast((err as Error).message, true); return false }
 }
 
 async function resolveProposal(id: string, prid: string, accept: boolean): Promise<void> {
   try {
     await api(`/api/patients/${id}/proposals/${prid}/${accept ? 'accept' : 'reject'}`, { method: 'POST', body: '{}' })
-    toast(accept ? '已接受' : '已拒绝'); void memberView(id)
+    toast(accept ? '已接受' : '已拒绝'); void memberView(id, 'pending')
   } catch (err) { toast((err as Error).message, true) }
 }
 

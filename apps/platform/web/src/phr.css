@@ -208,3 +208,16 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--pri) 45%
 /* 记录里的关联文档（健康档案、就诊简报）：整行可点开 */
 .rec-open { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .rec-open .go { color: var(--sub); font-size: 20px; }
+/* 待确认：按报告分组的卡片、顶部全部确认 */
+.bulk { margin: 4px 0 12px; }
+.bulk .btn { width: 100%; }
+.pcard .hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.pcard .hd .t { font-weight: 600; flex: 1; min-width: 0; }
+.pcard .hd .d { color: var(--sub); font-size: 12px; }
+.plist { margin: 6px 0 10px; border-top: 1px solid var(--line); }
+.pitem { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.pitem .t { flex: 1; min-width: 0; }
+.pitem .v { font-weight: 600; white-space: nowrap; }
+.pitem .warn { cursor: help; }
+.pitem .x { border: 0; background: none; color: var(--sub); font-size: 16px; padding: 4px 8px; min-height: 32px; cursor: pointer; }
+.pcard, .pcard .pitem .t { text-align: left; }
