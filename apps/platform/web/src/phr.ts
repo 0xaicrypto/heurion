@@ -70,6 +70,8 @@ function dlg(html: string): HTMLDialogElement {
   d.innerHTML = html
   document.body.append(d)
   d.addEventListener('click', e => { if (e.target === d) d.close() })
+  // 关掉就移除（不然页面里会留下一堆关闭的弹层，后面的选择器会选到旧的）
+  d.addEventListener('close', () => setTimeout(() => d.remove(), 0))
   d.showModal()
   return d
 }
@@ -390,9 +392,9 @@ function memberDialog(p: Patient | null, done: () => void): void {
 async function memberView(id: string): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
       <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 id="mName">…</h1><div class="sub" id="mMeta"></div></div>
-      <button class="edit" id="mBrief" title="生成给医生看的就诊简报">简报</button><button class="edit" id="mChat" title="问知家">💬</button><button class="edit" id="mEdit">编辑</button></div></div>
+      <button class="edit" id="mShare" title="把档案分享给医生（选医院 → 科室）">分享</button><button class="edit" id="mBrief" title="生成给医生看的就诊简报">简报</button><button class="edit" id="mChat" title="问知家">💬</button><button class="edit" id="mEdit">编辑</button></div></div>
     <div class="max"><div class="tabs" id="tabs">
-      <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button>
+      <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button><button class="tab" data-tab="share">分享</button>
     </div><div id="main" class="loading">加载中…</div></div>`
   $('#back').addEventListener('click', () => { location.hash = '' })
   let detail: Detail
@@ -405,14 +407,16 @@ async function memberView(id: string): Promise<void> {
   $('#mEdit').addEventListener('click', () => memberDialog(detail, () => void memberView(id)))
   $('#mBrief').addEventListener('click', () => void makeBrief(id))
   $('#mChat').addEventListener('click', () => void openChat(id))
+  $('#mShare').addEventListener('click', () => void shareDialog(id, name, () => show('share')))
 
-  const state = { tab: 'labs' as 'labs' | 'records' | 'pending' }
-  const show = (tab: 'labs' | 'records' | 'pending'): void => {
+  const state = { tab: 'labs' as 'labs' | 'records' | 'pending' | 'share' }
+  const show = (tab: 'labs' | 'records' | 'pending' | 'share'): void => {
     state.tab = tab
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.getAttribute('data-tab') === tab))
     const main = $('#main')
     if (tab === 'labs') void labsTab(main, id, detail)
     else if (tab === 'records') void recordsTab(main, id, detail)
+    else if (tab === 'share') void shareTab(main, id, name, () => show('share'))
     else void pendingTab(main, id, detail)
   }
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => show(t.getAttribute('data-tab') as never)))
@@ -420,6 +424,81 @@ async function memberView(id: string): Promise<void> {
 }
 
 /** 化验页签：最近值 + 每项展开全史与趋势。 */
+// —— 分享给医生（docs/design/SHARING.md）：选医院 → 科室 → 可选医生；范围、有效期、是否允许纳入医院病历 ——
+
+interface Hospital { id: string; name: string; departments: Array<{ id: string; name: string; doctors: Array<{ id: string; display_name: string }> }> }
+interface ShareRow {
+  id: string; hospital: string; department: string; doctor: string | null; scope: { categories: string[]; since: string | null }
+  allow_import: boolean; display_name: string | null; status: 'active' | 'revoked' | 'expired' | 'department_gone'; expires_at: string; created_at: string
+  imported: { at: string; by: string | null } | null
+}
+const SCOPE: Record<string, string> = { labs: '化验', reports: '报告原件', docs: '简报与健康档案' }
+const SHARE_STATUS: Record<string, string> = { active: '有效', revoked: '已撤销', expired: '已过期', department_gone: '科室已撤销' }
+const LOG_ACTION: Record<string, string> = { share_create: '分享', share_revoke: '撤销分享', share_view: '查看了概况', share_labs: '查看了化验', share_file: '下载了报告原件', share_doc: '查看了简报 / 档案', share_record: '读了报告', share_import: '纳入了医院病历' }
+
+async function shareDialog(id: string, name: string, done: () => void): Promise<void> {
+  let dir: Hospital[] = []
+  try { dir = await api<Hospital[]>('/api/phr/directory') } catch (err) { toast((err as Error).message, true); return }
+  if (dir.length === 0) { toast('现在还没有接受家庭分享的医院', true); return }
+  const opt = (v: string, t: string) => `<option value="${esc(v)}">${esc(t)}</option>`
+  const d = dlg(`<h3>把「${esc(name)}」的档案分享给医生</h3><div class="form">
+      <label>医院<select id="sHos">${dir.map(h => opt(h.id, h.name)).join('')}</select></label>
+      <label>科室<select id="sDept"></select></label>
+      <label>医生（可选）<select id="sDoc"></select></label>
+      <label>分享哪些<span>${Object.entries(SCOPE).map(([k, v]) => `<button type="button" class="chip pick on" data-c="${k}">${v}</button>`).join('')}</span></label>
+      <label>从哪天起的记录（可留空 = 全部）<input id="sSince" type="date"></label>
+      <label>有效期<select id="sDays"><option value="7">7 天</option><option value="30" selected>30 天</option><option value="90">90 天</option></select></label>
+      <label>给医生看的姓名（可选，只有被授权的医生看得到）<input id="sName" maxlength="24" placeholder="如：王桂兰"></label>
+      <label class="check"><input type="checkbox" id="sImport"> 允许医生把档案纳入医院病历（纳入后归医院保存，撤销分享也不会删除）</label>
+      <div class="hint">医生只读，看不到你的其他家人；你随时可以撤销。医生每次查看你都能在「分享」里看到。</div>
+      <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">确认分享</button></div>
+    </div>`)
+  const hos = d.querySelector<HTMLSelectElement>('#sHos')!, dept = d.querySelector<HTMLSelectElement>('#sDept')!, doc = d.querySelector<HTMLSelectElement>('#sDoc')!
+  const fillDept = () => { const h = dir.find(x => x.id === hos.value)!; dept.innerHTML = h.departments.map(x => opt(x.id, x.name)).join(''); fillDoc() }
+  const fillDoc = () => { const dp = dir.find(x => x.id === hos.value)!.departments.find(x => x.id === dept.value); doc.innerHTML = opt('', '科室里的医生都能看') + (dp?.doctors ?? []).map(x => opt(x.id, x.display_name)).join('') }
+  hos.addEventListener('change', fillDept); dept.addEventListener('change', fillDoc); fillDept()
+  d.querySelectorAll<HTMLButtonElement>('[data-c]').forEach(b => b.addEventListener('click', () => b.classList.toggle('on')))
+  d.querySelector('[data-x="0"]')!.addEventListener('click', () => d.close())
+  d.querySelector('[data-x="1"]')!.addEventListener('click', async () => {
+    const categories = [...d.querySelectorAll<HTMLElement>('[data-c].on')].map(b => b.dataset.c!)
+    if (!categories.length) { toast('至少选一类要分享的内容', true); return }
+    try {
+      await api(`/api/phr/${id}/shares`, { method: 'POST', body: JSON.stringify({
+        tenant_id: hos.value, department_id: dept.value, doctor_id: doc.value || null, scope: { categories, since: (d.querySelector<HTMLInputElement>('#sSince')!.value || null) },
+        days: Number(d.querySelector<HTMLSelectElement>('#sDays')!.value), allow_import: d.querySelector<HTMLInputElement>('#sImport')!.checked, display_name: d.querySelector<HTMLInputElement>('#sName')!.value,
+      }) })
+      d.close()
+      toast('已分享，医生现在就能看到')
+      done()
+    } catch (err) { toast((err as Error).message, true) }
+  })
+}
+
+async function shareTab(main: HTMLElement, id: string, name: string, refresh: () => void): Promise<void> {
+  main.className = 'loading'
+  let rows: ShareRow[] = [], log: Array<{ at: string; user: string; action: string; via: string; detail: string | null }> = []
+  try {
+    [rows, log] = await Promise.all([api<ShareRow[]>(`/api/phr/${id}/shares`), api<typeof log>(`/api/patients/${id}/access-log`)])
+  } catch (err) { main.className = ''; main.innerHTML = `<div class="empty">${esc((err as Error).message)}</div>`; return }
+  main.className = ''
+  const visits = log.filter(l => l.action.startsWith('share_') && l.action !== 'share_create' && l.action !== 'share_revoke')
+  main.innerHTML = `<div style="display:flex;justify-content:flex-end"><button class="btn" id="newShare" style="min-height:38px;padding:0 14px">＋ 分享给医生</button></div>
+    <div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">分享</div>
+      ${rows.length ? rows.map(r => `<div class="rec"><div class="info"><div class="t">${esc(r.hospital)} · ${esc(r.department)}${r.doctor ? ` · ${esc(r.doctor)}` : ''}</div>
+        <div class="m">${esc(r.scope.categories.map(c => SCOPE[c] ?? c).join('、'))}${r.scope.since ? `（${esc(r.scope.since)} 起）` : ''} · ${r.status === 'active' ? `${esc(r.expires_at.slice(0, 10))} 到期` : esc(SHARE_STATUS[r.status])}${r.allow_import ? ' · 允许纳入病历' : ''}</div>
+        ${r.imported ? `<div class="m" style="color:var(--pri-deep)">已被${esc(r.hospital)} ${esc(r.department)}${r.imported.by ? `（${esc(r.imported.by)}）` : ''}纳入病历 · ${esc(r.imported.at.slice(0, 10))}</div>` : ''}</div>
+        ${r.status === 'active' ? `<button class="btn ghost" data-revoke="${esc(r.id)}" style="min-height:34px;padding:0 12px">撤销</button>` : `<span class="chip">${esc(SHARE_STATUS[r.status])}</span>`}</div>`).join('')
+        : `<div class="empty">还没有分享过<br><span style="font-size:12px">看病前把${esc(name)}的化验、报告和简报分享给医生，医生打开就能看到</span></div>`}</div>
+    <div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">医生的查看记录</div>
+      ${visits.length ? visits.slice(0, 50).map(l => `<div class="rec"><div class="info"><div class="t">${esc(l.user)}${l.via === 'ai' ? '（医生的 AI 助手）' : ''} ${esc(LOG_ACTION[l.action] ?? l.action)}</div><div class="m">${esc(l.detail ?? '')} · ${esc(l.at.slice(0, 16).replace('T', ' '))}</div></div></div>`).join('')
+        : '<div class="empty">还没有医生查看过</div>'}</div>`
+  main.querySelector('#newShare')!.addEventListener('click', () => void shareDialog(id, name, refresh))
+  main.querySelectorAll<HTMLElement>('[data-revoke]').forEach(b => b.addEventListener('click', async () => {
+    if (!(await confirmDlg('撤销这个分享？医生立刻就看不到了（已纳入医院病历的部分归医院保存）', '撤销'))) return
+    try { await api(`/api/phr/shares/${b.dataset.revoke}`, { method: 'DELETE' }); toast('已撤销'); refresh() } catch (err) { toast((err as Error).message, true) }
+  }))
+}
+
 async function labsTab(main: HTMLElement, id: string, detail: Detail): Promise<void> {
   main.innerHTML = `<div style="display:flex;justify-content:flex-end"><button class="btn sec" id="addLab" style="min-height:36px;padding:0 12px">＋ 手动录入</button></div>
     <div class="card" id="latest">${detail.latest_labs.length ? '' : '<div class="empty">还没有化验值<br><span style="font-size:12px">上传化验单，或右上角手动录入</span></div>'}</div>`

@@ -22,7 +22,7 @@ export interface Me {
   tenant: { id: string; name: string; kind: 'personal' | 'org'; role: 'admin' | 'member'; settings: TenantSettings; members: number } | null
 }
 
-interface TenantSettings { patient_module: boolean; external_model_for_patients: boolean; patient_visibility: 'care_team' | 'tenant'; ai_patient_writes: 'review' | 'direct' }
+interface TenantSettings { patient_module: boolean; external_model_for_patients: boolean; patient_visibility: 'care_team' | 'tenant'; ai_patient_writes: 'review' | 'direct'; accept_patient_shares?: boolean }
 
 /** 邀请链接里的邀请码（/app?invite=…）。 */
 export const inviteCode = (): string | null => new URLSearchParams(location.search).get('invite')
@@ -500,6 +500,62 @@ function showLink(box: Element, link: string, label: string, notify: Notify): vo
 }
 
 /** 机构管理（机构管理员）：名称与设置、成员、邀请、本机构审计。 */
+/**
+ * 科室（知家家庭分享按科室投递：家人选「医院 → 科室」，科室里的医生都能看到）。
+ * 管理员建 / 改名 / 删科室、勾选成员（一人可在多个科室）；成员只能看。
+ */
+async function mountDepartments(box: HTMLElement, api: ApiFn, notify: Notify, admin: boolean): Promise<void> {
+  type Dept = { id: string; name: string; members: Array<{ id: string; display_name: string }> }
+  const render = async () => {
+    const list: Dept[] = await api('/api/tenant/departments')
+    box.className = 'dept-box'
+    box.innerHTML = `<div class="muted small">家人在知家里分享档案时选「本院 → 科室」，科室里的医生都能在「患者 → 家庭分享」里看到。一人可在多个科室。</div>
+      ${list.length ? `<table class="users"><thead><tr><th>科室</th><th>成员</th><th></th></tr></thead><tbody>${list.map(d => `<tr data-dept="${esc(d.id)}">
+        <td>${admin ? `<input class="dept-name" value="${esc(d.name)}" maxlength="40" aria-label="科室名称">` : `<b>${esc(d.name)}</b>`}</td>
+        <td>${d.members.length ? d.members.map(m => `<span class="chip">${esc(m.display_name)}</span>`).join(' ') : '<span class="muted">还没有成员</span>'}</td>
+        <td class="actions">${admin ? '<div class="actions-row"><button data-dact="members">设置成员</button><button data-dact="delete" class="danger">删除</button></div>' : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">还没有科室。</div>'}
+      ${admin ? '<form class="inline-form" id="deptForm"><input type="text" name="name" placeholder="新科室名称，如：心血管内科" maxlength="40" required><button class="primary">新建科室</button></form>' : ''}`
+    box.querySelector<HTMLFormElement>('#deptForm')?.addEventListener('submit', async e => {
+      e.preventDefault()
+      try { await api('/api/tenant/departments', { method: 'POST', body: JSON.stringify({ name: new FormData(e.target as HTMLFormElement).get('name') }) }); notify('科室已建好'); await render() } catch (err) { notify((err as Error).message, true) }
+    })
+    box.querySelectorAll<HTMLInputElement>('.dept-name').forEach(inp => inp.addEventListener('change', async () => {
+      const id = inp.closest<HTMLElement>('[data-dept]')!.dataset.dept!
+      try { await api(`/api/tenant/departments/${id}`, { method: 'PATCH', body: JSON.stringify({ name: inp.value }) }); notify('已改名') } catch (err) { notify((err as Error).message, true) }
+    }))
+    box.querySelectorAll<HTMLButtonElement>('[data-dact]').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.closest<HTMLElement>('[data-dept]')!.dataset.dept!
+      const d = list.find(x => x.id === id)!
+      // 删除点两次确认（和机构模板一致；机构管理本身在对话框里，不再弹一层）
+      if (btn.dataset.dact === 'delete') {
+        btn.dataset.dact = 'delete-confirm'
+        btn.textContent = '再点一次删除（发给该科室的家庭分享会失效）'
+        return
+      }
+      if (btn.dataset.dact === 'delete-confirm') {
+        try { await api(`/api/tenant/departments/${id}`, { method: 'DELETE' }); notify('已删除'); await render() } catch (err) { notify((err as Error).message, true) }
+        return
+      }
+      // 设置成员：从本机构成员里勾选
+      const all: Array<{ id: string; display_name: string; username: string; status: string }> = await api('/api/tenant/members')
+      const have = new Set(d.members.map(m => m.id))
+      const row = btn.closest('tr')!
+      const editor = document.createElement('tr')
+      editor.className = 'dept-editor'
+      editor.innerHTML = `<td colspan="3"><div class="dept-pick">${all.filter(u => u.status === 'active').map(u => `<label class="toggle"><input type="checkbox" value="${esc(u.id)}" ${have.has(u.id) ? 'checked' : ''}> ${esc(u.display_name)} <span class="muted">${esc(u.username)}</span></label>`).join('')}</div>
+        <div class="actions-row"><button class="primary" data-save>保存成员</button><button data-cancel>取消</button></div></td>`
+      box.querySelector('.dept-editor')?.remove()
+      row.after(editor)
+      editor.querySelector('[data-cancel]')!.addEventListener('click', () => editor.remove())
+      editor.querySelector('[data-save]')!.addEventListener('click', async () => {
+        const ids = [...editor.querySelectorAll<HTMLInputElement>('input:checked')].map(i => i.value)
+        try { await api(`/api/tenant/departments/${id}/members`, { method: 'PUT', body: JSON.stringify({ user_ids: ids }) }); notify('科室成员已更新'); await render() } catch (err) { notify((err as Error).message, true) }
+      })
+    }))
+  }
+  await render()
+}
+
 async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
   const t = await api('/api/tenant')
   const dlg = openDialog(t.kind === 'org' ? '机构管理' : '机构与邀请', `
@@ -510,8 +566,10 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
       <label class="toggle"><input type="checkbox" data-set="patient_module" ${t.settings.patient_module ? 'checked' : ''}> 启用患者模块</label>
       <label class="toggle"><input type="checkbox" data-set="external_model_for_patients" ${t.settings.external_model_for_patients ? 'checked' : ''}> 患者数据可以交给外部模型分析（只发代号，不发姓名）</label>
       <label class="toggle">AI 修改患者记录 <select data-set="ai_patient_writes"><option value="review"${t.settings.ai_patient_writes !== 'direct' ? ' selected' : ''}>需医生确认（进待确认）</option><option value="direct"${t.settings.ai_patient_writes === 'direct' ? ' selected' : ''}>直接生效（和人一样）</option></select></label>
+      ${t.kind === 'org' ? `<label class="toggle"><input type="checkbox" data-set="accept_patient_shares" ${t.settings.accept_patient_shares !== false ? 'checked' : ''}> 接受知家家庭分享（家人可在知家里选本院的科室分享档案）</label>` : ''}
       <label class="toggle">患者默认可见范围 <select data-set="patient_visibility"><option value="care_team"${t.settings.patient_visibility === 'care_team' ? ' selected' : ''}>创建者 + 诊疗组</option><option value="tenant"${t.settings.patient_visibility === 'tenant' ? ' selected' : ''}>本机构全员</option></select></label>
     </div>
+    ${t.kind === 'org' ? '<h3 class="mem-h">科室</h3><div id="tenantDepts" class="muted">加载中…</div>' : ''}
     <h3 class="mem-h">机构幻灯片模板</h3><div id="orgTemplates" class="muted">加载中…</div>
     <h3 class="mem-h">成员</h3><div id="tenantMembers" class="muted">加载中…</div>
     <h3 class="mem-h">邀请</h3>
@@ -522,6 +580,8 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
   const orgBox = dlg.querySelector<HTMLElement>('#orgTemplates')!
   orgBox.classList.remove('muted')
   void mountOrgTemplates(orgBox, api, notify, t.role === 'admin').catch(err => { orgBox.textContent = (err as Error).message })
+  const deptBox = dlg.querySelector<HTMLElement>('#tenantDepts')
+  if (deptBox) void mountDepartments(deptBox, api, notify, t.role === 'admin').catch(err => { deptBox.textContent = (err as Error).message })
   dlg.querySelector<HTMLFormElement>('#tenantForm')!.onsubmit = async e => {
     e.preventDefault()
     try { await api('/api/tenant', { method: 'PATCH', body: JSON.stringify({ name: new FormData(e.target as HTMLFormElement).get('name') }) }); notify('已保存') } catch (err) { notify((err as Error).message, true) }

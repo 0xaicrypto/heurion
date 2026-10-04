@@ -946,3 +946,21 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 .action-recent li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .user-button { position: relative; }
 .user-button.has-pending::after { content: ''; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; background: var(--danger); border: 2px solid var(--bg-deep); border-radius: 50%; }
+
+/* —— 家庭分享（医生一侧，知家家人分享来的档案，只读）—— */
+.pt-share-row .pt-code { color: var(--mint-text); }
+.page.share-page { max-width: 980px; }
+.sh-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.sh-head h1 { font-size: 26px; font-weight: 500; margin: 4px 0 0; display: flex; align-items: center; gap: 10px; }
+.sh-head .row { display: flex; gap: 8px; margin-top: 6px; }
+.sh-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.sh-card { text-align: left; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border: 1px solid var(--line-strong); background: var(--panel); cursor: pointer; }
+.sh-card:hover { border-color: var(--mint); }
+.sh-card-t { display: flex; align-items: center; gap: 8px; }
+.sh-card-t b { font-size: 15px; }
+.sh-sec { margin: 22px 0; }
+.sh-doc { margin-top: 12px; border: 1px solid var(--line); background: var(--paper); color: var(--paper-text); }
+.sh-doc-t { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--paper-line); }
+.sh-doc-body { padding: 16px 20px; max-height: 60vh; overflow: auto; }
+.dept-box table td input.dept-name { width: 100%; max-width: 220px; }
+.dept-pick { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0; }

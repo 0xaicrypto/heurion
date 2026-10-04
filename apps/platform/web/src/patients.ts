@@ -33,6 +33,18 @@ interface Detail extends Patient {
   studies?: Array<{ study_id: string; title: string; subject_id: string; enrolled_at: string }>
 }
 
+interface ShareSummary {
+  share_id: string; share_code: string; department: string; to_me: boolean; scope: { categories: string[]; since: string | null }
+  allow_import: boolean; expires_at: string; shared_at: string; imported: { at: string; patient_id: string | null } | null; display_name?: string | null
+}
+interface ShareDetail extends ShareSummary {
+  sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]; latest_labs: Lab[]; lab_count: number
+  records: Array<{ id: string; kind: string; title: string; report_date: string | null; file_id: string | null }>
+  documents: Array<{ doc_id: string; kind: string; title: string; updated_at: string }>
+}
+const SCOPE: Record<string, string> = { labs: '化验', reports: '报告原件', docs: '简报与健康档案' }
+const scopeText = (s: { categories: string[]; since: string | null }) => `${s.categories.map(c => SCOPE[c] ?? c).join('、')}${s.since ? `（${s.since} 起）` : ''}`
+
 export interface PatientHooks {
   /** 离开当前文档（关掉编辑器、清空中间区域） */
   leaveDoc(): void
@@ -75,7 +87,14 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
   // —— 左栏 ——
 
+  // —— 家庭分享（知家家人分享给本人科室 / 本人的档案，只读；docs/design/SHARING.md）——
+  let shares: ShareSummary[] = []
+  async function loadShares(): Promise<void> {
+    try { shares = await api<ShareSummary[]>('/api/shares') } catch { shares = [] }
+  }
+
   async function loadList(): Promise<void> {
+    await loadShares()
     try { list = await api<Patient[]>('/api/patients') } catch (err) {
       $('patientList').innerHTML = `<li class="nav-empty">${esc((err as Error).message)}</li>`
       return
@@ -86,7 +105,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   function renderList(): void {
     const q = (document.getElementById('docSearch') as HTMLInputElement).value.trim().toLowerCase()
     const shown = list.filter(p => !q || label(p).toLowerCase().includes(q) || p.tags.some(t => t.toLowerCase().includes(q)))
-    $('patientList').innerHTML = shown.map(p => `<li data-pt="${p.id}" class="${p.id === current ? 'active' : ''}" title="${esc(p.tags.join('、'))}">
+    $('patientList').innerHTML = (shares.length ? `<li class="pt-share-row${document.getElementById('page')!.classList.contains('share-page') ? ' active' : ''}" data-shares title="知家家人分享给你所在科室的档案（只读）">
+        <span class="pt-code">家庭</span><span class="label">家庭分享</span><span class="count">${shares.length}</span></li>` : '')
+      + shown.map(p => `<li data-pt=""${p.id}" class="${p.id === current ? 'active' : ''}" title="${esc(p.tags.join('、'))}">
         <span class="pt-code">${esc(p.code)}</span><span class="label">${esc(names()[p.id] ?? p.tags.slice(0, 2).join('、'))}</span>
         ${p.pending ? `<span class="count" title="待确认">${p.pending}</span>` : ''}${p.role === 'break_glass' ? '<span class="pill off" title="紧急访问">紧急</span>' : ''}</li>`).join('')
       + (list.length === 0 ? '<li class="nav-empty">还没有患者。点「＋患者」新建；患者在系统里只用代号。</li>' : shown.length === 0 ? `<li class="nav-empty">没有找到「${esc(q)}」</li>` : '')
@@ -418,6 +439,72 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     try { await api(`/api/patients/${current}`, { method: 'PATCH', body: JSON.stringify({ summary: ta.value }) }) } catch (err) { notice((err as Error).message, true) }
   }, true)
 
+  /** 家庭分享收件箱：中间区域显示卡片列表，点开看只读视图。 */
+  async function openShares(focus?: string): Promise<void> {
+    hooks.leaveDoc()
+    current = null
+    if (poll) { clearTimeout(poll); poll = null }
+    await loadShares()
+    const page = $('page')
+    page.className = 'page patient-page share-page'
+    $('docTitle').textContent = '家庭分享'
+    renderList()
+    page.innerHTML = `<div class="sh-head"><h1>家庭分享</h1>
+      <p class="muted">家人在知家里分享给你所在科室（或指定给你）的档案：只读、有效期内可见，每次查看家人都能在访问记录里看到。家人允许时可以「纳入本院」，复制成本院患者。</p></div>
+      ${shares.length ? `<div class="sh-cards">${shares.map(s => `<button class="sh-card" data-share="${esc(s.share_id)}">
+        <div class="sh-card-t"><b>${esc(s.display_name || s.share_code)}</b><span class="pt-code">${esc(s.share_code)}</span>${s.to_me ? '<span class="pill ok">指定给我</span>' : ''}</div>
+        <div class="muted small">${esc(s.department)} · ${esc(scopeText(s.scope))} · ${esc(s.expires_at.slice(0, 10))} 到期</div>
+        <div class="muted small">${s.imported ? '已纳入本院' : s.allow_import ? '家人允许纳入本院' : '仅查看'}</div></button>`).join('')}</div>`
+        : '<p class="muted">还没有收到家庭分享。家人在知家里选「本院 → 你所在的科室」分享后会出现在这里；科室由机构管理员在「机构管理」里设置。</p>'}`
+    page.querySelectorAll<HTMLElement>('[data-share]').forEach(b => b.addEventListener('click', () => void openShare(b.dataset.share!)))
+    if (focus) await openShare(focus)
+  }
+
+  async function openShare(id: string): Promise<void> {
+    const page = $('page')
+    let v: ShareDetail
+    try { v = await api<ShareDetail>(`/api/shares/${id}`) } catch (err) { notice((err as Error).message, true); await openShares(); return }
+    page.className = 'page patient-page share-page'
+    const who = v.display_name || v.share_code
+    $('docTitle').textContent = `家庭分享 · ${who}`
+    const labsRows = v.latest_labs.map(l => `<tr><td>${esc(l.test_name)}</td><td class="${l.flag ? 'pt-flag' : ''}">${esc(stdValue(l))} ${esc(l.std_unit ?? l.unit ?? '')}${l.flag === 'H' ? ' ↑' : l.flag === 'L' ? ' ↓' : ''}</td>
+      <td class="muted">${esc(stdRef(l))}</td><td class="muted">${esc(when(l))}</td><td class="muted small">${l.source === 'manual' ? '家人手工录入' : '来自报告'}</td></tr>`).join('')
+    page.innerHTML = `<div class="sh-head"><button class="link-btn" data-back>← 家庭分享</button>
+        <h1>${esc(who)} <span class="pt-code">${esc(v.share_code)}</span></h1>
+        <div class="muted">${[v.sex ? SEX[v.sex] : '', v.birth_year ? `${new Date().getFullYear() - v.birth_year} 岁` : '', ...v.tags].filter(Boolean).map(esc).join(' · ')}</div>
+        <div class="muted small">发给 ${esc(v.department)}${v.to_me ? '（指定给你）' : ''} · 范围：${esc(scopeText(v.scope))} · ${esc(v.expires_at.slice(0, 10))} 到期 · 只读，家人能看到你的查看记录</div>
+        <div class="row">${v.imported ? `<button data-open-imported="${esc(v.imported.patient_id ?? '')}">已纳入本院 · 打开患者</button>` : v.allow_import ? '<button class="primary" data-import>纳入本院</button>' : '<span class="muted small">家人没有允许纳入本院病历</span>'}</div></div>
+      ${v.scope.categories.includes('labs') ? `<section class="sh-sec"><h3 class="mem-h">化验（各项最近一次，共 ${v.lab_count} 条）</h3>${labsRows ? `<table class="users pt-labs"><thead><tr><th>项目</th><th>结果</th><th>参考范围</th><th>日期</th><th>来源</th></tr></thead><tbody>${labsRows}</tbody></table>
+        <button class="small-btn" data-all-labs>看全部化验</button><div id="shAllLabs"></div>` : '<p class="muted">范围内没有化验</p>'}</section>` : ''}
+      ${v.scope.categories.includes('reports') ? `<section class="sh-sec"><h3 class="mem-h">报告原件</h3>${v.records.length ? `<ul class="rs-list">${v.records.map(r => `<li class="rs-item"><span class="rs-kind">${esc(KIND[r.kind] ?? '报告')}</span><b>${esc(r.title)}</b><span class="muted small">${esc(r.report_date ?? '')}</span>
+        ${r.file_id ? `<a class="small-btn" target="_blank" rel="noopener" href="/api/shares/${esc(v.share_id)}/files/${esc(r.file_id)}?token=${encodeURIComponent(hooks.token())}">看原件</a>` : ''}</li>`).join('')}</ul>` : '<p class="muted">范围内没有报告</p>'}</section>` : ''}
+      ${v.scope.categories.includes('docs') ? `<section class="sh-sec"><h3 class="mem-h">就诊简报与健康档案</h3>${v.documents.length ? `<ul class="rs-list">${v.documents.map(d => `<li class="rs-item"><span class="rs-kind">${esc(d.kind === 'brief' ? '就诊简报' : d.kind === 'archive' ? '健康档案' : '文档')}</span><b>${esc(d.title)}</b><span class="muted small">${esc(d.updated_at.slice(0, 10))}</span>
+        <button class="small-btn" data-doc="${esc(d.doc_id)}">阅读</button></li>`).join('')}</ul><div id="shDoc"></div>` : '<p class="muted">没有简报或档案</p>'}</section>` : ''}`
+    page.querySelector('[data-back]')!.addEventListener('click', () => void openShares())
+    page.querySelector('[data-all-labs]')?.addEventListener('click', async () => {
+      try {
+        const all = await api<Lab[]>(`/api/shares/${id}/labs`)
+        $('shAllLabs').innerHTML = `<table class="users pt-labs"><thead><tr><th>项目</th><th>结果</th><th>参考范围</th><th>日期</th></tr></thead><tbody>${all.map(l => `<tr><td>${esc(l.test_name)}</td><td>${esc(stdValue(l))} ${esc(l.std_unit ?? l.unit ?? '')}</td><td class="muted">${esc(stdRef(l))}</td><td class="muted">${esc(when(l))}</td></tr>`).join('')}</tbody></table>`
+      } catch (err) { notice((err as Error).message, true) }
+    })
+    page.querySelectorAll<HTMLElement>('[data-doc]').forEach(b => b.addEventListener('click', async () => {
+      try {
+        const d = await api<{ title: string; html: string }>(`/api/shares/${id}/docs/${b.dataset.doc}`)
+        $('shDoc').innerHTML = `<div class="sh-doc"><div class="sh-doc-t"><b>${esc(d.title)}</b><span class="muted small">只读</span></div><div class="ProseMirror sh-doc-body">${d.html}</div></div>`
+      } catch (err) { notice((err as Error).message, true) }
+    }))
+    page.querySelector('[data-import]')?.addEventListener('click', async () => {
+      if (!await askConfirm({ title: '纳入本院', message: `把「${who}」复制成本院患者（新代号，你是负责人）：化验、报告原件、简报一并复制并标明来自家庭分享。纳入后归本院管理，家人撤销分享不影响已纳入的部分。`, confirm: '纳入本院' })) return
+      try {
+        const p = await api<Patient>(`/api/shares/${id}/import`, { method: 'POST' })
+        notice(`已纳入本院：${p.code}`)
+        await loadList()
+        await openPatient(p.id)
+      } catch (err) { notice((err as Error).message, true) }
+    })
+    page.querySelector<HTMLElement>('[data-open-imported]')?.addEventListener('click', e => { const pid = (e.currentTarget as HTMLElement).dataset.openImported; if (pid) void openPatient(pid) })
+  }
+
   /** 患者模式下还没选患者：中间显示患者模块的引导（不显示文档的欢迎页）。 */
   function showWelcome(): void {
     const page = $('page')
@@ -450,6 +537,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   $('patientList').onclick = e => {
     const t = e.target as HTMLElement
     if (t.closest('#breakGlassBtn')) { void breakGlass(); return }
+    if (t.closest('[data-shares]')) { void openShares(); return }
     const li = t.closest<HTMLElement>('li[data-pt]')
     if (li) void openPatient(li.dataset.pt!)
   }
@@ -506,7 +594,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       if (idle && current && document.getElementById('page')!.classList.contains('patient-page') && !document.getElementById('page')!.classList.contains('pt-welcome')) { await loadList(); return }
       current = null
       await loadList()
-      if (idle) showWelcome()
+      // 列表加载期间已经打开了某位患者（从研究页 / 病例报告跳过来）：不要再用引导页盖掉
+      if (idle && current === null && !document.getElementById('page')!.classList.contains('share-page')) showWelcome()
     },
   }
 }

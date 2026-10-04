@@ -208,3 +208,8 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--pri) 45%
 /* 记录里的关联文档（健康档案、就诊简报）：整行可点开 */
 .rec-open { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .rec-open .go { color: var(--sub); font-size: 20px; }
+/* 分享给医生 */
+.form label.check { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.5; }
+.form label.check input { width: auto; min-height: 0; margin-top: 4px; }
+.form .hint { font-size: 12px; color: var(--sub); line-height: 1.6; }
+dialog { max-height: 88vh; overflow-y: auto; }
