@@ -4,6 +4,7 @@ import { layoutSpec } from '../model/deck-templates.ts'
 import type { Documents } from '../model/runtime.ts'
 import type { OpService } from '../ops/service.ts'
 import type { Actor } from '../store/db.ts'
+import { allows, type Access } from '../research/access.ts'
 import { creditMarkdown, Unsplash, UnsplashError, type Photo } from './unsplash.ts'
 
 /**
@@ -11,6 +12,9 @@ import { creditMarkdown, Unsplash, UnsplashError, type Photo } from './unsplash.
  * 下载照片 → 存成文档所有者的资产 → add_image（图文版式放进图片区，其他版式居中）→ 署名追加到这一页的演讲备注。
  */
 export class ImageService {
+  /** 访问判定（研究共享的幻灯片：可编辑成员也能插图）；没接上时只认主人。 */
+  access: Access | null = null
+
   constructor(private readonly docs: Documents, private readonly ops: OpService, private readonly unsplash: Unsplash) {}
 
   get configured(): boolean { return this.unsplash.configured }
@@ -21,18 +25,20 @@ export class ImageService {
 
   async addToSlide(user: string, input: { doc_id: string; slide_id: string; photo_id: string; x?: number; y?: number; w?: number }, meta: { actor: Actor; turnId: string | null }) {
     const row = this.docs.store.getDoc(input.doc_id)
-    if (!row || row.owner !== user || row.deleted_at) throw new UnsplashError('photo_not_found', '文档不存在', 404)
+    const role = row && !row.deleted_at ? (this.access ? this.access.docRole(user, row) : row.owner === user ? 'owner' : null) : null
+    if (!row || !role) throw new UnsplashError('photo_not_found', '文档不存在', 404)
+    if (!allows(role, 'write')) throw new UnsplashError('photo_not_found', '你在这个研究里是只读成员，不能修改', 403)
     if (row.kind !== 'deck') throw new UnsplashError('bad_query', '只能插入幻灯片', 400)
     let slide: PMNode | null = null
     this.docs.get(input.doc_id).forEach(s => { if (s.attrs.id === input.slide_id) slide = s })
     if (!slide) throw new UnsplashError('photo_not_found', `找不到幻灯片 ${input.slide_id}`, 404)
     const { photo, bytes, mime } = await this.unsplash.use(input.photo_id)
-    const asset = this.docs.store.putAsset({ owner: row.owner, mime, name: `unsplash-${photo.id}.jpg`, bytes })
+    const asset = this.docs.store.putAsset({ owner: user, mime, name: `unsplash-${photo.id}.jpg`, bytes })
     const box = input.x !== undefined && input.y !== undefined && input.w !== undefined ? { x: input.x, y: input.y, w: input.w, h: input.w * photo.height / photo.width } : placement(slide, photo)
     const result = this.ops.edit({
       doc_id: input.doc_id, base_rev: this.docs.rev(input.doc_id), mode: 'apply',
       ops: [{ op: 'add_image', slide_id: input.slide_id, asset_id: asset.id, ...box, description: photo.credit.text, credit: creditMarkdown(photo.credit) }],
-    }, meta)
+    }, { ...meta, user })
     return { shape_id: result.results[0]?.ids[0] ?? null, asset_id: asset.id, rev: result.rev, credit: photo.credit }
   }
 }

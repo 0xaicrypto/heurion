@@ -46,6 +46,7 @@ import { citationOrder, diff, read } from '../views/read.ts'
 import { deckRead } from '../views/deck.ts'
 import { exportMarkdown, renderHtml } from '../views/render.ts'
 import { themePhoto } from '../model/theme-photos.ts'
+import { Access, allows, type Level } from '../research/access.ts'
 import type { ImageService } from '../images/service.ts'
 import { UnsplashError } from '../images/unsplash.ts'
 
@@ -80,6 +81,8 @@ export interface ApiDeps {
   workspaceDir?: (userId: string) => string
   /** Unsplash 图库（幻灯片搜图插图）；服务器没配 key 时 configured=false。 */
   images?: ImageService
+  /** 访问判定（研究团队协作）；不给时按 store 新建一个。 */
+  access?: Access
   devUser: string
 }
 
@@ -91,6 +94,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const { docs, ops, turns } = deps
   const store = docs.store
   const tenants = new TenantService(store, { devMode: deps.devMode })
+  // 访问判定（研究团队协作，research/access.ts）：文档、数据集、资产谁能看谁能改都问它
+  const access = deps.access ?? new Access(store)
+  access.docText ??= (id: string) => JSON.stringify(docs.get(id).toJSON())
+  if (deps.datasets && !deps.datasets.access) deps.datasets.access = access
+  if (deps.images && !deps.images.access) deps.images.access = access
   const tenantFailure = (c: Context, err: unknown) => {
     if (err instanceof TenantError) return c.json({ error: err.message, code: err.code }, err.status)
     throw err
@@ -142,6 +150,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/memory-import$/, action: 'memory.import' },
     { method: 'POST', re: /^\/api\/datasets$/, action: 'dataset.upload' },
     { method: 'DELETE', re: /^\/api\/studies\/[^/]+$/, action: 'study.delete' },
+    { method: 'POST', re: /^\/api\/studies\/[^/]+\/members$/, action: 'study.member_add' },
+    { method: 'PATCH', re: /^\/api\/studies\/[^/]+\/members\/[^/]+$/, action: 'study.member_role' },
+    { method: 'DELETE', re: /^\/api\/studies\/[^/]+\/members\/[^/]+$/, action: 'study.member_remove' },
+    { method: 'POST', re: /^\/api\/studies\/[^/]+\/transfer$/, action: 'study.transfer' },
+    { method: 'POST', re: /^\/api\/studies\/[^/]+\/handover$/, action: 'study.handover' },
     { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort$/, action: 'study.enroll' },
     { method: 'DELETE', re: /^\/api\/studies\/[^/]+\/cohort\/[^/]+$/, action: 'study.unenroll' },
     { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort\/dataset$/, action: 'study.cohort_dataset' },
@@ -175,7 +188,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   // 只有操作者自己的资源才记标题：越权尝试（别人的 id）只记 id——否则别的机构的标题会进到操作者所在机构的审计里
   const auditTarget = (path: string, actor: string | null): string | null => {
     const doc = /^\/api\/docs\/([^/]+)/.exec(path)?.[1]
-    if (doc) { const d = store.getDoc(doc); return d && d.owner === actor ? `文档 ${doc}《${d.title}》` : `文档 ${doc}` }
+    if (doc) { const d = store.getDoc(doc); return d && actor && access.docRole(actor, d) ? `文档 ${doc}《${d.title}》` : `文档 ${doc}` }
     const kb = /^\/api\/kb\/([^/]+)/.exec(path)?.[1]
     if (kb) { const f = store.getKbFile(kb); return f && f.owner === actor ? `资料 ${kb}《${f.name}》` : `资料 ${kb}` }
     const user = /^\/api\/admin\/users\/([^/]+)/.exec(path)?.[1]
@@ -183,7 +196,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const project = /^\/api\/projects\/([^/]+)/.exec(path)?.[1]
     if (project) { const p = store.getProject(project); return p && p.owner === actor ? `项目《${p.name}》` : `项目 ${project}` }
     const study = /^\/api\/studies\/([^/]+)/.exec(path)?.[1]
-    if (study) { const st = store.getStudy(study); return st && st.owner === actor ? `研究《${st.title}》` : `研究 ${study}` }
+    if (study) { const st = store.getStudy(study); return st && actor && store.studyRole(st.id, actor) ? `研究《${st.title}》` : `研究 ${study}` }
     return null
   }
   const authFailure = (c: Context, err: unknown) => {
@@ -564,10 +577,26 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return memoryFailure(c, err) }
   })
 
-  /** 自己的、不在回收站里的文档（回收站里的只能恢复或彻底删除）。 */
+  /** 我能读的、不在回收站里的文档（自己的，或我参与的研究里的；回收站里的只能主人恢复或彻底删除）。写权限由下面的中间件按路由把关。 */
   const owned = (c: Context<{ Variables: { user: string } }>) => {
     const row = store.getDoc(c.req.param('id')!)
-    return row && row.owner === c.get('user') && !row.deleted_at ? row : null
+    return row && !row.deleted_at && access.docRole(c.get('user'), row) ? row : null
+  }
+  /**
+   * 文档路由的访问级别（研究共享文档：只读成员能看、评论、导出、和 AI 对话（AI 同样只读），不能改）。
+   * GET 与下列 POST 只要读权限；其余写操作要「可编辑」；删除另由 canDelete 判断。不是成员的一律当不存在（路由里 owned 返回 null → 404）。
+   */
+  const READ_POSTS = [/^\/comments$/, /^\/comments\/[^/]+\/replies$/, /^\/comments\/[^/]+\/(resolve|reopen)$/, /^\/chat$/, /^\/duplicate$/]
+  const docLevel = (method: string, rest: string): Level => method === 'GET' || (method === 'POST' && READ_POSTS.some(r => r.test(rest))) ? 'read' : 'write'
+  for (const path of ['/api/docs/:id', '/api/docs/:id/*']) {
+    app.use(path, async (c, next) => {
+      const row = store.getDoc(c.req.param('id') ?? '')
+      if (!row || row.deleted_at) return next()
+      const role = access.docRole(c.get('user'), row)
+      const rest = new URL(c.req.url).pathname.replace(/^\/api\/docs\/[^/]+/, '')
+      if (role && !allows(role, docLevel(c.req.method, rest))) return c.json({ error: '你在这个研究里是只读成员，不能修改', code: 'forbidden' }, 403)
+      return next()
+    })
   }
   const ownedInTrash = (c: Context<{ Variables: { user: string } }>) => {
     const row = store.getDoc(c.req.param('id')!)
@@ -646,6 +675,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       failed_turns: store.failedTurns(row.id),
       suggestions: pendingGroups(doc),
       claim_checks: store.listClaimChecks(row.id),
+      // 研究共享：我的角色、协作者（顶栏显示）
+      my_role: access.docRole(c.get('user'), row),
+      collaborators: (() => { const st = access.studyOfDoc(row); return st ? store.studyMembers(st).map(m => ({ user_id: m.user_id, name: store.getUser(m.user_id)?.display_name ?? m.user_id, role: m.role })) : [] })(),
       revertable: [...new Set(store.listMessages(row.id).map(m => m.turn_id).filter((t): t is string => !!t))].filter(t => docs.canRevertTurn(row.id, t)),
       citations: store.listCitations(row.id).map(x => ({ ...x, number: order.includes(x.id) ? order.indexOf(x.id) + 1 : null })),
       comments: store.listComments(row.id).map(x => ({ ...x, anchor: locate(doc, x, marks) })),
@@ -658,6 +690,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const body = await c.req.json<{ title?: string; project_id?: string | null }>()
     if (body.title?.trim()) { store.renameDoc(row.id, body.title.trim()); deps.search?.reindex(row.id) }
     if ('project_id' in body) {
+      // 项目是个人的文件夹：只有主人、且文档不在研究里时能移动
+      if (row.owner !== c.get('user') || access.studyOfDoc(row)) return c.json({ error: '研究里的文档不能放进个人项目' }, 409)
       const project = projectOf(c, body.project_id)
       if (project === false) return c.json({ error: '项目不存在' }, 404)
       store.setDocProject(row.id, project)
@@ -777,6 +811,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.delete('/api/docs/:id', c => {
     const row = owned(c)
     if (!row) return c.json({ error: 'not found' }, 404)
+    if (!access.canDelete(c.get('user'), row, access.docRole(c.get('user'), row))) return c.json({ error: '只有创建者或研究负责人能删除这份文档', code: 'forbidden' }, 403)
     store.trashDoc(row.id, true)
     return c.json({ ok: true, trashed: true })
   })
@@ -864,7 +899,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const parsed = (row.kind === 'deck' ? DeckEditBatch : EditBatch).safeParse({ ...(await c.req.json<object>()), doc_id: row.id })
     if (!parsed.success) return c.json({ code: 'validation_error', message: parsed.error.message }, 400)
     try {
-      return c.json(ops.edit(parsed.data, { actor: 'user', turnId: null }))
+      return c.json(ops.edit(parsed.data, { actor: 'user', turnId: null, user: c.get('user') }))
     } catch (err) {
       if (err instanceof OpError) return c.json(err.toJSON(), 409)
       throw err
@@ -911,7 +946,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const group = c.req.param('group') === 'all' ? null : c.req.param('group')
     const accept = c.req.param('action') === 'accept'
     const next = resolveSuggestions(docs.get(row.id), group, accept)
-    const event = docs.commit(row.id, next, { actor: 'user', turnId: null, ops: [{ op: accept ? 'accept_suggestion' : 'reject_suggestion', group }] })
+    const event = docs.commit(row.id, next, { actor: 'user', turnId: null, user: c.get('user'), ops: [{ op: accept ? 'accept_suggestion' : 'reject_suggestion', group }] })
     return c.json({ rev: docs.rev(row.id), changes: event?.changes.length ?? 0 })
   })
 
@@ -1010,7 +1045,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const comment = store.addComment({ doc_id: row.id, node_id: body.node_id, snippet: body.snippet ?? '' })
     try {
       const anchored = attachComment(docs.get(row.id), body.node_id, body.snippet ?? '', comment.id, body.paragraph, body.range)
-      docs.commit(row.id, anchored.doc, { actor: 'user', turnId: null, ops: [{ op: 'comment', thread: comment.id }] })
+      docs.commit(row.id, anchored.doc, { actor: 'user', turnId: null, user: c.get('user'), ops: [{ op: 'comment', thread: comment.id }] })
       store.setCommentAnchor(comment.id, body.node_id, anchored.snippet)
     } catch (err) {
       store.db.prepare('DELETE FROM comments WHERE id = ?').run(comment.id)
@@ -1048,7 +1083,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const doc = docs.get(row.id)
     const tr = new Transform(doc)
     tr.removeMark(0, doc.content.size, doc.type.schema.marks.comment!.create({ thread: cid }))
-    docs.commit(row.id, tr.doc, { actor: 'user', turnId: null, ops: [{ op: 'delete_comment', thread: cid }] })
+    docs.commit(row.id, tr.doc, { actor: 'user', turnId: null, user: c.get('user'), ops: [{ op: 'delete_comment', thread: cid }] })
     store.db.prepare('DELETE FROM comments WHERE doc_id = ? AND id = ?').run(row.id, cid)
     return c.json({ ok: true })
   })
@@ -1078,6 +1113,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   /** 归入文档 / 数据集：{kind: doc | dataset, ref_id, role?: protocol | manuscript | slides | other} */
   app.post('/api/studies/:sid/items', async c => { try { st().link(c.get('user'), c.req.param('sid'), await c.req.json()); return c.json({ ok: true }, 201) } catch (err) { return studyFailure(c, err) } })
   app.delete('/api/studies/:sid/items/:kind/:rid', c => { try { st().unlink(c.get('user'), c.req.param('sid'), c.req.param('kind'), c.req.param('rid')); return c.json({ ok: true }) } catch (err) { return studyFailure(c, err) } })
+  // 研究成员（研究团队协作）：负责人加 / 移成员、改角色、转交；成员自己退出；机构管理员离职交接
+  app.get('/api/studies/:sid/members', c => { try { return c.json({ members: st().members(c.get('user'), c.req.param('sid')), role: st().role(c.get('user'), c.req.param('sid')) }) } catch (err) { return studyFailure(c, err) } })
+  app.get('/api/studies/:sid/candidates', c => { try { return c.json(st().candidates(c.get('user'), c.req.param('sid'))) } catch (err) { return studyFailure(c, err) } })
+  app.post('/api/studies/:sid/members', async c => { try { return c.json(st().addMember(c.get('user'), c.req.param('sid'), await c.req.json()), 201) } catch (err) { return studyFailure(c, err) } })
+  app.patch('/api/studies/:sid/members/:uid', async c => { try { return c.json(st().setRole(c.get('user'), c.req.param('sid'), c.req.param('uid'), (await c.req.json<{ role?: unknown }>()).role)) } catch (err) { return studyFailure(c, err) } })
+  app.delete('/api/studies/:sid/members/:uid', c => { try { return c.json(st().removeMember(c.get('user'), c.req.param('sid'), c.req.param('uid'))) } catch (err) { return studyFailure(c, err) } })
+  app.post('/api/studies/:sid/transfer', async c => { try { return c.json(st().transfer(c.get('user'), c.req.param('sid'), (await c.req.json<{ user_id?: unknown }>()).user_id)) } catch (err) { return studyFailure(c, err) } })
+  app.get('/api/tenant/studies', c => { try { return c.json(st().tenantStudies(c.get('user'))) } catch (err) { return studyFailure(c, err) } })
+  app.post('/api/studies/:sid/handover', async c => { try { return c.json(st().handover(c.get('user'), c.req.param('sid'), (await c.req.json<{ user_id?: unknown }>()).user_id)) } catch (err) { return studyFailure(c, err) } })
 
   // —— 研究入组（筛选 → 预览 → 入组；研究数据集）——
   const cohort = deps.cohort ?? (deps.studies && deps.patients ? new CohortService(deps.studies, deps.patients, deps.datasets ?? null) : null)
@@ -1094,7 +1138,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   // —— 数据集（实验室数据分析） ——
   const datasetFailure = (c: Context, err: unknown) => {
-    if (err instanceof DatasetError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : 400)
+    if (err instanceof DatasetError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : err.code === 'forbidden' ? 403 : 400)
     throw err
   }
   /** 数据集所属的研究（数据集页显示「所属研究」并能回到研究；数据集与研究同属一个用户） */
@@ -1151,7 +1195,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     // 对话里选中的数据集（只认自己的、已可用的）；研究项目里的文档自动带上这个研究的数据集
     const ctx = row.context ? JSON.parse(row.context) as { kind?: string; study_id?: string; title?: string } : null
     const studySets = ctx?.kind === 'study' && ctx.study_id && deps.studies ? (() => { try { return deps.studies!.readyDatasets(c.get('user'), ctx.study_id!).map(d => d.dataset_id) } catch { return [] } })() : []
-    const sets = [...new Set([...(datasets ?? []).slice(0, 10), ...studySets])].map(id => store.getDataset(id)).filter(d => d && d.owner === c.get('user') && d.status === 'ready')
+    const sets = [...new Set([...(datasets ?? []).slice(0, 10), ...studySets])].map(id => store.getDataset(id)).filter(d => d && access.canDataset(c.get('user'), d, 'read') && d.status === 'ready')
     const snote = ctx?.kind === 'study' ? `\n\n［研究］这份文档属于研究项目「${ctx.title ?? ''}」(study_id=${ctx.study_id})，可用 study_read 看方案、数据集、已有分析。` : ''
     const dnote = sets.length === 0 ? '' : `\n\n［数据集］请用这些数据分析（dataset_describe 看变量，dataset_open 放进工作区后用 Python 分析）：${sets.map(d => `《${d!.name}》(dataset_id=${d!.id}，${d!.rows} 行 × ${d!.cols} 列)`).join('、')}`
     // 对话里带上的患者（只认自己看得到的；只给代号）
@@ -1228,7 +1272,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   app.get('/api/assets/:id/provenance', c => {
     const asset = store.getAsset(c.req.param('id'))
-    if (!asset || asset.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    if (!asset || !access.canAsset(c.get('user'), asset)) return c.json({ error: 'not found' }, 404)
     return c.json(store.getAssetProvenance(asset.id))
   })
   app.get('/api/assets/:id', c => {
@@ -1239,7 +1283,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const logo = orgLogo(c.req.param('id'), c.get('user'))
     if (logo) return c.body(Buffer.from(logo.bytes), 200, { 'Content-Type': logo.mime, 'Cache-Control': 'private, no-cache' })
     const asset = store.getAsset(c.req.param('id'))
-    if (!asset || asset.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
+    if (!asset || !access.canAsset(c.get('user'), asset)) return c.json({ error: 'not found' }, 404)
     return c.body(Buffer.from(store.getAssetBytes(asset.id)!), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' })
   })
 

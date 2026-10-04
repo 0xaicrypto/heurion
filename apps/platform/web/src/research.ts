@@ -2,6 +2,8 @@
  * 临床研究（工作空间）：研究项目列表与研究页——研究方案、数据集、分析（用研究数据集画的图，自动汇总）、稿件、入组患者。
  * 入组：按条件筛选诊疗组里的患者 → 预览（代号 + 匹配依据）→ 勾选入组（研究编号 S001…）→ 生成研究数据集（只有研究编号）。
  * 新建方案 / 论文 / 幻灯片：新建文档并归入研究，打开后把建议的指令填进对话框（由人改好再发送）。
+ * 研究团队：负责人加同机构成员（可编辑 / 只读）、改角色、移出、转交；成员可退出；只读成员看不到修改类按钮。
+ * 机构管理员在研究开始页可做离职交接（只换负责人，不看内容）。
  */
 import { photoFigure } from './photos.ts'
 import { askConfirm } from './dialogs.ts'
@@ -9,12 +11,16 @@ import { askConfirm } from './dialogs.ts'
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 type Notice = (msg: string, error?: boolean) => void
 
-interface StudyLite { id: string; title: string; design: string | null; status: 'planning' | 'ongoing' | 'completed'; docs: number; datasets: number }
+type Role = 'owner' | 'editor' | 'viewer'
+const ROLE_LABEL: Record<Role, string> = { owner: '负责人', editor: '可编辑', viewer: '只读' }
+interface StudyLite { id: string; title: string; design: string | null; status: 'planning' | 'ongoing' | 'completed'; docs: number; datasets: number; my_role: Role; shared: boolean; shared_by: string | null; members: number }
+interface Member { user_id: string; name: string; role: Role; me: boolean }
 interface Study {
   id: string; title: string; design: string | null; status: StudyLite['status']; summary: string | null; design_label: string | null; status_label: string; updated_at: string
-  docs: Array<{ doc_id: string; title: string; kind: 'doc' | 'deck'; role: string; updated_at: string }>
+  my_role: Role; owner_name: string
+  docs: Array<{ doc_id: string; title: string; kind: 'doc' | 'deck'; role: string; updated_at: string; created_by?: string }>
   datasets: Array<{ dataset_id: string; name: string; format: string; rows: number; cols: number; status: string; version?: number; cohort?: { shape: string } | null }>
-  analyses: Array<{ asset_id: string; name: string; created_at: string; datasets: string[]; has_code: boolean }>
+  analyses: Array<{ asset_id: string; name: string; created_at: string; datasets: string[]; has_code: boolean; by?: string }>
 }
 
 export interface ResearchHooks {
@@ -61,7 +67,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     const q = ($('docSearch') as HTMLInputElement).value.trim().toLowerCase()
     const shown = list.filter(s => !q || s.title.toLowerCase().includes(q))
     $('studyList').innerHTML = shown.map(s => `<li data-study="${s.id}" class="hit${s.id === current ? ' active' : ''}" title="${esc(s.title)}">
-        <span class="hit-text"><span class="label">${esc(s.title)}</span><span class="snippet">${[s.design ? DESIGNS[s.design] : '', STATUS[s.status], `${s.datasets} 个数据集`].filter(Boolean).join(' · ')}</span></span></li>`).join('')
+        <span class="hit-text"><span class="label">${esc(s.title)}${s.shared ? ' <span class="pill shared-pill" title="同事共享给你的研究">共享</span>' : ''}</span><span class="snippet">${[s.shared ? `${s.shared_by} 负责 · ${ROLE_LABEL[s.my_role]}` : s.members > 1 ? `${s.members} 位成员` : '', s.design ? DESIGNS[s.design] : '', STATUS[s.status], `${s.datasets} 个数据集`].filter(Boolean).join(' · ')}</span></span></li>`).join('')
       + (list.length === 0 ? '<li class="nav-empty">还没有研究项目。点「＋ 新建研究」。</li>' : shown.length === 0 ? `<li class="nav-empty">没有找到「${esc(q)}」</li>` : '')
   }
 
@@ -110,69 +116,98 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     $('docTitle').textContent = s.title
     renderList()
     const docsOf = (roles: string[]) => s.docs.filter(d => roles.includes(d.role))
-    const docRow = (d: Study['docs'][number]) => `<li class="rs-item" data-opendoc="${d.doc_id}"><span class="rs-kind">${d.kind === 'deck' ? '幻灯片' : ROLES[d.role] ?? '文档'}</span><b>${esc(d.title)}</b><span class="muted small">更新于 ${date(d.updated_at)}</span>
-        <button class="quiet small-btn" data-unlink="doc:${d.doc_id}" title="移出研究（文档回到写作的文档列表）">移出</button></li>`
+    // 只读成员：不显示修改类按钮（接口同样拒绝）
+    const canEdit = s.my_role !== 'viewer'
+    const isOwner = s.my_role === 'owner'
+    const w = (html: string) => canEdit ? html : ''
+    const members = await api<{ members: Member[] }>(`/api/studies/${id}/members`).then(r => r.members).catch(() => [] as Member[])
+    const candidates = isOwner ? await api<Array<{ user_id: string; name: string; username: string }>>(`/api/studies/${id}/candidates`).catch(() => []) : []
+    const docRow = (d: Study['docs'][number]) => `<li class="rs-item" data-opendoc="${d.doc_id}"><span class="rs-kind">${d.kind === 'deck' ? '幻灯片' : ROLES[d.role] ?? '文档'}</span><b>${esc(d.title)}</b><span class="muted small">${members.length > 1 && d.created_by ? `${esc(d.created_by)} · ` : ''}更新于 ${date(d.updated_at)}</span>
+        ${w(`<button class="quiet small-btn" data-unlink="doc:${d.doc_id}" title="移出研究（文档回到创建者的文档列表）">移出</button>`)}</li>`
     const protocols = docsOf(['protocol'])
     const manuscripts = docsOf(['manuscript', 'slides', 'other'])
+    const ro = canEdit ? '' : ' disabled'
     page.innerHTML = `
+      ${canEdit ? '' : `<div class="banner rs-readonly"><span class="dot"></span>你是这个研究的只读成员（负责人 ${esc(s.owner_name)}）：能看文档、数据和分析，能评论；要修改请负责人把你改成「可编辑」。</div>`}
       <div class="rs-head">
-        <input class="rs-title" id="rsTitle" value="${esc(s.title)}" aria-label="研究名称">
+        <input class="rs-title" id="rsTitle" value="${esc(s.title)}" aria-label="研究名称"${ro ? ' readonly' : ''}>
         <div class="row">
-          <select id="rsDesign" aria-label="研究设计"><option value="">研究设计（未定）</option>${Object.entries(DESIGNS).map(([k, v]) => `<option value="${k}"${s.design === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
-          <select id="rsStatus" aria-label="状态">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${s.status === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+          <select id="rsDesign" aria-label="研究设计"${ro}><option value="">研究设计（未定）</option>${Object.entries(DESIGNS).map(([k, v]) => `<option value="${k}"${s.design === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+          <select id="rsStatus" aria-label="状态"${ro}>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${s.status === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+          <span class="rs-role muted small">我的角色：${ROLE_LABEL[s.my_role]}</span>
           <span class="grow"></span>
           <div class="menu-wrap"><button data-act="more" aria-haspopup="menu">更多 ▾</button>
-            <div class="dropdown" id="rsMore" hidden><button data-act="attach">归入已有文档…</button><button data-act="delete" class="danger-text">删除研究项目</button></div></div>
+            <div class="dropdown" id="rsMore" hidden>${w('<button data-act="attach">归入已有文档…</button>')}${isOwner ? '<button data-act="delete" class="danger-text">删除研究项目</button>' : '<button data-act="leave" class="danger-text">退出研究</button>'}</div></div>
         </div>
-        <textarea id="rsSummary" rows="2" placeholder="简介：研究问题、人群、暴露 / 干预、主要终点">${esc(s.summary ?? '')}</textarea>
+        <textarea id="rsSummary" rows="2" placeholder="简介：研究问题、人群、暴露 / 干预、主要终点"${ro ? ' readonly' : ''}>${esc(s.summary ?? '')}</textarea>
       </div>
       <div class="rs-grid">
         <section class="rs-card">
-          <div class="rs-card-head"><h3>研究方案</h3><button class="small-btn" data-new="protocol">＋ 新建方案</button></div>
+          <div class="rs-card-head"><h3>研究方案</h3>${w('<button class="small-btn" data-new="protocol">＋ 新建方案</button>')}</div>
           ${protocols.length ? `<ul class="rs-list">${protocols.map(docRow).join('')}</ul>` : '<p class="muted small">还没有研究方案。AI 可以依据你的研究问题起草：设计、纳入排除标准、终点、样本量、统计计划。</p>'}
         </section>
         <section class="rs-card">
-          <div class="rs-card-head"><h3>数据集</h3><button class="small-btn" data-act="upload">＋ 上传数据</button><input type="file" id="rsUpload" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.xpt,.sas7bdat,.sav,.zsav,.dta" multiple hidden></div>
+          <div class="rs-card-head"><h3>数据集</h3>${w('<button class="small-btn" data-act="upload">＋ 上传数据</button><input type="file" id="rsUpload" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.xpt,.sas7bdat,.sav,.zsav,.dta" multiple hidden>')}</div>
           ${s.datasets.length ? `<ul class="rs-list">${s.datasets.map(d => `<li class="rs-item" data-dataset="${d.dataset_id}"><span class="rs-kind">${esc(d.format)}</span><b>${esc(d.name)}</b>
             <span class="muted small">${d.status === 'ready' ? `${d.rows.toLocaleString()} 行 × ${d.cols} 列` : d.status === 'review' ? '<span class="flag-L">待处理身份信息</span>' : d.status === 'failed' ? '<span class="flag-H">导入失败</span>' : '处理中…'}</span>
-            <button class="quiet small-btn" data-unlink="dataset:${d.dataset_id}" title="移出研究（数据集仍在「全部数据集」里）">移出</button></li>`).join('')}</ul>`
+            ${w(`<button class="quiet small-btn" data-unlink="dataset:${d.dataset_id}" title="移出研究（数据集回到上传者的「全部数据集」里）">移出</button>`)}</li>`).join('')}</ul>`
             : '<p class="muted small">上传 CSV、Excel、SAS、SPSS、Stata。在这个研究的文档里和 AI 对话时，会自动带上这些数据集。</p>'}
         </section>
         <section class="rs-card wide">
           <div class="rs-card-head"><h3>分析</h3><span class="muted small">用本研究数据集画的图，点开看代码与数据来源</span></div>
-          ${s.analyses.length ? `<div class="rs-analyses">${s.analyses.map(a => `<button class="rs-fig" data-fig="${a.asset_id}" title="${esc(a.name)}"><img src="/api/assets/${a.asset_id}?token=${encodeURIComponent(hooks.token())}" alt="${esc(a.name)}"><span>${esc(a.name.split('/').pop())}<br><span class="muted">${esc(a.datasets.join('、'))} · ${date(a.created_at)}</span></span></button>`).join('')}</div>`
+          ${s.analyses.length ? `<div class="rs-analyses">${s.analyses.map(a => `<button class="rs-fig" data-fig="${a.asset_id}" title="${esc(a.name)}"><img src="/api/assets/${a.asset_id}?token=${encodeURIComponent(hooks.token())}" alt="${esc(a.name)}"><span>${esc(a.name.split('/').pop())}<br><span class="muted">${members.length > 1 && a.by ? `${esc(a.by)} · ` : ''}${esc(a.datasets.join('、'))} · ${date(a.created_at)}</span></span></button>`).join('')}</div>`
             : '<p class="muted small">还没有分析。打开论文或新建一份文档，在对话里让 AI 用研究数据做 Table 1、生存曲线、回归，画的图会出现在这里。</p>'}
         </section>
         <section class="rs-card wide">
-          <div class="rs-card-head"><h3>稿件</h3><button class="small-btn" data-new="manuscript">＋ 新建论文</button><button class="small-btn" data-new="slides">＋ 新建幻灯片</button></div>
+          <div class="rs-card-head"><h3>稿件</h3>${w('<button class="small-btn" data-new="manuscript">＋ 新建论文</button><button class="small-btn" data-new="slides">＋ 新建幻灯片</button>')}</div>
           ${manuscripts.length ? `<ul class="rs-list">${manuscripts.map(docRow).join('')}</ul>` : '<p class="muted small">论文、组会汇报幻灯片。写作时可以直接引用上面的分析结果。</p>'}
         </section>
-        ${cohortCard(cohort, cohortOff)}
+        ${cohortCard(cohort, cohortOff, canEdit)}
+        ${membersCard(members, candidates, isOwner)}
       </div>`
     // 数据集还在处理：隔几秒刷新
     if (s.datasets.some(d => d.status === 'processing')) poll = setTimeout(() => { if (current === id) void openStudy(id) }, 2500)
   }
 
   /** 入组患者卡片：入组名单、待确认的 AI 入组提议、研究数据集（过期提示）。 */
-  function cohortCard(c: Cohort | null, off: string): string {
+  /** 成员卡片：负责人可加人（本机构同事）、改角色、移出、转交；其他人看名单、可退出。 */
+  function membersCard(members: Member[], candidates: Array<{ user_id: string; name: string; username: string }>, isOwner: boolean): string {
+    const row = (m: Member) => `<li class="rs-item rs-member"><span class="collab-avatar role-${m.role}" aria-hidden="true">${esc(m.name.slice(0, 1).toUpperCase())}</span><b>${esc(m.name)}${m.me ? ' <span class="muted small">（我）</span>' : ''}</b>
+      ${isOwner && m.role !== 'owner'
+        ? `<select data-mrole="${m.user_id}" aria-label="${esc(m.name)} 的角色"><option value="editor"${m.role === 'editor' ? ' selected' : ''}>可编辑</option><option value="viewer"${m.role === 'viewer' ? ' selected' : ''}>只读</option></select>
+           <button class="quiet small-btn" data-mtransfer="${m.user_id}" data-mname="${esc(m.name)}" title="把负责人转交给 ${esc(m.name)}">转交</button>
+           <button class="quiet small-btn" data-mremove="${m.user_id}" data-mname="${esc(m.name)}">移出</button>`
+        : `<span class="rs-kind">${ROLE_LABEL[m.role]}</span>`}</li>`
+    return `<section class="rs-card wide" id="rsMembers">
+      <div class="rs-card-head"><h3>成员<span class="muted small"> · ${members.length} 人</span></h3>${isOwner ? '' : '<button class="quiet small-btn" data-act="leave">退出研究</button>'}</div>
+      <ul class="rs-list">${members.map(row).join('')}</ul>
+      ${isOwner ? (candidates.length
+        ? `<div class="row rs-addmember"><select id="rsAddUser" aria-label="加成员">${candidates.map(u => `<option value="${u.user_id}">${esc(u.name)}（${esc(u.username)}）</option>`).join('')}</select>
+            <select id="rsAddRole" aria-label="角色"><option value="editor">可编辑</option><option value="viewer">只读</option></select><button class="small-btn" data-act="addmember">＋ 加成员</button></div>`
+        : `<p class="muted small">${members.length > 1 ? '本机构的同事都已在研究里。' : '同机构的同事可以加进研究（可编辑 / 只读）。你的机构里还没有其他同事——机构管理员可在「机构管理」里邀请。'}</p>`) : ''}
+      <p class="muted small">成员能看研究里的文档、数据集和分析；可编辑成员能改文档、上传数据、生成研究数据集。入组患者仍要求操作者在患者的诊疗组里。</p>
+    </section>`
+  }
+
+  function cohortCard(c: Cohort | null, off: string, canEdit = true): string {
     if (!c) return `<section class="rs-card wide"><div class="rs-card-head"><h3>入组患者</h3></div><p class="muted small">${esc(off || '研究入组需要启用患者模块')}</p></section>`
     const active = c.subjects.filter(x => x.status === 'active')
     const sets = c.datasets.filter(d => d.latest)
     const SHAPE: Record<string, string> = { wide: '宽表', long: '长表' }
     return `<section class="rs-card wide" id="rsCohort">
       <div class="rs-card-head"><h3>入组患者${active.length ? `<span class="muted small"> · ${active.length} 人</span>` : ''}</h3>
-        <button class="small-btn" data-act="screen">＋ 筛选入组</button>${active.length ? '<button class="small-btn" data-act="gen">生成研究数据集</button>' : ''}</div>
+        ${canEdit ? `<button class="small-btn" data-act="screen">＋ 筛选入组</button>${active.length ? '<button class="small-btn" data-act="gen">生成研究数据集</button>' : ''}` : ''}</div>
       ${c.pending.length ? `<div class="banner pt-pending"><span class="dot"></span>AI 建议了 ${c.pending.length} 项入组 / 移出，待你确认</div>
         <ul class="rs-list">${c.pending.map(p => `<li class="rs-item"><span class="rs-kind">${p.kind === 'enroll' ? '入组' : '移出'}</span><b>${esc(p.code ?? '—')}</b><span class="muted small">${esc(p.reason)}</span>
           <button class="small-btn primary" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="accept">确认</button><button class="quiet small-btn" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="reject">不采纳</button></li>`).join('')}</ul>` : ''}
       ${sets.map(d => `<div class="rs-cohort-ds${d.stale ? ' stale' : ''}" data-dataset="${d.dataset_id}"><span class="rs-kind">${SHAPE[d.shape] ?? d.shape} v${d.version}</span>
         <span>${esc(d.name)} <span class="muted small">${d.rows} 行 · ${date(d.generated_at)}</span></span>
-        ${d.stale ? `<span class="flag-L small">入组或化验有变化，数据集已过期</span><button class="small-btn" data-regen="${d.shape}">刷新</button>` : '<span class="muted small">最新</span>'}</div>`).join('')}
+        ${d.stale ? `<span class="flag-L small">入组或化验有变化，数据集已过期</span>${canEdit ? `<button class="small-btn" data-regen="${d.shape}">刷新</button>` : ''}` : '<span class="muted small">最新</span>'}</div>`).join('')}
       ${c.subjects.length ? `<div class="ds-scroll"><table class="users rs-subjects"><thead><tr><th>研究编号</th><th>代号</th><th>性别</th><th>入组时年龄</th><th>诊断标签</th><th>入组日期</th><th></th></tr></thead><tbody>
         ${c.subjects.map(x => `<tr class="${x.status === 'active' ? '' : 'muted'}"><td><b>${esc(x.subject_id)}</b></td>
           <td>${x.code ? `<button class="linkish" data-patient="${x.patient_id}">${esc(x.code)}</button>` : '<span class="muted" title="你已不在这位患者的诊疗组里">—</span>'}</td>
           <td>${esc(SEX[x.sex ?? ''] ?? '')}</td><td>${x.age_at_enroll ?? ''}</td><td>${esc(x.tags.join('、'))}</td><td>${date(x.enrolled_at)}</td>
-          <td>${x.status === 'active' ? `<button class="quiet small-btn" data-unenroll="${x.patient_id}" data-subject="${esc(x.subject_id)}">移出</button>` : '<span class="small">已移出</span>'}</td></tr>`).join('')}
+          <td>${x.status === 'active' ? (canEdit && x.code ? `<button class="quiet small-btn" data-unenroll="${x.patient_id}" data-subject="${esc(x.subject_id)}">移出</button>` : '') : '<span class="small">已移出</span>'}</td></tr>`).join('')}
         </tbody></table></div>`
         : '<p class="muted small">按性别、年龄、诊断标签、化验结果、检查日期从你在诊疗组里的患者中筛选入组；每人得到研究编号（S001…），生成的研究数据集里只有研究编号，没有代号。</p>'}
     </section>`
@@ -335,8 +370,42 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
         <li><b>稿件</b><span>论文、组会汇报幻灯片，写作时直接引用分析结果。</span></li>
         <li><b>入组患者</b><span>从患者库按条件筛选入组，生成只有研究编号的研究数据集。</span></li>
       </ol>
-      <div class="row"><button class="primary" data-rw="new">＋ 新建研究</button>${list[0] ? `<button data-rw="open">打开「${esc(list[0].title)}」</button>` : ''}</div>
+      <div class="row" id="rsWelcomeActions"><button class="primary" data-rw="new">＋ 新建研究</button>${list[0] ? `<button data-rw="open">打开「${esc(list[0].title)}」</button>` : ''}</div>
     </div>${photoFigure('research')}`
+    // 机构管理员：离职交接入口（只换研究负责人，不看内容）
+    void api<{ role?: string; members?: number }>('/api/tenant').then(t => {
+      if (t.role === 'admin' && (t.members ?? 1) > 1 && page.classList.contains('rs-welcome')) $('rsWelcomeActions').insertAdjacentHTML('beforeend', '<button data-rw="handover" title="成员离职时，把他负责的研究转交给本机构的其他同事">研究交接…</button>')
+    }).catch(() => {})
+  }
+
+  /** 离职交接（机构管理员）：本机构的研究（只有标题、负责人、成员数）→ 选新负责人；原负责人移出，管理员自己不因此成为成员。 */
+  async function handoverDialog(): Promise<void> {
+    let rows: Array<{ study_id: string; title: string; owner: string; owner_name: string; members: number; updated_at: string }> = []
+    let people: Array<{ id: string; display_name: string; username: string }> = []
+    try { [rows, people] = await Promise.all([api('/api/tenant/studies'), api('/api/tenant/colleagues')]) } catch (err) { notice((err as Error).message, true); return }
+    const dlg = $('dialog')
+    const opts = (owner: string) => people.filter(p => p.id !== owner).map(p => `<option value="${p.id}">${esc(p.display_name)}（${esc(p.username)}）</option>`).join('')
+    dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="研究交接">
+      <div class="dialog-head"><h2>研究交接</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
+      <div class="dialog-body">
+        <div class="muted small">成员离职时，把他负责的研究交给本机构的另一位同事：新负责人接管全部内容，原负责人移出研究。你只看到研究名称与负责人，交接后也不会成为成员。每次交接写入审计日志。</div>
+        ${rows.length ? `<div class="ds-scroll"><table class="users"><thead><tr><th>研究</th><th>负责人</th><th>成员</th><th>交给</th><th></th></tr></thead><tbody>
+          ${rows.map(r => `<tr><td>${esc(r.title)}</td><td>${esc(r.owner_name)}</td><td>${r.members}</td><td><select data-hto="${r.study_id}">${opts(r.owner)}</select></td>
+            <td><button class="small-btn" data-hgo="${r.study_id}" data-htitle="${esc(r.title)}">交接</button></td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="muted">本机构还没有研究项目。</div>'}
+      </div></div>`
+    dlg.hidden = false
+    dlg.onchange = null
+    dlg.onclick = async e => {
+      const t = e.target as HTMLElement
+      if (t === dlg || t.closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = ''; return }
+      const go = t.closest<HTMLElement>('[data-hgo]')
+      if (!go) return
+      const to = dlg.querySelector<HTMLSelectElement>(`[data-hto="${go.dataset.hgo}"]`)?.value
+      if (!to) { notice('本机构没有可以接手的同事', true); return }
+      if (!await askConfirm({ title: '研究交接', message: `把「${go.dataset.htitle}」交给 ${people.find(p => p.id === to)?.display_name ?? ''}？原负责人会被移出研究。`, confirm: '交接', danger: true })) return
+      try { await api(`/api/studies/${go.dataset.hgo}/handover`, { method: 'POST', body: JSON.stringify({ user_id: to }) }); notice('已交接'); dlg.hidden = true; dlg.innerHTML = ''; void loadList() } catch (err) { notice((err as Error).message, true) }
+    }
   }
 
   // —— 事件 ——
@@ -347,6 +416,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (page.classList.contains('rs-welcome')) {
       const b = t.closest<HTMLElement>('[data-rw]')
       if (b?.dataset.rw === 'new') createDialog()
+      else if (b?.dataset.rw === 'handover') void handoverDialog()
       else if (b && list[0]) void openStudy(list[0].id)
       return
     }
@@ -391,6 +461,33 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (act === 'screen') { screenDialog(id); return }
     if (act === 'gen') { datasetDialog(id); return }
     if (act === 'attach') { $('rsMore').hidden = true; await attachExisting(s); return }
+    if (act === 'addmember') {
+      const user = ($('rsAddUser') as HTMLSelectElement).value, role = ($('rsAddRole') as HTMLSelectElement).value
+      try { await api(`/api/studies/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: user, role }) }); notice('已加入研究'); void openStudy(id); void loadList() } catch (err) { notice((err as Error).message, true) }
+      return
+    }
+    const mremove = t.closest<HTMLElement>('[data-mremove]')
+    if (mremove) {
+      if (!await askConfirm({ title: '移出成员', message: `把 ${mremove.dataset.mname} 移出研究？之后他看不到研究里的文档、数据和分析（包括他自己建的，这些内容属于研究）。`, confirm: '移出' })) return
+      try { await api(`/api/studies/${id}/members/${mremove.dataset.mremove}`, { method: 'DELETE' }); notice('已移出'); void openStudy(id) } catch (err) { notice((err as Error).message, true) }
+      return
+    }
+    const mtransfer = t.closest<HTMLElement>('[data-mtransfer]')
+    if (mtransfer) {
+      if (!await askConfirm({ title: '转交负责人', message: `把研究转交给 ${mtransfer.dataset.mname}？之后由他管理成员、删除研究；你留在研究里，角色变为「可编辑」。`, confirm: '转交' })) return
+      try { await api(`/api/studies/${id}/transfer`, { method: 'POST', body: JSON.stringify({ user_id: mtransfer.dataset.mtransfer }) }); notice('已转交'); void openStudy(id); void loadList() } catch (err) { notice((err as Error).message, true) }
+      return
+    }
+    if (act === 'leave') {
+      $('rsMore').hidden = true
+      if (!await askConfirm({ title: '退出研究', message: `退出「${s.title}」？之后你看不到研究里的文档、数据和分析；负责人可以再把你加回来。`, confirm: '退出', danger: true })) return
+      try {
+        const me = (await api<{ members: Member[] }>(`/api/studies/${id}/members`)).members.find(m => m.me)
+        if (me) await api(`/api/studies/${id}/members/${me.user_id}`, { method: 'DELETE' })
+        notice('已退出研究'); await loadList(); showWelcome()
+      } catch (err) { notice((err as Error).message, true) }
+      return
+    }
     if (act === 'delete') {
       $('rsMore').hidden = true
       if (await askConfirm({ title: '删除研究项目', message: `删除「${s.title}」？研究里的方案、论文、幻灯片会一起移到回收站（可以恢复）；数据集保留在「全部数据集」里。`, confirm: '删除', danger: true })) {
@@ -403,6 +500,11 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (!current || !$('page').classList.contains('study-page')) return
     const el = e.target as HTMLInputElement | HTMLSelectElement
     const id = current
+    if (el.dataset.mrole) {
+      try { await api(`/api/studies/${id}/members/${el.dataset.mrole}`, { method: 'PATCH', body: JSON.stringify({ role: el.value }) }); notice(`已改为「${el.value === 'viewer' ? '只读' : '可编辑'}」`) } catch (err) { notice((err as Error).message, true); void openStudy(id) }
+      return
+    }
+    if (el.id === 'rsAddUser' || el.id === 'rsAddRole') return
     if (el.id === 'rsUpload') {
       const files = Array.from((el as HTMLInputElement).files ?? [])
       ;(el as HTMLInputElement).value = ''

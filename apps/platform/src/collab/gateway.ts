@@ -6,6 +6,8 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import * as syncProtocol from 'y-protocols/sync'
 import type * as Y from 'yjs'
 import type { Documents } from '../model/runtime.ts'
+import type { DocRow } from '../store/db.ts'
+import { allows, type ResourceRole } from '../research/access.ts'
 
 /**
  * 协同网关（PLATFORM.md §9 P1）：最小 WebSocket 协议，`/collab/<docId>?token=`。
@@ -22,6 +24,8 @@ export interface GatewayDeps {
   docs: Documents
   /** 令牌 → 用户；无效返回 null。 */
   authenticate: (token: string) => string | null
+  /** 用户对文档的角色（研究共享文档：成员角色；其余只有主人）。不给时只放行主人。 */
+  role?: (user: string, doc: DocRow) => ResourceRole | null
 }
 
 export function attachCollab(server: Server, deps: GatewayDeps): WebSocketServer {
@@ -33,12 +37,17 @@ export function attachCollab(server: Server, deps: GatewayDeps): WebSocketServer
     const docId = decodeURIComponent(m[1]!)
     const user = deps.authenticate(url.searchParams.get('token') ?? '')
     const row = deps.docs.store.getDoc(docId)
-    if (!user || !row || row.owner !== user || row.kind !== 'doc' || row.deleted_at) {
+    const role = user && row ? (deps.role ? deps.role(user, row) : row.owner === user ? 'owner' : null) : null
+    if (!user || !row || !role || row.kind !== 'doc' || row.deleted_at) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }
-    wss.handleUpgrade(req, socket, head, ws => connect(ws, deps.docs.ydoc(docId)))
+    wss.handleUpgrade(req, socket, head, ws => {
+      // 连接上记下用户：合批落库时据此知道是谁改的（记忆信号只记在本人名下）
+      ;(ws as WebSocket & { heurionUser?: string }).heurionUser = user
+      connect(ws, deps.docs.ydoc(docId), allows(role, 'write'))
+    })
   })
   return wss
 }
@@ -47,7 +56,8 @@ function send(ws: WebSocket, encoder: encoding.Encoder): void {
   if (ws.readyState === ws.OPEN) ws.send(encoding.toUint8Array(encoder))
 }
 
-function connect(ws: WebSocket, ydoc: Y.Doc): void {
+/** writable=false（研究里的只读成员）：只同步服务端的内容给他，丢弃他发来的修改。 */
+function connect(ws: WebSocket, ydoc: Y.Doc, writable = true): void {
   const onUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === ws) return
     const encoder = encoding.createEncoder()
@@ -62,6 +72,8 @@ function connect(ws: WebSocket, ydoc: Y.Doc): void {
       const decoder = decoding.createDecoder(new Uint8Array(data))
       const type = decoding.readVarUint(decoder)
       if (type !== MSG_SYNC) return
+      // 只读：只处理 step1（客户端请求服务端状态），step2 / update（客户端的修改）丢弃
+      if (!writable && decoding.peekVarUint(decoder) !== syncProtocol.messageYjsSyncStep1) return
       const encoder = encoding.createEncoder()
       encoding.writeVarUint(encoder, MSG_SYNC)
       // 连接对象本身作为 origin：Documents 据此识别为浏览器编辑；广播时跳过发起方

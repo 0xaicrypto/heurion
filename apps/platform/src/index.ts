@@ -13,6 +13,7 @@ import { extractText } from './kb/extract.ts'
 import { KbService } from './kb/service.ts'
 import { makeIngest } from './datasets/ingest.ts'
 import { DatasetService } from './datasets/service.ts'
+import { Access } from './research/access.ts'
 import { StudyService } from './research/service.ts'
 import { CohortService } from './research/cohort.ts'
 import { TenantService } from './auth/tenants.ts'
@@ -84,10 +85,15 @@ const reportPages = async (name: string, mime: string, bytes: Uint8Array): Promi
 }
 const patients = new PatientService(config.tenantsDir, new TenantService(store, { devMode: config.devMode }), new TenantKeys(store, kekFrom({ kek: config.kek, secret: config.secret })), store,
   { pages: reportPages, complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }) })
-const studies = new StudyService(store, datasets)
+// 访问判定（研究团队协作）：研究里的文档、数据集、分析图按成员角色共享；接口、MCP、协同、服务层共用这一个
+const access = new Access(store)
+access.docText = id => JSON.stringify(docs.get(id).toJSON())
+datasets.access = access
+const studies = new StudyService(store, datasets, access)
 const cohort = new CohortService(studies, patients, datasets)
 // Unsplash 图库（幻灯片搜图）：没配 key 时 configured=false，界面隐藏入口、MCP 返回「未配置」
 const images = new ImageService(docs, ops, new Unsplash(config.unsplashAccessKey))
+images.access = access
 const turns = new TurnService(docs, pool, registry, { idleTimeoutMs: config.turnIdleTimeoutMs, memory, alerts })
 const mcpDeps = {
   docs, ops, claims, renderer, turns: registry, secret: config.secret,
@@ -103,6 +109,7 @@ const mcpDeps = {
   cohort,
   fulltext,
   images,
+  access,
   isLiveSession: (userId: string, generation: string) => pool.isLive(userId, generation),
 }
 
@@ -125,7 +132,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, images, workspaceDir: userId => pool.workspaceDir(userId) })
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, studies, cohort, images, access, workspaceDir: userId => pool.workspaceDir(userId) })
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))
@@ -173,7 +180,7 @@ const server = createServer((req, res) => {
   void api(req, res)
 })
 
-attachCollab(server, { docs, authenticate: token => accounts.userFor(token) })
+attachCollab(server, { docs, authenticate: token => accounts.userFor(token), role: (user, row) => access.docRole(user, row) })
 
 const restored = turns.restore()
 if (restored.interrupted || restored.requeued) console.log(`回合队列：${restored.interrupted} 个中断，${restored.requeued} 个继续排队`)

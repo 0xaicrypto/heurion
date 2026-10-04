@@ -54,6 +54,13 @@ const STUDY_PARITY: Record<string, string> = {
   'POST /api/studies/:sid/cohort': 'study_enroll',
   'DELETE /api/studies/:sid/cohort/:ptid': 'study_unenroll',
   'POST /api/studies/:sid/cohort/dataset': 'study_cohort_dataset',
+  // 研究团队成员（研究团队协作）
+  'GET /api/studies/:sid/members': 'study_members',
+  'GET /api/studies/:sid/candidates': 'study_members',
+  'POST /api/studies/:sid/members': 'study_members',
+  'PATCH /api/studies/:sid/members/:uid': 'study_members',
+  'DELETE /api/studies/:sid/members/:uid': 'study_members',
+  'POST /api/studies/:sid/transfer': 'study_members',
 }
 /** 图库：界面「图片 ▾ → 从 Unsplash 搜索」与 AI 同一个服务。 */
 const IMAGE_PARITY: Record<string, string> = {
@@ -75,6 +82,7 @@ const NOT_FOR_AI: Record<string, string> = {
   'DELETE /api/tenant/templates/:otid': '机构模板属于机构设置，由机构管理员本人维护',
   'PUT /api/tenant/templates/:otid/logo': '院徽由机构用官方文件上传，AI 不代传机构标识',
   'DELETE /api/tenant/templates/:otid/logo': '院徽由机构管理员本人维护',
+  'POST /api/studies/:sid/handover': '离职交接是机构管理员的人事操作（与机构成员管理一致，不给 AI）',
 }
 
 describe('人机对等：患者与临床研究', () => {

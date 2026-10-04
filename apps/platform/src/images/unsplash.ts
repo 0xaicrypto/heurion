@@ -45,7 +45,7 @@ interface RawPhoto {
 }
 
 export class UnsplashError extends Error {
-  constructor(readonly code: 'unsplash_unconfigured' | 'unsplash_failed' | 'photo_not_found' | 'bad_query', message: string, readonly status: 400 | 404 | 502 | 503 = 502) { super(message) }
+  constructor(readonly code: 'unsplash_unconfigured' | 'unsplash_failed' | 'photo_not_found' | 'bad_query', message: string, readonly status: 400 | 403 | 404 | 502 | 503 = 502) { super(message) }
 }
 
 export function creditOf(p: { user: { name: string; links: { html: string } }; links: { html: string } }): PhotoCredit {
