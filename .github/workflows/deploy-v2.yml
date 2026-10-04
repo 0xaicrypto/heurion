@@ -1,10 +1,10 @@
 name: Deploy Heurion 2.0
 
-# 2.0 代码在 0xaicrypto/heurion 的 v2 分支；部署到 1.0 所在的同一台 VPS（/opt/heurion2），替换 1.0。
+# 2.0 代码在 0xaicrypto/heurion 的 main 分支（2026-10-04 起；1.0 归档为 v1-archive 分支与 v1-final 标签）；部署到 /opt/heurion2。
 # 第一次部署会自动切换（停 1.0、全量备份、导入账户），失败自动恢复 1.0；清理 1.0 用 cleanup-v1.yml（手动）。
 on:
   push:
-    branches: [v2]
+    branches: [main]
     paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
 

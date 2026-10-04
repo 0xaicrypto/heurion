@@ -1,8 +1,7 @@
 name: Heurion 在线探测
 
 # 外部探测 heurion.org：每 10 分钟查一次 /healthz 与首页，连续两次失败开一个 issue（订阅仓库的人会收到邮件），
-# 恢复后自动关闭。GitHub 的定时任务只在默认分支（main）上运行——这个文件要放到 0xaicrypto/heurion 的 main 上，
-# 路径 .github/workflows/uptime.yml（2.0 代码在 v2 分支）。
+# 恢复后自动关闭。GitHub 的定时任务只在默认分支（main）上运行。
 on:
   schedule:
     - cron: '*/10 * * * *'
