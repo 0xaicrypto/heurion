@@ -160,6 +160,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'POST', re: /^\/api\/studies\/[^/]+\/cohort\/dataset$/, action: 'study.cohort_dataset' },
     { method: 'PATCH', re: /^\/api\/tenant$/, action: 'tenant.update' },
     { method: 'POST', re: /^\/api\/patients$/, action: 'patient.create' },
+    { method: 'POST', re: /^\/api\/patients\/[^/]+\/labs$/, action: 'patient.lab_add' },
     { method: 'DELETE', re: /^\/api\/patients\/[^/]+$/, action: 'patient.delete' },
     { method: 'GET', re: /^\/api\/patients\/[^/]+\/files\/[^/]+$/, action: 'patient.file_download' },
     { method: 'POST', re: /^\/api\/patients\/[^/]+\/team$/, action: 'patient.team_add' },
@@ -367,6 +368,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       const tests = c.req.query('tests')?.split(',').map(x => x.trim()).filter(Boolean)
       return c.json(pt(c).labs(me(c), c.req.param('ptid'), { tests, from: c.req.query('from'), to: c.req.query('to'), includePending: c.req.query('pending') === '1' }))
     } catch (err) { return patientFailure(c, err) }
+  })
+  /** 手动录入一项化验（知家：家人自己填的数值直接为已确认；AI 不能用，addLab 拒绝 via=ai）。 */
+  app.post('/api/patients/:ptid/labs', async c => {
+    try { return c.json(pt(c).addLab(me(c), c.req.param('ptid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) }
   })
   app.post('/api/patients/:ptid/labs/:lid/:action{confirm|reject}', c => {
     try { pt(c).setLabStatus(me(c), c.req.param('ptid'), c.req.param('lid'), c.req.param('action') === 'confirm' ? 'confirmed' : 'rejected'); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) }

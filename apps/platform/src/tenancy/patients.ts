@@ -29,6 +29,8 @@ export class PatientError extends Error {
 
 export interface PatientRow {
   id: string; code: string; sex: 'M' | 'F' | null; birth_year: number | null; tags: string[]
+  /** 称呼（家人档案里的叫法，加密存储；机构端为 null，患者端用称呼不用代号） */
+  name: string | null
   status: 'active' | 'archived'; created_by: string; created_at: string; updated_at: string
 }
 export interface LabRow {
@@ -103,7 +105,7 @@ class TenantPatientDb {
       PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS seq (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS patients (
-        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, sex TEXT, birth_year INTEGER, tags TEXT NOT NULL DEFAULT '[]', summary_enc TEXT,
+        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_enc TEXT, sex TEXT, birth_year INTEGER, tags TEXT NOT NULL DEFAULT '[]', summary_enc TEXT,
         status TEXT NOT NULL DEFAULT 'active', created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS care_team (
@@ -151,6 +153,7 @@ class TenantPatientDb {
     // 旧库补列
     const cols = (t: string) => (this.db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string }>).map(c => c.name)
     const labCols = cols('labs')
+    if (!cols('patients').includes('name_enc')) this.db.exec('ALTER TABLE patients ADD COLUMN name_enc TEXT')
     if (!labCols.includes('collected_at')) this.db.exec('ALTER TABLE labs ADD COLUMN collected_at TEXT')
     if (!labCols.includes('replaces')) this.db.exec('ALTER TABLE labs ADD COLUMN replaces TEXT')
     if (!cols('records').includes('report_time')) this.db.exec('ALTER TABLE records ADD COLUMN report_time TEXT')
@@ -170,8 +173,8 @@ class TenantPatientDb {
   close(): void { this.db.close() }
 }
 
-const patientOf = (r: Record<string, unknown>): PatientRow => ({
-  id: r.id as string, code: r.code as string, sex: (r.sex as PatientRow['sex']) ?? null, birth_year: (r.birth_year as number | null) ?? null,
+const patientOf = (r: Record<string, unknown>, name: string | null = null): PatientRow => ({
+  id: r.id as string, code: r.code as string, name, sex: (r.sex as PatientRow['sex']) ?? null, birth_year: (r.birth_year as number | null) ?? null,
   tags: JSON.parse((r.tags as string) || '[]') as string[], status: r.status as PatientRow['status'],
   created_by: r.created_by as string, created_at: r.created_at as string, updated_at: r.updated_at as string,
 })
@@ -246,7 +249,7 @@ export class PatientService {
     const team = this.teamRole(c.db, patientId, a.userId)
     const role = team ?? (c.settings.patient_visibility === 'tenant' ? 'tenant' : this.breakGlassActive(c.db, patientId, a.userId) ? 'break_glass' : null)
     if (!role) throw new PatientError('not_found', '患者不存在', 404)
-    return { c, p: patientOf(r), role }
+    return { c, p: patientOf(r, this.keys.decryptText(c.tenantId, (r.name_enc as string | null) ?? null)), role }
   }
 
   private log(c: { db: TenantPatientDb }, a: Actor, patientId: string, action: string, detail: string | null = null): void {
@@ -255,12 +258,12 @@ export class PatientService {
 
   // —— 患者 ——
 
-  create(a: Actor, input: { sex?: unknown; birth_year?: unknown; tags?: unknown }): PatientRow {
+  create(a: Actor, input: { sex?: unknown; birth_year?: unknown; tags?: unknown; name?: unknown }): PatientRow {
     const c = this.ctx(a)
     const id = rid('pt')
     const t = now()
-    c.db.db.prepare('INSERT INTO patients (id, code, sex, birth_year, tags, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, c.db.nextCode(), sex(input.sex), birthYear(input.birth_year), JSON.stringify(tags(input.tags)), a.userId, t, t)
+    c.db.db.prepare('INSERT INTO patients (id, code, name_enc, sex, birth_year, tags, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, c.db.nextCode(), this.keys.encryptText(c.tenantId, name(input.name)), sex(input.sex), birthYear(input.birth_year), JSON.stringify(tags(input.tags)), a.userId, t, t)
     c.db.db.prepare('INSERT INTO care_team (patient_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)').run(id, a.userId, 'owner', a.userId, t)
     this.log(c, a, id, 'create')
     return this.visible(a, id).p
@@ -273,7 +276,7 @@ export class PatientService {
       : c.db.db.prepare(`SELECT p.* FROM patients p WHERE p.id IN (SELECT patient_id FROM care_team WHERE user_id = ?)
           OR p.id IN (SELECT patient_id FROM break_glass WHERE user_id = ? AND expires_at > ?) ORDER BY p.updated_at DESC`).all(a.userId, a.userId, now())) as Array<Record<string, unknown>>
     return rows.map(r => {
-      const p = patientOf(r)
+      const p = patientOf(r, this.keys.decryptText(c.tenantId, (r.name_enc as string | null) ?? null))
       const stats = c.db.db.prepare("SELECT COUNT(*) AS n, MAX(collected_on) AS last FROM labs WHERE patient_id = ? AND status = 'confirmed'").get(p.id) as { n: number; last: string | null }
       const pending = (c.db.db.prepare("SELECT (SELECT COUNT(*) FROM labs WHERE patient_id = ? AND status = 'pending') + (SELECT COUNT(*) FROM proposals WHERE patient_id = ? AND status = 'pending') AS n").get(p.id, p.id) as { n: number }).n
       return { ...p, role: this.teamRole(c.db, p.id, a.userId) ?? (c.settings.patient_visibility === 'tenant' ? 'tenant' : 'break_glass'), labs: stats.n, last_lab: stats.last, pending }
@@ -295,12 +298,12 @@ export class PatientService {
     return { ...p, access: role, documents: this.documents(c, patientId, a.userId), studies: this.studiesOf(c, patientId), summary: this.keys.decryptText(c.tenantId, summary.summary_enc), care_team: team, records, latest_labs: latest, pending_proposals: this.proposals(a, patientId, c) }
   }
 
-  update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown }): PatientRow {
+  update(a: Actor, patientId: string, patch: { sex?: unknown; birth_year?: unknown; tags?: unknown; summary?: unknown; status?: unknown; name?: unknown }): PatientRow {
     const { c } = this.requireTeam(a, patientId)
     if (this.aiReview(a, c)) {
       // 需医生确认：作为一条「修改」提议
       const clean: Record<string, unknown> = {}
-      for (const k of ['sex', 'birth_year', 'tags', 'summary', 'status'] as const) if (patch[k] !== undefined) clean[k] = patch[k]
+      for (const k of ['sex', 'birth_year', 'tags', 'summary', 'status', 'name'] as const) if (patch[k] !== undefined) clean[k] = patch[k]
       if (patch.birth_year !== undefined) birthYear(patch.birth_year)
       this.propose(a, patientId, { kind: 'update', payload: clean, reason: typeof (patch as { reason?: unknown }).reason === 'string' ? (patch as { reason: string }).reason : 'AI 修改患者信息' })
       return this.visible(a, patientId).p
@@ -310,6 +313,7 @@ export class PatientService {
     if (patch.sex !== undefined) { sets.push('sex = ?'); args.push(sex(patch.sex)) }
     if (patch.birth_year !== undefined) { sets.push('birth_year = ?'); args.push(birthYear(patch.birth_year)) }
     if (patch.tags !== undefined) { sets.push('tags = ?'); args.push(JSON.stringify(tags(patch.tags))) }
+    if (patch.name !== undefined) { sets.push('name_enc = ?'); args.push(this.keys.encryptText(c.tenantId, name(patch.name))) }
     if (typeof patch.summary === 'string') { sets.push('summary_enc = ?'); args.push(this.keys.encryptText(c.tenantId, patch.summary.slice(0, 5000))) }
     if (patch.status === 'active' || patch.status === 'archived') { sets.push('status = ?'); args.push(patch.status) }
     if (sets.length) c.db.db.prepare(`UPDATE patients SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...args, now(), patientId)
@@ -687,7 +691,7 @@ export class PatientService {
   screen(a: Actor, studyId: string, criteria: unknown): { criteria: Criteria; total: number; patients: Array<{ patient_id: string; code: string; sex: string | null; age: number | null; tags: string[]; matched: string[]; subject_id: string | null }> } {
     const c = this.ctx(a)
     const cr = parseCriteria(criteria)
-    const rows = (c.db.db.prepare("SELECT p.* FROM patients p JOIN care_team t ON t.patient_id = p.id AND t.user_id = ? WHERE p.status = 'active' ORDER BY p.code").all(a.userId) as Array<Record<string, unknown>>).map(patientOf)
+    const rows = (c.db.db.prepare("SELECT p.* FROM patients p JOIN care_team t ON t.patient_id = p.id AND t.user_id = ? WHERE p.status = 'active' ORDER BY p.code").all(a.userId) as Array<Record<string, unknown>>).map(r => patientOf(r))
     const year = new Date().getUTCFullYear()
     const out = []
     for (const p of rows) {
@@ -829,6 +833,12 @@ export class PatientService {
 
 function sex(v: unknown): 'M' | 'F' | null {
   return v === 'M' || v === 'F' ? v : v === '男' ? 'M' : v === '女' ? 'F' : null
+}
+/** 称呼（家人档案里的叫法，如「妈妈」「宝宝」；不要求实名，留空 = 沿用代号）。 */
+function name(v: unknown): string | null {
+  if (v === null || v === undefined) return null
+  const s = String(v).trim().slice(0, 24)
+  return s || null
 }
 function birthYear(v: unknown): number | null {
   const n = Number(v)

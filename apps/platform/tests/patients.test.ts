@@ -34,6 +34,25 @@ describe('患者：机构隔离与可见范围', () => {
     expect(t.svc.list(t.as(t.u.drB)).map(p => p.id)).toEqual([pb.id])
   })
 
+  it('称呼：建档时写入（加密存储），列表与详情读得到，可改可清空；机构端不传就是 null', () => {
+    const t = env()
+    const a = t.as(t.u.drA)
+    const p = t.svc.create(a, { name: '妈妈', sex: 'F', birth_year: 1990, tags: ['孕产'] })
+    expect(p.name).toBe('妈妈')
+    expect(t.svc.list(a).map(x => x.name)).toEqual(['妈妈'])
+    // 库文件里看不到明文称呼
+    const raw = readFileSync(join(t.root, t.hospA.id, 'patients.db'))
+    expect(raw.includes(Buffer.from('妈妈'))).toBe(false)
+    // 改称呼 / 清空
+    t.svc.update(a, p.id, { name: '老妈' })
+    expect(t.svc.read(a, p.id).name).toBe('老妈')
+    t.svc.update(a, p.id, { name: '' })
+    expect(t.svc.read(a, p.id).name).toBeNull()
+    // 机构端原样：不传 name 的患者仍是 null
+    const q = t.svc.create(a, { sex: 'M' })
+    expect(q.name).toBeNull()
+  })
+
   it('诊疗组：同机构的人默认看不到，加进诊疗组后能看能改；机构设置「全员可见」时只能看不能改', () => {
     const t = env()
     const p = t.svc.create(t.as(t.u.drA), {})

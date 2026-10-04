@@ -95,7 +95,7 @@ describe('研究入组：筛选', () => {
   })
 
   it('matchCriteria：没有出生年份时年龄条件不匹配', () => {
-    const p = { id: 'x', code: 'P-9', sex: 'M' as const, birth_year: null, tags: [], status: 'active' as const, created_by: '', created_at: '', updated_at: '' }
+    const p = { id: 'x', code: 'P-9', name: null, sex: 'M' as const, birth_year: null, tags: [], status: 'active' as const, created_by: '', created_at: '', updated_at: '' }
     expect(matchCriteria(parseCriteria({ age_min: 18 }), p, [], 2026)).toBeNull()
     expect(matchCriteria(parseCriteria({ sex: 'M' }), p, [], 2026)).toEqual(['男'])
   })

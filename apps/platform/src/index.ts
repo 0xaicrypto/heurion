@@ -151,6 +151,10 @@ app.get('/app', c => existsSync(join(DIST, 'index.html'))
   ? c.html(readFileSync(join(DIST, 'index.html'), 'utf8'))
   : c.text('页面未构建：运行 pnpm --filter @heurion2/platform build，或用 dev:web 开发服务器（http://127.0.0.1:5173）', 503))
 app.get('/app/', c => c.redirect('/app'))
+// 知家（患者个人应用 V0，docs/design/PATIENT.md）：家庭健康顾问的移动 Web 外壳
+app.get('/phr', c => existsSync(join(DIST, 'phr.html'))
+  ? c.html(readFileSync(join(DIST, 'phr.html'), 'utf8'))
+  : c.text('页面未构建：运行 pnpm --filter @heurion2/platform build，或用 dev:web 开发服务器（http://127.0.0.1:5173/phr.html）', 503))
 // 官网：apps/site 的静态页（不用构建）；工作台在 /app
 const SITE = fileURLToPath(new URL('../../site/', import.meta.url))
 app.get('/', c => c.html(readFileSync(join(SITE, 'index.html'), 'utf8')))
