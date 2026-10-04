@@ -6,6 +6,7 @@ import { checkChartData, EDITABLE_CHART_TYPES, type ChartData } from '../convert
 import { deckSchema, emu, pt } from '../model/deck-schema.ts'
 import { decorations, isDecoName, LAYOUTS as LAYOUT_DEFS, layoutByName, layoutDef, layoutSpec, phSpecOf, themeOf, type LayoutKey, type PhSpec } from '../model/deck-templates.ts'
 import { DECK_THEMES, DEFAULT_THEME, resolveColor } from '../model/deck-themes.ts'
+import { BUILTIN_THEME_KEYS } from '../model/org-templates.ts'
 import { assignIds, indexById } from '../model/ids.ts'
 import { MarkdownError, parseBlocks, parseInline } from '../model/markdown.ts'
 import { replaceError, replaceInTextblock } from './apply.ts'
@@ -133,7 +134,7 @@ export const DeckOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('set_z'), shape_id: z.string(), to: z.enum(['front', 'back', 'forward', 'backward']).describe('置顶 / 置底 / 上移一层 / 下移一层') }),
   z.object({
     op: z.literal('apply_theme'),
-    theme: z.enum(Object.keys(DECK_THEMES) as [string, ...string[]]).describe(Object.entries(DECK_THEMES).map(([k, t]) => `${k}：${t.label}（${t.description}）`).join('；')),
+    theme: z.string().refine(v => !!DECK_THEMES[v], v => ({ message: `没有模板「${v}」（deck_templates 列出可用模板）` })).describe(BUILTIN_THEME_KEYS.map(k => `${k}：${DECK_THEMES[k]!.label}（${DECK_THEMES[k]!.description}）`).join('；') + '；以及本机构的模板 org_…（deck_templates 列出，只有本机构成员能用）'),
     slide_ids: z.array(z.string()).optional().describe('只套用到这些页；缺省全部'),
   }).describe('换模板：配色与字体；平台新建的 deck 还会换掉模板装饰（色条、色块等），继承版式位置的占位符挪到新模板的位置'),
   z.object({
@@ -688,7 +689,7 @@ function applyOne(tr: Transform, op: DeckOp, ctx: DeckContext): string[] {
       return [op.shape_id]
     }
     case 'apply_theme': {
-      if (!DECK_THEMES[op.theme]) throw new OpError('theme_not_found', `没有主题「${op.theme}」`, { hint: `可用主题：${Object.keys(DECK_THEMES).join('、')}` })
+      if (!DECK_THEMES[op.theme]) throw new OpError('theme_not_found', `没有主题「${op.theme}」`, { hint: `可用主题：${BUILTIN_THEME_KEYS.join('、')}；本机构模板用 deck_templates 查` })
       const ids: string[] = []
       const hits: Array<{ slide: PMNode; offset: number }> = []
       tr.doc.forEach((slide, offset) => {
@@ -779,9 +780,19 @@ function specParagraphs(spec: PhSpec, themeKey: string, markdown?: string): PMNo
 function decoShapes(themeKey: string, key: LayoutKey): PMNode[] {
   return decorations(themeKey, key).map(d => d.image
     ? deckSchema.node('shape', { kind: 'image', name: d.name, asset_id: d.image, description: d.credit ?? '', x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]) })
+    : d.text ? decoText(d)
     : deckSchema.node('shape', {
       kind: 'shape', name: d.name, geom: d.geom, fill: d.fill, x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]),
     }))
+}
+
+/** 文字装饰（机构名称）：一段固定字号、颜色的文字，名字 deco: 开头，不能改字。 */
+function decoText(d: { name: string; box: [number, number, number, number]; text?: { value: string; size: number; color: string; align: 'l' | 'r' } }): PMNode {
+  const t = d.text!
+  const ppr = `<a:pPr ${A_NS} marL="0" indent="0"${t.align === 'r' ? ' algn="r"' : ''}><a:buNone/></a:pPr>`
+  const rpr = deckSchema.marks.rpr!.create({ xml: `<a:rPr ${A_NS} lang="zh-CN" sz="${Math.round(t.size * 100)}" dirty="0"><a:solidFill><a:srgbClr val="${t.color}"/></a:solidFill></a:rPr>` })
+  return deckSchema.node('shape', { kind: 'text', name: d.name, x: emu(d.box[0]), y: emu(d.box[1]), w: emu(d.box[2]), h: emu(d.box[3]) },
+    [deckSchema.node('paragraph', { ppr, align: alignOf(ppr) }, [deckSchema.text(t.value, [rpr])])])
 }
 
 /**

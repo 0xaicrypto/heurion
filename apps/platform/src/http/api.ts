@@ -1,3 +1,5 @@
+import { OrgTemplateService } from '../auth/org-templates.ts'
+import { ORG_BASES, orgLogo, PRESET_AHSLYY, setOrgTenantResolver, themeAllowed, themeKeysFor } from '../model/org-templates.ts'
 import { Hono, type Context } from 'hono'
 import { Transform } from 'prosemirror-transform'
 import { streamSSE } from 'hono/streaming'
@@ -92,6 +94,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (err instanceof TenantError) return c.json({ error: err.message, code: err.code }, err.status)
     throw err
   }
+  // 机构幻灯片模板：运行时登记按调用者机构过滤（MCP 也用同一份登记）
+  const orgTemplates = new OrgTemplateService(store, tenants)
+  setOrgTenantResolver(uid => tenants.of(uid).id)
+  orgTemplates.loadAll()
   const app = new Hono<{ Variables: { user: string } }>()
   // 健康检查（部署脚本、容器 healthcheck、反向代理用）：数据库可读即健康；嵌入服务状态只报告不影响结果
   app.get('/healthz', async c => {
@@ -146,6 +152,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     { method: 'DELETE', re: /^\/api\/patients\/[^/]+\/team\/[^/]+$/, action: 'patient.team_remove' },
     { method: 'PATCH', re: /^\/api\/tenant\/members\/[^/]+$/, action: 'tenant.member_update' },
     { method: 'POST', re: /^\/api\/tenant\/invites$/, action: 'tenant.invite' },
+    { method: 'POST', re: /^\/api\/tenant\/templates$/, action: 'tenant.template_create' },
+    { method: 'PATCH', re: /^\/api\/tenant\/templates\/[^/]+$/, action: 'tenant.template_update' },
+    { method: 'DELETE', re: /^\/api\/tenant\/templates\/[^/]+$/, action: 'tenant.template_delete' },
+    { method: 'PUT', re: /^\/api\/tenant\/templates\/[^/]+\/logo$/, action: 'tenant.template_logo' },
+    { method: 'DELETE', re: /^\/api\/tenant\/templates\/[^/]+\/logo$/, action: 'tenant.template_logo_clear' },
     { method: 'DELETE', re: /^\/api\/tenant\/invites\/[^/]+$/, action: 'tenant.invite_revoke' },
     { method: 'POST', re: /^\/api\/platform\/tenants$/, action: 'platform.tenant_create' },
     { method: 'PATCH', re: /^\/api\/platform\/tenants\/[^/]+$/, action: 'platform.tenant_status' },
@@ -270,6 +281,28 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
   app.delete('/api/tenant/invites/:code', c => {
     try { tenants.revokeInvite(c.get('user'), c.req.param('code')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
+  })
+  // 机构幻灯片模板（管理员增删改、上传院徽；成员可看列表）
+  app.get('/api/tenant/templates', c => {
+    try { return c.json({ templates: orgTemplates.list(c.get('user')), bases: ORG_BASES.map(k => ({ key: k, label: DECK_THEMES[k]!.label })), presets: [PRESET_AHSLYY] }) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.post('/api/tenant/templates', async c => {
+    try { return c.json(orgTemplates.create(c.get('user'), await c.req.json()), 201) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.patch('/api/tenant/templates/:otid', async c => {
+    try { return c.json(orgTemplates.update(c.get('user'), c.req.param('otid'), await c.req.json())) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.delete('/api/tenant/templates/:otid', c => {
+    try { orgTemplates.remove(c.get('user'), c.req.param('otid')); return c.json({ ok: true }) } catch (err) { return tenantFailure(c, err) }
+  })
+  app.put('/api/tenant/templates/:otid/logo', async c => {
+    try {
+      const bytes = new Uint8Array(await c.req.arrayBuffer())
+      return c.json(orgTemplates.setLogo(c.get('user'), c.req.param('otid'), bytes, c.req.header('content-type') ?? ''))
+    } catch (err) { return tenantFailure(c, err) }
+  })
+  app.delete('/api/tenant/templates/:otid/logo', c => {
+    try { return c.json(orgTemplates.clearLogo(c.get('user'), c.req.param('otid'))) } catch (err) { return tenantFailure(c, err) }
   })
   app.get('/api/tenant/audit', c => {
     try {
@@ -558,7 +591,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       if (project === false) return c.json({ error: '项目不存在' }, 404)
       const place = (row: { id: string }) => { if (project) store.setDocProject(row.id, project); return store.getDoc(row.id)! }
       if (body.kind === 'deck') {
-        const template = body.template && DECK_THEMES[body.template] ? body.template : DEFAULT_THEME
+        const template = body.template && DECK_THEMES[body.template] && themeAllowed(body.template, user) ? body.template : DEFAULT_THEME
         const pkg = pptxTemplate(template)
         const row = docs.create({ owner: user, title, kind: 'deck', content: newTemplateDeck(title, template) })
         store.putPackage(row.id, 'pptx', pkg)
@@ -820,9 +853,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   /** 用户编辑（P1 编辑器上线前的入口）：同一操作层，actor=user。 */
   // 幻灯片主题（画布的主题选择与颜色板用；与 MCP apply_theme 同一份定义）
-  app.get('/api/deck-themes', c => c.json(DECK_THEMES))
+  app.get('/api/deck-themes', c => c.json(Object.fromEntries(themeKeysFor(c.get('user')).map(k => [k, DECK_THEMES[k]]))))
   // 模板清单：配色、说明、每个版式的占位符与装饰（模板选择器、加页的版式预览按它画）
-  app.get('/api/deck-templates', c => c.json(templateCatalog()))
+  app.get('/api/deck-templates', c => c.json(templateCatalog(c.get('user'))))
 
   app.post('/api/docs/:id/edit', async c => {
     const row = owned(c)
@@ -1201,6 +1234,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     // 带图模板的内置照片（公开授权，任何登录用户可取）
     const builtin = themePhoto(c.req.param('id'))
     if (builtin) return c.body(Buffer.from(builtin.bytes), 200, { 'Content-Type': builtin.mime, 'Cache-Control': 'public, max-age=86400' })
+    // 机构院徽：只给本机构成员
+    const logo = orgLogo(c.req.param('id'), c.get('user'))
+    if (logo) return c.body(Buffer.from(logo.bytes), 200, { 'Content-Type': logo.mime, 'Cache-Control': 'private, no-cache' })
     const asset = store.getAsset(c.req.param('id'))
     if (!asset || asset.owner !== c.get('user')) return c.json({ error: 'not found' }, 404)
     return c.body(Buffer.from(store.getAssetBytes(asset.id)!), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' })
