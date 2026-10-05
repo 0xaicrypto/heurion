@@ -94,6 +94,14 @@ h1 em { font-style: normal; color: var(--mint); }
 .note-act span { padding: 3px 10px; border: 1px solid var(--line-strong); font-size: 11px; }
 .note-act .ok { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); font-weight: 600; }
 
+/* 流水线与队列标签 */
+.mock-pipeline { display: flex; align-items: center; gap: 6px; padding: 8px 14px; background: var(--bg-deep); border-bottom: 1px solid var(--line); font-size: 11.5px; overflow-x: auto; scrollbar-width: none; }
+.pipe-step { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--line-strong); color: var(--muted); border-radius: 2px; font-family: var(--mono); white-space: nowrap; }
+.pipe-step.done { color: var(--green); border-color: var(--green-line); background: rgba(6, 182, 128, .08); }
+.pipe-step.active { color: var(--mint-ink); background: var(--mint); border-color: var(--mint); font-weight: 600; }
+.cohort-tag { font: 500 11px/1.4 var(--mono); color: #064e3b; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 5px 8px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cohort-tag span { font-weight: 700; color: #047857; }
+
 /* 四支柱 */
 .pillars { border-bottom: 1px solid var(--line); background: var(--bg-deep); }
 .pillar-row { display: grid; grid-template-columns: repeat(4, 1fr); }
@@ -108,7 +116,7 @@ h1 em { font-style: normal; color: var(--mint); }
 h2 { font-size: clamp(30px, 3.6vw, 48px); line-height: 1.15; font-weight: 600; letter-spacing: -.015em; max-width: 18em; }
 
 /* 痛点 */
-.pains { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 64px; border-top: 1px solid var(--line); }
+.pains { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 64px; border-top: 1px solid var(--line); }
 .pain { padding: 36px 32px 8px 0; display: flex; flex-direction: column; }
 .pain + .pain { padding-left: 32px; border-left: 1px solid var(--line); }
 .pain h3 { font-size: 22px; font-weight: 600; margin: 16px 0 14px; }
@@ -181,7 +189,9 @@ h2 { font-size: clamp(30px, 3.6vw, 48px); line-height: 1.15; font-weight: 600; l
 @media (max-width: 1080px) {
   .hero-row { grid-template-columns: 1fr; gap: 56px; padding-top: 72px; padding-bottom: 96px; }
   .mock { max-width: 720px; }
-  .pillar-row, .caps, .road { grid-template-columns: repeat(2, 1fr); }
+  .pillar-row, .caps, .pains, .road { grid-template-columns: repeat(2, 1fr); }
+  .pain:nth-child(2) { border-right: 1px solid var(--line); }
+  .pain:nth-child(-n+2) { border-bottom: 1px solid var(--line); padding-bottom: 24px; }
   .pillar:nth-child(2) { border-right: 1px solid var(--line); }
   .pillar:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .sec-row { grid-template-columns: 1fr; gap: 40px; }

@@ -2,8 +2,8 @@
 
 # Heurion 2.0 & OmniCanvas
 
-### Next-Gen AI-Native Collaborative Workspace & Medical Intelligence Platform
-下一代 AI 原生协同创作与医学智能工作台
+### End-to-End Clinical Research AI Workstation & Collaborative Canvas
+端到端临床科研全流程智能工作台与协同创作画布
 
 <p align="center">
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%E2%89%A524.0.0-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js Version" /></a>
@@ -30,12 +30,16 @@
 
 ## 📖 Overview
 
-**Heurion 2.0** is an AI-native collaborative workspace and medical intelligence platform engineered for high-stakes, evidence-grounded scenarios—academic research, clinical medical documentation, slide deck design, and multi-agent collaborative editing.
+**Heurion 2.0** is an **end-to-end clinical research AI workstation and collaborative canvas** engineered for the full lifecycle of medical discovery:
+- **Patient Data Collection**: Digitizing outpatient/inpatient records, multimodal lab report OCR, and personal health records (PHR) with clinical claim authorization.
+- **Research Project & Cohort Management**: Managing clinical studies, protocol milestones, and complex multi-parameter patient cohort filtering (inclusion/exclusion criteria).
+- **Data Governance & Autonomous Memory Evolution**: Clean clinical datasets (CSV, Excel, SAS, SPSS, Stata) and a self-evolving memory engine that distills research hypotheses, statistical definitions, and team consensus over time.
+- **Statistical Analysis & Paper Writing**: Sandboxed statistical computing (Table 1, Kaplan-Meier curves), structured collaborative paper drafting (Docs & Slides dual-mode), rigorous literature verification (PubMed, Europe PMC, OpenAlex), and verifiable citations.
 
 Unlike conventional LLM interfaces that treat documents as flat Markdown strings and overwrite entire texts, Heurion maintains a **structured document model with globally stable Block IDs**. All AI agent edits (such as DeepSeek, Claude, or GPT) interact via the standardized **Model Context Protocol (MCP)** and pass through strict operational **Write Guards** (ensuring user primacy, citation integrity, and human comment anchor preservation).
 
 The project features a **decoupled dual-engine architecture**:
-1. **Heurion Medical Platform (`@heurion2/platform`)**: Full-featured clinical & research intelligence platform with multi-source literature search (PubMed, Europe PMC, OpenAlex), personal health records (PHR), advanced cohort filtering, PHI privacy leak scanning, and multi-tenant RBAC.
+1. **Heurion Medical Platform (`@heurion2/platform`)**: Full-featured clinical research intelligence workstation with PHR ingestion, cohort query builder, sandboxed analytics, literature grounding, and PHI privacy scanning.
 2. **OmniCanvas Microservice (`@heurion2/canvas-service`)**: Decoupled, standalone collaborative workspace providing rich-text document editing and interactive slide presentation design, equipped with 30 pure Canvas MCP tools for document layout and slide deck generation, with zero domain coupling.
 
 ---
@@ -241,12 +245,18 @@ pnpm --filter @heurion2/platform ui
 
 ## 📖 平台概述 (Overview)
 
-**Heurion 2.0** 是一套专为高严肃度场景（医学文档、循证学术研究、幻灯片设计、多智能体协同写作）打造的 **AI 原生协作与智能工作台**。
+**Heurion 2.0** 是一套专为临床医学与生命科学科研全生命周期打造的**端到端全流程智能工作台与协同画布**（Clinical Research AI Workstation）。
 
-与传统的粗粒度大模型文本生成不同，Heurion 采用**结构化稳定 ID 文档模型**，将粒度精确到段落与区块。所有 AI 智能体（如 DeepSeek、Claude、GPT 等）的操作均通过标准 **Model Context Protocol (MCP)** 执行，并在操作层经过严格的**写前守卫（Write Guards）**保护，确保人类优先权、学术引用有效性、以及评论锚点的持久不失效。
+与传统的单点大模型写作工具不同，Heurion 深度贯通临床科研的全链路：
+- **患者数据收集与资产化**：门诊与住院病历数字化录入、化验单多模态 OCR 结构化提取、知家患者数字健康档案（PHR）协同沉淀，多租户授权 Claims 机制保障数据合规。
+- **科研项目与队列管理**：多课题集中立项与多租户权限隔离，多维复杂条件交并筛选（入排标准、诊断编码、检验值区间），秒级锁定目标人群画像。
+- **数据治理与自主记忆演进**：临床科研数据集（CSV/Excel/SAS/SPSS/Stata）标准化清洗与治理，独创课题记忆演进引擎，自动吸收研究假设与统计口径，越用越懂你的科研意图。
+- **严谨统计、论文撰写与学术汇报**：隔离沙箱环境秒级运行 Python/R 脚本自动输出 Table 1 与生存曲线，Docs & Slides 双模协同，写前守卫保护人类编辑优先权，PubMed/EuropePMC/OpenAlex 交叉验真。
+
+平台采用**结构化稳定 ID 文档模型**，将粒度精确到段落与区块。所有 AI 智能体（如 DeepSeek、Claude、GPT 等）的操作均通过标准 **Model Context Protocol (MCP)** 执行，并在操作层经过严格的**写前守卫（Write Guards）**保护，确保人类优先权、学术引用有效性、以及评论锚点的持久不失效。
 
 项目提供**双引擎解耦架构**：
-1. **Heurion Medical Platform (`@heurion2/platform`)**：全功能医学智能工作台，包含多数据源文献检索（PubMed、Europe PMC、OpenAlex）、PHR 患者数字档案、队列条件筛选、PHI 敏感信息泄露拦截与多租户权限控制。
+1. **Heurion Medical Platform (`@heurion2/platform`)**：全功能医学智能工作台，包含患者数据采集、队列筛选、沙箱统计、多源文献检索（PubMed、Europe PMC、OpenAlex）、PHR 患者数字档案、PHI 敏感信息泄露拦截与多租户权限控制。
 2. **OmniCanvas 微服务 (`@heurion2/canvas-service`)**：完全解耦的独立在线协同工作台，集成现代化长文排版与幻灯片设计器，内置 30 项纯净版 Canvas MCP 通用排版与幻灯片生成工具，零领域耦合。
 
 ---
