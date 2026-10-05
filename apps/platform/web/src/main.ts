@@ -1169,36 +1169,130 @@ function setBusy(b: boolean): void {
 }
 
 // —— 对话里贴图：粘贴 / 拖入的图片先上传为资产，发送时一起带上（AI 用 read_image 看） ——
-let chatImages: Array<{ id: string; name: string }> = []
+let chatImages: Array<{ id: string; name: string; previewUrl: string }> = []
 function renderChatImages(): void {
   const box = $('chatImages')
   box.hidden = chatImages.length === 0
-  box.innerHTML = chatImages.map(i => `<span class="chat-img" data-id="${i.id}"><img src="/api/assets/${i.id}?token=${encodeURIComponent(TOKEN)}" alt="${esc(i.name)}"><button class="chip-x" aria-label="移除">✕</button></span>`).join('')
+  box.innerHTML = chatImages.map(i => {
+    const src = i.previewUrl || `/api/assets/${i.id}?token=${encodeURIComponent(TOKEN)}`
+    return `<span class="chat-img" data-id="${i.id}"><img src="${src}" alt="${esc(i.name)}"><button class="chip-x" aria-label="移除">✕</button></span>`
+  }).join('')
     + (chatImages.length ? '<span class="muted small chat-img-hint">图片会发给 AI 模型，不要贴含患者姓名、证件号等身份信息的图</span>' : '')
 }
+
+function removeChatImage(id: string): void {
+  const item = chatImages.find(i => i.id === id)
+  if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl)
+  chatImages = chatImages.filter(i => i.id !== id)
+  renderChatImages()
+}
+
+function clearAllChatImages(): void {
+  for (const i of chatImages) {
+    if (i.previewUrl) URL.revokeObjectURL(i.previewUrl)
+  }
+  chatImages = []
+  renderChatImages()
+}
+
 async function attachImages(files: File[]): Promise<void> {
   if (!session) { showNotice('先打开一份文档再贴图', true); return }
   for (const f of files.slice(0, 8 - chatImages.length)) {
+    if (!f || f.size <= 0) {
+      showNotice('剪贴板中无有效图片数据（或为本地文件副本，请直接拖拽图片入框）', true)
+      continue
+    }
     if (f.size > 10 * 1024 * 1024) { showNotice(`${f.name} 超过 10MB`, true); continue }
+    const previewUrl = URL.createObjectURL(f)
     const fd = new FormData()
     fd.append('file', f)
-    try { chatImages.push({ id: (await api(`/api/docs/${session.docId}/assets`, { method: 'POST', body: fd })).asset_id, name: f.name || '图片' }) }
-    catch (err) { showNotice(`图片上传失败：${(err as Error).message}`, true) }
+    try {
+      const res = await api<{ asset_id: string; name: string }>(`/api/docs/${session.docId}/assets`, { method: 'POST', body: fd })
+      chatImages.push({ id: res.asset_id, name: f.name || '图片', previewUrl })
+    } catch (err) {
+      URL.revokeObjectURL(previewUrl)
+      showNotice(`图片上传失败：${(err as Error).message}`, true)
+    }
   }
   renderChatImages()
 }
-$<HTMLTextAreaElement>('chatInput').addEventListener('paste', e => {
-  const files = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'))
-  if (files.length) { e.preventDefault(); void attachImages(files) }
+
+$<HTMLTextAreaElement>('chatInput').addEventListener('paste', async e => {
+  const cd = e.clipboardData
+  if (!cd) return
+
+  const files: File[] = []
+
+  // 1. 优先从 items 提取（系统截图、画板、直接粘贴图片二进制）
+  for (const item of [...(cd.items ?? [])]) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file && file.size > 0) files.push(file)
+    }
+  }
+
+  // 2. 兜底从 files 读取
+  if (files.length === 0) {
+    for (const f of [...(cd.files ?? [])]) {
+      if (f.type.startsWith('image/') && f.size > 0) files.push(f)
+    }
+  }
+
+  // 3. 从 HTML 解析 base64 图片（网页直接复制图）
+  if (files.length === 0) {
+    const html = cd.getData('text/html')
+    if (html) {
+      const match = /<img[^>]+src=["'](data:image\/([a-zA-Z0-9+]+);base64,([^"']+))["']/i.exec(html)
+      const dataUrl = match?.[1]
+      if (dataUrl) {
+        try {
+          const res = await fetch(dataUrl)
+          const blob = await res.blob()
+          if (blob.size > 0) {
+            files.push(new File([blob], 'pasted-image.' + (match[2] || 'png'), { type: blob.type || 'image/png' }))
+          }
+        } catch { /* 忽略 */ }
+      }
+    }
+  }
+
+  if (files.length > 0) {
+    e.preventDefault()
+    void attachImages(files)
+  } else {
+    // 检查是否复制了 Finder 本地文件（size === 0）
+    const hasZeroFile = [...(cd.files ?? [])].some(f => f.type.startsWith('image/') || f.size === 0)
+    if (hasZeroFile && cd.types.includes('Files')) {
+      e.preventDefault()
+      showNotice('无法直接粘贴本地文件副本（系统安全限制），请直接将图片文件拖入输入框', true)
+    }
+  }
 })
-document.querySelector('.composer')!.addEventListener('dragover', e => { if ([...((e as DragEvent).dataTransfer?.items ?? [])].some(i => i.type.startsWith('image/'))) e.preventDefault() })
+
+document.querySelector('.composer')!.addEventListener('dragover', e => {
+  if ([...((e as DragEvent).dataTransfer?.items ?? [])].some(i => i.type.startsWith('image/'))) e.preventDefault()
+})
+
 document.querySelector('.composer')!.addEventListener('drop', e => {
-  const files = [...((e as DragEvent).dataTransfer?.files ?? [])].filter(f => f.type.startsWith('image/'))
+  const dt = (e as DragEvent).dataTransfer
+  const files: File[] = []
+  for (const item of [...(dt?.items ?? [])]) {
+    if (item.kind === 'file') {
+      const f = item.getAsFile()
+      if (f && f.type.startsWith('image/') && f.size > 0) files.push(f)
+    }
+  }
+  if (files.length === 0) {
+    for (const f of [...(dt?.files ?? [])]) {
+      if (f.type.startsWith('image/') && f.size > 0) files.push(f)
+    }
+  }
   if (files.length) { e.preventDefault(); void attachImages(files) }
 })
+
 $('chatImages').onclick = e => {
   const id = ((e.target as HTMLElement).closest('.chip-x')?.parentElement as HTMLElement | undefined)?.dataset.id
-  if (id) { chatImages = chatImages.filter(i => i.id !== id); renderChatImages() }
+  if (id) removeChatImage(id)
 }
 
 async function send(): Promise<void> {
@@ -1206,8 +1300,7 @@ async function send(): Promise<void> {
   if ((!typed && chatImages.length === 0) || !session) return
   const text = typed || '请看我附的图片'
   const images = chatImages.map(i => i.id)
-  chatImages = []
-  renderChatImages()
+  clearAllChatImages()
   $<HTMLTextAreaElement>('chatInput').value = ''
   // 属于患者的文档（病例报告等）：对话自动带上这位患者
   const patients = [...new Set([...(docPatient ? [docPatient] : []), ...patientsUi.takePicked()])]

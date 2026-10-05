@@ -6,3 +6,8 @@ data/
 .DS_Store
 dist-web/
 .venv-compute/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.canvas-render-cache/

@@ -277,6 +277,39 @@ export interface ReplyRow {
   created_at: string
 }
 
+export interface PhrClaimRow {
+  id: string
+  code: string
+  tenant_id: string
+  patient_id: string
+  created_by: string
+  expires_at: string
+  status: 'active' | 'requested' | 'confirmed' | 'revoked' | 'expired'
+  claimant_user_id: string | null
+  claimant_patient_id: string | null
+  requested_at: string | null
+  confirmed_by: string | null
+  confirmed_at: string | null
+  revoked_by: string | null
+  revoked_at: string | null
+  created_at: string
+}
+
+export interface PersonLinkRow {
+  id: string
+  tenant_id: string
+  hospital_patient_id: string
+  claimant_user_id: string
+  claimant_patient_id: string
+  claim_id: string | null
+  verified_by: string
+  verified_at: string
+  status: 'active' | 'revoked'
+  revoked_by: string | null
+  revoked_at: string | null
+  created_at: string
+}
+
 export type ClaimVerdict = 'supported' | 'unsupported' | 'unclear' | 'missing_citation'
 
 export interface ClaimCheckRow {
@@ -584,7 +617,23 @@ export class Store {
       imported_at TEXT, imported_by TEXT, imported_patient_id TEXT
     );
     CREATE INDEX IF NOT EXISTS phr_shares_target ON phr_shares (tenant_id, status);
-    CREATE INDEX IF NOT EXISTS phr_shares_owner ON phr_shares (owner, patient_id);`)
+    CREATE INDEX IF NOT EXISTS phr_shares_owner ON phr_shares (owner, patient_id);
+    CREATE TABLE IF NOT EXISTS phr_claims (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL, patient_id TEXT NOT NULL,
+      created_by TEXT NOT NULL, expires_at TEXT NOT NULL, status TEXT NOT NULL,
+      claimant_user_id TEXT, claimant_patient_id TEXT, requested_at TEXT,
+      confirmed_by TEXT, confirmed_at TEXT, revoked_by TEXT, revoked_at TEXT, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS phr_claims_code ON phr_claims (code);
+    CREATE INDEX IF NOT EXISTS phr_claims_target ON phr_claims (tenant_id, patient_id);
+    CREATE TABLE IF NOT EXISTS person_links (
+      id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, hospital_patient_id TEXT NOT NULL,
+      claimant_user_id TEXT NOT NULL, claimant_patient_id TEXT NOT NULL,
+      claim_id TEXT, verified_by TEXT NOT NULL, verified_at TEXT NOT NULL,
+      status TEXT NOT NULL, revoked_by TEXT, revoked_at TEXT, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS person_links_hospital ON person_links (tenant_id, hospital_patient_id);
+    CREATE INDEX IF NOT EXISTS person_links_claimant ON person_links (claimant_user_id, claimant_patient_id);`)
     // 研究团队协作之前的研究：负责人补成成员表里的 owner；研究记下所属机构（负责人当时的机构）
     const studyCols = (this.db.prepare('PRAGMA table_info(studies)').all() as Array<{ name: string }>).map(c => c.name)
     if (!studyCols.includes('tenant_id')) this.db.exec('ALTER TABLE studies ADD COLUMN tenant_id TEXT')
@@ -1194,6 +1243,59 @@ export class Store {
     this.db.prepare('UPDATE phr_shares SET imported_at = ?, imported_by = ?, imported_patient_id = ? WHERE id = ?').run(now(), by, patientId, id)
   }
 
+  // —— 认领码与患者绑定 (PATIENT.md §4) ——
+
+  addClaim(c: Pick<PhrClaimRow, 'code' | 'tenant_id' | 'patient_id' | 'created_by' | 'expires_at'>): PhrClaimRow {
+    const id = 'clm' + randomUUID().replace(/-/g, '').slice(0, 12)
+    this.db.prepare(`INSERT INTO phr_claims (id, code, tenant_id, patient_id, created_by, expires_at, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`).run(id, c.code, c.tenant_id, c.patient_id, c.created_by, c.expires_at, now())
+    return this.getClaim(id)!
+  }
+
+  getClaim(id: string): PhrClaimRow | undefined {
+    return this.db.prepare('SELECT * FROM phr_claims WHERE id = ?').get(id) as unknown as PhrClaimRow | undefined
+  }
+
+  getClaimByCode(code: string): PhrClaimRow | undefined {
+    return this.db.prepare('SELECT * FROM phr_claims WHERE code = ?').get(code) as unknown as PhrClaimRow | undefined
+  }
+
+  updateClaim(id: string, patch: Partial<PhrClaimRow>): void {
+    const keys = Object.keys(patch).filter(k => k !== 'id')
+    if (keys.length === 0) return
+    const sets = keys.map(k => `${k} = ?`).join(', ')
+    const vals = keys.map(k => (patch as Record<string, any>)[k])
+    this.db.prepare(`UPDATE phr_claims SET ${sets} WHERE id = ?`).run(...(vals as any[]), id)
+  }
+
+  listClaimsForPatient(tenantId: string, patientId: string): PhrClaimRow[] {
+    return this.db.prepare('SELECT * FROM phr_claims WHERE tenant_id = ? AND patient_id = ? ORDER BY created_at DESC').all(tenantId, patientId) as unknown as PhrClaimRow[]
+  }
+
+  addPersonLink(l: Pick<PersonLinkRow, 'tenant_id' | 'hospital_patient_id' | 'claimant_user_id' | 'claimant_patient_id' | 'claim_id' | 'verified_by'>): PersonLinkRow {
+    const id = 'plk' + randomUUID().replace(/-/g, '').slice(0, 12)
+    const t = now()
+    this.db.prepare(`INSERT INTO person_links (id, tenant_id, hospital_patient_id, claimant_user_id, claimant_patient_id, claim_id, verified_by, verified_at, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`).run(id, l.tenant_id, l.hospital_patient_id, l.claimant_user_id, l.claimant_patient_id, l.claim_id, l.verified_by, t, t)
+    return this.getPersonLink(id)!
+  }
+
+  getPersonLink(id: string): PersonLinkRow | undefined {
+    return this.db.prepare('SELECT * FROM person_links WHERE id = ?').get(id) as unknown as PersonLinkRow | undefined
+  }
+
+  revokePersonLink(id: string, revokedBy: string): void {
+    this.db.prepare("UPDATE person_links SET status = 'revoked', revoked_by = ?, revoked_at = ? WHERE id = ?").run(revokedBy, now(), id)
+  }
+
+  listLinksForHospitalPatient(tenantId: string, patientId: string): PersonLinkRow[] {
+    return this.db.prepare('SELECT * FROM person_links WHERE tenant_id = ? AND hospital_patient_id = ? ORDER BY created_at DESC').all(tenantId, patientId) as unknown as PersonLinkRow[]
+  }
+
+  listLinksForClaimant(claimantUserId: string, claimantPatientId: string): PersonLinkRow[] {
+    return this.db.prepare('SELECT * FROM person_links WHERE claimant_user_id = ? AND claimant_patient_id = ? ORDER BY created_at DESC').all(claimantUserId, claimantPatientId) as unknown as PersonLinkRow[]
+  }
+
   // —— 临床研究 ——
 
   addStudy(s: Pick<StudyRow, 'owner' | 'title' | 'design' | 'status' | 'summary'>): StudyRow {
@@ -1657,7 +1759,14 @@ export class Store {
 
   upsertCitation(input: { doc_id: string; doi: string; pmid: string | null; formatted: string; url: string | null }): CitationRow {
     const existing = this.db.prepare('SELECT * FROM citations WHERE doc_id = ? AND doi = ?').get(input.doc_id, input.doi) as CitationRow | undefined
-    if (existing) return existing
+    if (existing) {
+      if (input.formatted && input.formatted !== existing.formatted) {
+        this.db.prepare('UPDATE citations SET formatted = ?, pmid = COALESCE(?, pmid), url = COALESCE(?, url) WHERE id = ?')
+          .run(input.formatted, input.pmid, input.url, existing.id)
+        return this.db.prepare('SELECT * FROM citations WHERE id = ?').get(existing.id) as unknown as CitationRow
+      }
+      return existing
+    }
     const id = 'c' + randomUUID().replace(/-/g, '').slice(0, 7)
     this.db.prepare('INSERT INTO citations (id, doc_id, doi, pmid, formatted, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, input.doc_id, input.doi, input.pmid, input.formatted, input.url, now())

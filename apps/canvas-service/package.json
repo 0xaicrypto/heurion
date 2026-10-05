@@ -1,0 +1,46 @@
+{
+  "name": "@heurion2/canvas-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-native online collaborative document and canvas service (OmniCanvas / AgentDoc)",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@heurion2/platform": "workspace:*",
+    "@hono/node-server": "^1.19.17",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "hono": "^4.13.11",
+    "lib0": "^0.2.119",
+    "prosemirror-commands": "^1.7.2",
+    "prosemirror-dropcursor": "^1.8.4",
+    "prosemirror-gapcursor": "^1.4.1",
+    "prosemirror-inputrules": "^1.5.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.12",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-tables": "^1.8.5",
+    "prosemirror-transform": "^1.12.2",
+    "prosemirror-view": "^1.42.6",
+    "ws": "^8.22.0",
+    "y-prosemirror": "^1.3.7",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.1",
+    "vitest": "^3.2.7"
+  }
+}

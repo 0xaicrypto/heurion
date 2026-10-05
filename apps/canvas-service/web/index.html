@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniCanvas · Google Workspace 风格 AI 原生协同创作平台</title>
+  <link rel="stylesheet" href="./src/style.css">
+  <link rel="stylesheet" href="./src/google-workspace.css">
+</head>
+<body>
+  <div class="gw-app-container">
+    <!-- 1. Google Workspace 顶栏 -->
+    <header class="gw-header">
+      <div class="gw-header-primary">
+        <div class="gw-doc-meta">
+          <div class="gw-app-logo" id="btnLogoHome" title="OmniCanvas 首页">
+            <span id="appIcon" class="gw-app-icon doc">📄</span>
+          </div>
+          <div class="gw-title-container">
+            <div class="gw-title-row">
+              <input id="docTitle" class="gw-title-input" value="正在加载文档..." spellcheck="false" />
+              <button id="btnStar" class="gw-star-btn" title="加星标">⭐</button>
+              <div id="syncPill" class="gw-sync-pill synced">
+                <span class="gw-sync-dot"></span>
+                <span id="syncText">已同步至本地云端</span>
+              </div>
+              <span id="modeBadge" class="gw-mode-badge doc">文档模式</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="gw-header-actions">
+          <button id="btnMcpConnect" class="gw-btn gw-btn-mcp" title="外部 Agent 直连协议">⚡ MCP: /mcp</button>
+          <button id="btnToggleAi" class="gw-btn" title="展开 / 收起 AI 协作面板">🤖 AI 助理</button>
+          <button id="btnExportMenu" class="gw-btn" title="导出文件">📥 导出 ▾</button>
+          <button id="btnPresent" class="gw-btn gw-btn-deck" style="display:none;" title="全屏放映演示">▶ 放映</button>
+          <div class="gw-avatar" title="当前登录角色：Editor">ED</div>
+        </div>
+      </div>
+
+      <!-- 2. Google Docs / Slides 经典菜单栏 -->
+      <nav class="gw-menubar">
+        <div class="gw-menu-item">
+          <button class="gw-menu-trigger">文件</button>
+          <div class="gw-dropdown-menu">
+            <div class="gw-menu-option" id="menuNewDoc"><span>+ 新建文档</span><span class="gw-shortcut">Doc</span></div>
+            <div class="gw-menu-option" id="menuNewDeck"><span>+ 新建幻灯片</span><span class="gw-shortcut">Deck</span></div>
+            <div class="gw-menu-divider"></div>
+            <div class="gw-menu-option" id="menuExportDocx"><span>导出为 Word (.docx)</span></div>
+            <div class="gw-menu-option" id="menuExportPptx"><span>导出为 PowerPoint (.pptx)</span></div>
+            <div class="gw-menu-option" id="menuExportMd"><span>导出为 Markdown (.md)</span></div>
+            <div class="gw-menu-divider"></div>
+            <div class="gw-menu-option" id="menuDuplicate"><span>创建副本</span></div>
+            <div class="gw-menu-option" id="menuDelete" style="color:var(--gw-red);"><span>删除当前文档</span></div>
+          </div>
+        </div>
+
+        <div class="gw-menu-item">
+          <button class="gw-menu-trigger">编辑</button>
+          <div class="gw-dropdown-menu">
+            <div class="gw-menu-option" id="menuUndo"><span>撤销</span><span class="gw-shortcut">Ctrl+Z</span></div>
+            <div class="gw-menu-option" id="menuRedo"><span>重做</span><span class="gw-shortcut">Ctrl+Y</span></div>
+          </div>
+        </div>
+
+        <div class="gw-menu-item">
+          <button class="gw-menu-trigger">视图</button>
+          <div class="gw-dropdown-menu">
+            <div class="gw-menu-option" id="menuToggleSidebar"><span>显示/隐藏左侧大纲栏</span></div>
+            <div class="gw-menu-option" id="menuToggleAiPanel"><span>显示/隐藏右侧 AI 助手</span></div>
+            <div class="gw-menu-divider"></div>
+            <div class="gw-menu-option" id="modeDoc"><span>切换至流式文档</span></div>
+            <div class="gw-menu-option" id="modeDeck"><span>切换至幻灯片画布</span></div>
+          </div>
+        </div>
+
+        <div class="gw-menu-item">
+          <button class="gw-menu-trigger">插入</button>
+          <div class="gw-dropdown-menu">
+            <div class="gw-menu-option" id="menuInsertCard"><span>圆角卡片</span></div>
+            <div class="gw-menu-option" id="menuInsertChart"><span>原生数据图表</span></div>
+            <div class="gw-menu-option" id="menuInsertDiagram"><span>机制图 (SVG)</span></div>
+          </div>
+        </div>
+
+        <div class="gw-menu-item" id="menuSlideGroup">
+          <button class="gw-menu-trigger">幻灯片</button>
+          <div class="gw-dropdown-menu">
+            <div class="gw-menu-option" id="menuAddSlide"><span>+ 新增幻灯片页</span><span class="gw-shortcut">Ctrl+M</span></div>
+            <div class="gw-menu-option" id="menuLayoutCheck"><span>🔍 版面健康体检</span></div>
+            <div class="gw-menu-option" id="menuChangeTheme"><span>更换设计主题</span></div>
+          </div>
+        </div>
+
+        <div class="gw-menu-item">
+          <button class="gw-menu-trigger">扩展</button>
+          <div class="gw-dropdown-menu">
+            <div class="gw-menu-option" id="menuOpenMcp"><span>⚡ MCP 开放端点配置</span></div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- 3. 上下文操作工具条 (Google Ribbon) -->
+      <!-- A. 流式文档专属工具条 -->
+      <div id="docToolbar" class="gw-toolbar">
+        <div class="gw-tb-group">
+          <button id="btnDocUndo" class="gw-tb-btn" title="撤销 (Ctrl+Z)">↩</button>
+          <button id="btnDocRedo" class="gw-tb-btn" title="重做 (Ctrl+Y)">↪</button>
+        </div>
+        <div class="gw-tb-divider"></div>
+        <div class="gw-tb-group">
+          <select id="selDocStyle" class="gw-tb-select" title="样式选择">
+            <option value="paragraph">正文文本</option>
+            <option value="heading1">标题 1 (H1)</option>
+            <option value="heading2">标题 2 (H2)</option>
+            <option value="heading3">标题 3 (H3)</option>
+          </select>
+          <select id="selDocFont" class="gw-tb-select" title="字体选择">
+            <option value="sans">黑体 (无衬线)</option>
+            <option value="serif">宋体 / 仿宋</option>
+            <option value="mono">等宽代码体</option>
+          </select>
+        </div>
+        <div class="gw-tb-divider"></div>
+        <div class="gw-tb-group">
+          <button id="btnDocBold" class="gw-tb-btn" title="粗体 (Ctrl+B)"><b>B</b></button>
+          <button id="btnDocItalic" class="gw-tb-btn" title="斜体 (Ctrl+I)"><i>I</i></button>
+          <button id="btnDocUnderline" class="gw-tb-btn" title="下划线 (Ctrl+U)"><u>U</u></button>
+        </div>
+        <div class="gw-tb-divider"></div>
+        <div class="gw-tb-group">
+          <button id="btnDocAlignLeft" class="gw-tb-btn" title="左对齐">≡</button>
+          <button id="btnDocAlignCenter" class="gw-tb-btn" title="居中对齐">≢</button>
+          <button id="btnDocAlignRight" class="gw-tb-btn" title="右对齐">≣</button>
+        </div>
+        <div class="gw-tb-divider"></div>
+        <div class="gw-tb-group">
+          <button id="btnDocBullet" class="gw-tb-btn" title="无序列表">• 列表</button>
+          <button id="btnDocOrdered" class="gw-tb-btn" title="有序列表">1. 列表</button>
+          <button id="btnDocTable" class="gw-tb-btn" title="插入表格">⊞ 表格</button>
+        </div>
+      </div>
+
+      <!-- B. 幻灯片画布专属工具条 (Google Slides Studio) -->
+      <div id="deckToolbar" class="gw-toolbar" style="display:none;">
+        <div class="gw-tb-group">
+          <select id="selAddSlideLayout" class="gw-tb-select" style="background:#ea8600; color:#fff; font-weight:600; border-radius:14px; padding:0 10px;" title="添加新幻灯片页">
+            <option value="">+ 新建幻灯片 ▾</option>
+            <option value="标题和内容">标题和内容</option>
+            <option value="两栏">两栏对比</option>
+            <option value="图文">左图右文</option>
+            <option value="大数字">大数字与要点</option>
+            <option value="空白">空白自由排版</option>
+            <option value="章节页">章节过渡页</option>
+            <option value="致谢">总结致谢</option>
+          </select>
+        </div>
+        <div class="gw-tb-divider"></div>
+        <div class="gw-tb-group">
+          <button id="btnDeckSelect" class="gw-tb-btn active" title="选择工具">↖ 选择</button>
+          <button id="btnDeckText" class="gw-tb-btn" title="添加独立文本框">T 文本框</button>
+          <select id="selAddShape" class="gw-tb-select" title="添加几何色块或卡片">
+            <option value="">🔲 添加形状 ▾</option>
+            <option value="roundRect">圆角高亮卡片</option>
+            <option value="rect">矩形内容卡片</option>
+            <option value="ellipse">圆形 / 徽标色块</option>
+          </select>
+          <select id="selAddChart" class="gw-tb-select" title="插入原生数据图表">
+            <option value="">📈 插入图表 ▾</option>
+            <option value="column">垂直柱状图 (Column)</option>
+            <option value="bar">水平条形图 (Bar)</option>
+            <option value="line">趋势折线图 (Line)</option>
+            <option value="pie">占比饼图 (Pie)</option>
+          </select>
+        </div>
+        <div class="gw-tb-divider"></div>
+        <div class="gw-tb-group">
+          <select id="selTheme" class="gw-tb-select" title="切换模板主题">
+            <option value="clean-white">极简白 (Clean White)</option>
+            <option value="tech-blue">科技蓝 (Tech Blue)</option>
+            <option value="clinical">临床蓝 (Clinical)</option>
+            <option value="warm">暖灰雅致 (Warm)</option>
+            <option value="teal">墨绿典雅 (Teal)</option>
+            <option value="dark">暗夜黑 (Dark)</option>
+          </select>
+          <button id="btnLayoutCheck" class="gw-tb-btn" title="检查形状重叠、文字溢出与版面问题">🔍 版面体检</button>
+          <button id="btnDeleteShape" class="gw-tb-btn" style="color:var(--gw-red);" title="删除当前选中的形状 (Delete)">🗑️ 删除形状</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 4. 三栏工作台主体 -->
+    <div class="gw-workspace">
+      <!-- 左侧：Google Drive 文档库 / 幻灯片胶卷大纲 -->
+      <aside id="leftSidebar" class="gw-sidebar-left">
+        <div class="gw-sidebar-tabs">
+          <button id="tabDocs" class="gw-sidebar-tab active">📑 文档库</button>
+          <button id="tabFilmstrip" class="gw-sidebar-tab" style="display:none;">🖼️ 幻灯片大纲</button>
+        </div>
+
+        <div class="gw-sidebar-content">
+          <!-- 面板 1：文档列表库 -->
+          <div id="panelDocs">
+            <div class="gw-doc-actions">
+              <button id="btnNewDoc" class="gw-new-doc-btn primary"><span>+</span> 文档</button>
+              <button id="btnNewDeck" class="gw-new-doc-btn"><span>+</span> 幻灯片</button>
+            </div>
+            <div id="docList">
+              <!-- 动态文档列表渲染 -->
+            </div>
+          </div>
+
+          <!-- 面板 2：幻灯片胶卷缩略大纲 (Google Slides Filmstrip) -->
+          <div id="panelFilmstrip" style="display:none;">
+            <div style="font-size:12px; color:var(--gw-text-secondary); margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+              <span>点击直接跳转至对应页</span>
+              <button id="btnQuickAddSlide" style="border:none; background:none; color:var(--gw-blue); cursor:pointer; font-weight:600;">+ 加页</button>
+            </div>
+            <div id="filmstripList">
+              <!-- 动态幻灯片页列表渲染 -->
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 中间核心主舞台画布视口 -->
+      <main id="canvasViewport" class="gw-canvas-viewport">
+        <div id="page" class="page">
+          <!-- ProseMirror 文档纸张 或 DeckView 幻灯片舞台挂载在此 -->
+        </div>
+      </main>
+
+      <!-- 右侧：Google Gemini 风格 AI 写作伙伴与 MCP 协议面板 -->
+      <aside id="rightSidebar" class="gw-sidebar-right">
+        <div class="gw-sidebar-tabs">
+          <button id="tabAiChat" class="gw-sidebar-tab active">🤖 AI 写作助手</button>
+          <button id="tabMcp" class="gw-sidebar-tab">⚡ MCP 协议端点</button>
+        </div>
+
+        <!-- 面板 A：AI 创作助手 -->
+        <div id="panelAiChat" style="display:flex; flex-direction:column; height:calc(100% - 41px);">
+          <div class="gw-ai-chips">
+            <button class="gw-chip" data-prompt="请为这份文档总结提炼核心结论与执行摘要">✨ 提炼摘要</button>
+            <button class="gw-chip" data-prompt="请在幻灯片中插入一张对比柱状图">📊 插入数据图表</button>
+            <button class="gw-chip" data-prompt="优化当前页面的版面布局，让要点更加清晰醒目">🎨 美化版面</button>
+            <button class="gw-chip" data-prompt="润色选中文段，提高学术表达的严谨性与专业度">📝 润色文段</button>
+            <button class="gw-chip" data-prompt="全面检查幻灯片是否存在文字重叠或溢出，并自动修正">🔍 版面体检修复</button>
+          </div>
+
+          <div id="chatMessages" class="gw-chat-stream">
+            <div class="gw-chat-bubble ai">
+              👋 您好！我是您的 <b>OmniCanvas AI 协同创作成伴</b>。<br><br>
+              • <b>流式文档</b>：可直接撰写论文、调研报告或白皮书；<br>
+              • <b>幻灯片画布</b>：支持原子化排版、卡片色块、数据图表与 LibreOffice 渲染；<br>
+              • <b>人机对等</b>：外部 Agent 可通过 <code>/mcp</code> 端点以毫秒级并行指令操作当前页面。
+            </div>
+          </div>
+
+          <div class="gw-chat-input-area">
+            <div class="gw-prompt-box">
+              <textarea id="aiPromptInput" class="gw-prompt-textarea" placeholder="向 AI 发出写作或排版指令... (Ctrl+Enter 发送)"></textarea>
+              <div class="gw-prompt-footer">
+                <span class="gw-prompt-tip">Ctrl+Enter 快速执行</span>
+                <button id="btnSendPrompt" class="gw-send-btn">执行</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 面板 B：MCP 开放协议控制台 -->
+        <div id="panelMcp" class="gw-mcp-panel" style="display:none; overflow-y:auto;">
+          <div class="gw-mcp-card">
+            <div class="gw-mcp-label">MCP Server URL</div>
+            <div class="gw-mcp-field">
+              <input id="mcpUrlInput" class="gw-mcp-input" readonly value="http://localhost:8888/mcp" />
+              <button id="btnCopyMcpUrl" class="gw-copy-btn">复制</button>
+            </div>
+          </div>
+
+          <div class="gw-mcp-card">
+            <div class="gw-mcp-label">Bearer Token</div>
+            <div class="gw-mcp-field">
+              <input id="mcpTokenInput" class="gw-mcp-input" readonly value="..." />
+              <button id="btnCopyMcpToken" class="gw-copy-btn">复制</button>
+            </div>
+          </div>
+
+          <div class="gw-mcp-card">
+            <div class="gw-mcp-label">开放能力清单 (30 个工具)</div>
+            <p style="font-size:12px; color:var(--gw-text-secondary); margin:0 0 8px 0; line-height:1.5;">
+              文档生命周期管理、CRDT 双向同步、幻灯片原子化指令 (DeckOp)、原生图表注入、SVG 机制图渲染、学术文献检索与论断核对。
+            </p>
+            <div style="font-size:11.5px; color:#047857; font-weight:600;">● 状态：服务就绪，允许外部 Agent 读写接入</div>
+          </div>
+
+          <div class="gw-mcp-card">
+            <div class="gw-mcp-label">Cursor / Claude / Copilot 配置示例</div>
+            <pre style="background:#1e293b; color:#38bdf8; padding:10px; border-radius:6px; font-size:11px; overflow-x:auto; margin:4px 0 0 0;"><code>{
+  "mcpServers": {
+    "omnicanvas": {
+      "url": "http://localhost:8888/mcp",
+      "headers": {
+        "Authorization": "Bearer <TOKEN>"
+      }
+    }
+  }
+}</code></pre>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- 对话框浮层 -->
+  <div id="dialog" hidden></div>
+
+  <!-- 主业务逻辑脚本 -->
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

@@ -70,11 +70,18 @@ async function connect(markdown: string, scope: { d?: '*' | string[]; p?: Array<
   const client = new Client({ name: 'test', version: '0' })
   await client.connect(b)
   const call = async (name: string, args: Record<string, unknown>) => {
-    const r = await client.callTool({ name, arguments: args }) as { isError?: boolean; content: Array<{ text: string }> }
-    const body = r.content[0]!.text
+    const r = await client.callTool({ name, arguments: args }) as { isError?: boolean; content: Array<{ type?: string; text?: string; data?: string; mimeType?: string }> }
+    const first = r.content?.[0]
+    const body = first?.text ?? ''
     let parsed: unknown = body
     try { parsed = JSON.parse(body) } catch { /* 纯文本视图 */ }
-    return { isError: Boolean(r.isError), body: parsed as any, text: body }
+    return {
+      isError: Boolean(r.isError),
+      body: parsed as any,
+      text: body,
+      content: r.content,
+      image: first?.type === 'image' ? first : undefined,
+    }
   }
   return { ...env, client, call, registry, workspace, kb, memory, datasets }
 }
@@ -344,6 +351,20 @@ describe('AI 生成图片并插入（与人的插图能力一致）', () => {
     expect(read.text).toContain('主题 mint')
     expect(read.text).toMatch(/模板装饰 \d+ 个/)
     expect(read.text).toContain('对照组')
+  })
+
+  it('slide_render：服务端内置光栅化引擎自闭环返回真实 PNG 图片，无需外部系统 LibreOffice', async () => {
+    const t = await connect('占位。')
+    const created = await t.call('doc_create', { title: '测试演示', kind: 'deck' })
+    const deckId = created.body.doc_id as string
+    const outline = await t.call('doc_outline', { doc_id: deckId })
+    const slideId = /\{#([a-z0-9]+)\}/.exec(outline.text)![1]!
+    const res = await t.call('slide_render', { doc_id: deckId, slide_id: slideId })
+    expect(res.isError).toBe(false)
+    expect(res.content?.[0]?.type).toBe('image')
+    expect(res.content?.[0]?.mimeType).toBe('image/png')
+    expect(typeof res.content?.[0]?.data).toBe('string')
+    expect((res.content?.[0]?.data ?? '').length).toBeGreaterThan(100)
   })
 })
 

@@ -558,6 +558,21 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .slide-head button { font-size: 11px; padding: 2px 10px; letter-spacing: .06em; }
 .slide { position: relative; background: #fff; color: #1f2328; box-shadow: 0 0 0 1px var(--line), var(--shadow); overflow: hidden; }
 .slide-png { display: block; width: 100%; height: 100%; object-fit: contain; }
+.precise-slide-container { position: relative; width: 100%; height: 100%; }
+.precise-slide-container .slide-png { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 5; }
+.precise-fallback-view { display: none; width: 100%; height: 100%; position: relative; }
+.precise-slide-container.render-error .slide-png { display: none; }
+.precise-slide-container.render-error .precise-fallback-view { display: block; }
+.render-warning-overlay { position: absolute; top: 10px; left: 14px; right: 14px; z-index: 100; pointer-events: auto; }
+.render-warning-card { background: rgba(254, 247, 224, 0.96); backdrop-filter: blur(6px); border: 1px solid #f9ab00; border-radius: 8px; padding: 10px 14px; box-shadow: 0 4px 12px rgba(60, 64, 67, 0.15); color: #3c4043; font-size: 12px; line-height: 1.5; }
+.render-warning-title { font-weight: 600; color: #b06000; display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.render-warning-desc { margin-bottom: 8px; color: #5f6368; }
+.render-warning-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.btn-copy-install { background: #1a73e8; color: #ffffff; border: none; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: 500; cursor: pointer; }
+.btn-copy-install:hover { background: #1765c9; }
+.btn-back-approx { background: #ffffff; color: #3c4043; border: 1px solid #dadce0; border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+.btn-back-approx:hover { background: #f1f3f4; }
+.render-warning-fallback { font-size: 10px; color: #80868b; }
 .shape { position: absolute; overflow: hidden; line-height: 1.2; transition: background .8s; }
 .shape p { margin: 0 0 .2em; white-space: pre-wrap; word-break: break-word; }
 .slide p.bullet::before { content: '• '; }
@@ -694,10 +709,11 @@ button.block { width: 100%; padding: 10px 12px; }
 .kb-picker-empty { padding: 6px 10px; }
 
 /* —— 对话里的图片 —— */
-.chat-images { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.chat-img { position: relative; display: inline-block; width: 56px; height: 56px; border: 1px solid var(--line-strong); }
-.chat-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.chat-img .chip-x { position: absolute; top: -6px; right: -6px; background: var(--panel); border: 1px solid var(--line-strong) !important; padding: 0 4px; font-size: 10px; }
+.chat-images { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.chat-img { position: relative; display: inline-flex; width: 60px; height: 60px; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; background: var(--panel-2, #181c20); box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+.chat-img img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 5px; }
+.chat-img .chip-x { position: absolute; top: 3px; right: 3px; background: rgba(0, 0, 0, 0.65); color: #fff; border: 0 !important; border-radius: 50%; width: 18px; height: 18px; line-height: 18px; padding: 0; font-size: 11px; text-align: center; cursor: pointer; transition: background 0.15s; z-index: 2; display: flex; align-items: center; justify-content: center; }
+.chat-img .chip-x:hover { background: rgba(239, 68, 68, 0.9); }
 .chat-img-hint { flex-basis: 100%; }
 .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; white-space: normal; }
 .msg-images img { max-width: 140px; max-height: 120px; display: block; border: 1px solid var(--green-line); }
@@ -943,6 +959,23 @@ button.block { width: 100%; padding: 10px 12px; }
 }
 
 /* 机构管理 / 平台运营 */
+.dialog-card.wide { width: min(980px, 100%); }
+.org-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line-strong); margin: -4px 0 16px; overflow-x: auto; padding-bottom: 2px; }
+.org-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; font-size: 13px; color: var(--text-2); cursor: pointer; white-space: nowrap; border-radius: 4px 4px 0 0; }
+.org-tab:hover { color: var(--text); background: var(--hover); }
+.org-tab.active { color: var(--mint-text); border-bottom-color: var(--mint); font-weight: 500; background: var(--panel); }
+.org-panel { display: flex; flex-direction: column; gap: 16px; }
+.org-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.org-stat-card { border: 1px solid var(--line); background: var(--panel-raised, var(--hover)); padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.org-stat-num { font-size: 20px; font-weight: 600; color: var(--mint-text); }
+.org-stat-lbl { font-size: 11.5px; color: var(--muted); }
+.dept-filter-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.dept-member-filter { flex: 1; min-width: 140px; padding: 4px 8px; font-size: 12px; }
+.dept-pick-scroll { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border: 1px solid var(--line); }
+.member-dept-badge { display: inline-block; font-size: 11px; padding: 1px 6px; background: var(--green-soft); color: var(--mint-text); border: 1px solid var(--green-line); margin: 0 4px 2px 0; }
+.member-search-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.member-search-input { width: 220px; padding: 5px 10px; font-size: 12px; }
+.org-sub-section { border: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .tenant-settings { display: flex; flex-direction: column; gap: 8px; }
 .tenant-settings select { font-size: 12px; margin-left: 6px; }
 .invite-link { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--green-line); background: var(--green-soft); display: flex; flex-direction: column; gap: 6px; }

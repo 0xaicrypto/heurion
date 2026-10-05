@@ -15,7 +15,7 @@ import { StudyError, type StudyService } from './service.ts'
 
 export type Shape = 'wide' | 'long'
 export interface CohortOrigin {
-  kind: 'cohort'; study_id: string; shape: Shape; tests: string[] | null; from: string | null; to: string | null
+  kind: 'cohort'; study_id: string; shape: Shape; tests: string[] | null; from: string | null; to: string | null; relative_days?: boolean
   generated_at: string; fingerprint: string; subjects: number; trusted_columns: string[]
 }
 
@@ -24,6 +24,14 @@ const csv = (rows: unknown[][]) => rows.map(r => r.map(q).join(',')).join('\n') 
 /** 列名里的单位：µmol/L → umol_L，10^9/L → 10e9_L，% → pct（pandas 里好用） */
 const unitSlug = (u: string | null) => u ? '_' + u.replace(/µ/g, 'u').replace(/\^/g, 'e').replace(/%/g, 'pct').replace(/²/g, '2').replace(/[^A-Za-z0-9.]+/g, '_').replace(/\./g, '').replace(/^_|_$/g, '') : ''
 const date = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null
+
+/** 计算两个日期相差的天数（d1 - d0），用于以入组日为 Day 0 的相对时间轴。 */
+function daysDiff(d1: string | null | undefined, d0: string | null | undefined): number | null {
+  if (!d1 || !d0 || !/^\d{4}-\d{2}-\d{2}$/.test(d1) || !/^\d{4}-\d{2}-\d{2}$/.test(d0)) return null
+  const ms1 = Date.parse(d1), ms0 = Date.parse(d0)
+  if (Number.isNaN(ms1) || Number.isNaN(ms0)) return null
+  return Math.round((ms1 - ms0) / 86400000)
+}
 
 export class CohortService {
   constructor(private readonly studies: StudyService, private readonly patients: PatientService, private readonly datasets: DatasetService | null) {
@@ -71,21 +79,22 @@ export class CohortService {
 
   /**
    * 生成（或刷新）研究数据集：快照 → CSV → 数据集（自动归入研究）。
-   * tests 不填 = 入组受试者有过的全部化验项目；from / to 限定化验日期。数据与上一版完全相同时沿用上一版。
+   * tests 不填 = 入组受试者有过的全部化验项目；from / to 限定化验日期；relative_days=true 计算相对入组日（Day 0）天数。
    */
-  async dataset(a: Actor, studyId: string, input: { shape?: unknown; tests?: unknown; from?: unknown; to?: unknown }): Promise<{ dataset: DatasetView; unchanged: boolean; skipped: string[] }> {
+  async dataset(a: Actor, studyId: string, input: { shape?: unknown; tests?: unknown; from?: unknown; to?: unknown; relative_days?: unknown }): Promise<{ dataset: DatasetView; unchanged: boolean; skipped: string[] }> {
     const study = this.studies.get(a.userId, studyId, 'write')
     if (!this.datasets) throw new StudyError('unavailable', '数据集未启用')
     const shape: Shape = input.shape === 'long' ? 'long' : 'wide'
+    const relativeDays = Boolean(input.relative_days)
     const tests = Array.isArray(input.tests) ? input.tests.filter((t): t is string => typeof t === 'string' && t.trim() !== '').slice(0, 50) : []
     const from = date(input.from), to = date(input.to)
     const snap = this.patients.cohortSnapshot(a, studyId, { tests, from, to, log: true })
     if (!snap.subjects.length) throw new StudyError('empty_cohort', snap.skipped.length ? '入组的患者你都不在诊疗组里了，不能生成数据集' : '还没有入组的患者')
-    const { header, rows, labels } = shape === 'wide' ? wide(snap.subjects) : long(snap.subjects)
+    const { header, rows, labels } = shape === 'wide' ? wide(snap.subjects, relativeDays) : long(snap.subjects, relativeDays)
     const prev = this.cohortDatasets(a, studyId).filter(d => d.shape === shape)
     const version = (prev[0]?.version ?? 0) + 1
     const origin: CohortOrigin = {
-      kind: 'cohort', study_id: studyId, shape, tests: tests.length ? tests : null, from, to, generated_at: new Date().toISOString(),
+      kind: 'cohort', study_id: studyId, shape, tests: tests.length ? tests : null, from, to, relative_days: relativeDays ? true : undefined, generated_at: new Date().toISOString(),
       fingerprint: snap.fingerprint, subjects: snap.subjects.length, trusted_columns: header,
     }
     const label = shape === 'wide' ? '宽表' : '长表'
@@ -110,7 +119,7 @@ export class CohortService {
 type Subject = ReturnType<PatientService['cohortSnapshot']>['subjects'][number]
 
 /** 宽表：每人一行；每个化验项目一组列（基线 = 窗口内第一次，最近 = 最后一次，次数），统一用该项目最常见的标准单位，单位不同的值只进长表。 */
-function wide(subjects: Subject[]) {
+function wide(subjects: Subject[], relativeDays = false) {
   const byKey = new Map<string, { name: string; units: Map<string, number> }>()
   for (const s of subjects) for (const l of s.labs) {
     if (l.std_value === null) continue
@@ -123,7 +132,19 @@ function wide(subjects: Subject[]) {
   const labels: Record<string, string> = { subject_id: '研究编号', sex: '性别', age_at_enroll: '入组时年龄', tags: '诊断标签', enrolled_on: '入组日期' }
   for (const t of tests) {
     const u = unitSlug(t.unit), shown = t.unit ? `（${t.unit}）` : ''
-    for (const [col, lab] of [[`${t.key}_baseline${u}`, `${t.name} 基线${shown}`], [`${t.key}_baseline_date`, `${t.name} 基线日期`], [`${t.key}_latest${u}`, `${t.name} 最近${shown}`], [`${t.key}_latest_date`, `${t.name} 最近日期`], [`${t.key}_n`, `${t.name} 次数`]] as const) {
+    const cols: Array<[string, string]> = [
+      [`${t.key}_baseline${u}`, `${t.name} 基线${shown}`],
+      [`${t.key}_baseline_date`, `${t.name} 基线日期`],
+    ]
+    if (relativeDays) cols.push([`${t.key}_baseline_day_rel`, `${t.name} 基线相对入组天数`])
+    cols.push(
+      [`${t.key}_latest${u}`, `${t.name} 最近${shown}`],
+      [`${t.key}_latest_date`, `${t.name} 最近日期`],
+    )
+    if (relativeDays) cols.push([`${t.key}_latest_day_rel`, `${t.name} 最近相对入组天数`])
+    cols.push([`${t.key}_n`, `${t.name} 次数`])
+
+    for (const [col, lab] of cols) {
       header.push(col); labels[col] = lab
     }
   }
@@ -132,7 +153,11 @@ function wide(subjects: Subject[]) {
     for (const t of tests) {
       const vals = s.labs.filter((l: LabRow) => l.test_key === t.key && l.std_value !== null && (l.std_unit ?? null) === t.unit)
       const first = vals[0], last = vals[vals.length - 1]
-      r.push(first?.std_value ?? null, first?.collected_on ?? null, last?.std_value ?? null, last?.collected_on ?? null, vals.length)
+      r.push(first?.std_value ?? null, first?.collected_on ?? null)
+      if (relativeDays) r.push(daysDiff(first?.collected_on, s.enrolled_on))
+      r.push(last?.std_value ?? null, last?.collected_on ?? null)
+      if (relativeDays) r.push(daysDiff(last?.collected_on, s.enrolled_on))
+      r.push(vals.length)
     }
     return r
   })
@@ -140,9 +165,18 @@ function wide(subjects: Subject[]) {
 }
 
 /** 长表：每次化验一行（标准单位；没法换算的保留原单位并标出）。 */
-function long(subjects: Subject[]) {
-  const header = ['subject_id', 'test_key', 'test_name', 'value', 'unit', 'value_text', 'flag', 'collected_on', 'collected_at', 'unit_converted', 'unknown_unit']
-  const labels: Record<string, string> = { subject_id: '研究编号', test_key: '项目键', test_name: '项目', value: '数值（标准单位）', unit: '单位', value_text: '文字结果', flag: '异常标记', collected_on: '采样日期', collected_at: '采样时间', unit_converted: '单位已换算', unknown_unit: '单位未识别' }
-  const rows = subjects.flatMap(s => s.labs.map(l => [s.subject_id, l.test_key, l.test_name, l.std_value, l.std_unit, l.value_text, l.flag, l.collected_on, l.collected_at, l.converted ? 1 : 0, l.unknown_unit ? 1 : 0]))
+function long(subjects: Subject[], relativeDays = false) {
+  const header = ['subject_id', 'test_key', 'test_name', 'value', 'unit', 'value_text', 'flag', 'collected_on', ...(relativeDays ? ['day_rel'] : []), 'collected_at', 'unit_converted', 'unknown_unit']
+  const labels: Record<string, string> = {
+    subject_id: '研究编号', test_key: '项目键', test_name: '项目', value: '数值（标准单位）', unit: '单位',
+    value_text: '文字结果', flag: '异常标记', collected_on: '采样日期',
+    ...(relativeDays ? { day_rel: '相对入组天数' } : {}),
+    collected_at: '采样时间', unit_converted: '单位已换算', unknown_unit: '单位未识别',
+  }
+  const rows = subjects.flatMap(s => s.labs.map(l => [
+    s.subject_id, l.test_key, l.test_name, l.std_value, l.std_unit, l.value_text, l.flag, l.collected_on,
+    ...(relativeDays ? [daysDiff(l.collected_on, s.enrolled_on)] : []),
+    l.collected_at, l.converted ? 1 : 0, l.unknown_unit ? 1 : 0,
+  ]))
   return { header, rows, labels }
 }

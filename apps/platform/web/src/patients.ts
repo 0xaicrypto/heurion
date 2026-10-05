@@ -175,7 +175,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           ${canEdit ? `<button class="primary" data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
           <button data-act="report" title="新建一份病例报告并关联到这位患者；对话框里会填好建议的指令，由你确认后发送">写病例报告</button>
           ${d.access === 'owner' ? `<span class="grow"></span><div class="menu-wrap"><button data-act="ptmore" aria-haspopup="menu">更多 ▾</button>
-            <div class="dropdown" id="ptMore" hidden><button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button data-act="delete" class="danger-text">删除患者</button></div></div>` : ''}
+            <div class="dropdown" id="ptMore" hidden><button data-act="claim">就诊认领与知家绑定</button><button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button data-act="delete" class="danger-text">删除患者</button></div></div>` : ''}
         </div>
         ${pendingCount ? `<div class="banner pt-pending"><span class="dot"></span>${d.records.filter(r => r.status === 'pending').length} 份报告、${d.pending_proposals.length} 条 AI 提议待确认<button data-tab="review">去审核</button></div>` : ''}
       </div>
@@ -315,6 +315,135 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     } catch (err) { notice((err as Error).message, true) }
   }
 
+  async function showClaimDialog(patientId: string, d: Detail | Patient): Promise<void> {
+    const data = await api<{
+      claims: Array<{ id: string; code: string; status: string; expires_at: string; created_at: string; requested_at: string | null; confirmed_at: string | null; claimant_info?: { birth_year?: number | null } }>;
+      links: Array<{ id: string; status: string; verified_at: string }>;
+    }>(`/api/patients/${patientId}/claims`)
+    const dlg = document.getElementById('dialog')!
+    const activeClaim = data.claims.find(c => c.status === 'active')
+    const requestedClaim = data.claims.find(c => c.status === 'requested')
+    const activeLink = data.links.find(l => l.status === 'active')
+
+    const renderClaimHtml = () => `
+      <div class="dialog-card" role="dialog" aria-modal="true" aria-label="就诊认领与知家绑定">
+        <div class="dialog-head"><h2>${esc(d.code)} 就诊认领与知家绑定</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
+        <div class="dialog-body" style="gap: 16px">
+          ${activeLink ? `
+            <div class="banner" style="background: var(--green-soft); border-color: var(--green-line)">
+              <span class="dot"></span>
+              <div><b>已绑定知家家庭档案！</b><div class="muted small">关联编号：${esc(activeLink.id)} · 绑定于 ${new Date(activeLink.verified_at).toLocaleString('zh-CN', { hour12: false })}</div></div>
+              <button class="danger quiet" id="btnUnlink" style="margin-left: auto">解除绑定</button>
+            </div>
+          ` : requestedClaim ? `
+            <div class="banner pt-pending" style="flex-direction: column; align-items: flex-start; gap: 8px">
+              <div style="display: flex; gap: 8px; align-items: center">
+                <span class="dot"></span>
+                <b>知家端已提交认领申请！</b>
+                <span class="chip">${requestedClaim.claimant_info?.birth_year ? `${requestedClaim.claimant_info.birth_year} 年生` : '未提供出生年份'}</span>
+              </div>
+              <div class="muted small">为防止错认或手误，请核对患者信息并输入出生年份进行二次核验后确认绑定。</div>
+              <div class="field-row" style="width: 100%; margin-top: 4px">
+                <input type="number" id="claimBirthYear" placeholder="输入患者出生年份（如 1985）核对" style="max-width: 220px">
+                <button class="primary" id="btnConfirmClaim">确认绑定（医生本人）</button>
+                <button class="quiet" id="btnRejectClaim">驳回申请</button>
+              </div>
+            </div>
+          ` : activeClaim ? `
+            <div class="invite-link">
+              <div class="muted small">患者知家认领码（24 小时有效，一码一用）：</div>
+              <div class="field-row">
+                <input type="text" readonly value="${esc(activeClaim.code)}" style="font-size: 16px; font-weight: 600; letter-spacing: 2px">
+                <button type="button" class="primary" id="btnCopyClaim">复制</button>
+              </div>
+              <div class="row" style="justify-content: space-between; margin-top: 4px">
+                <span class="muted small">有效期至：${new Date(activeClaim.expires_at).toLocaleString('zh-CN', { hour12: false })}</span>
+                <button class="quiet danger-text" id="btnRevokeClaim" style="font-size: 12px">撤销认领码</button>
+              </div>
+            </div>
+          ` : `
+            <div class="muted small">
+              生成 24 小时有效的专属就诊认领码。患者或家属在知家移动端输入该认领码后，系统将建立医院病历与家庭档案的安全链接。
+            </div>
+            <div class="row">
+              <button class="primary" id="btnGenClaim">生成 24 小时就诊认领码</button>
+            </div>
+          `}
+
+          <h3 class="mem-h" style="margin-top: 14px">认领历史记录</h3>
+          ${data.claims.length === 0 ? '<div class="muted small">暂无认领记录</div>' : `
+            <table class="users" style="font-size: 12px">
+              <thead><tr><th>认领码</th><th>状态</th><th>生成时间</th><th>处理时间</th></tr></thead>
+              <tbody>${data.claims.map(c => `<tr>
+                <td style="font-family: var(--mono)">${esc(c.code)}</td>
+                <td>${c.status === 'confirmed' ? '<span class="pill ok">已绑定</span>' : c.status === 'requested' ? '<span class="pill warn">待确认</span>' : c.status === 'active' ? '<span class="pill">生效中</span>' : c.status === 'expired' ? '<span class="pill off">已过期</span>' : '<span class="pill off">已撤销</span>'}</td>
+                <td class="muted">${new Date(c.created_at).toLocaleString('zh-CN', { hour12: false })}</td>
+                <td class="muted">${c.confirmed_at ? new Date(c.confirmed_at).toLocaleString('zh-CN', { hour12: false }) : c.requested_at ? new Date(c.requested_at).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+              </tr>`).join('')}</tbody>
+            </table>
+          `}
+        </div>
+      </div>`
+
+    dlg.innerHTML = renderClaimHtml()
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
+
+    dlg.querySelector('#btnCopyClaim')?.addEventListener('click', async () => {
+      if (activeClaim) {
+        await navigator.clipboard.writeText(activeClaim.code).catch(() => {})
+        notice('已复制认领码')
+      }
+    })
+    dlg.querySelector('#btnGenClaim')?.addEventListener('click', async () => {
+      try {
+        await api(`/api/patients/${patientId}/claims`, { method: 'POST' })
+        notice('认领码已生成')
+        await showClaimDialog(patientId, d)
+      } catch (err) { notice((err as Error).message, true) }
+    })
+    dlg.querySelector('#btnRevokeClaim')?.addEventListener('click', async () => {
+      if (activeClaim) {
+        try {
+          await api(`/api/claims/${activeClaim.id}`, { method: 'DELETE' })
+          notice('认领码已撤销')
+          await showClaimDialog(patientId, d)
+        } catch (err) { notice((err as Error).message, true) }
+      }
+    })
+    dlg.querySelector('#btnUnlink')?.addEventListener('click', async () => {
+      const activeClaimId = data.claims.find(c => c.status === 'confirmed')?.id
+      if (activeClaimId && await askConfirm({ title: '解除关联', message: '解除与知家家庭成员的档案关联？解除后医院端病历数据仍保留。', confirm: '解除绑定', danger: true })) {
+        try {
+          await api(`/api/claims/${activeClaimId}`, { method: 'DELETE' })
+          notice('已解除绑定')
+          await showClaimDialog(patientId, d)
+        } catch (err) { notice((err as Error).message, true) }
+      }
+    })
+    dlg.querySelector('#btnRejectClaim')?.addEventListener('click', async () => {
+      if (requestedClaim) {
+        try {
+          await api(`/api/claims/${requestedClaim.id}`, { method: 'DELETE' })
+          notice('已驳回认领申请')
+          await showClaimDialog(patientId, d)
+        } catch (err) { notice((err as Error).message, true) }
+      }
+    })
+    dlg.querySelector('#btnConfirmClaim')?.addEventListener('click', async () => {
+      if (requestedClaim) {
+        const yearInput = (dlg.querySelector('#claimBirthYear') as HTMLInputElement).value.trim()
+        const year = yearInput ? Number(yearInput) : undefined
+        try {
+          await api(`/api/claims/${requestedClaim.id}/confirm`, { method: 'POST', body: JSON.stringify({ birth_year: year }) })
+          notice('病历与知家家庭档案绑定成功！')
+          await showClaimDialog(patientId, d)
+        } catch (err) { notice((err as Error).message, true) }
+      }
+    })
+  }
+
   // —— 事件 ——
 
   document.getElementById('page')!.addEventListener('click', async e => {
@@ -347,6 +476,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         (document.getElementById('ptUpload') as HTMLInputElement).click()
       } else if (act === 'report') {
         await writeReport(d)
+      } else if (act === 'claim') {
+        await showClaimDialog(id, d)
       } else if (act === 'team') {
         const [colleagues, detail] = await Promise.all([api<any[]>('/api/tenant/colleagues'), api<Detail>(`/api/patients/${id}`)])
         const inTeam = new Set(detail.care_team.map(m => m.user_id))

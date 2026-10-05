@@ -49,7 +49,20 @@ interface PhStyle { anchor?: 't' | 'ctr' | 'b'; align?: 'l' | 'ctr' | 'r' | 'jus
 const BODY_LEVELS = [28, 24, 20, 18, 18]
 
 export class DeckView {
-  private data: { rev: number; size: { cx: number; cy: number }; doc: PMJson; ph_styles?: Record<string, Array<{ type: string; idx: string | null; style: PhStyle }>> } | null = null
+  private data: {
+    rev: number
+    size: { cx: number; cy: number }
+    doc: PMJson
+    ph_styles?: Record<string, Array<{ type: string; idx: string | null; style: PhStyle }>>
+    render_info?: {
+      available: boolean
+      mode: string
+      soffice: string | null
+      pdftoppm: string | null
+      missing: string[]
+      installHint: string
+    }
+  } | null = null
   /** 正在渲染的形状继承的占位符样式（导入的占位符才有）。 */
   private phStyle: PhStyle | null = null
   private precise = new Set<number>()
@@ -90,11 +103,34 @@ export class DeckView {
       const t = e.target as HTMLElement
       const mark = t.closest('mark.comment') as HTMLElement | null
       if (mark?.dataset.thread) opts.onCommentClick(mark.dataset.thread)
+
+      const copyBtn = t.closest('[data-copy-cmd]') as HTMLElement | null
+      if (copyBtn) {
+        const cmd = copyBtn.dataset.copyCmd || 'brew install --cask libreoffice'
+        navigator.clipboard?.writeText(cmd).then(() => {
+          this.opts.onNotice?.('已复制安装命令到剪贴板：' + cmd)
+        }).catch(() => {
+          prompt('请复制以下命令在终端中运行：', cmd)
+        })
+        return
+      }
+
+      const backBtn = t.closest('[data-back-approx]') as HTMLElement | null
+      if (backBtn) {
+        const i = Number(backBtn.dataset.backApprox)
+        this.precise.delete(i)
+        this.render()
+        return
+      }
+
       const toggle = t.closest('[data-precise]') as HTMLElement | null
       if (toggle) {
         const i = Number(toggle.dataset.precise)
-        if (this.precise.has(i)) this.precise.delete(i)
-        else this.precise.add(i)
+        if (this.precise.has(i)) {
+          this.precise.delete(i)
+        } else {
+          this.precise.add(i)
+        }
         this.render()
       }
     })
@@ -137,15 +173,33 @@ export class DeckView {
     this.mount.innerHTML = slides.map((slide, i) => {
       const notes = slide.content?.find(c => c.type === 'notes')
       const suggest = slide.attrs?.suggest ? ` data-suggest="${slide.attrs.suggest}" data-suggest-group="${esc(slide.attrs.suggest_group)}"` : ''
+      const shapesHtml = (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s, slide.attrs?.layout as string | undefined, slide.attrs?.layout_name as string | undefined)).join('')
+      const renderUnavailableHtml = `
+        <div class="render-warning-overlay">
+          <div class="render-warning-card">
+            <div class="render-warning-title">⚠️ 幻灯片精确渲染不可用</div>
+            <div class="render-warning-desc">${esc(this.data?.render_info?.installHint || '当前系统缺少 LibreOffice，无法将 PPTX 转换为位图。')}</div>
+            <div class="render-warning-actions">
+              <button class="btn-copy-install" data-copy-cmd="brew install --cask libreoffice">📋 复制安装命令 (macOS)</button>
+              <button class="btn-back-approx" data-back-approx="${i}">切回近似预览</button>
+            </div>
+            <div class="render-warning-fallback">已自动为您呈现高保真近真矢量预览：</div>
+          </div>
+        </div>
+      `
       const body = this.precise.has(i)
-        ? `<img class="slide-png" src="/api/docs/${this.opts.docId}/slides/${i}/render.png?token=${encodeURIComponent(this.opts.token)}&rev=${this.data!.rev}" alt="渲染中…" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'精确渲染不可用（需要 LibreOffice 或 heurion2:dev 镜像）'}))">`
-        : (slide.content ?? []).filter(c => c.type === 'shape').map(s => this.shape(s, slide.attrs?.layout as string | undefined, slide.attrs?.layout_name as string | undefined)).join('')
+        ? `<div class="precise-slide-container">
+            <img class="slide-png" src="/api/docs/${this.opts.docId}/slides/${i}/render.png?token=${encodeURIComponent(this.opts.token)}&rev=${this.data!.rev}" alt="渲染中…" onerror="const c = this.closest('.precise-slide-container'); if (c) c.classList.add('render-error');">
+            <div class="precise-fallback-view">${renderUnavailableHtml}${shapesHtml}</div>
+          </div>`
+        : shapesHtml
       return `<div class="slide-wrap" data-id="${esc(slide.attrs?.id)}" data-index="${i}"${suggest}>
         <div class="slide-head"><span>第 ${i + 1} 页 · ${esc(slide.attrs?.layout_name || '无版式')}</span><button data-precise="${i}">${this.precise.has(i) ? '近似预览' : '精确预览'}</button></div>
         <div class="slide"${slide.attrs?.theme ? ` data-theme="${esc(slide.attrs.theme)}"` : ''} style="width:${this.width}px;height:${height}px;${slide.attrs?.bg ? `background:#${slide.attrs.bg};${isDark(slide.attrs.bg) ? 'color:#E2E8F0;' : ''}` : ''}">${body}</div>
         <div class="slide-notes"><span class="notes-label">备注</span><div class="notes-text${notes && this.text(notes) ? '' : ' empty'}" data-notes="${esc(slide.attrs?.id)}" title="双击编辑演讲者备注">${notes && this.text(notes) ? esc(this.text(notes)) : '双击添加演讲者备注'}</div></div>
       </div>`
     }).join('')
+
     // 选中的形状被删了（别人或 AI 删的）：从选中里去掉
     const alive = this.selected.filter(id => this.findShape(id))
     if (alive.length !== this.selected.length) { this.selected = alive; this.opts.onSelectShape?.(alive[0] ?? null) }

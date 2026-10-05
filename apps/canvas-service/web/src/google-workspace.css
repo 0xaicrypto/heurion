@@ -1,0 +1,1055 @@
+/* ==========================================================================
+   Google Workspace (Docs & Slides) Design System for OmniCanvas
+   ========================================================================== */
+
+:root {
+  --gw-blue: #1a73e8;
+  --gw-blue-hover: #1765c9;
+  --gw-blue-light: #e8f0fe;
+  --gw-yellow: #f9ab00;
+  --gw-yellow-hover: #e37400;
+  --gw-yellow-light: #fef7e0;
+  --gw-green: #188038;
+  --gw-green-light: #e6f4ea;
+  --gw-red: #d93025;
+  --gw-red-light: #fce8e6;
+
+  --gw-bg: #f8fafd;
+  --gw-surface: #ffffff;
+  --gw-border: #dadce0;
+  --gw-border-light: #eaedf1;
+  --gw-text: #202124;
+  --gw-text-secondary: #5f6368;
+  --gw-text-muted: #80868b;
+  --gw-hover: #f1f3f4;
+  --gw-active: #e8f0fe;
+
+  --gw-shadow-1: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+  --gw-shadow-2: 0 2px 6px 2px rgba(60,64,67,0.15);
+  --gw-shadow-paper: 0 1px 3px 1px rgba(60,64,67,0.15), 0 1px 2px 0 rgba(60,64,67,0.3);
+  --gw-shadow-slide: 0 4px 16px 0 rgba(60,64,67,0.12), 0 1px 4px 0 rgba(60,64,67,0.16);
+
+  --gw-font: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+  --gw-font-mono: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Reset & Base Layout */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: var(--gw-bg);
+  font-family: var(--gw-font);
+  color: var(--gw-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.gw-app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--gw-bg);
+}
+
+/* --------------------------------------------------------------------------
+   1. Google Workspace Top Application Header
+   -------------------------------------------------------------------------- */
+.gw-header {
+  background: #ffffff;
+  border-bottom: 1px solid var(--gw-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.gw-header-primary {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  gap: 12px;
+}
+
+.gw-doc-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.gw-app-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.gw-app-icon {
+  font-size: 26px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gw-app-icon.doc { color: var(--gw-blue); }
+.gw-app-icon.deck { color: var(--gw-yellow); }
+
+.gw-title-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.gw-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gw-title-input {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--gw-text);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 7px;
+  outline: none;
+  background: transparent;
+  min-width: 140px;
+  max-width: 380px;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.gw-title-input:hover {
+  border-color: var(--gw-border);
+  background: #f8f9fa;
+}
+
+.gw-title-input:focus {
+  border-color: var(--gw-blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 2px var(--gw-blue-light);
+}
+
+.gw-star-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--gw-text-muted);
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.gw-star-btn:hover {
+  background: var(--gw-hover);
+  color: var(--gw-yellow);
+}
+
+.gw-star-btn.starred {
+  color: var(--gw-yellow);
+}
+
+.gw-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--gw-text-secondary);
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: #f1f3f4;
+  user-select: none;
+}
+
+.gw-sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #188038;
+}
+
+.gw-sync-pill.synced .gw-sync-dot { background: #188038; }
+.gw-sync-pill.connecting .gw-sync-dot { background: #f9ab00; }
+.gw-sync-pill.offline .gw-sync-dot { background: #d93025; }
+
+.gw-mode-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+
+.gw-mode-badge.doc {
+  background: var(--gw-blue-light);
+  color: var(--gw-blue);
+}
+
+.gw-mode-badge.deck {
+  background: var(--gw-yellow-light);
+  color: #b06000;
+}
+
+/* Header Right Actions */
+.gw-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 18px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--gw-border);
+  background: #ffffff;
+  color: var(--gw-text);
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.gw-btn:hover {
+  background: var(--gw-hover);
+  border-color: #c6c9cc;
+}
+
+.gw-btn-primary {
+  background: var(--gw-blue);
+  color: #ffffff;
+  border-color: var(--gw-blue);
+}
+
+.gw-btn-primary:hover {
+  background: var(--gw-blue-hover);
+  border-color: var(--gw-blue-hover);
+  color: #ffffff;
+}
+
+.gw-btn-deck {
+  background: #ea8600;
+  color: #ffffff;
+  border-color: #ea8600;
+}
+
+.gw-btn-deck:hover {
+  background: #d47800;
+  color: #ffffff;
+}
+
+.gw-btn-mcp {
+  background: #0f172a;
+  color: #38bdf8;
+  border-color: #1e293b;
+  font-family: var(--gw-font-mono);
+  font-size: 12px;
+}
+
+.gw-btn-mcp:hover {
+  background: #1e293b;
+  color: #7dd3fc;
+}
+
+.gw-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #e0e7ff;
+  color: #3730a3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid #c7d2fe;
+}
+
+/* --------------------------------------------------------------------------
+   2. Classic Google Menu Bar (文件 / 编辑 / 视图 / 插入 / 格式...)
+   -------------------------------------------------------------------------- */
+.gw-menubar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: #ffffff;
+  gap: 2px;
+  border-top: 1px solid #f1f3f4;
+}
+
+.gw-menu-item {
+  position: relative;
+  display: inline-block;
+}
+
+.gw-menu-trigger {
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: var(--gw-text-secondary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+}
+
+.gw-menu-trigger:hover, .gw-menu-item.open .gw-menu-trigger {
+  background: var(--gw-hover);
+  color: var(--gw-text);
+}
+
+.gw-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background: #ffffff;
+  border: 1px solid var(--gw-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 6px 0;
+  z-index: 1000;
+  display: none;
+}
+
+.gw-menu-item.open .gw-dropdown-menu {
+  display: block;
+}
+
+.gw-menu-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--gw-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.gw-menu-option:hover {
+  background: var(--gw-hover);
+}
+
+.gw-menu-option .gw-shortcut {
+  font-size: 11px;
+  color: var(--gw-text-muted);
+  font-family: var(--gw-font-mono);
+}
+
+.gw-menu-divider {
+  height: 1px;
+  background: var(--gw-border-light);
+  margin: 4px 0;
+}
+
+/* --------------------------------------------------------------------------
+   3. Contextual Toolbar Ribbon (Docs / Slides Action Bar)
+   -------------------------------------------------------------------------- */
+.gw-toolbar {
+  height: 42px;
+  background: #edf2fa;
+  border-radius: 24px;
+  margin: 4px 16px 8px 16px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 1px 2px rgba(60,64,67,0.1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.gw-toolbar::-webkit-scrollbar { display: none; }
+
+.gw-tb-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gw-tb-divider {
+  width: 1px;
+  height: 18px;
+  background: #c7cdd8;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+.gw-tb-btn {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--gw-text);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+}
+
+.gw-tb-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.gw-tb-btn:active, .gw-tb-btn.active {
+  background: #d3e3fd;
+  color: #041e49;
+  font-weight: 600;
+}
+
+.gw-tb-select {
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--gw-text);
+  padding: 0 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+
+.gw-tb-select:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* --------------------------------------------------------------------------
+   4. Studio Workspace Layout (Left Filmstrip / Center Canvas / Right AI)
+   -------------------------------------------------------------------------- */
+.gw-workspace {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+  background: var(--gw-bg);
+}
+
+/* Left Sidebar (Filmstrip or Doc List) */
+.gw-sidebar-left {
+  width: 260px;
+  min-width: 260px;
+  background: #ffffff;
+  border-right: 1px solid var(--gw-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  transition: width 0.2s ease, min-width 0.2s ease, transform 0.2s ease;
+}
+
+.gw-sidebar-left.collapsed {
+  width: 0;
+  min-width: 0;
+  transform: translateX(-100%);
+  overflow: hidden;
+}
+
+.gw-sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--gw-border);
+  background: #f8fafd;
+}
+
+.gw-sidebar-tab {
+  flex: 1;
+  padding: 10px 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--gw-text-secondary);
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.gw-sidebar-tab:hover {
+  color: var(--gw-text);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.gw-sidebar-tab.active {
+  color: var(--gw-blue);
+  font-weight: 600;
+  border-bottom-color: var(--gw-blue);
+  background: #ffffff;
+}
+
+.gw-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* Document List */
+.gw-doc-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.gw-new-doc-btn {
+  flex: 1;
+  height: 36px;
+  border-radius: 18px;
+  border: 1px solid var(--gw-border);
+  background: #ffffff;
+  color: var(--gw-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+
+.gw-new-doc-btn:hover {
+  background: var(--gw-hover);
+  box-shadow: 0 1px 3px rgba(60,64,67,0.12);
+}
+
+.gw-new-doc-btn.primary {
+  background: var(--gw-blue);
+  color: #ffffff;
+  border-color: var(--gw-blue);
+}
+
+.gw-new-doc-btn.primary:hover {
+  background: var(--gw-blue-hover);
+}
+
+.gw-doc-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  margin-bottom: 4px;
+  color: var(--gw-text);
+  transition: background 0.1s;
+}
+
+.gw-doc-item:hover {
+  background: var(--gw-hover);
+}
+
+.gw-doc-item.active {
+  background: var(--gw-blue-light);
+  color: var(--gw-blue);
+  font-weight: 600;
+}
+
+/* Slide Filmstrip Thumbnails (Google Slides Style) */
+.gw-filmstrip-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.gw-filmstrip-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gw-text-muted);
+  width: 20px;
+  text-align: right;
+}
+
+.gw-filmstrip-card {
+  flex: 1;
+  height: 64px;
+  border-radius: 6px;
+  border: 1px solid var(--gw-border);
+  background: #ffffff;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 1px 2px rgba(60,64,67,0.08);
+  transition: all 0.15s ease;
+  overflow: hidden;
+}
+
+.gw-filmstrip-card:hover {
+  border-color: #9aa0a6;
+  box-shadow: 0 1px 4px rgba(60,64,67,0.16);
+}
+
+.gw-filmstrip-item.active .gw-filmstrip-card {
+  border: 2px solid var(--gw-blue);
+  box-shadow: 0 2px 8px rgba(26,115,232,0.25);
+  background: #fafcfe;
+}
+
+.gw-filmstrip-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gw-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gw-filmstrip-layout {
+  font-size: 10.5px;
+  color: var(--gw-text-muted);
+  align-self: flex-start;
+  background: #f1f3f4;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Center Stage Viewport */
+.gw-canvas-viewport {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 60px 24px;
+  position: relative;
+  background: #f8fafc;
+}
+
+/* Document Mode Canvas (Google Docs Sheet) */
+#page:not(.deck) {
+  width: 816px;
+  min-height: 1056px;
+  background: #ffffff;
+  box-shadow: var(--gw-shadow-paper);
+  border-radius: 2px;
+  padding: 72px 96px;
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+
+/* Presentation Deck Mode Canvas (Google Slides Stage) */
+#page.deck {
+  width: fit-content;
+  max-width: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#page.deck .slide-wrap {
+  margin-bottom: 40px;
+}
+
+#page.deck .slide {
+  border-radius: 4px;
+  box-shadow: var(--gw-shadow-slide);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Right AI Companion & MCP Sidebar */
+.gw-sidebar-right {
+  width: 340px;
+  min-width: 340px;
+  background: #ffffff;
+  border-left: 1px solid var(--gw-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  transition: width 0.2s ease, min-width 0.2s ease, transform 0.2s ease;
+}
+
+.gw-sidebar-right.collapsed {
+  width: 0;
+  min-width: 0;
+  transform: translateX(100%);
+  overflow: hidden;
+}
+
+.gw-ai-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--gw-border);
+}
+
+.gw-ai-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gw-text);
+}
+
+.gw-ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--gw-border-light);
+  background: #fafcfe;
+}
+
+.gw-chip {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--gw-border);
+  background: #ffffff;
+  color: var(--gw-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.gw-chip:hover {
+  background: var(--gw-blue-light);
+  border-color: #c2e7ff;
+  color: var(--gw-blue);
+}
+
+.gw-chat-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gw-chat-bubble {
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  box-shadow: 0 1px 2px rgba(60,64,67,0.06);
+}
+
+.gw-chat-bubble.ai {
+  align-self: flex-start;
+  background: #ffffff;
+  border: 1px solid var(--gw-border);
+  color: var(--gw-text);
+}
+
+.gw-chat-bubble.user {
+  align-self: flex-end;
+  background: var(--gw-blue-light);
+  color: #041e49;
+  border: 1px solid #d3e3fd;
+}
+
+.gw-chat-input-area {
+  padding: 12px;
+  border-top: 1px solid var(--gw-border);
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gw-prompt-box {
+  border: 1px solid var(--gw-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.gw-prompt-box:focus-within {
+  border-color: var(--gw-blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 2px var(--gw-blue-light);
+}
+
+.gw-prompt-textarea {
+  border: none;
+  background: transparent;
+  outline: none;
+  resize: none;
+  height: 64px;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--gw-text);
+}
+
+.gw-prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.gw-prompt-tip {
+  font-size: 11px;
+  color: var(--gw-text-muted);
+}
+
+.gw-send-btn {
+  padding: 5px 14px;
+  border-radius: 14px;
+  background: var(--gw-blue);
+  color: #ffffff;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.gw-send-btn:hover {
+  background: var(--gw-blue-hover);
+}
+
+/* MCP Panel */
+.gw-mcp-panel {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gw-mcp-card {
+  border: 1px solid var(--gw-border);
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.gw-mcp-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--gw-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.gw-mcp-field {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.gw-mcp-input {
+  flex: 1;
+  background: #ffffff;
+  border: 1px solid var(--gw-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: var(--gw-font-mono);
+  font-size: 12px;
+  color: var(--gw-text);
+  outline: none;
+}
+
+.gw-copy-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--gw-border);
+  background: #ffffff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gw-copy-btn:hover {
+  background: var(--gw-hover);
+}
+
+/* --------------------------------------------------------------------------
+   5. Modals & Notifications
+   -------------------------------------------------------------------------- */
+.gw-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(32, 33, 36, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gw-modal {
+  width: 520px;
+  max-width: 90vw;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: gwPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes gwPop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.gw-modal-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--gw-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gw-modal-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.gw-modal-body {
+  padding: 20px;
+  max-height: 70vh;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.gw-modal-foot {
+  padding: 12px 20px;
+  border-top: 1px solid var(--gw-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: #f8fafc;
+}
+
+/* 幻灯片精确渲染降级与提示卡片 */
+.precise-slide-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.precise-slide-container .slide-png {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 5;
+}
+.precise-fallback-view {
+  display: none;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.precise-slide-container.render-error .slide-png {
+  display: none;
+}
+.precise-slide-container.render-error .precise-fallback-view {
+  display: block;
+}
+.render-warning-overlay {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  right: 14px;
+  z-index: 100;
+  pointer-events: auto;
+}
+.render-warning-card {
+  background: rgba(254, 247, 224, 0.96);
+  backdrop-filter: blur(6px);
+  border: 1px solid #f9ab00;
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 4px 12px rgba(60, 64, 67, 0.15);
+  color: #3c4043;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.render-warning-title {
+  font-weight: 600;
+  color: #b06000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.render-warning-desc {
+  margin-bottom: 8px;
+  color: #5f6368;
+}
+.render-warning-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.btn-copy-install {
+  background: #1a73e8;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-copy-install:hover {
+  background: #1765c9;
+}
+.btn-back-approx {
+  background: #ffffff;
+  color: #3c4043;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-back-approx:hover {
+  background: #f1f3f4;
+}
+.render-warning-fallback {
+  font-size: 10px;
+  color: #80868b;
+}
+

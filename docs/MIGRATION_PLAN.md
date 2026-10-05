@@ -48,10 +48,10 @@
 | DOI 元数据、引用登记 | `crossref.client`、`insert-citation-tool`、`citation-store` | ✅ 已完成 `doi_lookup` / `insert_citation` / `list_citations` | M0 |
 | 引用守卫 | `citation-guard`、`citation-audit` | ✅ 已完成：操作层写前拦截 DOI / PMID / 手写参考文献条目；人类编辑事后提示 | P0 |
 | 论断核对（1.0 没有） | — | **新：`verify_claims`**，正文论断对照已登记文献的摘要或全文 | M1 |
-| OpenAlex 检索 | `openalex-search-tool` | `openalex_search` | M3 |
+| OpenAlex 检索 | `openalex-search-tool` | ✅ 已完成 `openalex_search` | M3 |
 | OA 全文 | `oa-pdf-tool`（Unpaywall） | `oa_fulltext`，同时为论断核对供给全文 | M3 |
 | 医学网站、全文抽取 | `medical-web-tools`（visit/extract） | `fetch_article`（经 ssrf-guard + 域名白名单） | M3 |
-| 引用格式（AMA 以外） | `citation-format` | `insert_citation(style)`：Vancouver / APA / GB/T 7714 | M3 |
+| 引用格式（AMA 以外） | `citation-format` | ✅ 已完成 `insert_citation(style)`：Vancouver / APA / GB/T 7714 | M3 |
 | 用户知识库检索 | `modules/knowledge`、`retrieval/unified-search` | `kb_search` / `kb_read`（关键词 + 向量，RRF），见 §2.5 R2 | **R2** |
 | 统计分析 | `stats-engine`、`stat-*`、`python-stats-worker` | 容器预装 scipy/statsmodels/lifelines + **统计 skill**；需要可复核的结果时用 `run_stats`（固定实现，输出方法学段落） | M4 |
 | 投稿选刊 | `modules/submission`（DOAJ、OpenAlex、warning list） | `journal_match` | M5 |

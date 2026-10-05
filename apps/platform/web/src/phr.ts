@@ -396,7 +396,7 @@ async function memberView(id: string, tab: 'labs' | 'records' | 'pending' = 'lab
       <button class="edit" id="mChat" title="问知家">💬 问知家</button>
       <div class="more-wrap"><button class="edit" id="mMore" aria-haspopup="menu" aria-label="更多">⋯</button>
         <div class="more-menu" id="mMenu" role="menu" hidden>
-          <button id="mBrief" role="menuitem">📝 生成就诊简报</button><button id="mShare" role="menuitem">🏥 分享给医生</button><button id="mEdit" role="menuitem">✏️ 编辑资料</button>
+          <button id="mBrief" role="menuitem">📝 生成就诊简报</button><button id="mShare" role="menuitem">🏥 分享给医生</button><button id="mClaim" role="menuitem">🔗 绑定就诊认领码</button><button id="mEdit" role="menuitem">✏️ 编辑资料</button>
         </div></div></div></div>
     <div class="max"><div class="tabs" id="tabs">
       <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button><button class="tab" data-tab="share">分享</button>
@@ -418,6 +418,7 @@ async function memberView(id: string, tab: 'labs' | 'records' | 'pending' = 'lab
   $('#mBrief').addEventListener('click', () => void makeBrief(id))
   $('#mChat').addEventListener('click', () => void openChat(id))
   $('#mShare').addEventListener('click', () => void shareDialog(id, name, () => show('share')))
+  $('#mClaim').addEventListener('click', () => void claimDialog(id, name, () => show('share')))
 
   const state = { tab: 'labs' as 'labs' | 'records' | 'pending' | 'share' }
   const show = (tab: 'labs' | 'records' | 'pending' | 'share'): void => {
@@ -484,15 +485,48 @@ async function shareDialog(id: string, name: string, done: () => void): Promise<
   })
 }
 
+async function claimDialog(id: string, name: string, done: () => void): Promise<void> {
+  const d = dlg(`<h3>绑定医院病历</h3><div class="form">
+    <div style="font-size:13px;color:var(--text-2);line-height:1.6">输入接诊医生在工作台提供的 8 位认领码（如 <code>9ABC-2DEF</code>），向医院提交「${esc(name)}」的病历档案关联申请。</div>
+    <label>8 位就诊认领码<input id="cCode" maxlength="12" placeholder="例如：9ABC-2DEF" style="text-transform:uppercase;font-family:var(--mono);font-size:16px;letter-spacing:2px;font-weight:600"></label>
+    <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">提交申请</button></div>
+  </div>`)
+  d.querySelector('[data-x="0"]')!.addEventListener('click', () => d.close())
+  d.querySelector('[data-x="1"]')!.addEventListener('click', async () => {
+    const code = ($('#cCode', d) as HTMLInputElement).value.trim()
+    if (!code) { toast('请先输入认领码', true); return }
+    try {
+      const res = await api<{ hospital_name: string }>(`/api/phr/${id}/claim`, { method: 'POST', body: JSON.stringify({ code }) })
+      d.close()
+      toast(`已向「${res.hospital_name}」提交绑定申请，请等待医生确认！`)
+      done()
+    } catch (err) { toast((err as Error).message, true) }
+  })
+}
+
 async function shareTab(main: HTMLElement, id: string, name: string, refresh: () => void): Promise<void> {
   main.className = 'loading'
   let rows: ShareRow[] = [], log: Array<{ at: string; user: string; action: string; via: string; detail: string | null }> = []
+  let links: Array<{ id: string; hospital_name: string; status: string; verified_at: string }> = []
   try {
-    [rows, log] = await Promise.all([api<ShareRow[]>(`/api/phr/${id}/shares`), api<typeof log>(`/api/patients/${id}/access-log`)])
+    const [r1, r2, r3] = await Promise.all([
+      api<ShareRow[]>(`/api/phr/${id}/shares`),
+      api<typeof log>(`/api/patients/${id}/access-log`),
+      api<typeof links>(`/api/phr/${id}/links`).catch(() => []),
+    ])
+    rows = r1; log = r2; links = r3
   } catch (err) { main.className = ''; main.innerHTML = `<div class="empty">${esc((err as Error).message)}</div>`; return }
   main.className = ''
   const visits = log.filter(l => l.action.startsWith('share_') && l.action !== 'share_create' && l.action !== 'share_revoke')
-  main.innerHTML = `<div style="display:flex;justify-content:flex-end"><button class="btn" id="newShare" style="min-height:38px;padding:0 14px">＋ 分享给医生</button></div>
+  main.innerHTML = `<div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn sec" id="btnClaim" style="min-height:38px;padding:0 14px">🔗 绑定认领码</button>
+      <button class="btn" id="newShare" style="min-height:38px;padding:0 14px">＋ 分享给医生</button>
+    </div>
+    ${links.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">已绑定的医院病历</div>
+      ${links.map(l => `<div class="rec"><div class="info">
+        <div class="t">🏥 ${esc(l.hospital_name)}</div>
+        <div class="m">已完成正式病历绑定 · ${esc(l.verified_at ? l.verified_at.slice(0, 10) : '生效中')}</div>
+      </div><span class="chip on">已互通</span></div>`).join('')}</div>` : ''}
     <div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">分享</div>
       ${rows.length ? rows.map(r => `<div class="rec"><div class="info"><div class="t">${esc(r.hospital)} · ${esc(r.department)}${r.doctor ? ` · ${esc(r.doctor)}` : ''}</div>
         <div class="m">${esc(r.scope.categories.map(c => SCOPE[c] ?? c).join('、'))}${r.scope.since ? `（${esc(r.scope.since)} 起）` : ''} · ${r.status === 'active' ? `${esc(r.expires_at.slice(0, 10))} 到期` : esc(SHARE_STATUS[r.status])}${r.allow_import ? ' · 允许纳入病历' : ''}</div>
@@ -503,6 +537,7 @@ async function shareTab(main: HTMLElement, id: string, name: string, refresh: ()
       ${visits.length ? visits.slice(0, 50).map(l => `<div class="rec"><div class="info"><div class="t">${esc(l.user)}${l.via === 'ai' ? '（医生的 AI 助手）' : ''} ${esc(LOG_ACTION[l.action] ?? l.action)}</div><div class="m">${esc(l.detail ?? '')} · ${esc(l.at.slice(0, 16).replace('T', ' '))}</div></div></div>`).join('')
         : '<div class="empty">还没有医生查看过</div>'}</div>`
   main.querySelector('#newShare')!.addEventListener('click', () => void shareDialog(id, name, refresh))
+  main.querySelector('#btnClaim')!.addEventListener('click', () => void claimDialog(id, name, refresh))
   main.querySelectorAll<HTMLElement>('[data-revoke]').forEach(b => b.addEventListener('click', async () => {
     if (!(await confirmDlg('撤销这个分享？医生立刻就看不到了（已纳入医院病历的部分归医院保存）', '撤销'))) return
     try { await api(`/api/phr/shares/${b.dataset.revoke}`, { method: 'DELETE' }); toast('已撤销'); refresh() } catch (err) { toast((err as Error).message, true) }

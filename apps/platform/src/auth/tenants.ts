@@ -42,6 +42,8 @@ export interface MemberView {
   tenant_role: UserRow['tenant_role']; status: UserRow['status']; created_at: string; last_login_at: string | null; doc_count: number
   /** 已有账户加入的（自己另有个人空间 / 知家；移出时回到那里） */
   joined: boolean
+  /** 所在科室列表 */
+  departments?: Array<{ id: string; name: string }>
 }
 
 const INVITE_DAYS_MAX = 30
@@ -153,7 +155,12 @@ export class TenantService {
 
   members(actor: string): MemberView[] {
     const t = this.requireAdmin(actor)
-    return this.store.tenantMembers(t.id).map(memberView)
+    const depts = this.store.listDepartments(t.id)
+    return this.store.tenantMembers(t.id).map(u => {
+      const v = memberView(u)
+      v.departments = depts.filter(d => d.members.includes(u.id)).map(d => ({ id: d.id, name: d.name }))
+      return v
+    })
   }
 
   /** 改成员的机构角色或停用 / 启用（只能管本机构的人；不能让机构失去最后一位管理员）。 */

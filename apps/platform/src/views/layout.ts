@@ -41,7 +41,7 @@ export function checkLayout(doc: PMNode, size: { cx: number; cy: number }, slide
   const H = pt(size.cy)
   doc.forEach((slide, _o, index) => {
     if (slideIds && !slideIds.includes(slide.attrs.id as string)) return
-    const boxes: Array<{ id: string; x: number; y: number; w: number; h: number }> = []
+    const boxes: Array<{ id: string; x: number; y: number; w: number; h: number; text: string }> = []
     slide.forEach(shape => {
       if (shape.type.name !== 'shape') return
       if (isDecoName(shape.attrs.name)) return // 模板装饰（可以有意出血到页外）
@@ -52,8 +52,9 @@ export function checkLayout(doc: PMNode, size: { cx: number; cy: number }, slide
       if (x < -2 || y < -2 || x + w > W + 2 || y + h > H + 2) {
         issues.push({ slide: index + 1, shape_id: id, kind: 'out_of_bounds', detail: `形状 (${x}, ${y}, ${w}×${h}) 超出页面 ${W}×${H}` })
       }
-      if (shape.attrs.kind !== 'text' || !shape.textContent.trim()) return
-      boxes.push({ id, x, y, w, h })
+      if ((shape.attrs.kind !== 'text' && shape.attrs.kind !== 'shape') || !shape.textContent.trim()) return
+      const text = shape.textContent.trim()
+      boxes.push({ id, x, y, w, h, text })
       const autofit = /normAutofit|spAutoFit/.test(String(shape.attrs.body_pr ?? ''))
       const inner = Math.max(10, w - 14)
       let height = 7
@@ -77,8 +78,19 @@ export function checkLayout(doc: PMNode, size: { cx: number; cy: number }, slide
         const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x))
         const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y))
         const smaller = Math.min(a.w * a.h, b.w * b.h)
-        if (smaller > 0 && (ix * iy) / smaller > 0.2) {
-          issues.push({ slide: index + 1, shape_id: b.id, kind: 'overlap', detail: `与形状 {#${a.id}} 重叠 ${Math.round((ix * iy) / smaller * 100)}%` })
+        if (smaller > 0) {
+          const overlapRatio = (ix * iy) / smaller
+          if (overlapRatio > 0.2) {
+            const isDup = a.text && b.text && (a.text.includes(b.text.slice(0, 10)) || b.text.includes(a.text.slice(0, 10)))
+            issues.push({
+              slide: index + 1,
+              shape_id: b.id,
+              kind: 'overlap',
+              detail: isDup
+                ? `与形状 {#${a.id}} 文本重复且空间重叠 ${Math.round(overlapRatio * 100)}%，请检查是否重复添加了文本框`
+                : `与形状 {#${a.id}} 重叠 ${Math.round(overlapRatio * 100)}%`,
+            })
+          }
         }
       }
     }

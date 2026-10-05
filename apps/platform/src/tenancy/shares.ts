@@ -160,6 +160,28 @@ export class ShareService {
     return { ...d, node: this.docs.get(docId) }
   }
 
+  /** 分享文档里的原件图片：必须由该分享范围内的文档引用，且由医生所在科室调阅。记一次查看原件图片审计日志。 */
+  asset(a: Actor, shareId: string, assetId: string): { asset: { id: string; mime: string; name: string }; bytes: Uint8Array } {
+    const s = this.forDoctor(a, shareId)
+    const asset = this.store.getAsset(assetId)
+    if (!asset) throw new PatientError('not_found', '图片不存在', 404)
+    const view = this.patients.sharedView(s.source_tenant_id, s.patient_id, scopeOf(s))
+    const docIds = new Set(view.documents.map(d => d.doc_id))
+    let referenced = false
+    for (const docId of docIds) {
+      const node = this.docs.get(docId)
+      if (node && JSON.stringify(node.toJSON()).includes(assetId)) {
+        referenced = true
+        break
+      }
+    }
+    if (!referenced) throw new PatientError('not_found', '图片不存在或未被分享', 404)
+    const bytes = this.store.getAssetBytes(asset.id)
+    if (!bytes) throw new PatientError('not_found', '图片不存在', 404)
+    this.patients.sharedLog(s.source_tenant_id, s.patient_id, a.userId, a.via, 'share_asset', `${this.where(s)} · 查看原件图片「${asset.name}」`)
+    return { asset, bytes }
+  }
+
   /** 纳入本院（家人允许时）：复制成本院患者，返回新患者。 */
   import(a: Actor, shareId: string) {
     const s = this.forDoctor(a, shareId)

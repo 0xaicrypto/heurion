@@ -132,6 +132,11 @@ const ALL_PARITY: Record<string, string> = {
   'GET /api/phr/directory': 'phr_share.directory', 'GET /api/phr/:ptid/shares': 'phr_share.list', 'POST /api/phr/:ptid/shares': 'phr_share.create', 'DELETE /api/phr/shares/:shid': 'phr_share.revoke',
   'GET /api/shares': 'share_list', 'GET /api/shares/:shid': 'share_read', 'GET /api/shares/:shid/docs/:id': 'share_read',
   'GET /api/shares/:shid/labs': 'share_labs', 'GET /api/shares/:shid/files/:pfid': 'share_file', 'POST /api/shares/:shid/import': 'share_import',
+  // 机构患者认领码绑定与 PHI 敏感数据扫描 (PATIENT.md §4, §8)
+  'POST /api/patients/:ptid/claim_code': 'patient_claim_code',
+  'GET /api/patients/:ptid/claims': 'patient_claims_list',
+  'GET /api/phr/:ptid/links': 'phr_member_links',
+  'POST /api/ops/phi-scan': 'phi_scan',
 }
 
 /** AI 发起后要用户在确认卡上确认才执行的动作（不可恢复的删除、权限与安全、以机构身份对外的标识）。 */
@@ -148,6 +153,12 @@ const AI_CONFIRM = [
 /** 不给 AI 的（只是界面机制，或必须本人亲自做）；每条写清理由。 */
 const NOT_FOR_AI: Record<string, string> = {
   'GET /api/images': '界面用来决定是否显示搜图入口；AI 从 image_search 返回的 unsplash_unconfigured 得知图库没配置',
+  // 知家分享原件图片由界面展示
+  'GET /api/shares/:shid/assets/:aid': '图片二进制资产由界面渲染展示；AI 读打码后的文字内容（share_file / share_read）',
+  // 机构患者认领码绑定的人机分界
+  'POST /api/claims/:cid/confirm': '医生确认认领绑定必须由医生本人在界面操作防错绑（留审计，AI 不能代为确认）',
+  'DELETE /api/claims/:cid': '撤销认领码或解除绑定是医生/家属本人的管理操作',
+  'POST /api/phr/:ptid/claim': '在知家输入认领码是患者/家属本人操作',
   // 知家（PATIENT.md）：手动录入是家人自己填的数值，直接为已确认；AI 的化验只能来自报告提取（report_upload / report_lab_add）
   'POST /api/patients/:ptid/labs': '手动录入化验是家人本人的操作（AI 的化验来自上传报告的提取与补项）',
   'POST /api/patients/:ptid/proposals/:prid/:action{accept|reject}': '审核 AI 的提议是人的事（AI 不能采纳自己的提议）',

@@ -213,7 +213,6 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
   $('userMenuLeave').hidden = !!me.dev || !me.tenant?.in_org
   $('userMenuPhr').hidden = !!me.dev
   if (!me.dev) void refreshInvites(api, notify)
-  $('userMenuClaim').hidden = !(me.dev_mode && me.role === 'admin')
   // 读视图是模型看到的文档表示，只在开发模式下作为排查工具提供
   $('userMenuReadView').hidden = !me.dev_mode
   $('userMenuSettings').hidden = !!me.dev
@@ -247,11 +246,6 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
       case 'invites': void openMyInvites(api, notify); break
       case 'phr': location.href = '/phr'; break
       case 'leave': void leaveHospital(me, api, notify); break
-      case 'claim': {
-        const r = await api('/api/me/claim-dev-data', { method: 'POST' }).catch(err => { notify((err as Error).message, true); return null })
-        if (r) { notify(`已把开发期的 ${r.docs} 份文档、${r.assets} 个资产转到你的账户`); setTimeout(() => location.reload(), 900) }
-        break
-      }
       case 'everywhere':
         await api('/api/auth/logout-everywhere', { method: 'POST' }).catch(() => {})
         signOut()
@@ -349,9 +343,9 @@ async function leaveHospital(me: Me, api: ApiFn, notify: Notify): Promise<void> 
 
 function closeDialog(): void { const d = $('dialog'); d.hidden = true; d.innerHTML = '' }
 
-function openDialog(title: string, body: string): HTMLElement {
+function openDialog(title: string, body: string, wide = false): HTMLElement {
   const dlg = $('dialog')
-  dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+  dlg.innerHTML = `<div class="dialog-card${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
     <div class="dialog-head"><h2>${esc(title)}</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
     <div class="dialog-body">${body}</div></div>`
   dlg.hidden = false
@@ -428,9 +422,42 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
 }
 
 async function openAdmin(me: Me, api: <T = any>(path: string, opts?: RequestInit) => Promise<T>, notify: (msg: string, error?: boolean) => void): Promise<void> {
-  const dlg = openDialog('平台运营', `<h3 class="mem-h">机构</h3><div id="platformTenants" class="muted">加载中…</div>
-    <h3 class="mem-h">实例设置</h3><div id="adminSettings" class="admin-settings"></div>
-    <h3 class="mem-h">全部用户</h3><div id="adminUsers" class="muted">加载中…</div>${AUDIT_HTML}`)
+  const dlg = openDialog('平台运营', `
+    <div class="org-tabs" id="adminTabs">
+      <button class="org-tab active" data-tab="tenants">🏢 机构大盘</button>
+      <button class="org-tab" data-tab="users">👥 全局用户</button>
+      <button class="org-tab" data-tab="settings">⚙️ 实例设置</button>
+      <button class="org-tab" data-tab="audit">🛡️ 全局审计</button>
+    </div>
+    <div class="org-panel" id="tabAdminTenants">
+      <div id="platformTenants" class="muted">加载中…</div>
+    </div>
+    <div class="org-panel" id="tabAdminUsers" hidden>
+      <div class="member-search-row">
+        <input type="search" id="adminUserSearch" class="member-search-input" placeholder="按姓名、用户名或机构筛选用户..." autocomplete="off">
+      </div>
+      <div id="adminUsers" class="muted">加载中…</div>
+    </div>
+    <div class="org-panel" id="tabAdminSettings" hidden>
+      <div id="adminSettings" class="admin-settings"></div>
+    </div>
+    <div class="org-panel" id="tabAdminAudit" hidden>
+      ${AUDIT_HTML}
+    </div>`, true)
+
+  const tabs = dlg.querySelectorAll<HTMLButtonElement>('#adminTabs .org-tab')
+  const panels: Record<string, HTMLElement> = {
+    tenants: dlg.querySelector('#tabAdminTenants')!,
+    users: dlg.querySelector('#tabAdminUsers')!,
+    settings: dlg.querySelector('#tabAdminSettings')!,
+    audit: dlg.querySelector('#tabAdminAudit')!,
+  }
+  tabs.forEach(btn => btn.addEventListener('click', () => {
+    const t = btn.dataset.tab!
+    tabs.forEach(b => b.classList.toggle('active', b === btn))
+    Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== t })
+  }))
+
   void renderTenants(dlg, me, api, notify).catch(err => notify((err as Error).message, true))
   mountAudit(dlg, '/api/admin/audit', api, notify)
   // 实例设置：记忆总开关（停用会删除所有用户的记忆，页内二次确认）
@@ -471,6 +498,18 @@ async function openAdmin(me: Me, api: <T = any>(path: string, opts?: RequestInit
           <button data-act="reset">重置密码</button>
           <button data-act="logout" title="让该用户所有设备上的登录失效">强制下线</button>
         </div></td></tr>`).join('')}</tbody></table>`
+
+    const searchInput = dlg.querySelector<HTMLInputElement>('#adminUserSearch')
+    if (searchInput) {
+      searchInput.oninput = () => {
+        const q = searchInput.value.trim().toLowerCase()
+        dlg.querySelectorAll<HTMLElement>('#adminUsers tbody tr').forEach(tr => {
+          if (tr.classList.contains('reset-row')) return
+          const text = tr.innerText.toLowerCase()
+          tr.hidden = Boolean(q && !text.includes(q))
+        })
+      }
+    }
   }
   await render().catch(err => notify((err as Error).message, true))
   dlg.onchange = async e => {
@@ -599,17 +638,17 @@ function showLink(box: Element, link: string, label: string, notify: Notify): vo
  * 科室（知家家庭分享按科室投递：家人选「医院 → 科室」，科室里的医生都能看到）。
  * 管理员建 / 改名 / 删科室、勾选成员（一人可在多个科室）；成员只能看。
  */
-async function mountDepartments(box: HTMLElement, api: ApiFn, notify: Notify, admin: boolean): Promise<void> {
+async function mountDepartments(box: HTMLElement, api: ApiFn, notify: Notify, admin: boolean, onMembersChange?: () => Promise<void>): Promise<void> {
   type Dept = { id: string; name: string; members: Array<{ id: string; display_name: string }> }
   const render = async () => {
     const list: Dept[] = await api('/api/tenant/departments')
     box.className = 'dept-box'
-    box.innerHTML = `<div class="muted small">家人在知家里分享档案时选「本院 → 科室」，科室里的医生都能在「患者 → 家庭分享」里看到。一人可在多个科室。</div>
-      ${list.length ? `<table class="users"><thead><tr><th>科室</th><th>成员</th><th></th></tr></thead><tbody>${list.map(d => `<tr data-dept="${esc(d.id)}">
-        <td>${admin ? `<input class="dept-name" value="${esc(d.name)}" maxlength="40" aria-label="科室名称">` : `<b>${esc(d.name)}</b>`}</td>
+    box.innerHTML = `<div class="muted small" style="margin-bottom: 8px">家人在知家里分享档案时选「本院 → 科室」，科室里的医生都能在「患者 → 家庭分享」里看到。一人可在多个科室。</div>
+      ${list.length ? `<table class="users"><thead><tr><th>科室</th><th>科室医生 (${list.reduce((acc, d) => acc + d.members.length, 0)} 人次)</th><th></th></tr></thead><tbody>${list.map(d => `<tr data-dept="${esc(d.id)}">
+        <td style="min-width: 140px">${admin ? `<input class="dept-name" value="${esc(d.name)}" maxlength="40" aria-label="科室名称">` : `<b>${esc(d.name)}</b>`}</td>
         <td>${d.members.length ? d.members.map(m => `<span class="chip">${esc(m.display_name)}</span>`).join(' ') : '<span class="muted">还没有成员</span>'}</td>
         <td class="actions">${admin ? '<div class="actions-row"><button data-dact="members">设置成员</button><button data-dact="delete" class="danger">删除</button></div>' : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">还没有科室。</div>'}
-      ${admin ? '<form class="inline-form" id="deptForm"><input type="text" name="name" placeholder="新科室名称，如：心血管内科" maxlength="40" required><button class="primary">新建科室</button></form>' : ''}`
+      ${admin ? '<form class="inline-form" id="deptForm" style="margin-top: 10px"><input type="text" name="name" placeholder="新科室名称，如：心血管内科" maxlength="40" required><button class="primary">新建科室</button></form>' : ''}`
     box.querySelector<HTMLFormElement>('#deptForm')?.addEventListener('submit', async e => {
       e.preventDefault()
       try { await api('/api/tenant/departments', { method: 'POST', body: JSON.stringify({ name: new FormData(e.target as HTMLFormElement).get('name') }) }); notify('科室已建好'); await render() } catch (err) { notify((err as Error).message, true) }
@@ -621,30 +660,67 @@ async function mountDepartments(box: HTMLElement, api: ApiFn, notify: Notify, ad
     box.querySelectorAll<HTMLButtonElement>('[data-dact]').forEach(btn => btn.addEventListener('click', async () => {
       const id = btn.closest<HTMLElement>('[data-dept]')!.dataset.dept!
       const d = list.find(x => x.id === id)!
-      // 删除点两次确认（和机构模板一致；机构管理本身在对话框里，不再弹一层）
       if (btn.dataset.dact === 'delete') {
         btn.dataset.dact = 'delete-confirm'
         btn.textContent = '再点一次删除（发给该科室的家庭分享会失效）'
         return
       }
       if (btn.dataset.dact === 'delete-confirm') {
-        try { await api(`/api/tenant/departments/${id}`, { method: 'DELETE' }); notify('已删除'); await render() } catch (err) { notify((err as Error).message, true) }
+        try { await api(`/api/tenant/departments/${id}`, { method: 'DELETE' }); notify('已删除'); await render(); await onMembersChange?.() } catch (err) { notify((err as Error).message, true) }
         return
       }
-      // 设置成员：从本机构成员里勾选
+      // 设置成员：带实时搜索过滤、全选/清空、已选计数
       const all: Array<{ id: string; display_name: string; username: string; status: string }> = await api('/api/tenant/members')
+      const activeMembers = all.filter(u => u.status === 'active')
       const have = new Set(d.members.map(m => m.id))
       const row = btn.closest('tr')!
       const editor = document.createElement('tr')
       editor.className = 'dept-editor'
-      editor.innerHTML = `<td colspan="3"><div class="dept-pick">${all.filter(u => u.status === 'active').map(u => `<label class="toggle"><input type="checkbox" value="${esc(u.id)}" ${have.has(u.id) ? 'checked' : ''}> ${esc(u.display_name)} <span class="muted">${esc(u.username)}</span></label>`).join('')}</div>
-        <div class="actions-row"><button class="primary" data-save>保存成员</button><button data-cancel>取消</button></div></td>`
+      editor.innerHTML = `<td colspan="3"><div class="dept-editor-inner">
+        <div class="dept-filter-row">
+          <input type="search" class="dept-member-filter" placeholder="搜索成员姓名、用户名..." autocomplete="off">
+          <span class="muted small dept-count-info">已选 <b>${have.size}</b> / ${activeMembers.length} 人</span>
+          <button type="button" class="quiet small-btn dept-select-all">全选</button>
+          <button type="button" class="quiet small-btn dept-clear-all">清空</button>
+        </div>
+        <div class="dept-pick dept-pick-scroll">${activeMembers.map(u => `<label class="toggle dept-pick-item" data-text="${esc(u.display_name.toLowerCase())} ${esc(u.username.toLowerCase())}"><input type="checkbox" value="${esc(u.id)}" ${have.has(u.id) ? 'checked' : ''}> <b>${esc(u.display_name)}</b> <span class="muted">${esc(u.username)}</span></label>`).join('')}</div>
+        <div class="actions-row" style="margin-top: 8px"><button class="primary" data-save>保存成员</button><button data-cancel>取消</button></div>
+      </div></td>`
       box.querySelector('.dept-editor')?.remove()
       row.after(editor)
+
+      const filterInput = editor.querySelector<HTMLInputElement>('.dept-member-filter')!
+      const countInfo = editor.querySelector<HTMLElement>('.dept-count-info')!
+      const updateCount = () => {
+        const checkedCount = editor.querySelectorAll<HTMLInputElement>('.dept-pick-item input:checked').length
+        countInfo.innerHTML = `已选 <b>${checkedCount}</b> / ${activeMembers.length} 人`
+      }
+      filterInput.addEventListener('input', () => {
+        const q = filterInput.value.trim().toLowerCase()
+        editor.querySelectorAll<HTMLElement>('.dept-pick-item').forEach(item => {
+          const match = !q || (item.dataset.text ?? '').includes(q)
+          item.hidden = !match
+        })
+      })
+      editor.querySelector('.dept-select-all')?.addEventListener('click', () => {
+        editor.querySelectorAll<HTMLElement>('.dept-pick-item:not([hidden]) input').forEach(i => { (i as HTMLInputElement).checked = true })
+        updateCount()
+      })
+      editor.querySelector('.dept-clear-all')?.addEventListener('click', () => {
+        editor.querySelectorAll<HTMLElement>('.dept-pick-item:not([hidden]) input').forEach(i => { (i as HTMLInputElement).checked = false })
+        updateCount()
+      })
+      editor.querySelectorAll<HTMLInputElement>('.dept-pick-item input').forEach(i => i.addEventListener('change', updateCount))
+
       editor.querySelector('[data-cancel]')!.addEventListener('click', () => editor.remove())
       editor.querySelector('[data-save]')!.addEventListener('click', async () => {
         const ids = [...editor.querySelectorAll<HTMLInputElement>('input:checked')].map(i => i.value)
-        try { await api(`/api/tenant/departments/${id}/members`, { method: 'PUT', body: JSON.stringify({ user_ids: ids }) }); notify('科室成员已更新'); await render() } catch (err) { notify((err as Error).message, true) }
+        try {
+          await api(`/api/tenant/departments/${id}/members`, { method: 'PUT', body: JSON.stringify({ user_ids: ids }) })
+          notify('科室成员已更新')
+          await render()
+          await onMembersChange?.()
+        } catch (err) { notify((err as Error).message, true) }
       })
     }))
   }
@@ -653,35 +729,117 @@ async function mountDepartments(box: HTMLElement, api: ApiFn, notify: Notify, ad
 
 async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
   const t = await api('/api/tenant')
-  const dlg = openDialog(t.kind === 'org' ? '机构管理' : '机构与邀请', `
-    <form id="tenantForm" class="form"><label>机构名称<span class="field-row"><input type="text" name="name" value="${esc(t.name)}" maxlength="60" required><button class="primary">保存</button></span></label></form>
-    ${t.kind === 'personal' ? '<div class="muted">现在是个人账户。邀请同事加入后，这里就成为一个机构：成员的文档、资料仍各自私有；以后的患者数据按机构隔离。</div>' : ''}
-    <h3 class="mem-h">患者数据</h3>
-    <div class="tenant-settings">
-      <label class="toggle"><input type="checkbox" data-set="patient_module" ${t.settings.patient_module ? 'checked' : ''}> 启用患者模块</label>
-      <label class="toggle"><input type="checkbox" data-set="external_model_for_patients" ${t.settings.external_model_for_patients ? 'checked' : ''}> 患者数据可以交给外部模型分析（只发代号，不发姓名）</label>
-      <label class="toggle">AI 修改患者记录 <select data-set="ai_patient_writes"><option value="review"${t.settings.ai_patient_writes !== 'direct' ? ' selected' : ''}>需医生确认（进待确认）</option><option value="direct"${t.settings.ai_patient_writes === 'direct' ? ' selected' : ''}>直接生效（和人一样）</option></select></label>
-      ${t.kind === 'org' ? `<label class="toggle"><input type="checkbox" data-set="accept_patient_shares" ${t.settings.accept_patient_shares !== false ? 'checked' : ''}> 接受知家家庭分享（家人可在知家里选本院的科室分享档案）</label>` : ''}
-      <label class="toggle">患者默认可见范围 <select data-set="patient_visibility"><option value="care_team"${t.settings.patient_visibility === 'care_team' ? ' selected' : ''}>创建者 + 诊疗组</option><option value="tenant"${t.settings.patient_visibility === 'tenant' ? ' selected' : ''}>本机构全员</option></select></label>
+  const title = t.kind === 'org' ? (t.name ? `机构管理 · ${t.name}` : '机构管理') : (t.name ? `机构与邀请 · ${t.name}` : '机构与邀请')
+  const dlg = openDialog(title, `
+    <div class="org-tabs" id="tenantTabs">
+      <button class="org-tab active" data-tab="overview">⚙️ 概览与设置</button>
+      ${t.kind === 'org' ? '<button class="org-tab" data-tab="depts">🏥 科室管理</button>' : ''}
+      <button class="org-tab" data-tab="members">👥 成员与邀请</button>
+      <button class="org-tab" data-tab="templates">📑 机构模板</button>
+      <button class="org-tab" data-tab="audit">🛡️ 安全审计</button>
     </div>
-    ${t.kind === 'org' ? '<h3 class="mem-h">科室</h3><div id="tenantDepts" class="muted">加载中…</div>' : ''}
-    <h3 class="mem-h">机构幻灯片模板</h3><div id="orgTemplates" class="muted">加载中…</div>
-    <h3 class="mem-h">成员</h3><div id="tenantMembers" class="muted">加载中…</div>
-    <h3 class="mem-h">邀请</h3>
-    ${t.kind === 'org' ? `<form class="inline-form" id="inviteUserForm"><input type="text" name="username" placeholder="平台上已有账户的用户名" required autocomplete="off"><select name="role"><option value="member">成员</option><option value="admin">机构管理员</option></select><button class="primary">按用户名邀请</button></form>
-    <div class="muted small">已在平台注册（例如先用知家）的人：按用户名邀请，对方登录后在头像菜单「医院邀请」里接受即加入，他的个人空间（知家）保留。没注册过的人用下面的邀请链接。</div>` : ''}
-    <form class="inline-form" id="inviteForm"><select name="role"><option value="member">成员</option><option value="admin">机构管理员</option></select><input type="text" name="email" placeholder="对方邮箱（可选，仅备注）" inputmode="email"><select name="days"><option value="7">7 天内有效</option><option value="1">1 天</option><option value="30">30 天</option></select><button class="primary">生成邀请链接</button></form>
-    <div id="inviteLink"></div><div id="inviteList"></div>
-    ${AUDIT_HTML}`)
+
+    <!-- Tab 1: Overview & Settings -->
+    <div class="org-panel" id="tTabOverview">
+      <div class="org-stats-grid" id="tStatsGrid"></div>
+      <form id="tenantForm" class="form">
+        <label>机构名称<span class="field-row"><input type="text" name="name" value="${esc(t.name)}" maxlength="60" required><button class="primary">保存名称</button></span></label>
+      </form>
+      ${t.kind === 'personal' ? '<div class="muted">现在是个人账户。邀请同事加入后，这里就成为一个机构：成员的文档、资料仍各自私有；以后的患者数据按机构隔离。</div>' : ''}
+      <h3 class="mem-h">患者数据与合规规则</h3>
+      <div class="tenant-settings">
+        <label class="toggle"><input type="checkbox" data-set="patient_module" ${t.settings.patient_module ? 'checked' : ''}> 启用患者模块</label>
+        <label class="toggle"><input type="checkbox" data-set="external_model_for_patients" ${t.settings.external_model_for_patients ? 'checked' : ''}> 患者数据可以交给外部模型分析（只发代号，不发姓名）</label>
+        <label class="toggle">AI 修改患者记录 <select data-set="ai_patient_writes"><option value="review"${t.settings.ai_patient_writes !== 'direct' ? ' selected' : ''}>需医生确认（进待确认）</option><option value="direct"${t.settings.ai_patient_writes === 'direct' ? ' selected' : ''}>直接生效（和人一样）</option></select></label>
+        ${t.kind === 'org' ? `<label class="toggle"><input type="checkbox" data-set="accept_patient_shares" ${t.settings.accept_patient_shares !== false ? 'checked' : ''}> 接受知家家庭分享（家人可在知家里选本院的科室分享档案）</label>` : ''}
+        <label class="toggle">患者默认可见范围 <select data-set="patient_visibility"><option value="care_team"${t.settings.patient_visibility === 'care_team' ? ' selected' : ''}>创建者 + 诊疗组</option><option value="tenant"${t.settings.patient_visibility === 'tenant' ? ' selected' : ''}>本机构全员</option></select></label>
+      </div>
+    </div>
+
+    <!-- Tab 2: Departments -->
+    ${t.kind === 'org' ? `<div class="org-panel" id="tTabDepts" hidden>
+      <div id="tenantDepts" class="muted">加载中…</div>
+    </div>` : ''}
+
+    <!-- Tab 3: Members & Invites -->
+    <div class="org-panel" id="tTabMembers" hidden>
+      <div class="member-search-row">
+        <input type="search" id="memberSearch" class="member-search-input" placeholder="按姓名、用户名或科室筛选成员..." autocomplete="off">
+      </div>
+      <div id="tenantMembers" class="muted">加载中…</div>
+      <h3 class="mem-h" style="margin-top: 20px">邀请新成员</h3>
+      <div class="org-sub-section">
+        ${t.kind === 'org' ? `<form class="inline-form" id="inviteUserForm"><input type="text" name="username" placeholder="平台已有账户用户名（如知家注册账户）" required autocomplete="off"><select name="role"><option value="member">普通成员</option><option value="admin">机构管理员</option></select><button class="primary">按用户名邀请</button></form>
+        <div class="muted small">已注册用户：对方在头像菜单收到邀请并接受后加入，个人空间（知家）予以保留。</div>` : ''}
+        <form class="inline-form" id="inviteForm"><select name="role"><option value="member">普通成员</option><option value="admin">机构管理员</option></select><input type="text" name="email" placeholder="对方邮箱（可选，仅备注）" inputmode="email"><select name="days"><option value="7">7 天内有效</option><option value="1">1 天</option><option value="30">30 天</option></select><button class="primary">生成邀请链接</button></form>
+        <div id="inviteLink"></div><div id="inviteList"></div>
+      </div>
+    </div>
+
+    <!-- Tab 4: Templates -->
+    <div class="org-panel" id="tTabTemplates" hidden>
+      <div id="orgTemplates" class="muted">加载中…</div>
+    </div>
+
+    <!-- Tab 5: Audit -->
+    <div class="org-panel" id="tTabAudit" hidden>
+      ${AUDIT_HTML}
+    </div>`, true)
+
+  const tabs = dlg.querySelectorAll<HTMLButtonElement>('#tenantTabs .org-tab')
+  const panels: Record<string, HTMLElement> = {
+    overview: dlg.querySelector('#tTabOverview')!,
+    depts: dlg.querySelector('#tTabDepts') as HTMLElement,
+    members: dlg.querySelector('#tTabMembers')!,
+    templates: dlg.querySelector('#tTabTemplates')!,
+    audit: dlg.querySelector('#tTabAudit')!,
+  }
+  tabs.forEach(btn => btn.addEventListener('click', () => {
+    const tabName = btn.dataset.tab!
+    tabs.forEach(b => b.classList.toggle('active', b === btn))
+    Object.entries(panels).forEach(([k, p]) => { if (p) p.hidden = k !== tabName })
+  }))
+
   mountAudit(dlg, '/api/tenant/audit', api, notify)
   const orgBox = dlg.querySelector<HTMLElement>('#orgTemplates')!
   orgBox.classList.remove('muted')
   void mountOrgTemplates(orgBox, api, notify, t.role === 'admin').catch(err => { orgBox.textContent = (err as Error).message })
+
+  let currentMembersList: any[] = []
+  let currentInvitesList: any[] = []
+  let currentDeptsList: any[] = []
+
+  const updateStats = () => {
+    const grid = dlg.querySelector('#tStatsGrid')
+    if (!grid) return
+    const adminsCount = currentMembersList.filter(m => m.tenant_role === 'admin' && m.status === 'active').length
+    grid.innerHTML = `
+      <div class="org-stat-card"><span class="org-stat-num">${currentMembersList.length}</span><span class="org-stat-lbl">机构成员 (管理员 ${adminsCount})</span></div>
+      ${t.kind === 'org' ? `<div class="org-stat-card"><span class="org-stat-num">${currentDeptsList.length}</span><span class="org-stat-lbl">临床科室</span></div>` : ''}
+      <div class="org-stat-card"><span class="org-stat-num">${currentInvitesList.length}</span><span class="org-stat-lbl">待加入邀请</span></div>
+      <div class="org-stat-card"><span class="org-stat-num">${t.settings.patient_module ? '已启用' : '未开放'}</span><span class="org-stat-lbl">患者数据模块</span></div>
+    `
+  }
+
   const deptBox = dlg.querySelector<HTMLElement>('#tenantDepts')
-  if (deptBox) void mountDepartments(deptBox, api, notify, t.role === 'admin').catch(err => { deptBox.textContent = (err as Error).message })
+  if (deptBox) {
+    void mountDepartments(deptBox, api, notify, t.role === 'admin', async () => {
+      await renderMembers()
+    }).catch(err => { deptBox.textContent = (err as Error).message })
+  }
+
   dlg.querySelector<HTMLFormElement>('#tenantForm')!.onsubmit = async e => {
     e.preventDefault()
-    try { await api('/api/tenant', { method: 'PATCH', body: JSON.stringify({ name: new FormData(e.target as HTMLFormElement).get('name') }) }); notify('已保存') } catch (err) { notify((err as Error).message, true) }
+    const newName = String(new FormData(e.target as HTMLFormElement).get('name') ?? '').trim()
+    try {
+      await api('/api/tenant', { method: 'PATCH', body: JSON.stringify({ name: newName }) })
+      t.name = newName
+      const h2 = dlg.querySelector('.dialog-head h2')
+      if (h2) h2.textContent = t.kind === 'org' ? `机构管理 · ${newName}` : `机构与邀请 · ${newName}`
+      notify('已保存')
+    } catch (err) {
+      notify((err as Error).message, true)
+    }
   }
   dlg.querySelector('.tenant-settings')!.addEventListener('change', async e => {
     e.stopPropagation()
@@ -691,23 +849,45 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
     const value = el instanceof HTMLInputElement && el.type === 'checkbox' ? el.checked : el.value
     try { await api('/api/tenant', { method: 'PATCH', body: JSON.stringify({ settings: { [key]: value } }) }); notify('设置已保存') } catch (err) { notify((err as Error).message, true) }
   })
+
   const renderMembers = async () => {
-    const list: any[] = await api('/api/tenant/members')
+    currentMembersList = await api('/api/tenant/members')
+    if (t.kind === 'org') {
+      try { currentDeptsList = await api('/api/tenant/departments') } catch { currentDeptsList = [] }
+    }
+    updateStats()
     const box = dlg.querySelector('#tenantMembers')!
     box.className = ''
     box.innerHTML = `<table class="users"><thead><tr><th>成员</th><th>角色</th><th>状态</th><th>文档</th><th>最近登录</th><th></th></tr></thead><tbody>
-      ${list.map(u => `<tr data-mid="${esc(u.id)}" class="${u.status === 'disabled' ? 'disabled' : ''}"><td><b>${esc(u.display_name)}</b><div class="muted">${esc(u.username)}${u.id === me.id ? ' · 我' : ''}${u.joined ? ' · 已有账户加入' : ''}</div></td>
-        <td><select data-mrole><option value="member"${u.tenant_role === 'member' ? ' selected' : ''}>成员</option><option value="admin"${u.tenant_role === 'admin' ? ' selected' : ''}>机构管理员</option></select></td>
+      ${currentMembersList.map(u => `<tr data-mid="${esc(u.id)}" class="${u.status === 'disabled' ? 'disabled' : ''}">
+        <td><b>${esc(u.display_name)}</b><div class="muted">${esc(u.username)}${u.id === me.id ? ' · 我' : ''}${u.joined ? ' · 已有账户加入' : ''}</div>
+          ${u.departments?.length ? `<div style="margin-top: 4px">${u.departments.map((d: any) => `<span class="member-dept-badge">${esc(d.name)}</span>`).join('')}</div>` : ''}</td>
+        <td><select data-mrole><option value="member"${u.tenant_role === 'member' ? ' selected' : ''}>普通成员</option><option value="admin"${u.tenant_role === 'admin' ? ' selected' : ''}>机构管理员</option></select></td>
         <td>${u.status === 'active' ? '<span class="pill ok">正常</span>' : '<span class="pill off">已停用</span>'}</td><td>${u.doc_count}</td><td class="muted">${when(u.last_login_at)}</td>
         <td class="actions">${u.id === me.id ? '' : `<div class="actions-row"><button data-mact="${u.status === 'active' ? 'disable' : 'enable'}">${u.status === 'active' ? '停用' : '启用'}</button>${t.kind === 'org' ? '<button data-mact="remove" class="danger">移出</button>' : ''}</div>`}</td></tr>`).join('')}</tbody></table>`
+
+    const searchInput = dlg.querySelector<HTMLInputElement>('#memberSearch')
+    if (searchInput) {
+      searchInput.oninput = () => {
+        const q = searchInput.value.trim().toLowerCase()
+        box.querySelectorAll<HTMLElement>('tbody tr').forEach(tr => {
+          const text = tr.innerText.toLowerCase()
+          tr.hidden = Boolean(q && !text.includes(q))
+        })
+      }
+    }
   }
+
   const renderInvites = async () => {
-    const list: any[] = await api('/api/tenant/invites')
-    dlg.querySelector('#inviteList')!.innerHTML = list.length === 0 ? '' : `<table class="users"><thead><tr><th>待使用的邀请</th><th>角色</th><th>有效期至</th><th></th></tr></thead><tbody>
-      ${list.map(i => `<tr data-code="${esc(i.code)}"><td class="muted">${i.target_username ? `发给用户 <b>${esc(i.target_username)}</b>` : esc(i.email ?? '（未注明）')} · ${when(i.created_at)} 发出</td><td>${i.role === 'admin' ? '机构管理员' : '成员'}</td><td class="muted">${when(i.expires_at)}</td>
+    currentInvitesList = await api('/api/tenant/invites')
+    updateStats()
+    dlg.querySelector('#inviteList')!.innerHTML = currentInvitesList.length === 0 ? '' : `<table class="users" style="margin-top: 10px"><thead><tr><th>待使用的邀请</th><th>角色</th><th>有效期至</th><th></th></tr></thead><tbody>
+      ${currentInvitesList.map(i => `<tr data-code="${esc(i.code)}"><td class="muted">${i.target_username ? `发给用户 <b>${esc(i.target_username)}</b>` : esc(i.email ?? '（未注明）')} · ${when(i.created_at)} 发出</td><td>${i.role === 'admin' ? '机构管理员' : '普通成员'}</td><td class="muted">${when(i.expires_at)}</td>
         <td class="actions"><div class="actions-row">${i.target_username ? '' : '<button data-iact="copy">复制链接</button>'}<button data-iact="revoke" class="danger">撤销</button></div></td></tr>`).join('')}</tbody></table>`
   }
+
   await Promise.all([renderMembers(), renderInvites()]).catch(err => notify((err as Error).message, true))
+
   const userForm = dlg.querySelector<HTMLFormElement>('#inviteUserForm')
   if (userForm) userForm.onsubmit = async e => {
     e.preventDefault()
@@ -738,7 +918,6 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
     const mact = t2.closest<HTMLElement>('[data-mact]')
     const uid = mact?.closest<HTMLElement>('[data-mid]')?.dataset.mid
     if (mact && uid && mact.dataset.mact === 'remove') {
-      // 两步确认（不用浏览器原生对话框）：第一次点变成「确认移出」
       mact.dataset.mact = 'remove-confirm'; mact.textContent = '确认移出'
       mact.title = '他回到自己的个人空间（知家不受影响），本院研究成员身份与科室归属会去掉'
       return

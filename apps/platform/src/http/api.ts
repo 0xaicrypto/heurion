@@ -15,6 +15,8 @@ import { TenantError, TenantService } from '../auth/tenants.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
 import { ShareService } from '../tenancy/shares.ts'
+import { PatientClaimService } from '../tenancy/claims.ts'
+import { scanPhi, redactPhi } from '../ops/phi-scan.ts'
 import { CohortService } from '../research/cohort.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
@@ -85,6 +87,8 @@ export interface ApiDeps {
   images?: ImageService
   /** 知家分享给医生（不给时由 patients 组装）。 */
   shares?: ShareService
+  /** 机构认领码与患者绑定（不给时由 patients 组装）。 */
+  claims_patient?: PatientClaimService
   /** 访问判定（研究团队协作）；不给时按 store 新建一个。 */
   access?: Access
   devUser: string
@@ -486,12 +490,17 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!shares) throw new PatientError('patient_module_off', '患者模块未启用', 403)
     return shares
   }
+  const claims = deps.claims_patient ?? (deps.patients ? new PatientClaimService(store, tenants, deps.patients) : null)
+  const clm = () => {
+    if (!claims) throw new PatientError('patient_module_off', '患者模块未启用', 403)
+    return claims
+  }
   /** 家人一侧：可分享的医院 → 科室 → 医生；某成员的分享（有效 / 撤销 / 过期 / 纳入）；新建；撤销。 */
   app.get('/api/phr/directory', c => { try { return c.json(sh().directory()) } catch (err) { return patientFailure(c, err) } })
   app.get('/api/phr/:ptid/shares', c => { try { return c.json(sh().listForPatient(me(c), c.req.param('ptid'))) } catch (err) { return patientFailure(c, err) } })
   app.post('/api/phr/:ptid/shares', async c => { try { return c.json(sh().create(me(c), c.req.param('ptid'), await c.req.json()), 201) } catch (err) { return patientFailure(c, err) } })
   app.delete('/api/phr/shares/:shid', c => { try { sh().revoke(me(c), c.req.param('shid')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
-  /** 医生一侧：收到的分享（只读实时视图）、化验、报告原件、简报 / 健康档案、纳入本院。 */
+  /** 医生一侧：收到的分享（只读实时视图）、化验、报告原件、简报 / 健康档案、原件图片、纳入本院。 */
   app.get('/api/shares', c => { try { return c.json(sh().inbox(me(c))) } catch (err) { return patientFailure(c, err) } })
   app.get('/api/shares/:shid', c => { try { return c.json(sh().read(me(c), c.req.param('shid'))) } catch (err) { return patientFailure(c, err) } })
   app.get('/api/shares/:shid/labs', c => {
@@ -503,13 +512,63 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.body(new Uint8Array(f.bytes), 200, { 'Content-Type': f.mime, 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'Cache-Control': 'no-store' })
     } catch (err) { return patientFailure(c, err) }
   })
+  app.get('/api/shares/:shid/assets/:aid', c => {
+    try {
+      const { asset, bytes } = sh().asset(me(c), c.req.param('shid'), c.req.param('aid'))
+      return c.body(Buffer.from(bytes), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, no-cache' })
+    } catch (err) { return patientFailure(c, err) }
+  })
   app.get('/api/shares/:shid/docs/:id', c => {
     try {
-      const d = sh().doc(me(c), c.req.param('shid'), c.req.param('id'))
-      return c.json({ doc_id: d.doc_id, kind: d.kind, title: d.title, updated_at: d.updated_at, html: renderHtml(d.node, store.listCitations(d.doc_id), () => '') })
+      const shid = c.req.param('shid')
+      const d = sh().doc(me(c), shid, c.req.param('id'))
+      const token = requestToken(c) ?? ''
+      const shareAssetUrl = (aid: string) => `/api/shares/${encodeURIComponent(shid)}/assets/${encodeURIComponent(aid)}?token=${encodeURIComponent(token)}`
+      return c.json({ doc_id: d.doc_id, kind: d.kind, title: d.title, updated_at: d.updated_at, html: renderHtml(d.node, store.listCitations(d.doc_id), shareAssetUrl) })
     } catch (err) { return patientFailure(c, err) }
   })
   app.post('/api/shares/:shid/import', c => { try { return c.json(sh().import(me(c), c.req.param('shid')), 201) } catch (err) { return patientFailure(c, err) } })
+
+  // —— 机构患者认领码与家庭成员绑定 (PATIENT.md §4, §8) ——
+  /** 医生在机构患者页生成一次性认领码（24h 有效）。 */
+  app.post('/api/patients/:ptid/claim_code', c => {
+    try { return c.json(clm().createClaimCode(me(c), c.req.param('ptid')), 201) } catch (err) { return patientFailure(c, err) }
+  })
+  /** 医生查看患者的认领历史和绑定关系。 */
+  app.get('/api/patients/:ptid/claims', c => {
+    try { return c.json(clm().listPatientClaims(me(c), c.req.param('ptid'))) } catch (err) { return patientFailure(c, err) }
+  })
+  /** 医生确认认领绑定（防错绑，AI 不能代为确认）。 */
+  app.post('/api/claims/:cid/confirm', async c => {
+    try {
+      const body = await c.req.json<{ birth_year?: number }>().catch(() => ({}))
+      return c.json(clm().confirmClaim(me(c), c.req.param('cid'), body))
+    } catch (err) { return patientFailure(c, err) }
+  })
+  /** 撤销认领码或解除绑定。 */
+  app.delete('/api/claims/:cid', c => {
+    try { return c.json(clm().revokeClaim(me(c), c.req.param('cid'))) } catch (err) { return patientFailure(c, err) }
+  })
+  /** 家人/患者在知家端输入认领码绑定家庭成员档案。 */
+  app.post('/api/phr/:ptid/claim', async c => {
+    try {
+      const body = await c.req.json<{ code?: string }>()
+      if (!body.code) throw new PatientError('missing_code', '请输入认领码', 400)
+      return c.json(clm().requestClaim(me(c), body.code, c.req.param('ptid')))
+    } catch (err) { return patientFailure(c, err) }
+  })
+  /** 家人查看家庭成员绑定的机构记录。 */
+  app.get('/api/phr/:ptid/links', c => {
+    try { return c.json(clm().listMemberLinks(me(c), c.req.param('ptid'))) } catch (err) { return patientFailure(c, err) }
+  })
+
+  // —— 生产合规：PHI 敏感数据扫描与脱敏 ——
+  app.post('/api/ops/phi-scan', async c => {
+    const body = await c.req.json<{ text?: string }>()
+    const text = body.text ?? ''
+    const findings = scanPhi(text)
+    return c.json({ findings, clean: findings.length === 0, redacted: redactPhi(text) })
+  })
 
   // —— 知家（docs/design/PATIENT.md）：成员的健康档案与就诊简报 ——
 
@@ -1016,21 +1075,29 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
 
   /** deck 模型（页面渲染用）：幻灯片、形状、页面尺寸。 */
-  app.get('/api/docs/:id/deck', c => {
+  app.get('/api/docs/:id/deck', async c => {
     const row = owned(c)
     if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
     const info = ops.deckContextInfo(row.id)
     // ph_styles：各版式占位符继承的文字样式（画布显示导入的占位符用）
     const ph_styles = Object.fromEntries(info.layouts.map(l => [l.part, l.placeholders.map(p => ({ type: p.type, idx: p.idx, style: p.style ?? {} }))]))
-    return c.json({ rev: docs.rev(row.id), size: info.size, layouts: info.layouts.map(l => l.name), ph_styles, doc: docs.get(row.id).toJSON() })
+    const render_info = await deps.renderer.diagnose()
+    return c.json({ rev: docs.rev(row.id), size: info.size, layouts: info.layouts.map(l => l.name), ph_styles, doc: docs.get(row.id).toJSON(), render_info })
   })
 
-  /** 幻灯片的精确预览（LibreOffice 渲染，按 rev 缓存）。 */
+
+  /** 幻灯片的精确预览（LibreOffice 或内置 Resvg 矢量光栅化渲染，按 rev 缓存）。 */
   app.get('/api/docs/:id/slides/:index/render.png', async c => {
     const row = owned(c)
     if (!row || row.kind !== 'deck') return c.json({ error: 'not found' }, 404)
     try {
-      const pngs = await deps.renderer.render(`${row.id}/${docs.rev(row.id)}`, () => pptxFor(docs, row.id).bytes)
+      const info = ops.deckContextInfo(row.id)
+      const pngs = await deps.renderer.render(`${row.id}/${docs.rev(row.id)}`, {
+        pptx: () => pptxFor(docs, row.id).bytes,
+        getDoc: () => docs.get(row.id),
+        size: info.size,
+        getAssetBytes: id => store.getAssetBytes(id),
+      })
       const png = pngs[Number(c.req.param('index'))]
       if (!png) return c.json({ error: 'slide not found' }, 404)
       return c.body(readFileSync(png), 200, { 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=3600' })
@@ -1361,17 +1428,23 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
     // 对话里贴的图片（自己的图片资产）：放进 AI 工作区 attachments/，AI 用 read_image 看；要插进文稿可直接用资产 id
     let inote = ''
-    const pics = (images ?? []).slice(0, 8).map(id => store.getAsset(id)).filter(a => a && a.owner === c.get('user') && a.mime.startsWith('image/'))
+    const pics = (images ?? []).slice(0, 8).map(id => store.getAsset(id)).filter(a => a && a.size > 0 && a.owner === c.get('user') && a.mime.startsWith('image/'))
     if (pics.length && deps.workspaceDir) {
       const dir = join(deps.workspaceDir(c.get('user')), 'attachments')
       if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
       const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' }
-      const files = pics.map(a => {
-        const rel = `attachments/${a!.id}.${EXT[a!.mime] ?? 'png'}`
-        writeFileSync(join(deps.workspaceDir!(c.get('user')), rel), store.getAssetBytes(a!.id)!, { mode: 0o644 })
-        return `${rel}(asset_id=${a!.id})`
-      })
-      inote = `\n\n［图片］用户在对话里附了 ${pics.length} 张图片，用 read_image 查看：${files.join('、')}。要放进文稿时直接用 ![说明](asset:<asset_id> "图注")。`
+      const files: string[] = []
+      for (const a of pics) {
+        if (!a) continue
+        const bytes = store.getAssetBytes(a.id)
+        if (!bytes || bytes.length === 0) continue
+        const rel = `attachments/${a.id}.${EXT[a.mime] ?? 'png'}`
+        writeFileSync(join(deps.workspaceDir!(c.get('user')), rel), bytes, { mode: 0o644 })
+        files.push(`${rel}(asset_id=${a.id})`)
+      }
+      if (files.length) {
+        inote = `\n\n［图片］用户在对话里附了 ${files.length} 张图片，用 read_image 查看：${files.join('、')}。要放进文稿时直接用 ![说明](asset:<asset_id> "图注")。`
+      }
     }
     return streamTurn(c, deps, row.id, message.trim() + note + dnote + snote + pnote + inote, { suggest: suggest !== false, ...(memory === false ? { memory: false } : {}) })
   })
@@ -1415,10 +1488,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!row) return c.json({ error: 'not found' }, 404)
     const form = await c.req.parseBody()
     const file = form.file instanceof File ? form.file : null
-    if (!file) return c.json({ error: '缺少图片文件' }, 400)
-    if (!['image/png', 'image/jpeg', 'image/gif'].includes(file.type)) return c.json({ error: '只支持 png / jpg / gif 图片' }, 400)
+    if (!file || file.size <= 0) return c.json({ error: '图片文件为空' }, 400)
+    if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) return c.json({ error: '只支持 png / jpg / gif / webp 图片' }, 400)
     if (file.size > 10 * 1024 * 1024) return c.json({ error: '图片超过 10MB' }, 400)
-    const asset = store.putAsset({ owner: c.get('user'), mime: file.type, name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    if (bytes.length === 0) return c.json({ error: '图片数据为空' }, 400)
+    const asset = store.putAsset({ owner: c.get('user'), mime: file.type, name: file.name, bytes })
     return c.json({ asset_id: asset.id, name: asset.name }, 201)
   })
 
@@ -1435,8 +1510,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const logo = orgLogo(c.req.param('id'), c.get('user'))
     if (logo) return c.body(Buffer.from(logo.bytes), 200, { 'Content-Type': logo.mime, 'Cache-Control': 'private, no-cache' })
     const asset = store.getAsset(c.req.param('id'))
-    if (!asset || !access.canAsset(c.get('user'), asset)) return c.json({ error: 'not found' }, 404)
-    return c.body(Buffer.from(store.getAssetBytes(asset.id)!), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' })
+    if (!asset || asset.size <= 0 || !access.canAsset(c.get('user'), asset)) return c.json({ error: 'not found' }, 404)
+    const bytes = store.getAssetBytes(asset.id)
+    if (!bytes || bytes.length === 0) return c.json({ error: 'not found' }, 404)
+    return c.body(Buffer.from(bytes), 200, { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' })
   })
 
   // —— AI 发起、等用户确认的高风险操作（docs/design/AI_PERMISSIONS.md）——

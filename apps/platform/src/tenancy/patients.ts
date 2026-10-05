@@ -1040,12 +1040,23 @@ function flagOf(l: ReturnType<typeof labInput>): 'H' | 'L' | null {
 
 export type LabOp = '>' | '>=' | '<' | '<=' | '='
 export interface LabCriterion { test: string; test_key: string; mode: 'latest' | 'any'; op: LabOp; value: number }
+export interface LabChangeCriterion {
+  test: string
+  test_key: string
+  change_type: 'diff' | 'pct' // diff = latest - baseline, pct = ((latest - baseline) / Math.abs(baseline)) * 100
+  op: LabOp
+  value: number
+}
 export interface Criteria {
   sex: 'M' | 'F' | null; age_min: number | null; age_max: number | null
   /** 诊断标签包含其中任一（不分大小写、部分匹配） */
   tags_any: string[]
+  /** 排除标签：包含其中任一即排除（不分大小写、部分匹配） */
+  tags_exclude: string[]
   /** 化验条件（都要满足）；用换算到标准单位后的已确认值 */
   labs: LabCriterion[]
+  /** 化验指标动态变化条件（例如 ALT 下降幅度 >= 30% 或肌酐上升绝对值 >= 50） */
+  lab_changes: LabChangeCriterion[]
   /** 报告日期窗口：只看这段时间内的化验；只给窗口时要求窗口内至少有一次化验 */
   from: string | null; to: string | null
 }
@@ -1063,10 +1074,20 @@ export function parseCriteria(v: unknown): Criteria {
     if (!test || !op || value === null) throw new PatientError('bad_criteria', '化验条件要有项目、比较符（> >= < <= =）和数值')
     return { test, test_key: testKey(test), mode: l.mode === 'any' ? 'any' as const : 'latest' as const, op, value }
   })
+  const lab_changes = (Array.isArray(o.lab_changes) ? o.lab_changes : []).slice(0, 10).map(x => {
+    const l = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>
+    const test = typeof l.test === 'string' ? l.test.trim() : ''
+    const op = OPS.includes(l.op as LabOp) ? l.op as LabOp : null
+    const change_type = l.change_type === 'pct' ? 'pct' as const : 'diff' as const
+    const value = num(l.value)
+    if (!test || !op || value === null) throw new PatientError('bad_criteria', '化验变化条件要有项目、比较符（> >= < <= =）和数值')
+    return { test, test_key: testKey(test), change_type, op, value }
+  })
   return {
     sex: o.sex === 'M' || o.sex === 'F' ? o.sex : null, age_min: num(o.age_min), age_max: num(o.age_max),
     tags_any: (Array.isArray(o.tags_any) ? o.tags_any : []).filter((t): t is string => typeof t === 'string' && t.trim() !== '').map(t => t.trim()).slice(0, 20),
-    labs, from: date(o.from), to: date(o.to),
+    tags_exclude: (Array.isArray(o.tags_exclude) ? o.tags_exclude : []).filter((t): t is string => typeof t === 'string' && t.trim() !== '').map(t => t.trim()).slice(0, 20),
+    labs, lab_changes, from: date(o.from), to: date(o.to),
   }
 }
 
@@ -1082,13 +1103,17 @@ export function matchCriteria(cr: Criteria, p: PatientRow, labs: LabRow[], year:
     if ((cr.age_min !== null && age < cr.age_min) || (cr.age_max !== null && age > cr.age_max)) return null
     why.push(`${age} 岁`)
   }
+  if (cr.tags_exclude.length) {
+    const excluded = p.tags.find(t => cr.tags_exclude.some(q => t.toLowerCase().includes(q.toLowerCase())))
+    if (excluded) return null
+  }
   if (cr.tags_any.length) {
     const hit = p.tags.find(t => cr.tags_any.some(q => t.toLowerCase().includes(q.toLowerCase())))
     if (!hit) return null
     why.push(`标签「${hit}」`)
   }
   const inWin = labs.filter(l => l.collected_on && (!cr.from || l.collected_on >= cr.from) && (!cr.to || l.collected_on <= cr.to))
-  if ((cr.from || cr.to) && !cr.labs.length) {
+  if ((cr.from || cr.to) && !cr.labs.length && !cr.lab_changes.length) {
     if (!inWin.length) return null
     why.push(`窗口内 ${inWin.length} 次化验`)
   }
@@ -1099,6 +1124,24 @@ export function matchCriteria(cr: Criteria, p: PatientRow, labs: LabRow[], year:
     const hit = pick.find(l => cmp(l.std_value!, q.op, q.value))
     if (!hit) return null
     why.push(`${hit.test_name} ${hit.std_value}${hit.std_unit ? ' ' + hit.std_unit : ''}（${hit.collected_on}${q.mode === 'latest' ? '，最近一次' : ''}）`)
+  }
+  for (const q of cr.lab_changes) {
+    const vals = inWin.filter(l => l.test_key === q.test_key && l.std_value !== null)
+    if (vals.length < 2) return null
+    const first = vals[0]!, last = vals[vals.length - 1]!
+    const baseVal = first.std_value!, lastVal = last.std_value!
+    let calculated = 0
+    if (q.change_type === 'pct') {
+      if (Math.abs(baseVal) < 1e-9) return null
+      calculated = ((lastVal - baseVal) / Math.abs(baseVal)) * 100
+    } else {
+      calculated = lastVal - baseVal
+    }
+    if (!cmp(calculated, q.op, q.value)) return null
+    const unit = last.std_unit ? ` ${last.std_unit}` : ''
+    const sign = calculated >= 0 ? '+' : ''
+    const changeStr = q.change_type === 'pct' ? `${sign}${calculated.toFixed(1)}%` : `${sign}${calculated.toFixed(2)}${unit}`
+    why.push(`${last.test_name} 变化 ${changeStr}（基线 ${baseVal} → 最近 ${lastVal}）`)
   }
   return why
 }

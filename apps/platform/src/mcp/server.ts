@@ -18,9 +18,10 @@ import { exportMarkdown } from '../views/render.ts'
 import { deckOutline, deckRead, slideRead } from '../views/deck.ts'
 import { checkLayout } from '../views/layout.ts'
 import type { CrossrefClient } from '../literature/crossref.ts'
-import { formatAma, normalizeDoi } from '../literature/format.ts'
+import { formatAma, formatCitation, normalizeDoi, type CitationStyle } from '../literature/format.ts'
 import { relevantPassages, type FullTextClient } from '../literature/fulltext.ts'
 import { importReferences, parseReferences } from '../literature/import-refs.ts'
+import { OpenAlexClient } from '../literature/openalex.ts'
 import type { PubMedClient } from '../literature/pubmed.ts'
 import { locate, threadMarks } from '../model/anchors.ts'
 import type { Documents } from '../model/runtime.ts'
@@ -33,7 +34,9 @@ import { StudyError, type StudyService } from '../research/service.ts'
 import { CohortService } from '../research/cohort.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
 import { ShareService } from '../tenancy/shares.ts'
-import { TenantError } from '../auth/tenants.ts'
+import { PatientClaimService } from '../tenancy/claims.ts'
+import { scanPhi, redactPhi } from '../ops/phi-scan.ts'
+import { TenantError, TenantService } from '../auth/tenants.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import { DiagramError, renderSvg } from '../render/diagram.ts'
@@ -51,6 +54,7 @@ export interface McpDeps {
   turns: TurnRegistry
   pubmed: PubMedClient
   crossref: CrossrefClient
+  openalex?: OpenAlexClient
   secret: string
   /** 用户工作区目录（asset_upload 只能读这里面的文件）。 */
   workspaceDir: (userId: string) => string
@@ -140,16 +144,11 @@ class Ctx {
   }
 }
 
-export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
+export function registerCanvasTools(server: McpServer, ctx: Ctx): void {
+  const { deps, claims } = ctx
   const { docs } = deps
   const store = docs.store
-  // 访问判定（与界面同一个）：没注入时按 store 新建，数据集服务也接上
-  if (!deps.access) { deps.access = new Access(store); deps.access.docText = id => JSON.stringify(docs.get(id).toJSON()) }
-  if (deps.datasets && !deps.datasets.access) deps.datasets.access = deps.access
-  if (deps.images && !deps.images.access) deps.images.access = deps.access
   const access = deps.access
-  const ctx = new Ctx(deps, claims)
-  const server = new McpServer({ name: 'heurion', version: '0.1.0' }, { instructions: INSTRUCTIONS })
 
   server.registerTool('doc_list', {
     description: '列出可访问的文档（id、标题、类型、rev、更新时间）。',
@@ -361,7 +360,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
       'add_slide {after, layout?, title?, body?, body2?}（按版式填占位符，不需要算坐标；平台模板的版式：封面、章节页、标题和内容、两栏（body 左栏 / body2 右栏）、图文（左图片区，body 为右侧说明）、大数字（body 数字 / body2 说明）、致谢、空白）；delete_slide {slide_id}；move_slide {slide_id, after}；' +
       'set_text {shape_id, markdown}（整体重写，按模板格式；列表项 - 对应项目符号）；replace_text {shape_id, find, replace}（小改动首选）；' +
       'set_paragraphs {shape_id, paragraphs:[{text, lvl?}]}（逐段改写多段文字，未改的字保留原有颜色、加粗、引用与评论标记）；' +
-      'add_shape {slide_id, markdown?, x, y, w, h, font_size?, geometry?: rect|roundRect|ellipse, fill?, color?}（文本框；带 geometry / fill 即色块、标题条、卡片）；' +
+      'add_shape {slide_id, markdown?, x, y, w, h, font_size?, geometry?: rect|roundRect|ellipse, fill?, color?}（文本框；带 geometry / fill 即色块卡片，卡片自带居中文本容器，直接传 markdown 即可，严禁在同一位置叠加新建文本框！修改已有形状文本必须用 set_text 或 replace_text）；' +
       'set_xfrm {shape_id, x?, y?, w?, h?}；delete_shape {shape_id}；set_z {shape_id, to: front|back|forward|backward}；' +
       'set_fill {shape_id, color}；set_background {slide_id, color}；set_text_style {shape_id, paragraph?, color?, size?, bold?, italic?, align?}；' +
       'add_image {slide_id, asset_id, x, y, w, h?}（图片先用 asset_upload 上传；h 缺省按原图比例）；' +
@@ -418,7 +417,13 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     doc.forEach((s, _o, i) => { if (s.attrs.id === slide_id) index = i })
     if (index < 0) return fail('node_not_found', `找不到幻灯片 ${slide_id}`)
     try {
-      const pngs = await deps.renderer.render(`${doc_id}/${docs.rev(doc_id)}`, () => pptxFor(docs, doc_id).bytes)
+      const info = deps.ops.deckContextInfo(doc_id)
+      const pngs = await deps.renderer.render(`${doc_id}/${docs.rev(doc_id)}`, {
+        pptx: () => pptxFor(docs, doc_id).bytes,
+        getDoc: () => docs.get(doc_id),
+        size: info.size,
+        getAssetBytes: id => store.getAssetBytes(id),
+      })
       const png = pngs[index]
       if (!png) return fail('render_failed', '渲染结果缺少这一页')
       return { content: [{ type: 'image' as const, data: readFileSync(png).toString('base64'), mimeType: 'image/png' }] }
@@ -521,6 +526,18 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     inputSchema: { query: z.string().min(1).describe('PubMed 检索式，可用 MeSH 与布尔运算'), limit: z.number().int().min(1).max(20).default(10) },
   }, async ({ query, limit }) => json(await deps.pubmed.search(query, limit)))
 
+  const openalex = deps.openalex ?? new OpenAlexClient()
+  server.registerTool('openalex_search', {
+    description: '检索 OpenAlex 开放学术文献图谱（涵盖生物医学与跨学科文献）。返回 PMID、DOI、标题、作者、期刊、年份。',
+    inputSchema: { query: z.string().min(1).describe('搜索关键词或论文题目'), limit: z.number().int().min(1).max(50).default(10) },
+  }, async ({ query, limit }) => {
+    try {
+      return json(await openalex.search(query, limit))
+    } catch (err) {
+      return fail('openalex_failed', `OpenAlex 检索失败：${(err as Error).message}`)
+    }
+  })
+
   server.registerTool('oa_fulltext', {
     description:
       '读一篇文献的开放获取全文（PMC 开放获取，或 Unpaywall 找到的开放 PDF）。给 query 时只返回与之最相关的几段，不给时返回开头一段与全文长度。' +
@@ -540,14 +557,16 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
   }, async ({ doi }) => json(await deps.crossref.lookup(doi) ?? { found: false, doi: normalizeDoi(doi) }))
 
   server.registerTool('insert_citation', {
-    description: '为文档登记一条引用（DOI 必须能在 Crossref 查到），返回 cite_id。正文里写 [@c:<cite_id>] 引用它；编号与参考文献表由平台生成。',
-    inputSchema: { doc_id: z.string(), doi: z.string().min(1), pmid: z.string().optional() },
-  }, async ({ doc_id, doi, pmid }) => {
+    description: '为文档登记一条引用（DOI 必须能在 Crossref 或 OpenAlex 查到），返回 cite_id。正文里写 [@c:<cite_id>] 引用它；编号与参考文献表由平台生成。',
+    inputSchema: { doc_id: z.string(), doi: z.string().min(1), pmid: z.string().optional(), style: z.enum(['ama', 'apa', 'vancouver', 'gbt7714']).optional() },
+  }, async ({ doc_id, doi, pmid, style }) => {
     const denied = ctx.check(doc_id, 'write')
     if (denied) return denied
-    const article = await deps.crossref.lookup(doi)
-    if (!article) return fail('doi_not_found', `DOI ${normalizeDoi(doi)} 在 Crossref 查不到，不能作为引用`, { hint: '用 pubmed_search 找到真实文献的 DOI。' })
-    const row = store.upsertCitation({ doc_id, doi: article.doi!, pmid: pmid ?? null, formatted: formatAma(article), url: `https://doi.org/${article.doi}` })
+    let article = await deps.crossref.lookup(doi)
+    if (!article && deps.openalex) article = await deps.openalex.lookup(doi)
+    if (!article) return fail('doi_not_found', `DOI ${normalizeDoi(doi)} 在 Crossref/OpenAlex 查不到，不能作为引用`, { hint: '用 pubmed_search 或 openalex_search 找到真实文献的 DOI。' })
+    const formatted = formatCitation(article, style ?? 'ama')
+    const row = store.upsertCitation({ doc_id, doi: article.doi!, pmid: pmid ?? null, formatted, url: `https://doi.org/${article.doi}` })
     return json({ cite_id: row.id, marker: `[@c:${row.id}]`, formatted: row.formatted })
   })
 
@@ -646,11 +665,43 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
         if (!crel.startsWith('..') && !isAbsolute(crel) && statSync(cf).size <= 50_000) code = readFileSync(cf, 'utf8')
       } catch { /* 找不到脚本就只记数据集 */ }
     }
-    const sets = (dataset_ids ?? []).map(id => store.getDataset(id)).filter(d => d && access.canDataset(claims.u, d, 'read')).map(d => ({ id: d!.id, name: d!.name, version: d!.version, rows: d!.rows }))
+    const sets = (dataset_ids ?? []).map(id => store.getDataset(id)).filter(d => d && (!access || access.canDataset(claims.u, d, 'read'))).map(d => ({ id: d!.id, name: d!.name, version: d!.version, rows: d!.rows }))
     const provenance = code || sets.length ? { code, code_path: code_path ?? null, datasets: sets, turn_id: ctx.turnId, at: new Date().toISOString() } : null
     const asset = store.putAsset({ owner: claims.u, mime, name: rel, bytes: readFileSync(file), provenance })
     return json({ asset_id: asset.id, mime, size: asset.size, markdown: `![说明](asset:${asset.id} "图 N 图题")`, ...(provenance ? { provenance: code ? '已记录代码与数据来源' : '已记录数据来源（没找到脚本）' } : {}) })
   })
+
+  server.registerTool('diagram_render', {
+    description:
+      '生成示意图：写一段自包含的 SVG（机制图、流程图、研究设计图、对比图等），平台渲染成 PNG 存为资产，返回 asset_id。' +
+      '之后插入：文档用 doc_edit 写 ![图注](asset:<asset_id>)；幻灯片用 deck_edit 的 add_image。' +
+      '要求：带 viewBox 与 width/height；文字用 <text>（中文字体用 Noto Sans CJK SC）；不能有脚本、事件属性、foreignObject、外部链接或外部图片。' +
+      '数据图（生存曲线、森林图等）用 shell 里的 matplotlib 画再 asset_upload 更准确。',
+    inputSchema: {
+      svg: z.string().min(20).describe('完整的 SVG 文本'),
+      name: z.string().max(80).optional().describe('文件名 / 说明'),
+      width_px: z.number().int().min(200).max(4096).optional().describe('输出宽度像素，缺省 1600'),
+    },
+  }, async ({ svg, name, width_px }) => {
+    if (!claims.p.includes('write')) return fail('forbidden', '当前令牌不能上传资产')
+    let out: ReturnType<typeof renderSvg>
+    try {
+      out = renderSvg(svg, width_px)
+    } catch (err) {
+      if (err instanceof DiagramError) return fail('invalid_svg', err.message, { hint: '改正后重新调用；SVG 必须自包含。' })
+      throw err
+    }
+    const label = (name ?? '示意图').trim() || '示意图'
+    const asset = store.putAsset({ owner: claims.u, mime: 'image/png', name: `${label}.png`, bytes: out.png })
+    return json({ asset_id: asset.id, width: out.width, height: out.height, markdown: `![${label}](asset:${asset.id})` })
+  })
+}
+
+export function registerHealthcareTools(server: McpServer, ctx: Ctx): void {
+  const { deps, claims } = ctx
+  const { docs } = deps
+  const store = docs.store
+  const access = deps.access
 
   const datasetFail = (err: unknown) => {
     if (err instanceof DatasetError) return fail(err.code, err.message, err.code === 'needs_review' ? { hint: '请用户在「数据」里处理标出的身份信息列后再分析。' } : {})
@@ -1145,33 +1196,89 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
     return { content: [{ type: 'text' as const, text: `《${f.name}》${f.doi ? ` DOI ${f.doi}` : ''}${f.pmid ? ` PMID ${f.pmid}` : ''} · 共 ${f.pages} 页\n\n${text || '（这几页没有文字）'}` }] }
   })
 
-  server.registerTool('diagram_render', {
-    description:
-      '生成示意图：写一段自包含的 SVG（机制图、流程图、研究设计图、对比图等），平台渲染成 PNG 存为资产，返回 asset_id。' +
-      '之后插入：文档用 doc_edit 写 ![图注](asset:<asset_id>)；幻灯片用 deck_edit 的 add_image。' +
-      '要求：带 viewBox 与 width/height；文字用 <text>（中文字体用 Noto Sans CJK SC）；不能有脚本、事件属性、foreignObject、外部链接或外部图片。' +
-      '数据图（生存曲线、森林图等）用 shell 里的 matplotlib 画再 asset_upload 更准确。',
-    inputSchema: {
-      svg: z.string().min(20).describe('完整的 SVG 文本'),
-      name: z.string().max(80).optional().describe('文件名 / 说明'),
-      width_px: z.number().int().min(200).max(4096).optional().describe('输出宽度像素，缺省 1600'),
-    },
-  }, async ({ svg, name, width_px }) => {
-    if (!claims.p.includes('write')) return fail('forbidden', '当前令牌不能上传资产')
-    let out: ReturnType<typeof renderSvg>
+  server.registerTool('phr_member_links', {
+    description: '家人查看知家成员关联绑定的各合作医院机构记录。',
+    inputSchema: { member_id: z.string().describe('知家成员 ID（个人空间中的 patient_id）') },
+  }, async ({ member_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    const tenantSvc = new TenantService(store, { devMode: false })
+    const claimSvc = new PatientClaimService(store, tenantSvc, deps.patients)
     try {
-      out = renderSvg(svg, width_px)
+      const res = claimSvc.listMemberLinks(aiActor(), member_id)
+      return json(res)
     } catch (err) {
-      if (err instanceof DiagramError) return fail('invalid_svg', err.message, { hint: '改正后重新调用；SVG 必须自包含。' })
-      throw err
+      return patientFail(err)
     }
-    const label = (name ?? '示意图').trim() || '示意图'
-    const asset = store.putAsset({ owner: claims.u, mime: 'image/png', name: `${label}.png`, bytes: out.png })
-    return json({ asset_id: asset.id, width: out.width, height: out.height, markdown: `![${label}](asset:${asset.id})` })
   })
 
+  server.registerTool('patient_claim_code', {
+    description: '医生为机构患者生成一次性关联认领码（24 小时有效，用于患者/家属在知家端绑定关联）。',
+    inputSchema: { patient_id: z.string().describe('机构患者 ID') },
+  }, async ({ patient_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    const tenantSvc = new TenantService(store, { devMode: false })
+    const claimSvc = new PatientClaimService(store, tenantSvc, deps.patients)
+    try {
+      const res = claimSvc.createClaimCode(aiActor(), patient_id)
+      return json(res)
+    } catch (err) {
+      return patientFail(err)
+    }
+  })
 
-  // 用户本人的全部权限（机构管理、平台运营、账户、删除 / 恢复……）：同一套接口，高风险的要用户确认
+  server.registerTool('patient_claims_list', {
+    description: '医生查看机构患者的历史认领申请记录与关联绑定状态。',
+    inputSchema: { patient_id: z.string().describe('机构患者 ID') },
+  }, async ({ patient_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    const tenantSvc = new TenantService(store, { devMode: false })
+    const claimSvc = new PatientClaimService(store, tenantSvc, deps.patients)
+    try {
+      const res = claimSvc.listPatientClaims(aiActor(), patient_id)
+      return json(res)
+    } catch (err) {
+      return patientFail(err)
+    }
+  })
+
+  server.registerTool('phi_scan', {
+    description: '扫描文本中的敏感个人健康信息（PHI：身份证号、手机号、银行卡号等）并提供掩码脱敏结果。',
+    inputSchema: { text: z.string().describe('待扫描脱敏的文本内容') },
+  }, async ({ text }) => {
+    const findings = scanPhi(text)
+    const redacted = redactPhi(text)
+    return json({ findings, redacted })
+  })
+}
+
+export type CanvasMcpDeps = Pick<McpDeps, 'docs' | 'ops' | 'turns' | 'renderer' | 'secret' | 'workspaceDir'> & Partial<Pick<McpDeps, 'pubmed' | 'crossref' | 'claims' | 'openalex' | 'fulltext' | 'images' | 'access' | 'invoke' | 'isLiveSession'>>
+
+/** 独立 AI 原生文档与画布 MCP 服务（OmniCanvas / AgentDoc 核心引擎） */
+export function buildCanvasMcpServer(deps: CanvasMcpDeps, claims: TokenClaims): McpServer {
+  const { docs } = deps
+  const store = docs.store
+  if (!deps.pubmed) deps.pubmed = {} as PubMedClient
+  if (!deps.crossref) deps.crossref = {} as CrossrefClient
+  if (!deps.access) { deps.access = new Access(store); deps.access.docText = id => JSON.stringify(docs.get(id).toJSON()) }
+  if (deps.images && !deps.images.access) deps.images.access = deps.access
+  const ctx = new Ctx(deps as McpDeps, claims)
+  const server = new McpServer({ name: 'omnicanvas', version: '0.1.0' }, { instructions: INSTRUCTIONS })
+  registerCanvasTools(server, ctx)
+  return server
+}
+
+/** Heurion 综合医疗业务 MCP 服务：聚合画布与文档、医疗临床与科研、管理审批全部工具 */
+export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
+  const { docs } = deps
+  const store = docs.store
+  if (!deps.access) { deps.access = new Access(store); deps.access.docText = id => JSON.stringify(docs.get(id).toJSON()) }
+  if (deps.datasets && !deps.datasets.access) deps.datasets.access = deps.access
+  if (deps.images && !deps.images.access) deps.images.access = deps.access
+  const ctx = new Ctx(deps, claims)
+  const server = new McpServer({ name: 'heurion', version: '0.1.0' }, { instructions: INSTRUCTIONS })
+
+  registerCanvasTools(server, ctx)
+  registerHealthcareTools(server, ctx)
   registerAdminTools(server, { store, turns: deps.turns, invoke: deps.invoke, workspaceDir: deps.workspaceDir }, claims.u)
   return server
 }
@@ -1190,6 +1297,25 @@ export async function handleMcp(deps: McpDeps, req: IncomingMessage, res: Server
     return
   }
   const server = buildMcpServer(deps, claims)
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+  res.on('close', () => { void transport.close(); void server.close() })
+  await server.connect(transport)
+  await transport.handleRequest(req, res)
+}
+
+/** 独立画布无状态 Streamable HTTP MCP 处理函数（纯文档与画布工具，无医疗业务依赖） */
+export async function handleCanvasMcp(deps: CanvasMcpDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const auth = req.headers.authorization ?? ''
+  const claims = auth.startsWith('Bearer ') ? verifyToken(deps.secret, auth.slice(7), 'mcp') : null
+  if (!claims) {
+    res.writeHead(401).end('unauthorized')
+    return
+  }
+  if (claims.s && deps.isLiveSession && !deps.isLiveSession(claims.u, claims.s)) {
+    res.writeHead(401).end('session stopped')
+    return
+  }
+  const server = buildCanvasMcpServer(deps, claims)
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
   res.on('close', () => { void transport.close(); void server.close() })
   await server.connect(transport)
