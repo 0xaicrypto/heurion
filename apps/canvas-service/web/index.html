@@ -80,6 +80,7 @@
             <div class="gw-menu-option" id="menuInsertCard"><span>圆角卡片</span></div>
             <div class="gw-menu-option" id="menuInsertChart"><span>原生数据图表</span></div>
             <div class="gw-menu-option" id="menuInsertDiagram"><span>机制图 (SVG)</span></div>
+            <div class="gw-menu-option" id="menuInsertImaging"><span>🩺 医学影像 (MONAI)</span></div>
           </div>
         </div>
 
@@ -138,6 +139,7 @@
           <button id="btnDocBullet" class="gw-tb-btn" title="无序列表">• 列表</button>
           <button id="btnDocOrdered" class="gw-tb-btn" title="有序列表">1. 列表</button>
           <button id="btnDocTable" class="gw-tb-btn" title="插入表格">⊞ 表格</button>
+          <button id="btnDocImaging" class="gw-tb-btn" style="color:#0284c7; font-weight:600;" title="MONAI 3D 影像分析与 RECIST 测距">🩺 医学影像</button>
         </div>
       </div>
 
@@ -184,6 +186,7 @@
             <option value="dark">暗夜黑 (Dark)</option>
           </select>
           <button id="btnLayoutCheck" class="gw-tb-btn" title="检查形状重叠、文字溢出与版面问题">🔍 版面体检</button>
+          <button id="btnDeckImaging" class="gw-tb-btn" style="color:#0284c7; font-weight:600;" title="MONAI 3D 影像分析与 RECIST 测距">🩺 医学影像</button>
           <button id="btnDeleteShape" class="gw-tb-btn" style="color:var(--gw-red);" title="删除当前选中的形状 (Delete)">🗑️ 删除形状</button>
         </div>
       </div>
@@ -244,6 +247,7 @@
             <button class="gw-chip" data-prompt="请在幻灯片中插入一张对比柱状图">📊 插入数据图表</button>
             <button class="gw-chip" data-prompt="优化当前页面的版面布局，让要点更加清晰醒目">🎨 美化版面</button>
             <button class="gw-chip" data-prompt="润色选中文段，提高学术表达的严谨性与专业度">📝 润色文段</button>
+            <button class="gw-chip" data-prompt="请调用 MONAI 影像计算节点分析真实腹部增强 CT 样本，执行脾脏与实质脏器分割，计算 RECIST 1.1 最大长径并生成图表汇报。">🩺 分析腹部 CT 影像与 RECIST</button>
             <button class="gw-chip" data-prompt="全面检查幻灯片是否存在文字重叠或溢出，并自动修正">🔍 版面体检修复</button>
           </div>
 

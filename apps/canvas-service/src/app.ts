@@ -392,6 +392,104 @@ export function createCanvasApp(deps: CanvasAppDeps) {
     })
   })
 
+  // 11. MONAI 医学影像分析代理与资产沉淀
+  const imagingWorkerUrl = (process.env.IMAGING_WORKER_URL || 'http://127.0.0.1:8004').replace(/\/+$/, '')
+
+  app.get('/api/imaging/status', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/health`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return c.json({ error: 'imaging_worker_error', status: 'error' }, 502)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message, status: 'offline' }, 503)
+    }
+  })
+
+  app.get('/api/imaging/models', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/models`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return c.json({ error: 'imaging_worker_error' }, 502)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.get('/api/imaging/samples', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/samples`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return c.json({ error: 'imaging_worker_error' }, 502)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/analyze', async c => {
+    const user = c.get('user')
+    const body = await c.req.json().catch(() => ({}))
+    try {
+      let endpoint = `${imagingWorkerUrl}/api/v1/analyze/benchmark`
+      let reqBody: Record<string, unknown> = {
+        model_name: body.model_id || 'lung_nodule_segmenter',
+        window_preset: body.window_preset || 'lung',
+        z_slices: body.z_slices || 48,
+        y_dim: 128,
+        x_dim: 128,
+      }
+      if (body.sample_id) {
+        endpoint = `${imagingWorkerUrl}/api/v1/analyze/sample`
+        reqBody = {
+          sample_id: body.sample_id,
+          model_name: body.model_id,
+          window_preset: body.window_preset,
+        }
+      } else if (body.file_path) {
+        endpoint = `${imagingWorkerUrl}/api/v1/analyze/file`
+        reqBody = {
+          file_path: body.file_path,
+          model_name: body.model_id,
+          window_preset: body.window_preset,
+        }
+      }
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqBody),
+        signal: AbortSignal.timeout(60000),
+      })
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '')
+        return c.json({ error: 'inference_failed', message: text }, 502)
+      }
+      const data = await resp.json()
+
+      // 提取 Base64 关键截面图沉淀为永久资产
+      const b64 = String(data.key_slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+      let assetId: string | null = null
+      if (b64) {
+        const buf = Buffer.from(b64, 'base64')
+        const asset = store.putAsset({
+          owner: user,
+          mime: 'image/png',
+          name: `${body.label || 'monai-recist-slice'}.png`,
+          bytes: buf,
+        })
+        assetId = asset.id
+      }
+
+      return c.json({
+        ...data,
+        asset_id: assetId,
+        image_url: assetId ? `/api/assets/${assetId}` : null,
+        markdown: assetId ? `![${body.label || 'RECIST 截面'}](asset:${assetId})` : null,
+      })
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
   return app
 }
 

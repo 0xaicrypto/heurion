@@ -43,6 +43,7 @@ import { DiagramError, renderSvg } from '../render/diagram.ts'
 import type { TurnRegistry } from './turns.ts'
 import type { ImageService } from '../images/service.ts'
 import { UnsplashError } from '../images/unsplash.ts'
+import { registerImagingTools } from './imaging-tools.ts'
 import type { Invoke } from '../http/invoke.ts'
 import { registerAdminTools } from './admin-tools.ts'
 
@@ -118,6 +119,11 @@ const INSTRUCTIONS = `heurion 文档平台。文档只能通过这些工具读�
   研究入组：study_cohort_preview 按条件筛（先给用户看名单与依据）→ 用户同意后 study_enroll → study_cohort_dataset 生成研究数据集（只有研究编号）→ dataset_open 分析；study_cohort_list 里 stale=true 时先提醒用户刷新。
   写病例报告：doc_create 新建文档 → patient_doc_link 关联到患者（这样它出现在患者页的「病例报告」里，不在文档列表里）→ 依据 patient_read / labs_query 写。
 - 写完带引用的论断后，可用 verify_claims 对照文献摘要自查，并用 claim_report 提交结果。
+- 医学影像分析（MONAI 3D 深度学习与 RECIST 1.1 实体瘤量化）：
+  - imaging_status 查看计算节点硬件加速状态（Apple Silicon Metal MPS / CUDA）；imaging_models 查询可用临床分割模型。
+  - imaging_analyze 运行 3D 影像病灶分割与 RECIST 测量，自动生成含半透明轮廓、测距卡尺与标尺的出版级关键切片 PNG 并保存为资产；
+    返回的 markdown_insert 可直接用 doc_edit 插入文档，或用 deck_edit 的 add_image 放入幻灯片；
+  - imaging_recist_evaluate 比较基线与随访病灶长径总和，自动评定 RECIST 1.1 疗效等级（CR/PR/SD/PD）与变化率。
 - 幻灯片（kind=deck）：doc_outline 看各页 → slide_read 读一页（形状 id、位置、文字）→ deck_edit 修改（新页用 add_slide 按版式填内容，不必算坐标）→ layout_check 检查溢出与重叠，必要时 slide_render 看图。
 - 权限：你代表当前用户操作，拥有和用户本人完全一样的权限——用户是机构管理员 / 平台运营，你就能做对应的管理（account 看用户是谁、什么角色；tenant_admin、org_template、platform_admin、doc_manage、dataset_manage、kb_manage、memory_manage、patient_admin、study_admin 等）；用户不能做的你也不能做。高风险操作（不可恢复的删除、机构设置与成员权限、邀请、紧急访问、交接与转交、平台运营的写操作、上传院徽）调用后不会立刻执行，而是返回 pending_confirmation 并在对话里给用户弹出确认卡：先向用户说明要做什么、为什么，然后等用户确认，不要重复提交，结果用 action_status 查。你不能确认自己的操作。
 - 幻灯片配图：image_search 按关键词（英文效果更好）搜 Unsplash 图库 → slide_add_photo 把选中的照片插入某一页（图文版式自动放进图片区）。署名（Photo by 摄影师 on Unsplash）由平台写进图片说明和这一页的演讲备注，不要删；回复用户时也要提到署名。图库没配置时这两个工具返回 unsplash_unconfigured，改用用户上传的图片。`
@@ -1279,6 +1285,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
 
   registerCanvasTools(server, ctx)
   registerHealthcareTools(server, ctx)
+  registerImagingTools(server, { store, claims })
   registerAdminTools(server, { store, turns: deps.turns, invoke: deps.invoke, workspaceDir: deps.workspaceDir }, claims.u)
   return server
 }

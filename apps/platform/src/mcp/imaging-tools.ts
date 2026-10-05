@@ -1,0 +1,203 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { z } from 'zod'
+import type { TokenClaims } from '../auth/token.ts'
+import type { Store } from '../store/db.ts'
+
+const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
+const json = (value: unknown) => text(JSON.stringify(value, null, 2))
+const fail = (code: string, message: string, extra: Record<string, unknown> = {}) => ({
+  content: [{ type: 'text' as const, text: JSON.stringify({ error: code, message, ...extra }, null, 2) }],
+  isError: true,
+})
+
+export interface ImagingToolsDeps {
+  store: Store
+  claims: TokenClaims
+  workerUrl?: string
+}
+
+/**
+ * 注册 MONAI 医学影像分析 MCP 工具套件：
+ * 包含硬件加速探测、临床模型清单、3D 病灶分割、RECIST 1.1 量化与出版级关键切片资产生成。
+ */
+export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps): void {
+  const { store, claims } = deps
+  const workerUrl = (deps.workerUrl || process.env.IMAGING_WORKER_URL || 'http://127.0.0.1:8004').replace(/\/+$/, '')
+
+  // 1. 影像微服务状态与计算硬件探测
+  server.registerTool('imaging_status', {
+    description: '检查 MONAI 医学影像分析微服务的运行状态与底层硬件加速器信息（Apple Silicon Metal MPS / NVIDIA CUDA / CPU 统一显存）。',
+    inputSchema: {},
+  }, async () => {
+    try {
+      const resp = await fetch(`${workerUrl}/health`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return fail('imaging_worker_error', `影像微服务返回 HTTP ${resp.status}`)
+      const data = await resp.json()
+      return json(data)
+    } catch (err) {
+      return fail('imaging_worker_offline', `无法连接 MONAI 影像计算节点 (${workerUrl})：请确认 worker 服务已启动。`, {
+        hint: '在本地可执行 uv run --python 3.12 --project apps/imaging-worker uvicorn src.server:app --port 8004 启动微服务。'
+      })
+    }
+  })
+
+  // 2. 临床分割与检测模型清单
+  server.registerTool('imaging_models', {
+    description: '获取 MONAI 影像计算节点当前支持的临床深度学习模型清单（例如肺结节分割、腹部多器官分割、脑胶质瘤 BraTS 等）。',
+    inputSchema: {},
+  }, async () => {
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/models`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return fail('imaging_worker_error', `获取模型失败 HTTP ${resp.status}`)
+      const data = await resp.json()
+      return json(data)
+    } catch (err) {
+      return fail('imaging_worker_offline', `无法连接 MONAI 影像节点：${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  // 3. 核心工具：3D 影像分析、RECIST 1.1 量化与关键截面插图生成
+  server.registerTool('imaging_analyze', {
+    description:
+      '运行 MONAI 3D 医学影像分析与 RECIST 1.1 肿瘤测量：' +
+      '调度硬件加速器（M4 Pro GPU / CUDA）执行 3D 卷积分割，提取最大横截面关键层（Key Slice），' +
+      '自动生成带有半透明轮廓、测距卡尺与 5cm 标尺的高清 PNG，并自动保存为当前用户的文档资产。' +
+      '返回 asset_id、RECIST 测量指标（长径、短径、体积）以及直接可插入 Markdown 的图片语法。',
+    inputSchema: {
+      model_id: z.string().optional().describe('指定的临床模型 ID，例如 spleen_segmenter, lung_nodule_segmenter, liver_lesion_segmenter, brain_tumor_brats'),
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 spleen_test (真实人体腹部 CT) 或 prostate_mri (真实人体前列腺 MRI)'),
+      file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI (.nii/.nii.gz) 文件的绝对路径'),
+      window_preset: z.enum(['lung', 'abdomen', 'brain', 'mediastinum']).optional().describe('CT 窗宽窗位预设'),
+      benchmark: z.boolean().optional().describe('是否运行 3D 高拟真解剖体素基准测试（未指定 sample_id/file_path 时缺省为 true）'),
+      z_slices: z.number().int().min(16).max(256).optional().describe('扫描层数，缺省 48'),
+      label: z.string().max(60).optional().describe('生成的图注标签，例如「图 1 基线靶病灶 RECIST 截面」'),
+    },
+  }, async ({ model_id, sample_id, file_path, window_preset, benchmark, z_slices, label }) => {
+    if (!claims.p.includes('write')) return fail('forbidden', '当前令牌没有写入或上传资产权限')
+    
+    let resultData: any
+    try {
+      let endpoint = `${workerUrl}/api/v1/analyze/benchmark`
+      let reqBody: Record<string, unknown> = {
+        model_name: model_id ?? 'lung_nodule_segmenter',
+        window_preset: window_preset ?? 'lung',
+        z_slices: z_slices ?? 48,
+        y_dim: 128,
+        x_dim: 128,
+      }
+
+      if (sample_id) {
+        endpoint = `${workerUrl}/api/v1/analyze/sample`
+        reqBody = {
+          sample_id,
+          model_name: model_id,
+          window_preset,
+        }
+      } else if (file_path) {
+        endpoint = `${workerUrl}/api/v1/analyze/file`
+        reqBody = {
+          file_path,
+          model_name: model_id,
+          window_preset,
+        }
+      }
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqBody),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('inference_failed', `MONAI 推理失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `调用 MONAI 计算节点失败：${err instanceof Error ? err.message : String(err)}`, {
+        hint: '请确认微服务已在 8004 端口正常运行。'
+      })
+    }
+
+    // 提取关键切片 Base64 并转换为二进制 Buffer，保存为资产
+    const b64Data = String(resultData.key_slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+    if (!b64Data) return fail('no_image_output', '推理完成但未返回关键切片图像')
+    const pngBuffer = Buffer.from(b64Data, 'base64')
+
+    const assetName = `${label || 'monai-recist-slice'}.png`
+    const asset = store.putAsset({
+      owner: claims.u,
+      mime: 'image/png',
+      name: assetName,
+      bytes: pngBuffer,
+    })
+
+    const recist = resultData.recist_metrics || {}
+    const ld = recist.longest_diameter_mm ?? 0
+    const vol = recist.total_volume_cm3 ?? 0
+    const sliceIdx = recist.key_slice_index ?? 0
+    const figCaption = label || `图 1 目标病灶 RECIST 1.1 关键截面图（长径 ${ld} mm，体积 ${vol} cm³）`
+    const figNote = `图 1 3D MONAI CT 肿瘤靶病灶自动分割与最大横截面量化标尺（第 #${sliceIdx} 层，长径 ${ld} mm，短径 ${recist.short_axis_mm ?? 0} mm，总体积 ${vol} cm³）`
+
+    return json({
+      status: 'success',
+      asset_id: asset.id,
+      accelerator: resultData.accelerator,
+      duration_sec: resultData.inference_duration_sec,
+      recist_metrics: {
+        longest_diameter_mm: ld,
+        short_axis_mm: recist.short_axis_mm ?? 0,
+        total_volume_cm3: vol,
+        key_slice_index: sliceIdx,
+      },
+      markdown_insert: `![${figCaption}](asset:${asset.id} "${figNote}")`,
+      summary: resultData.summary_markdown,
+    })
+  })
+
+  // 4. 辅助工具：RECIST 1.1 疗效评估（基线 vs 随访评估 CR / PR / SD / PD）
+  server.registerTool('imaging_recist_evaluate', {
+    description:
+      '根据 RECIST 1.1（实体瘤疗效评价标准）评估靶病灶变化等级：' +
+      '输入基线长径之和（baseline_sum_mm）与随访长径之和（followup_sum_mm），' +
+      '自动计算变化百分比与疗效等级（CR 完全缓解 / PR 部分缓解 / SD 疾病稳定 / PD 疾病进展）。',
+    inputSchema: {
+      baseline_sum_mm: z.number().min(0.1).describe('基线靶病灶最大长径之和（毫米）'),
+      followup_sum_mm: z.number().min(0).describe('本次随访靶病灶最大长径之和（毫米）'),
+    },
+  }, async ({ baseline_sum_mm, followup_sum_mm }) => {
+    const diff = followup_sum_mm - baseline_sum_mm
+    const percentChange = round((diff / baseline_sum_mm) * 100, 1)
+
+    let evaluation = 'SD'
+    let interpretation = '疾病稳定 (Stable Disease)'
+
+    if (followup_sum_mm === 0) {
+      evaluation = 'CR'
+      interpretation = '完全缓解 (Complete Response)：所有靶病灶均完全消失。'
+    } else if (percentChange <= -30.0) {
+      evaluation = 'PR'
+      interpretation = `部分缓解 (Partial Response)：靶病灶长径总和缩小 ≥ 30%（当前减少 ${Math.abs(percentChange)}%）。`
+    } else if (percentChange >= 20.0 && diff >= 5.0) {
+      evaluation = 'PD'
+      interpretation = `疾病进展 (Progressive Disease)：靶病灶长径总和增加 ≥ 20% 且绝对值增加 ≥ 5mm（当前增加 ${percentChange}%）。`
+    } else {
+      evaluation = 'SD'
+      interpretation = `疾病稳定 (Stable Disease)：未达到 PR 缩小标准，亦未达到 PD 增大标准（变化率 ${percentChange > 0 ? '+' : ''}${percentChange}%）。`
+    }
+
+    return json({
+      baseline_sum_mm,
+      followup_sum_mm,
+      percent_change: `${percentChange > 0 ? '+' : ''}${percentChange}%`,
+      recist_category: evaluation,
+      interpretation,
+      academic_statement: `根据 RECIST 1.1 评价标准，患者靶病灶长径总和由基线 ${baseline_sum_mm} mm 变化至 ${followup_sum_mm} mm（${percentChange > 0 ? '+' : ''}${percentChange}%），疗效评估为 ${evaluation}（${interpretation.split('：')[0]}）。`,
+    })
+  })
+}
+
+function round(n: number, d = 1): number {
+  const f = Math.pow(10, d)
+  return Math.round(n * f) / f
+}

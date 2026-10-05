@@ -433,4 +433,56 @@ describe('OmniCanvas / AgentDoc 独立画布与在线文档服务 (@heurion2/can
       }
     })
   })
+
+  describe('5. MONAI 医学影像分析代理与资产沉淀 (/api/imaging/*)', () => {
+    it('健康检查与模型/样本列表代理', async () => {
+      const { app, token } = setupTestEnv()
+      const statusRes = await app.request('/api/imaging/status', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(statusRes.status).toBe(200)
+      const statusData = await statusRes.json()
+      expect(statusData.service).toBe('heurion-monai-worker')
+
+      const modelsRes = await app.request('/api/imaging/models', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(modelsRes.status).toBe(200)
+      const modelsData = await modelsRes.json()
+      expect(modelsData.models.length).toBeGreaterThanOrEqual(3)
+
+      const samplesRes = await app.request('/api/imaging/samples', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(samplesRes.status).toBe(200)
+      const samplesData = await samplesRes.json()
+      expect(samplesData.samples.length).toBeGreaterThanOrEqual(1)
+    })
+
+    it('真实人体 CT 样本分析并沉淀为画布资产', async () => {
+      const { app, token } = setupTestEnv()
+      const anaRes = await app.request('/api/imaging/analyze', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: 'spleen_test',
+          model_id: 'spleen_segmenter',
+          label: '腹部 CT 关键切片',
+        }),
+      })
+      expect(anaRes.status).toBe(200)
+      const anaData = await anaRes.json()
+      expect(anaData.status).toBe('success')
+      expect(anaData.asset_id).toBeDefined()
+      expect(anaData.image_url).toBe(`/api/assets/${anaData.asset_id}`)
+      expect(anaData.recist_metrics.longest_diameter_mm).toBeGreaterThan(200)
+
+      // 验证资产可被 GET /api/assets/:id 读取
+      const assetRes = await app.request(anaData.image_url, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(assetRes.status).toBe(200)
+      expect(assetRes.headers.get('content-type')).toBe('image/png')
+    })
+  })
 })

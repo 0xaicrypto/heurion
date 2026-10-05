@@ -8,6 +8,7 @@ import { Editor } from './editor.ts'
 import { Provider } from './provider.ts'
 import { editChartData } from './chart-dialog.ts'
 import { askConfirm, askText } from './dialogs.ts'
+import { openImagingDialog, type ImagingResult } from './imaging-dialog.ts'
 
 interface DocSummary {
   id: string
@@ -560,6 +561,66 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   $('btnLayoutCheck').onclick = handleLayoutCheck
   $('menuLayoutCheck').onclick = handleLayoutCheck
+
+  // 12. MONAI 医学影像分析与 RECIST 1.1 关键截面图插入
+  const handleOpenImaging = () => {
+    openImagingDialog(api, async (res: ImagingResult) => {
+      if (activeKind === 'deck' && activeSession.deck && activeDocId) {
+        const slide = activeSession.deck.currentSlide()
+        const slideId = slide?.attrs?.id as string | undefined
+        if (!slideId) {
+          alert('请先选择或新建一个幻灯片页')
+          return
+        }
+
+        await activeSession.deck.edit([
+          {
+            op: 'add_image',
+            slide_id: slideId,
+            asset_id: res.asset_id,
+            x: 60,
+            y: 110,
+            w: 430,
+            h: 330,
+            description: `MONAI ${res.model_name} 关键截面图`,
+          },
+          {
+            op: 'add_shape',
+            slide_id: slideId,
+            markdown: `### 🩺 MONAI 靶病灶量化评估 (${res.model_name})`,
+            x: 520,
+            y: 110,
+            w: 380,
+            h: 50,
+            font_size: 16,
+          },
+          {
+            op: 'add_table',
+            slide_id: slideId,
+            rows: [
+              ['RECIST 1.1 评估指标', '临床测量值'],
+              ['关键横截面 (Key Slice)', `第 #${res.recist_metrics.key_slice_index} 层`],
+              ['最大长径 (Longest Diameter)', `${res.recist_metrics.longest_diameter_mm} mm`],
+              ['垂直短径 (Short Axis)', `${res.recist_metrics.short_axis_mm} mm`],
+              ['脏器 / 病灶总体积', `${res.recist_metrics.total_volume_cm3} cm³`],
+              ['计算硬件与纯推理耗时', `${res.accelerator} (${res.inference_duration_sec}s)`],
+            ],
+            x: 520,
+            y: 170,
+            w: 380,
+            font_size: 13,
+          },
+        ])
+        await activeSession.deck.load()
+      } else {
+        alert(`已成功生成医学影像资产 (ID: ${res.asset_id})，您可在文档中直接使用 Markdown 引用：\n\n![RECIST 截面](asset:${res.asset_id})`)
+      }
+    })
+  }
+
+  $('btnDocImaging').onclick = handleOpenImaging
+  $('btnDeckImaging').onclick = handleOpenImaging
+  $('menuInsertImaging').onclick = handleOpenImaging
 
   // 13. 全屏放映演示 (Google Slides Present Mode)
   $('btnPresent').onclick = () => {
