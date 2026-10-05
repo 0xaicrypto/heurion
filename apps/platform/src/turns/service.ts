@@ -244,6 +244,7 @@ export class TurnService {
     const store = this.docs.store
     const doc = store.getDoc(docId)
     if (!doc) throw new Error(`doc ${docId} not found`)
+    this.docs.pin(docId)
 
     const turn = store.createTurn({ user_id: userId, doc_id: docId, message, opts: JSON.stringify(opts) })
     r.turnId = turn.id
@@ -333,6 +334,7 @@ export class TurnService {
       emit({ type: 'turn_done', turn_id: turn.id, status, docs: [...touched] })
       this.cancelling.delete(userId)
       this.timedOut.delete(userId)
+      this.docs.unpin(docId)
     }
   }
 

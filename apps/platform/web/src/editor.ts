@@ -25,6 +25,8 @@ export interface EditorOptions {
   onCommentClick: (thread: string) => void
   onSuggestion: (group: string, accept: boolean) => void
   onSelection: (anchor: SelectionAnchor | null) => void
+  /** 点击论断标注时回调（定位或展开伴随审查卡片） */
+  onClaimClick?: (claimId: string) => void
   /** 图是否由数据分析生成（有则显示「来自分析」，点开看代码与数据来源）。 */
   analysis?: { has: (assetId: string) => Promise<boolean>; show: (assetId: string) => void }
   /** 只读（研究里的只读成员）：能看、能选中文字评论，不能改 */
@@ -116,38 +118,277 @@ const flashPlugin = new Plugin<DecorationSet>({
   props: { decorations: state => flashKey.getState(state) },
 })
 
-/** 待采纳修订：每组第一个块前放「采纳 / 拒绝」按钮。 */
-function suggestionPlugin(onSuggestion: EditorOptions['onSuggestion']) {
+/** 把 textblock 内部的字符偏移映射为 ProseMirror 全局文档位置 */
+export function charOffsetToPos(node: PMNode, nodeStartPos: number, charOffset: number): number {
+  let curChar = 0
+  let curPos = nodeStartPos + 1
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)
+    if (child.isText && child.text) {
+      const len = child.text.length
+      if (charOffset <= curChar + len) {
+        return curPos + Math.max(0, charOffset - curChar)
+      }
+      curChar += len
+    }
+    curPos += child.nodeSize
+  }
+  return curPos
+}
+
+export type DiffOp = { kind: 'equal' | 'delete' | 'insert'; text: string }
+
+/** 中英混合文本的词 / 字符级 LCS Diff */
+export function diffWords(a: string, b: string): DiffOp[] {
+  if (a === b) return a ? [{ kind: 'equal', text: a }] : []
+  if (!a) return b ? [{ kind: 'insert', text: b }] : []
+  if (!b) return a ? [{ kind: 'delete', text: a }] : []
+
+  const tokenize = (s: string) => s.match(/[\u4e00-\u9fa5]|[a-zA-Z0-9_.-]+|\s+|[^\s\w\u4e00-\u9fa5]/g) ?? []
+  const tokensA = tokenize(a)
+  const tokensB = tokenize(b)
+
+  const n = tokensA.length
+  const m = tokensB.length
+  if (n * m > 250000) {
+    return [{ kind: 'delete', text: a }, { kind: 'insert', text: b }]
+  }
+
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < m; j++) {
+      if (tokensA[i] === tokensB[j]) {
+        dp[i + 1]![j + 1] = dp[i]![j]! + 1
+      } else {
+        dp[i + 1]![j + 1] = Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!)
+      }
+    }
+  }
+
+  const raw: DiffOp[] = []
+  let i = n
+  let j = m
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && tokensA[i - 1] === tokensB[j - 1]) {
+      raw.push({ kind: 'equal', text: tokensA[i - 1]! })
+      i--
+      j--
+    } else if (j > 0 && (i === 0 || dp[i]![j - 1]! >= dp[i - 1]![j]!)) {
+      raw.push({ kind: 'insert', text: tokensB[j - 1]! })
+      j--
+    } else {
+      raw.push({ kind: 'delete', text: tokensA[i - 1]! })
+      i--
+    }
+  }
+  raw.reverse()
+
+  const merged: DiffOp[] = []
+  for (const item of raw) {
+    if (merged.length > 0 && merged[merged.length - 1]!.kind === item.kind) {
+      merged[merged.length - 1]!.text += item.text
+    } else {
+      merged.push({ ...item })
+    }
+  }
+
+  // 语义平滑：若 delete 与 insert 之间仅夹着 1 个汉字（如「显著下」+「降」+「低」），将其合并以保证整词完整（「显著下降」与「降低」）
+  for (let idx = 0; idx < merged.length - 2; idx++) {
+    const a = merged[idx]!
+    const b = merged[idx + 1]!
+    const c = merged[idx + 2]!
+    if (
+      ((a.kind === 'delete' && c.kind === 'insert') || (a.kind === 'insert' && c.kind === 'delete')) &&
+      b.kind === 'equal' && b.text.length === 1 && /^[\u4e00-\u9fa5]$/.test(b.text)
+    ) {
+      if (a.kind === 'delete') {
+        a.text += b.text
+        c.text = b.text + c.text
+      } else {
+        a.text = b.text + a.text
+        c.text += b.text
+      }
+      merged.splice(idx + 1, 1)
+      idx--
+    }
+  }
+
+  return merged
+}
+
+/** 待采纳修订：在视图层将成对的增删块投影为行内字符级 Diff，并在块前呈现精致审查条 */
+function suggestionDiffPlugin(onSuggestion: EditorOptions['onSuggestion']) {
   const build = (doc: PMNode) => {
-    const seen = new Set<string>()
     const decos: Decoration[] = []
-    doc.descendants((n, pos) => {
-      const group = n.attrs.suggest_group as string | null
-      if (!n.attrs.suggest || !group || seen.has(group)) return true
-      seen.add(group)
-      decos.push(Decoration.widget(pos, () => {
-        const bar = document.createElement('div')
-        bar.className = 'suggest-bar'
-        bar.contentEditable = 'false'
-        bar.innerHTML = '<span>AI 修订</span><button data-a="1">采纳</button><button data-a="0">拒绝</button>'
-        bar.addEventListener('mousedown', e => {
-          const btn = (e.target as HTMLElement).closest('button')
-          if (!btn) return
-          e.preventDefault()
-          onSuggestion(group, btn.dataset.a === '1')
+
+    interface SuggestionBlock {
+      pos: number
+      node: PMNode
+      suggest: 'insert' | 'delete'
+      group: string
+      id: string | null
+      suggestOf: string | null
+    }
+    const groups = new Map<string, SuggestionBlock[]>()
+    doc.descendants((node, pos) => {
+      const suggest = node.attrs.suggest as 'insert' | 'delete' | null
+      const group = node.attrs.suggest_group as string | null
+      if (suggest && group) {
+        const list = groups.get(group) ?? []
+        list.push({
+          pos,
+          node,
+          suggest,
+          group,
+          id: (node.attrs.id as string | null) ?? null,
+          suggestOf: (node.attrs.suggest_of as string | null) ?? null,
         })
-        return bar
-      }, { side: -1, key: `sg-${group}`, ignoreSelection: true }))
+        groups.set(group, list)
+      }
       return true
     })
+
+    for (const [group, blocks] of groups) {
+      const deletes = blocks.filter(b => b.suggest === 'delete')
+      const inserts = blocks.filter(b => b.suggest === 'insert')
+      const pairedDeletes = new Set<SuggestionBlock>()
+
+      for (const ins of inserts) {
+        let del = deletes.find(d => !pairedDeletes.has(d) && ins.suggestOf && d.id === ins.suggestOf)
+        if (!del && deletes.length === 1 && !pairedDeletes.has(deletes[0]!)) {
+          del = deletes[0]
+        }
+
+        if (del && ins.node.isTextblock && del.node.isTextblock) {
+          pairedDeletes.add(del)
+          // 隐藏原删除块（由新块呈现行内划线 Diff）
+          decos.push(Decoration.node(del.pos, del.pos + del.node.nodeSize, { class: 'suggest-paired-delete' }))
+
+          const ops = diffWords(del.node.textContent, ins.node.textContent)
+          let charOffset = 0
+          for (const op of ops) {
+            if (op.kind === 'equal') {
+              charOffset += op.text.length
+            } else if (op.kind === 'delete') {
+              const widgetPos = charOffsetToPos(ins.node, ins.pos, charOffset)
+              const delText = op.text
+              decos.push(Decoration.widget(widgetPos, () => {
+                const el = document.createElement('del')
+                el.className = 'diff-del'
+                el.textContent = delText
+                el.title = '原删除内容'
+                return el
+              }, { side: -1, key: `del-${ins.pos}-${charOffset}` }))
+            } else if (op.kind === 'insert') {
+              const from = charOffsetToPos(ins.node, ins.pos, charOffset)
+              const to = charOffsetToPos(ins.node, ins.pos, charOffset + op.text.length)
+              if (to > from) {
+                decos.push(Decoration.inline(from, to, { class: 'diff-ins' }))
+              }
+              charOffset += op.text.length
+            }
+          }
+        } else {
+          decos.push(Decoration.node(ins.pos, ins.pos + ins.node.nodeSize, { class: 'diff-ins-block' }))
+        }
+      }
+
+      for (const del of deletes) {
+        if (!pairedDeletes.has(del)) {
+          decos.push(Decoration.node(del.pos, del.pos + del.node.nodeSize, { class: 'diff-del-block' }))
+        }
+      }
+
+      const firstBlock = inserts[0] ?? deletes.find(d => !pairedDeletes.has(d))
+      if (firstBlock) {
+        decos.push(Decoration.widget(firstBlock.pos, () => {
+          const bar = document.createElement('div')
+          bar.className = 'suggest-bar'
+          bar.contentEditable = 'false'
+          bar.innerHTML = '<span class="badge-pill rev"><span class="dot"></span> AI 修订 · 待采纳</span><button data-a="1" class="btn-sm-accept">采纳</button><button data-a="0" class="btn-sm-reject">拒绝</button>'
+          bar.addEventListener('mousedown', e => {
+            const btn = (e.target as HTMLElement).closest('button')
+            if (!btn) return
+            e.preventDefault()
+            onSuggestion(group, btn.dataset.a === '1')
+          })
+          return bar
+        }, { side: -1, key: `sg-${group}`, ignoreSelection: true }))
+      }
+    }
+
     return DecorationSet.create(doc, decos)
   }
+
   return new Plugin<DecorationSet>({
     state: {
       init: (_c, state) => build(state.doc),
       apply: (tr, set) => tr.docChanged ? build(tr.doc) : set,
     },
     props: { decorations(state) { return this.getState(state) } },
+  })
+}
+
+export interface ClaimCheckItem {
+  claim_id: string
+  node_id: string
+  sentence: string
+  verdict: string
+  reason: string
+}
+
+export const claimPluginKey = new PluginKey<{ checks: ClaimCheckItem[]; decos: DecorationSet }>('claim-checks')
+
+function claimCheckPlugin() {
+  const build = (doc: PMNode, checks: ClaimCheckItem[]) => {
+    const flagged = checks.filter(c => c.verdict !== 'supported' && c.sentence && c.sentence.trim())
+    if (flagged.length === 0) return DecorationSet.empty
+
+    const decos: Decoration[] = []
+    doc.descendants((node, pos) => {
+      if (!node.isTextblock) return true
+      const text = node.textContent
+      for (const check of flagged) {
+        const s = check.sentence.trim()
+        let idx = text.indexOf(s)
+        while (idx >= 0) {
+          const from = charOffsetToPos(node, pos, idx)
+          const to = charOffsetToPos(node, pos, idx + s.length)
+          if (to > from) {
+            decos.push(Decoration.inline(from, to, {
+              class: 'claim-warn-text',
+              'data-claim-id': check.claim_id,
+              title: `论断核查 [${check.verdict}]：${check.reason}`,
+            }))
+          }
+          idx = text.indexOf(s, idx + s.length)
+        }
+      }
+      return true
+    })
+    return DecorationSet.create(doc, decos)
+  }
+
+  return new Plugin<{ checks: ClaimCheckItem[]; decos: DecorationSet }>({
+    key: claimPluginKey,
+    state: {
+      init: () => ({ checks: [], decos: DecorationSet.empty }),
+      apply(tr, prev) {
+        const meta = tr.getMeta(claimPluginKey) as ClaimCheckItem[] | undefined
+        if (meta) {
+          return { checks: meta, decos: build(tr.doc, meta) }
+        }
+        if (tr.docChanged) {
+          return { checks: prev.checks, decos: build(tr.doc, prev.checks) }
+        }
+        return prev
+      },
+    },
+    props: {
+      decorations(state) {
+        return claimPluginKey.getState(state)?.decos ?? DecorationSet.empty
+      },
+    },
   })
 }
 
@@ -244,7 +485,8 @@ export class Editor {
         idPlugin,
         citePlugin,
         flashPlugin,
-        suggestionPlugin(opts.onSuggestion),
+        suggestionDiffPlugin(opts.onSuggestion),
+        claimCheckPlugin(),
       ],
     })
     const editor = this
@@ -311,6 +553,11 @@ export class Editor {
         return true
       },
       handleClickOn: (_view, _pos, _node, _nodePos, event) => {
+        const claimEl = (event.target as HTMLElement).closest('.claim-warn-text') as HTMLElement | null
+        if (claimEl?.dataset.claimId) {
+          opts.onClaimClick?.(claimEl.dataset.claimId)
+          return true
+        }
         const mark = (event.target as HTMLElement).closest('mark.comment') as HTMLElement | null
         if (mark?.dataset.thread) opts.onCommentClick(mark.dataset.thread)
         return false
@@ -396,6 +643,10 @@ export class Editor {
   scrollToThread(thread: string): void {
     const el = this.view.dom.querySelector(`mark.comment[data-thread="${CSS.escape(thread)}"]`)
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  setClaimChecks(checks: ClaimCheckItem[]): void {
+    this.view.dispatch(this.view.state.tr.setMeta(claimPluginKey, checks))
   }
 
   destroy(): void {

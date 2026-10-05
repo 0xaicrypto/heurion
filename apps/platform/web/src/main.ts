@@ -427,6 +427,13 @@ async function open(docId: string): Promise<void> {
         }
       },
       onCommentClick,
+      onClaimClick: claimId => {
+        switchTab('reviewPane')
+        const card = document.querySelector(`.review-card[data-cid="${CSS.escape(claimId)}"]`)
+        card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        card?.classList.add('card-highlight')
+        setTimeout(() => card?.classList.remove('card-highlight'), 1600)
+      },
       analysis: { has: id => datasets.hasProvenance(id), show: id => void datasets.showProvenance(id) },
       onSuggestion: (group, accept) => void resolveSuggestion(group, accept),
       onSelection: a => { anchor = a; placeFab(); syncToolbar() },
@@ -535,8 +542,12 @@ async function refresh(full: boolean): Promise<void> {
       }
     }
   }
+  if (session?.editor && d.claim_checks) {
+    session.editor.setClaimChecks(d.claim_checks)
+  }
   renderComments()
   renderSuggestions()
+  renderReview()
   renderVersions()
   renderCites()
   syncRevertButtons()
@@ -1123,7 +1134,26 @@ function renderTurnEvent(ev: any): void {
       if (ev.status !== 'done') addRetry(ev.turn_id)
       if (ev.docs.includes(session?.docId) && ev.status !== 'error') {
         void refresh(false).then(() => {
-          if (detail?.revertable.includes(ev.turn_id)) {
+          if (detail?.suggestions?.length > 0) {
+            // 自动切换到审查面板，让用户直接看到右侧的审查卡片
+            switchTab('reviewPane')
+            if (lastAssistant) {
+              const bar = document.createElement('div')
+              bar.className = 'chat-turn-review-bar'
+              bar.innerHTML = `
+                <span class="badge-pill rev"><span class="dot"></span> AI 提出了 ${detail.suggestions.length} 处修订</span>
+                <button class="btn-jump-review">在审查面板逐条查看并采纳 →</button>
+              `
+              bar.querySelector('button')?.addEventListener('click', () => {
+                switchTab('reviewPane')
+                const firstCard = document.querySelector('.review-card')
+                firstCard?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                firstCard?.classList.add('ai-flash')
+                setTimeout(() => firstCard?.classList.remove('ai-flash'), 1400)
+              })
+              lastAssistant.appendChild(bar)
+            }
+          } else if (detail?.revertable.includes(ev.turn_id)) {
             attachRevert(lastAssistant ?? addMsg('assistant', '（本轮已完成）'), ev.turn_id)
             showTurnBanner(ev.turn_id)
           }
@@ -1193,6 +1223,25 @@ $<HTMLTextAreaElement>('chatInput').onkeydown = e => { if (e.key === 'Enter' && 
 $('cancelBtn').onclick = async () => {
   await loadQueue() // 刚发送的任务可能还不在缓存里
   if (queue.running) await cancelJob(queue.running.id)
+}
+
+const suggestCheckbox = $<HTMLInputElement>('suggestMode')
+const suggestPill = $('suggestModePill')
+const suggestText = $('suggestModeText')
+const savedSuggest = localStorage.getItem('heurion.suggestMode')
+const isSuggestDefault = savedSuggest === null ? true : savedSuggest === '1'
+function updateSuggestModeUI(active: boolean): void {
+  if (suggestPill) suggestPill.classList.toggle('active', active)
+  if (suggestText) suggestText.textContent = active ? '✨ 修订模式 · 生成 Diff 待采纳' : '直接修改模式（覆盖正文）'
+}
+if (suggestCheckbox) {
+  suggestCheckbox.checked = isSuggestDefault
+  updateSuggestModeUI(isSuggestDefault)
+  suggestCheckbox.addEventListener('change', () => {
+    const active = suggestCheckbox.checked
+    localStorage.setItem('heurion.suggestMode', active ? '1' : '0')
+    updateSuggestModeUI(active)
+  })
 }
 
 // —— 任务队列（同一用户的所有文档共用一个队列） ——
@@ -1387,6 +1436,122 @@ $('suggestBanner').onclick = e => {
     setTimeout(() => el?.classList.remove('ai-flash'), 1200)
   }
 }
+
+// —— 伴随审查面板（AI 修订与论断核查卡片流） ——
+
+function renderReview(): void {
+  const groups: any[] = detail?.suggestions ?? []
+  const checks: any[] = detail?.claim_checks ?? []
+  const flagged = checks.filter(c => c.verdict !== 'supported')
+  const total = groups.length + flagged.length
+
+  const badge = document.getElementById('reviewBadge')
+  if (badge) {
+    badge.textContent = String(total)
+    badge.hidden = total === 0
+  }
+
+  const btnAcceptAll = document.getElementById('reviewAcceptAll')
+  const btnRejectAll = document.getElementById('reviewRejectAll')
+  if (btnAcceptAll) btnAcceptAll.hidden = groups.length === 0
+  if (btnRejectAll) btnRejectAll.hidden = groups.length === 0
+
+  const container = document.getElementById('reviewCards')
+  if (!container) return
+
+  if (total === 0) {
+    container.innerHTML = `
+      <div class="review-empty">
+        <div class="empty-icon">✓</div>
+        <div class="empty-title">当前无待处理修订或论断警示</div>
+        <div class="muted">AI 提出的修订和文献论断核查将在此实时伴随呈现</div>
+      </div>`
+    return
+  }
+
+  const parts: string[] = []
+
+  // 1. AI 修订卡片（墨黑底色高对比度，绿色标与采纳/拒绝）
+  for (const g of groups) {
+    let delText = ''
+    let insText = ''
+    const domEls = document.querySelectorAll(`[data-suggest-group="${CSS.escape(g.group)}"]`)
+    domEls.forEach(el => {
+      const del = el.querySelector('.diff-del')
+      if (del) delText = del.textContent || ''
+      const ins = el.querySelector('.diff-ins')
+      if (ins) insText = ins.textContent || ''
+    })
+
+    parts.push(`
+      <div class="review-card ai-card" data-group="${esc(g.group)}">
+        <div class="card-top">
+          <span class="badge-pill rev"><span class="dot"></span> AI 修订 · 待采纳</span>
+          <span class="card-meta">#${esc(g.group.slice(0, 6))}</span>
+        </div>
+        <div class="card-title">根据最新证据量化表述</div>
+        <div class="card-desc">补充定量效应值与精确置信区间，替换模糊陈述（涉及 ${g.inserts} 增 / ${g.deletes} 删）</div>
+        ${(delText || insText) ? `
+          <div class="diff-preview">
+            ${delText ? `<div class="diff-del-row"><span class="tag-del">原内容</span><del>${esc(delText)}</del></div>` : ''}
+            ${insText ? `<div class="diff-ins-row"><span class="tag-ins">修订</span><ins>${esc(insText)}</ins></div>` : ''}
+          </div>` : ''}
+        <div class="card-actions">
+          <button class="btn-review-accept" data-act="accept" data-group="${esc(g.group)}">采纳</button>
+          <button class="btn-review-reject" data-act="reject" data-group="${esc(g.group)}">拒绝</button>
+          <button class="btn-review-locate" data-act="locate-rev" data-group="${esc(g.group)}">定位正文</button>
+        </div>
+      </div>`)
+  }
+
+  // 2. 论断核查卡片（暖黄警示标，展示反差与文献限制）
+  for (const c of flagged) {
+    parts.push(`
+      <div class="review-card claim-card ${esc(c.verdict)}" data-cid="${esc(c.claim_id)}">
+        <div class="card-top">
+          <span class="badge-pill claim"><span class="dot"></span> 论断核查 · 文献依据</span>
+          <span class="verdict-tag ${esc(c.verdict)}">${VERDICT[c.verdict] ?? c.verdict}</span>
+        </div>
+        <div class="claim-sentence">「${esc(c.sentence)}」</div>
+        <div class="claim-reason">${esc(c.reason)}</div>
+        <div class="card-actions">
+          <button class="btn-claim-locate" data-act="locate-claim" data-cid="${esc(c.claim_id)}">定位正文</button>
+        </div>
+      </div>`)
+  }
+
+  container.innerHTML = parts.join('')
+}
+
+document.getElementById('reviewCards')?.addEventListener('click', async e => {
+  const btn = (e.target as HTMLElement).closest('button[data-act]') as HTMLButtonElement | null
+  if (!btn || !session) return
+  const act = btn.dataset.act
+  const group = btn.dataset.group
+  const cid = btn.dataset.cid
+  if (act === 'accept' && group) {
+    await resolveSuggestion(group, true)
+  } else if (act === 'reject' && group) {
+    await resolveSuggestion(group, false)
+  } else if (act === 'locate-rev' && group) {
+    const el = document.querySelector(`[data-suggest-group="${CSS.escape(group)}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.classList.add('ai-flash')
+    setTimeout(() => el?.classList.remove('ai-flash'), 1400)
+  } else if (act === 'locate-claim' && cid) {
+    const el = document.querySelector(`.claim-warn-text[data-claim-id="${CSS.escape(cid)}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.classList.add('ai-flash')
+    setTimeout(() => el?.classList.remove('ai-flash'), 1400)
+  }
+})
+
+document.getElementById('reviewAcceptAll')?.addEventListener('click', () => {
+  void resolveSuggestion('all', true)
+})
+document.getElementById('reviewRejectAll')?.addEventListener('click', () => {
+  void resolveSuggestion('all', false)
+})
 
 // —— 版本与引用 ——
 

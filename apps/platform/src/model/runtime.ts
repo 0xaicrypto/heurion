@@ -172,12 +172,16 @@ interface Loaded {
   turnUndo: Map<string, { origin: ServerOrigin; um: Y.UndoManager }>
   /** 本次合批里做了浏览器编辑的用户（协同连接上标的 heurionUser） */
   editors: Set<string>
+  /** 活跃连接 / 任务引用计数（> 0 时不可被空闲驱逐） */
+  pins: number
+  /** 上次访问时间戳 */
+  lastAccessed: number
 }
 
 type Meta = { actor: Actor; turnId: string | null; ops: unknown; user?: string | null }
 
 /**
- * 文档运行时：每个文档一个 Y.Doc（内存常驻）。
+ * 文档运行时：每个文档一个 Y.Doc（按需加载与空闲驱逐）。
  * - 服务端写入（AI / 导入 / 回滚 / 评论锚点）经 commit 以单个 Yjs 事务提交，origin = ServerOrigin；
  * - 浏览器的编辑经协同网关直接写进同一个 Y.Doc，按 USER_FLUSH_MS 合批成一次用户提交
  *   （rev+1、op log、节点变更索引），并修复编辑器拆段带来的重复 id；
@@ -185,9 +189,42 @@ type Meta = { actor: Actor; turnId: string | null; ops: unknown; user?: string |
  */
 export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-detail': [CommitDetail]; created: [DocRow] }> {
   private readonly loaded = new Map<string, Loaded>()
+  private idleTimeoutMs = 10 * 60 * 1000
 
   constructor(readonly store: Store) {
     super()
+  }
+
+  /** 钉住文档（活跃 WebSocket 连接或 AI 回合期间），增加引用计数，防止空闲驱逐。 */
+  pin(docId: string): void {
+    const l = this.load(docId)
+    l.pins = (l.pins ?? 0) + 1
+    l.lastAccessed = Date.now()
+  }
+
+  /** 释放钉住，减少引用计数。 */
+  unpin(docId: string): void {
+    const l = this.loaded.get(docId)
+    if (!l) return
+    l.pins = Math.max(0, (l.pins ?? 1) - 1)
+    l.lastAccessed = Date.now()
+  }
+
+  /**
+   * 检查并驱逐空闲文档：未被钉住（pins === 0）、超过 idleMs 未访问。
+   * 驱逐前若有未落库编辑先落库。返回驱逐的文档数量。
+   */
+  evictIdle(idleMs = this.idleTimeoutMs): number {
+    const now = Date.now()
+    let count = 0
+    for (const [docId, l] of [...this.loaded.entries()]) {
+      if ((l.pins ?? 0) > 0) continue
+      if (now - (l.lastAccessed ?? 0) < idleMs) continue
+      this.flush(docId)
+      this.unload(docId)
+      count++
+    }
+    return count
   }
 
   /** 新建文档：content 缺省为一个空段落；同时落 v1。 */
@@ -205,27 +242,29 @@ export class Documents extends EventEmitter<{ commit: [CommitEvent]; 'commit-det
 
   private load(docId: string): Loaded {
     let l = this.loaded.get(docId)
-    if (!l) {
-      const row = this.store.getDoc(docId)
-      const state = this.store.getState(docId)
-      if (!row || !state) throw new Error(`doc ${docId} not found`)
-      const ydoc = new Y.Doc()
-      Y.applyUpdate(ydoc, state)
-      const committed = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schemaFor(row.kind))
-      const loaded: Loaded = { kind: row.kind, ydoc, rev: row.rev, cache: committed, committed, timer: null, turnUndo: new Map(), editors: new Set() }
-      ydoc.on('update', (_update: Uint8Array, origin: unknown) => {
-        loaded.cache = null
-        if (isServerOrigin(origin)) return
-        const who = (origin as { heurionUser?: unknown } | null)?.heurionUser
-        if (typeof who === 'string') loaded.editors.add(who)
-        // 浏览器编辑（或回合撤销）：合批落库
-        if (loaded.timer) clearTimeout(loaded.timer)
-        loaded.timer = setTimeout(() => { this.flush(docId) }, USER_FLUSH_MS)
-        loaded.timer.unref?.()
-      })
-      l = loaded
-      this.loaded.set(docId, l)
+    if (l) {
+      l.lastAccessed = Date.now()
+      return l
     }
+    const row = this.store.getDoc(docId)
+    const state = this.store.getState(docId)
+    if (!row || !state) throw new Error(`doc ${docId} not found`)
+    const ydoc = new Y.Doc()
+    Y.applyUpdate(ydoc, state)
+    const committed = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(BODY), schemaFor(row.kind))
+    const loaded: Loaded = { kind: row.kind, ydoc, rev: row.rev, cache: committed, committed, timer: null, turnUndo: new Map(), editors: new Set(), pins: 0, lastAccessed: Date.now() }
+    ydoc.on('update', (_update: Uint8Array, origin: unknown) => {
+      loaded.cache = null
+      if (isServerOrigin(origin)) return
+      const who = (origin as { heurionUser?: unknown } | null)?.heurionUser
+      if (typeof who === 'string') loaded.editors.add(who)
+      // 浏览器编辑（或回合撤销）：合批落库
+      if (loaded.timer) clearTimeout(loaded.timer)
+      loaded.timer = setTimeout(() => { this.flush(docId) }, USER_FLUSH_MS)
+      loaded.timer.unref?.()
+    })
+    l = loaded
+    this.loaded.set(docId, l)
     return l
   }
 

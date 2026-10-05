@@ -195,6 +195,7 @@
     <div class="side-head narrow-only"><span class="eyebrow">Heurion AI</span><button class="icon-btn" id="sideClose" aria-label="关闭"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6"/></svg></button></div>
     <div class="tabs">
       <button data-tab="chatPane" class="active">对话</button>
+      <button data-tab="reviewPane" id="reviewTab">审查 <span class="tab-badge" id="reviewBadge" hidden>0</span></button>
       <button data-tab="commentPane">评论</button>
       <button data-tab="versionPane">版本</button>
       <button data-tab="citePane">引用</button>
@@ -206,6 +207,15 @@
       </div>
       <div class="log" id="chatLog"></div>
       <div class="composer">
+        <div class="composer-mode-bar">
+          <label class="mode-pill active" id="suggestModePill" title="点击切换：开启时 AI 的修改作为待采纳修订（红绿 Diff），由你逐条采纳；关闭时直接修改正文">
+            <input type="checkbox" id="suggestMode" checked>
+            <span class="mode-dot"></span>
+            <span class="mode-text" id="suggestModeText">修订模式 · 生成 Diff 待采纳</span>
+          </label>
+          <span class="grow"></span>
+          <label class="toggle-sm" title="这一轮不使用、也不新增记忆"><input type="checkbox" id="noMemory"> 不用记忆</label>
+        </div>
         <div class="kb-picked" id="kbPicked" hidden></div>
         <div class="kb-picked" id="dsPicked" hidden></div>
         <div class="kb-picked" id="ptPicked" hidden></div>
@@ -213,8 +223,6 @@
         <textarea id="chatInput" rows="3" placeholder="让 Heurion 修改文档，例如：在方法部分补充纳入标准，并引用相关 RCT（⌘↩ 发送；可以粘贴或拖入图片）"></textarea>
         <div class="row">
           <div class="composer-opts">
-            <label class="toggle" title="AI 的修改作为待采纳修订，由你逐条采纳"><input type="checkbox" id="suggestMode"> 修订模式</label>
-            <label class="toggle" title="这一轮不使用、也不新增记忆"><input type="checkbox" id="noMemory"> 不用记忆</label>
             <button class="quiet small-btn" id="kbPickBtn" title="选资料库里的资料，让 AI 依据它们写">＋ 引用资料</button>
             <button class="quiet small-btn" id="ptPickBtn" title="选患者，让 AI 读这位患者的资料与化验（按诊疗组权限，记入访问记录）" hidden>＋ 引用患者</button>
             <button class="quiet small-btn" id="dsPickBtn" title="选上传的数据，让 AI 做统计分析（Table 1、生存曲线、组间比较……）">＋ 引用数据</button>
@@ -223,6 +231,15 @@
           <button id="sendBtn" class="ai" disabled>发送</button>
         </div>
       </div>
+    </div>
+    <div class="tabpane" id="reviewPane">
+      <div class="review-head">
+        <span class="review-title">伴随审查与变更</span>
+        <span class="grow"></span>
+        <button id="reviewAcceptAll" class="primary small-btn" hidden>全部采纳</button>
+        <button id="reviewRejectAll" class="quiet small-btn" hidden>全部拒绝</button>
+      </div>
+      <div id="reviewCards" class="review-cards"></div>
     </div>
     <div class="tabpane" id="commentPane">
       <div id="newComment" class="card" hidden>

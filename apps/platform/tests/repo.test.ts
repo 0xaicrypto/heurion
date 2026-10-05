@@ -200,3 +200,49 @@ describe('审计日志', () => {
   })
 })
 
+describe('事务与文档运行时内存管理', () => {
+  it('Store.transaction：异常时自动回滚，外层捕获后数据完整无残留', () => {
+    const store = new Store(':memory:')
+    expect(() => {
+      store.transaction(() => {
+        store.createProject('u1', 'p1')
+        throw new Error('boom')
+      })
+    }).toThrow('boom')
+    expect(store.listProjects('u1')).toEqual([])
+  })
+
+  it('Store.transaction：支持嵌套保存点，内层成功时生效', () => {
+    const store = new Store(':memory:')
+    store.transaction(() => {
+      store.createProject('u1', 'p1')
+      store.transaction(() => {
+        store.createProject('u1', 'p2')
+      })
+    })
+    expect(store.listProjects('u1').map(p => p.name).sort()).toEqual(['p1', 'p2'])
+  })
+
+  it('Documents：pin/unpin 保护活跃文档，evictIdle 仅驱逐空闲已落库文档', () => {
+    const store = new Store(':memory:')
+    const docs = new Documents(store)
+    const doc1 = docs.create({ owner: 'u1', title: 'd1' })
+    const doc2 = docs.create({ owner: 'u1', title: 'd2' })
+
+    // 读入内存
+    docs.get(doc1.id)
+    docs.get(doc2.id)
+
+    // pin 住 doc1
+    docs.pin(doc1.id)
+
+    // evictIdle 0ms（立即满足空闲超时）：doc1 由于被 pin 不会被驱逐，doc2 会被驱逐
+    const evicted = docs.evictIdle(0)
+    expect(evicted).toBe(1)
+
+    // doc1 仍在内存中；unpin 后可被驱逐
+    docs.unpin(doc1.id)
+    expect(docs.evictIdle(0)).toBe(1)
+  })
+})
+

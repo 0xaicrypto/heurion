@@ -1246,7 +1246,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!row || !store.getComment(row.id, c.req.param('cid'))) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json<{ text?: string; suggest?: boolean }>().catch(() => ({} as { text?: string; suggest?: boolean }))
     if (body.text?.trim()) store.addReply(c.req.param('cid'), 'user', body.text.trim())
-    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid'), row.kind), { suggest: body.suggest, commentId: c.req.param('cid') })
+    return streamTurn(c, deps, row.id, commentPrompt(row.id, c.req.param('cid'), row.kind), { suggest: body.suggest !== false, commentId: c.req.param('cid') })
   })
 
   // —— 对话 ——
@@ -1373,7 +1373,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       })
       inote = `\n\n［图片］用户在对话里附了 ${pics.length} 张图片，用 read_image 查看：${files.join('、')}。要放进文稿时直接用 ![说明](asset:<asset_id> "图注")。`
     }
-    return streamTurn(c, deps, row.id, message.trim() + note + dnote + snote + pnote + inote, { suggest, ...(memory === false ? { memory: false } : {}) })
+    return streamTurn(c, deps, row.id, message.trim() + note + dnote + snote + pnote + inote, { suggest: suggest !== false, ...(memory === false ? { memory: false } : {}) })
   })
 
   // 任务队列：正在执行的一个 + 排队中的；可逐个取消

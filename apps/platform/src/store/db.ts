@@ -347,6 +347,27 @@ const userKey = (username: string) => username.normalize('NFKC').toLowerCase()
 
 export class Store {
   readonly db: DatabaseSync
+  private savepointLevel = 0
+
+  /**
+   * 事务执行块：基于 SQLite SAVEPOINT 支持安全多层嵌套。
+   * 顶层事务或内层保存点在异常时自动 ROLLBACK 并抛出，成功时 RELEASE。
+   */
+  transaction<T>(fn: () => T): T {
+    const sp = `sp_${++this.savepointLevel}`
+    this.db.exec(`SAVEPOINT ${sp}`)
+    try {
+      const res = fn()
+      this.db.exec(`RELEASE SAVEPOINT ${sp}`)
+      return res
+    } catch (err) {
+      this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}`)
+      this.db.exec(`RELEASE SAVEPOINT ${sp}`)
+      throw err
+    } finally {
+      this.savepointLevel--
+    }
+  }
 
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -838,14 +859,15 @@ export class Store {
   }
 
   deleteKbFile(id: string): void {
-    this.db.prepare('DELETE FROM kb_fts WHERE chunk_id IN (SELECT id FROM kb_chunks WHERE file_id = ?)').run(id)
-    this.db.prepare('DELETE FROM kb_files WHERE id = ?').run(id)
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM kb_fts WHERE chunk_id IN (SELECT id FROM kb_chunks WHERE file_id = ?)').run(id)
+      this.db.prepare('DELETE FROM kb_files WHERE id = ?').run(id)
+    })
   }
 
   /** 写入一份资料的全部文字块（替换旧的）。 */
   putKbChunks(file: { id: string; owner: string }, chunks: Array<{ page: number; text: string }>): void {
-    this.db.exec('BEGIN')
-    try {
+    this.transaction(() => {
       this.db.prepare('DELETE FROM kb_fts WHERE chunk_id IN (SELECT id FROM kb_chunks WHERE file_id = ?)').run(file.id)
       this.db.prepare('DELETE FROM kb_chunks WHERE file_id = ?').run(file.id)
       const ins = this.db.prepare('INSERT INTO kb_chunks (id, file_id, owner, seq, page, text) VALUES (?, ?, ?, ?, ?, ?)')
@@ -855,8 +877,7 @@ export class Store {
         ins.run(id, file.id, file.owner, i, c.page, c.text)
         fts.run(id, file.owner, c.text)
       })
-      this.db.exec('COMMIT')
-    } catch (err) { this.db.exec('ROLLBACK'); throw err }
+    })
   }
 
   /** 还没向量化的块。 */
@@ -1123,15 +1144,19 @@ export class Store {
   }
 
   deleteDepartment(id: string): void {
-    this.db.prepare('DELETE FROM department_members WHERE department_id = ?').run(id)
-    this.db.prepare('DELETE FROM tenant_departments WHERE id = ?').run(id)
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM department_members WHERE department_id = ?').run(id)
+      this.db.prepare('DELETE FROM tenant_departments WHERE id = ?').run(id)
+    })
   }
 
   /** 科室成员整体替换（一人可在多个科室）。 */
   setDepartmentMembers(id: string, userIds: string[]): void {
-    this.db.prepare('DELETE FROM department_members WHERE department_id = ?').run(id)
-    const st = this.db.prepare('INSERT OR IGNORE INTO department_members (department_id, user_id, added_at) VALUES (?, ?, ?)')
-    for (const u of userIds) st.run(id, u, now())
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM department_members WHERE department_id = ?').run(id)
+      const st = this.db.prepare('INSERT OR IGNORE INTO department_members (department_id, user_id, added_at) VALUES (?, ?, ?)')
+      for (const u of userIds) st.run(id, u, now())
+    })
   }
 
   departmentsOfUser(userId: string): string[] {
@@ -1216,14 +1241,12 @@ export class Store {
   transferStudy(studyId: string, to: string, by: string, keepOld = true): void {
     const st = this.getStudy(studyId)
     if (!st) return
-    this.db.exec('BEGIN')
-    try {
+    this.transaction(() => {
       if (keepOld) this.db.prepare("UPDATE study_members SET role = 'editor' WHERE study_id = ? AND user_id = ?").run(studyId, st.owner)
       else this.db.prepare('DELETE FROM study_members WHERE study_id = ? AND user_id = ?').run(studyId, st.owner)
       this.db.prepare("INSERT INTO study_members (study_id, user_id, role, added_by, added_at) VALUES (?, ?, 'owner', ?, ?) ON CONFLICT (study_id, user_id) DO UPDATE SET role = 'owner'").run(studyId, to, by, now())
       this.db.prepare('UPDATE studies SET owner = ?, updated_at = ? WHERE id = ?').run(to, now(), studyId)
-      this.db.exec('COMMIT')
-    } catch (err) { this.db.exec('ROLLBACK'); throw err }
+    })
   }
 
   updateStudy(id: string, patch: Partial<Pick<StudyRow, 'title' | 'design' | 'status' | 'summary'>>): void {
@@ -1232,9 +1255,11 @@ export class Store {
   }
 
   deleteStudy(id: string): void {
-    this.db.prepare('DELETE FROM study_items WHERE study_id = ?').run(id)
-    this.db.prepare('DELETE FROM study_members WHERE study_id = ?').run(id)
-    this.db.prepare('DELETE FROM studies WHERE id = ?').run(id)
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM study_items WHERE study_id = ?').run(id)
+      this.db.prepare('DELETE FROM study_members WHERE study_id = ?').run(id)
+      this.db.prepare('DELETE FROM studies WHERE id = ?').run(id)
+    })
   }
 
   studyItems(studyId: string): StudyItemRow[] {
@@ -1455,8 +1480,7 @@ export class Store {
     ops: unknown
     changes: Array<{ node_id: string; kind: 'added' | 'modified' | 'removed' }>
   }): number {
-    this.db.exec('BEGIN')
-    try {
+    return this.transaction(() => {
       const doc = this.getDoc(input.docId)
       if (!doc) throw new Error(`doc ${input.docId} not found`)
       const rev = doc.rev + 1
@@ -1466,12 +1490,8 @@ export class Store {
         .run(input.docId, rev, input.actor, input.turnId, JSON.stringify(input.ops), JSON.stringify(input.changes), t)
       const ins = this.db.prepare('INSERT INTO node_changes (doc_id, rev, node_id, actor, kind) VALUES (?, ?, ?, ?, ?)')
       for (const c of input.changes) ins.run(input.docId, rev, c.node_id, input.actor, c.kind)
-      this.db.exec('COMMIT')
       return rev
-    } catch (err) {
-      this.db.exec('ROLLBACK')
-      throw err
-    }
+    })
   }
 
   /** 节点在 sinceRev 之后是否被某类写者改过（冲突守卫）。 */

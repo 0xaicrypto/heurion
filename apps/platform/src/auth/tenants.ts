@@ -280,10 +280,12 @@ export class TenantService {
     if (u.tenant_id === inv.tenant_id) throw new TenantError('already_member', '你已经是这个机构的成员', 409)
     if (this.inOrg(userId)) throw new TenantError('in_other_org', '你已经在另一家医院；先退出那家，才能加入新的', 409)
     // 个人空间留下：老账户的个人租户就是现在的工作空间
-    if (!u.personal_tenant_id && u.tenant_id && this.store.getTenant(u.tenant_id)?.kind === 'personal') this.store.setPersonalTenant(u.id, u.tenant_id)
-    this.store.moveUserToTenant(u.id, inv.tenant_id, inv.role)
-    this.store.useInvite(inv.code, u.id)
-    return this.view(userId)
+    return this.store.transaction(() => {
+      if (!u.personal_tenant_id && u.tenant_id && this.store.getTenant(u.tenant_id)?.kind === 'personal') this.store.setPersonalTenant(u.id, u.tenant_id)
+      this.store.moveUserToTenant(u.id, inv.tenant_id, inv.role)
+      this.store.useInvite(inv.code, u.id)
+      return this.view(userId)
+    })
   }
 
   /** 本人拒绝一个发给自己的邀请。 */
@@ -302,10 +304,12 @@ export class TenantService {
   private detach(userId: string, tenantId: string): void {
     const owned = this.store.listTenantStudies(tenantId).filter(st => st.owner === userId)
     if (owned.length) throw new TenantError('owns_studies', `还负责着本院的 ${owned.length} 个研究（${owned.slice(0, 3).map(st => `「${st.title}」`).join('、')}${owned.length > 3 ? '…' : ''}）；先转交给本院同事，或请机构管理员做离职交接`, 409)
-    for (const st of this.store.listTenantStudies(tenantId)) this.store.removeStudyMember(st.id, userId)
-    for (const d of this.store.listDepartments(tenantId)) if (d.members.includes(userId)) this.store.setDepartmentMembers(d.id, d.members.filter(m => m !== userId))
-    const home = this.personalOf(userId)
-    this.store.moveUserToTenant(userId, home.id, 'admin')
+    this.store.transaction(() => {
+      for (const st of this.store.listTenantStudies(tenantId)) this.store.removeStudyMember(st.id, userId)
+      for (const d of this.store.listDepartments(tenantId)) if (d.members.includes(userId)) this.store.setDepartmentMembers(d.id, d.members.filter(m => m !== userId))
+      const home = this.personalOf(userId)
+      this.store.moveUserToTenant(userId, home.id, 'admin')
+    })
   }
 
   /** 本人退出医院。 */

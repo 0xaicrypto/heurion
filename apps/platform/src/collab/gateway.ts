@@ -46,7 +46,8 @@ export function attachCollab(server: Server, deps: GatewayDeps): WebSocketServer
     wss.handleUpgrade(req, socket, head, ws => {
       // 连接上记下用户：合批落库时据此知道是谁改的（记忆信号只记在本人名下）
       ;(ws as WebSocket & { heurionUser?: string }).heurionUser = user
-      connect(ws, deps.docs.ydoc(docId), allows(role, 'write'))
+      deps.docs.pin(docId)
+      connect(ws, deps.docs.ydoc(docId), allows(role, 'write'), () => deps.docs.unpin(docId))
     })
   })
   return wss
@@ -57,7 +58,7 @@ function send(ws: WebSocket, encoder: encoding.Encoder): void {
 }
 
 /** writable=false（研究里的只读成员）：只同步服务端的内容给他，丢弃他发来的修改。 */
-function connect(ws: WebSocket, ydoc: Y.Doc, writable = true): void {
+function connect(ws: WebSocket, ydoc: Y.Doc, writable = true, onClose?: () => void): void {
   const onUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === ws) return
     const encoder = encoding.createEncoder()
@@ -84,7 +85,10 @@ function connect(ws: WebSocket, ydoc: Y.Doc, writable = true): void {
       ws.close(1003, 'bad message')
     }
   })
-  ws.on('close', () => ydoc.off('update', onUpdate))
+  ws.on('close', () => {
+    ydoc.off('update', onUpdate)
+    onClose?.()
+  })
 
   // 服务端先发 step1：客户端据此回送服务端缺的更新（断线期间的本地编辑）
   const encoder = encoding.createEncoder()
