@@ -36,13 +36,13 @@ Unlike conventional LLM interfaces that treat documents as flat Markdown strings
 
 The project features a **decoupled dual-engine architecture**:
 1. **Heurion Medical Platform (`@heurion2/platform`)**: Full-featured clinical & research intelligence platform with multi-source literature search (PubMed, Europe PMC, OpenAlex), personal health records (PHR), advanced cohort filtering, PHI privacy leak scanning, and multi-tenant RBAC.
-2. **OmniCanvas Microservice (`@heurion2/canvas-service`)**: Decoupled, standalone collaborative workspace inspired by Google Docs and Google Slides, equipped with 30 pure Canvas MCP tools for document layout and slide deck generation, with zero medical domain coupling.
+2. **OmniCanvas Microservice (`@heurion2/canvas-service`)**: Decoupled, standalone collaborative workspace providing rich-text document editing and interactive slide presentation design, equipped with 30 pure Canvas MCP tools for document layout and slide deck generation, with zero domain coupling.
 
 ---
 
 ## ✨ Key Features
 
-### 🎨 1. Google Workspace-Inspired Experience
+### 🎨 1. Modern Document & Presentation Studio (Dual-Mode)
 - **Fluid Docs & Slides Dual-Mode**: Seamlessly switch between long-form structured document authoring and 16:9 interactive presentation slide decks.
 - **Modern Designer Panel**: Built-in document outline navigation, real-time slide filmstrip, card-based layouts, instant template injection, and customizable themes.
 - **Rich Multimodal Clipboard & Live Preview**: Native clipboard extraction supporting OS screenshots, rich text, and images. Features instant local zero-latency preview (`createObjectURL`) alongside strict server-side zero-byte validation.
@@ -99,7 +99,7 @@ heurion2/
 │   │   │   ├── index.ts       # Standalone microservice entry (REST + WebSocket + MCP)
 │   │   │   ├── app.ts         # Pure Canvas MCP Server (30 authoring/formatting tools)
 │   │   │   └── collab.ts      # Standalone Yjs CRDT room manager
-│   │   └── web/               # Google Docs & Slides styled frontend interface
+│   │   └── web/               # Document & slide deck workspace frontend
 │   │       ├── src/editor.ts  # Document editor core
 │   │       ├── src/deck.ts    # Slide deck designer core
 │   │       └── src/main.ts    # Workspace shell & command center
@@ -247,13 +247,13 @@ pnpm --filter @heurion2/platform ui
 
 项目提供**双引擎解耦架构**：
 1. **Heurion Medical Platform (`@heurion2/platform`)**：全功能医学智能工作台，包含多数据源文献检索（PubMed、Europe PMC、OpenAlex）、PHR 患者数字档案、队列条件筛选、PHI 敏感信息泄露拦截与多租户权限控制。
-2. **OmniCanvas 微服务 (`@heurion2/canvas-service`)**：完全解耦的独立在线协同工作台，参考 Google Docs 与 Google Slides 现代交互体验重构，内置 30 项纯净版 Canvas MCP 通用排版与幻灯片生成工具，零医疗业务耦合。
+2. **OmniCanvas 微服务 (`@heurion2/canvas-service`)**：完全解耦的独立在线协同工作台，集成现代化长文排版与幻灯片设计器，内置 30 项纯净版 Canvas MCP 通用排版与幻灯片生成工具，零领域耦合。
 
 ---
 
 ## ✨ 核心特性 (Features)
 
-### 🎨 1. Google Workspace 现代交互设计
+### 🎨 1. 文档与演示文稿一体化双模工作台
 - **Docs & Slides 双形态无缝切换**：支持文档长文排版模式与 16:9 交互式演示文稿（Slide Deck）模式。
 - **现代化设计器**：内置大纲导航、实时缩略图胶卷、卡片化版式设计、模板库快速注入与颜色/主题系统。
 - **即时图文混排与安全预览**：重构剪贴板原生多模态支持，支持操作系统截图粘贴即时高保真预览，并在落盘前实施严格的二进制校验。

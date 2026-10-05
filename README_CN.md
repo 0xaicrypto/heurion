@@ -34,13 +34,13 @@ Next-Gen AI-Native Collaborative Workspace & Medical Intelligence Platform
 
 项目提供**双引擎解耦架构**：
 1. **Heurion Medical Platform (`@heurion2/platform`)**：全功能医学智能工作台，包含多数据源文献检索（PubMed、Europe PMC、OpenAlex）、PHR 患者数字档案、队列条件筛选、PHI 敏感信息泄露拦截与多租户权限控制。
-2. **OmniCanvas 微服务 (`@heurion2/canvas-service`)**：完全解耦的独立在线协同工作台，参考 Google Docs 与 Google Slides 现代交互体验重构，内置 30 项纯净版 Canvas MCP 通用排版与幻灯片生成工具，零医疗业务耦合。
+2. **OmniCanvas 微服务 (`@heurion2/canvas-service`)**：完全解耦的独立在线协同工作台，集成现代化长文排版与幻灯片设计器，内置 30 项纯净版 Canvas MCP 通用排版与幻灯片生成工具，零领域耦合。
 
 ---
 
 ## ✨ 核心特性 (Features)
 
-### 🎨 1. Google Workspace 现代交互设计
+### 🎨 1. 文档与演示文稿一体化双模工作台
 - **Docs & Slides 双形态无缝切换**：支持文档长文排版模式与 16:9 交互式演示文稿（Slide Deck）模式。
 - **现代化设计器**：内置大纲导航、实时缩略图胶卷、卡片化版式设计、模板库快速注入与颜色/主题系统。
 - **即时图文混排与安全预览**：重构剪贴板原生多模态支持，支持操作系统截图粘贴即时高保真预览，并在落盘前实施严格的二进制校验。
@@ -97,7 +97,7 @@ heurion2/
 │   │   │   ├── index.ts       # 独立微服务入口 (REST + WebSocket + MCP)
 │   │   │   ├── app.ts         # 纯净版 Canvas MCP Server（30 个排版/创作工具）
 │   │   │   └── collab.ts      # 独立 Yjs CRDT 协同房间管理
-│   │   └── web/               # Google Docs & Slides 交互工作台前端
+│   │   └── web/               # 文档与演示文稿独立前端工作台
 │   │       ├── src/editor.ts  # 文档编辑器核心
 │   │       ├── src/deck.ts    # 幻灯片设计器核心
 │   │       └── src/main.ts    # 现代工作台交互与命令体系
