@@ -23,6 +23,19 @@ interface Lab {
 interface RecordRow {
   id: string; kind: string; title: string; report_date: string | null; file_id: string | null; status: 'pending' | 'confirmed' | 'rejected'
   extraction: string | null; extraction_note: string | null; created_at: string
+  imaging_data?: {
+    model_id?: string
+    sample_id?: string | null
+    modality?: string
+    asset_id?: string
+    file_id?: string
+    raw_file_id?: string | null
+    raw_file_name?: string | null
+    raw_file_size?: number | null
+    metrics?: Record<string, any>
+    findings?: string[]
+    analyzed_at?: string
+  } | null
 }
 interface Detail extends Patient {
   access: 'owner' | 'member' | 'tenant' | 'break_glass'; summary: string | null
@@ -107,7 +120,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const shown = list.filter(p => !q || label(p).toLowerCase().includes(q) || p.tags.some(t => t.toLowerCase().includes(q)))
     $('patientList').innerHTML = (shares.length ? `<li class="pt-share-row${document.getElementById('page')!.classList.contains('share-page') ? ' active' : ''}" data-shares title="知家家人分享给你所在科室的档案（只读）">
         <span class="pt-code">家庭</span><span class="label">家庭分享</span><span class="count">${shares.length}</span></li>` : '')
-      + shown.map(p => `<li data-pt=""${p.id}" class="${p.id === current ? 'active' : ''}" title="${esc(p.tags.join('、'))}">
+      + shown.map(p => `<li data-pt="${p.id}" class="${p.id === current ? 'active' : ''}" title="${esc(p.tags.join('、'))}">
         <span class="pt-code">${esc(p.code)}</span><span class="label">${esc(names()[p.id] ?? p.tags.slice(0, 2).join('、'))}</span>
         ${p.pending ? `<span class="count" title="待确认">${p.pending}</span>` : ''}${p.role === 'break_glass' ? '<span class="pill off" title="紧急访问">紧急</span>' : ''}</li>`).join('')
       + (list.length === 0 ? '<li class="nav-empty">还没有患者。点「＋患者」新建；患者在系统里只用代号。</li>' : shown.length === 0 ? `<li class="nav-empty">没有找到「${esc(q)}」</li>` : '')
@@ -150,6 +163,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   // —— 患者页 ——
 
   async function openPatient(id: string, keepTab = false): Promise<void> {
+    if (!id) return
     if (current !== id) hooks.leaveDoc()
     current = id
     if (!keepTab) tab = 'overview'
@@ -172,22 +186,42 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           ${d.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('')}${canEdit ? '<button class="quiet small-btn" data-act="tags">编辑</button>' : ''}</div>
         ${d.access === 'break_glass' ? '<div class="notice">紧急访问（只读，24 小时内有效，已记入访问日志）</div>' : d.access === 'tenant' ? '<div class="muted small">机构设置为全员可见：你可以查看，修改需要加入诊疗组</div>' : ''}
         <div class="row pt-actions">
-          ${canEdit ? `<button class="primary" data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
+          ${canEdit ? `<button class="primary" data-act="imaging" title="使用 MONAI 深度学习模型对胸部/腹部 CT 或 MRI 进行定量分析（支气管扩张、粘液栓、RECIST 1.1 靶病灶等）并沉淀至患者档案">🩺 影像分析</button>` : ''}
+          ${canEdit ? `<button data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
           <button data-act="report" title="新建一份病例报告并关联到这位患者；对话框里会填好建议的指令，由你确认后发送">写病例报告</button>
           ${d.access === 'owner' ? `<span class="grow"></span><div class="menu-wrap"><button data-act="ptmore" aria-haspopup="menu">更多 ▾</button>
             <div class="dropdown" id="ptMore" hidden><button data-act="claim">就诊认领与知家绑定</button><button data-act="team">诊疗组</button><button data-act="log">访问记录</button><button data-act="delete" class="danger-text">删除患者</button></div></div>` : ''}
         </div>
         ${pendingCount ? `<div class="banner pt-pending"><span class="dot"></span>${d.records.filter(r => r.status === 'pending').length} 份报告、${d.pending_proposals.length} 条 AI 提议待确认<button data-tab="review">去审核</button></div>` : ''}
       </div>
-      <div class="tabs pt-tabs">${(['overview', 'labs', 'records', 'docs', 'review'] as const).map(t => `<button data-tab="${t}" class="${t === tab ? 'active' : ''}">${{ overview: '概览', labs: '化验', records: '原始报告', docs: `病例报告${d.documents.length ? ` (${d.documents.length})` : ''}`, review: `待确认${pendingCount ? ` (${pendingCount})` : ''}` }[t]}</button>`).join('')}</div>
+      <div class="tabs pt-tabs">${(['overview', 'labs', 'records', 'docs', 'review'] as const).map(t => `<button data-tab="${t}" class="${t === tab ? 'active' : ''}">${{ overview: '概览', labs: '化验', records: `原始报告 / 影像${d.records.filter(r => r.kind === 'imaging').length ? ` (${d.records.filter(r => r.kind === 'imaging').length})` : ''}`, docs: `病例报告${d.documents.length ? ` (${d.documents.length})` : ''}`, review: `待确认${pendingCount ? ` (${pendingCount})` : ''}` }[t]}</button>`).join('')}</div>
       <div class="pt-body">${tab === 'overview' ? overview(d, canEdit) : tab === 'labs' ? labsView(confirmedLabs) : tab === 'records' ? recordsView(d) : tab === 'docs' ? docsView(d) : reviewView(d, pendingLabs, canEdit)}</div>`
     // 还在提取的报告：隔几秒刷新
     if (d.records.some(r => r.extraction === 'queued' || r.extraction === 'running')) poll = setTimeout(() => { if (current === id) void openPatient(id, true) }, 3000)
   }
 
   function overview(d: Detail, canEdit: boolean): string {
+    const latestImg = d.records.find(r => r.kind === 'imaging')
+    const imgWidget = latestImg ? `
+      <section class="pt-overview-imaging">
+        <div class="row" style="align-items: baseline; margin-bottom: 8px"><h3 class="mem-h" style="margin: 0">最新医学影像量化</h3><span class="grow"></span><button class="quiet small-btn" data-tab="records">查看全部影像档案 ➔</button></div>
+        <div class="pt-overview-img-card" data-rec="${latestImg.id}">
+          ${latestImg.file_id ? `<img src="/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}" class="pt-overview-thumb" data-view-img="/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}" title="点击查看大图">` : ''}
+          <div class="pt-overview-img-meta">
+            <div class="row" style="align-items: center; justify-content: space-between"><b>${esc(latestImg.title)}</b><span class="muted small">${esc(latestImg.report_date || '')}</span></div>
+            <div class="muted small" style="margin: 6px 0 10px; line-height: 1.5">${esc(latestImg.extraction_note || '已完成三维体素分割与定量测量')}</div>
+            <div class="row" style="gap: 8px">
+              <button class="primary small-btn" data-img-report="${latestImg.id}">📝 基于此影像写报告</button>
+              <button class="small-btn" data-img-canvas="${latestImg.id}">🎨 会诊 Slide</button>
+              <button class="quiet small-btn" data-tab="records">详细指标</button>
+            </div>
+          </div>
+        </div>
+      </section>` : ''
+
     return `<section><h3 class="mem-h">摘要</h3>
         ${canEdit ? `<textarea id="ptSummary" rows="4" placeholder="病史要点、用药、随访计划（只用代号，不写姓名）">${esc(d.summary ?? '')}</textarea>` : `<div class="pt-summary">${esc(d.summary ?? '（无）')}</div>`}</section>
+      ${imgWidget}
       <section><h3 class="mem-h">最近化验</h3>${d.latest_labs.length === 0 ? '<div class="muted">还没有已确认的化验。点「上传化验单 / 报告」，自动提取后在「待确认」里审核。</div>' : `<table class="users pt-labs">
         <thead><tr><th>项目</th><th>结果</th><th>参考范围</th><th>日期</th></tr></thead><tbody>
         ${d.latest_labs.map(l => `<tr data-trend="${esc(l.test_key)}"><td>${esc(l.test_name)}</td><td class="flag-${l.flag ?? 'n'}" title="${esc(origNote(l))}">${esc(stdValue(l))} ${esc(l.std_unit ?? '')}${l.flag === 'H' ? ' ↑' : l.flag === 'L' ? ' ↓' : ''}${l.converted || l.unknown_unit ? '<sup>*</sup>' : ''}</td><td class="muted">${esc(stdRef(l))}</td><td class="muted">${esc(when(l))}</td></tr>`).join('')}
@@ -229,14 +263,96 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   }
 
   function recordsView(d: Detail): string {
-    if (d.records.length === 0) return '<div class="muted">还没有上传原始报告。点「上传化验单 / 报告」。</div>'
+    const imagingRecords = d.records.filter(r => r.kind === 'imaging')
+    const otherRecords = d.records.filter(r => r.kind !== 'imaging')
+
+    if (d.records.length === 0) return '<div class="muted">还没有影像或报告。点击上方「🩺 影像分析」量化 CT/MRI，或「上传化验单 / 报告」。</div>'
     const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回' }
     const EXTRACT: Record<string, string> = { queued: '排队提取', running: '提取中…', done: '', failed: '提取失败', skipped: '' }
-    return `<table class="users"><thead><tr><th>报告日期</th><th>类型</th><th>标题</th><th>状态</th><th></th></tr></thead><tbody>
-      ${d.records.map(r => `<tr data-rec="${r.id}"><td>${esc(r.report_date ?? '—')}</td><td>${esc(KIND[r.kind] ?? r.kind)}</td>
-        <td>${esc(r.title)}${r.extraction_note ? `<div class="muted small">${esc(r.extraction_note)}</div>` : ''}</td>
-        <td><span class="pill ${r.status === 'confirmed' ? 'ok' : 'off'}">${STATUS[r.status]}</span> <span class="muted small">${EXTRACT[r.extraction ?? ''] ?? ''}</span></td>
-        <td class="actions">${r.file_id ? `<button data-file="${r.file_id}">原件</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+
+    const imagingHtml = imagingRecords.length ? `
+      <div class="pt-imaging-section">
+        <div class="row pt-section-head">
+          <h3 class="mem-h" style="margin: 0">🩺 医学影像量化档案 (MONAI 3D Quantitative Imaging)</h3>
+          <span class="muted small">${imagingRecords.length} 份分析记录</span>
+          <span class="grow"></span>
+          <button class="primary small-btn" data-act="imaging">＋ 新建影像量化分析</button>
+        </div>
+        <div class="pt-imaging-grid">
+          ${imagingRecords.map(r => {
+            const data = r.imaging_data || {}
+            const m = data.metrics || {}
+            const aid = data.asset_id
+            const sliceFid = data.file_id
+            const imgUrl = sliceFid ? `/api/patients/${d.id}/files/${sliceFid}?token=${encodeURIComponent(hooks.token())}` : aid ? `/api/assets/${aid}?token=${encodeURIComponent(hooks.token())}` : ''
+            const rawFid = data.raw_file_id || (r.file_id && r.file_id !== sliceFid ? r.file_id : null)
+            const rawFileName = data.raw_file_name || (rawFid ? 'scan.nii.gz' : '')
+            const rawSizeText = data.raw_file_size ? `${(data.raw_file_size / (1024 * 1024)).toFixed(1)} MB` : ''
+            const isBronchiectasis = data.model_id === 'bronchiectasis_mucus_analyzer' || r.title.includes('支气管')
+            return `
+              <div class="pt-imaging-card" data-rec="${r.id}">
+                <div class="pt-imaging-thumb-wrap" data-view-img="${imgUrl}" title="点击查看切片大图">
+                  ${imgUrl ? `<img src="${imgUrl}" alt="${esc(r.title)}" class="pt-imaging-thumb">` : '<div class="pt-imaging-no-img">暂无预览</div>'}
+                  <span class="pt-imaging-badge-overlay">${esc(data.modality || 'CT')}</span>
+                </div>
+                <div class="pt-imaging-content">
+                  <div class="pt-imaging-head">
+                    <div class="pt-imaging-title">
+                      <b>${esc(r.title)}</b>
+                      ${rawFileName ? `<span class="pt-imaging-badge" title="原始 3D 扫描文件已加密保存在该患者档案中">📦 ${esc(rawFileName)}</span>` : ''}
+                    </div>
+                    <span class="muted small">${esc(r.report_date || r.created_at.slice(0, 10))}</span>
+                  </div>
+                  <div class="pt-imaging-metrics">
+                    ${isBronchiectasis ? `
+                      ${m.bar_ratio ? `<span class="pt-imaging-pill ${m.signet_ring_sign ? 'alert' : 'ok'}">BAR 印戒征: ${m.bar_ratio}${m.signet_ring_sign ? ' (阳性 ⚠)' : ''}</span>` : ''}
+                      ${m.total_mucus_volume_cm3 !== undefined ? `<span class="pt-imaging-pill">粘液栓体积: ${m.total_mucus_volume_cm3} cm³</span>` : ''}
+                      ${m.high_attenuation_mucus_cm3 ? `<span class="pt-imaging-pill alert">高密度粘液栓 HAM: ${m.high_attenuation_mucus_cm3} cm³ (ABPA疑诊)</span>` : ''}
+                      ${m.airway_occlusion_rate_pct !== undefined ? `<span class="pt-imaging-pill">管腔阻塞率: ${m.airway_occlusion_rate_pct}%</span>` : ''}
+                      ${m.wall_to_lumen_ratio ? `<span class="pt-imaging-pill">管壁/管腔比: ${m.wall_to_lumen_ratio}</span>` : ''}
+                      ${m.primary_location || m.distribution_summary ? `
+                        <div class="pt-imaging-location-row" style="margin-top: 6px; font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap">
+                          <span style="font-weight: 600; color: var(--text)">📍 解剖定位:</span>
+                          <span class="pt-imaging-badge" style="background: rgba(56,189,248,0.12); color: var(--blue); border-color: rgba(56,189,248,0.3)">${esc(m.primary_location || m.distribution_summary)}</span>
+                          ${m.mucus_nodule_locations && m.mucus_nodule_locations.length > 0 ? `
+                            <span class="muted small">(${m.mucus_nodule_locations.length} 个主要嵌顿团簇 · 范围 ${esc(m.mucus_nodule_locations[0].slice_range)})</span>
+                          ` : ''}
+                        </div>
+                      ` : ''}
+                    ` : `
+                      ${m.longest_diameter_mm ? `<span class="pt-imaging-pill alert">RECIST 1.1 长径: ${m.longest_diameter_mm} mm</span>` : ''}
+                      ${m.short_axis_mm ? `<span class="pt-imaging-pill">短径: ${m.short_axis_mm} mm</span>` : ''}
+                      ${m.total_volume_cm3 ? `<span class="pt-imaging-pill">3D 体积: ${m.total_volume_cm3} cm³</span>` : ''}
+                      ${m.key_slice_index !== undefined ? `<span class="pt-imaging-pill">最大截面: #${m.key_slice_index} 层</span>` : ''}
+                    `}
+                  </div>
+                  ${r.extraction_note ? `<div class="pt-imaging-note muted small">${esc(r.extraction_note)}</div>` : ''}
+                  <div class="pt-imaging-actions">
+                    <button class="primary small-btn" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">📝 写影像病例报告</button>
+                    <button class="small-btn" data-img-canvas="${r.id}" title="在 Heurion 原生幻灯片工作台制作包含此影像指标的多页会诊 Slide (PPTX)">🎨 制作会诊 Slide</button>
+                    ${imgUrl ? `<button class="quiet small-btn" data-view-img="${imgUrl}">🔍 查看量化切片</button>` : ''}
+                    ${rawFid ? `<a class="quiet small-btn" href="/api/patients/${d.id}/files/${rawFid}?token=${encodeURIComponent(hooks.token())}" target="_blank" download="${esc(rawFileName)}" title="下载该患者已归档的原始 3D 序列扫描文件">💾 下载 3D 原卷${rawSizeText ? ` (${esc(rawSizeText)})` : ''}</a>` : ''}
+                  </div>
+                </div>
+              </div>`
+          }).join('')}
+        </div>
+      </div>
+    ` : ''
+
+    const otherHtml = otherRecords.length ? `
+      <div class="pt-other-records-section">
+        <h3 class="mem-h" style="margin-top: ${imagingRecords.length ? '24px' : '0'}">📄 检验报告与病历文书</h3>
+        <table class="users"><thead><tr><th>报告日期</th><th>类型</th><th>标题</th><th>状态</th><th></th></tr></thead><tbody>
+          ${otherRecords.map(r => `<tr data-rec="${r.id}"><td>${esc(r.report_date ?? '—')}</td><td>${esc(KIND[r.kind] ?? r.kind)}</td>
+            <td>${esc(r.title)}${r.extraction_note ? `<div class="muted small">${esc(r.extraction_note)}</div>` : ''}</td>
+            <td><span class="pill ${r.status === 'confirmed' ? 'ok' : 'off'}">${STATUS[r.status]}</span> <span class="muted small">${EXTRACT[r.extraction ?? ''] ?? ''}</span></td>
+            <td class="actions">${r.file_id ? `<button data-file="${r.file_id}">原件</button>` : ''}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    ` : ''
+
+    return imagingHtml + otherHtml
   }
 
   function reviewView(d: Detail, labs: Lab[], canEdit: boolean): string {
@@ -313,6 +429,439 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       hooks.prefillChat(`请依据患者 ${d.code} 的已确认数据写一份病例报告（参考 CARE 指南：病史、检查、诊断、治疗与随访、讨论）。化验值写明日期并标出异常；只用代号或去标识写法，不写姓名；数据里没有的内容留「待补充」，不要编造。需要时画关键化验的趋势图。`)
       notice('已新建病例报告并关联到患者。对话框里填好了建议的指令，可以修改后点「发送」')
     } catch (err) { notice((err as Error).message, true) }
+  }
+
+  /** 基于影像分析记录一键写病例报告：创建文档，关联患者，自动在 AI 对话框预填影像指标与关键截面插图 */
+  async function writeImagingReport(d: Patient | Detail, r: RecordRow): Promise<void> {
+    try {
+      const doc = await api<{ id: string }>('/api/docs', {
+        method: 'POST',
+        body: JSON.stringify({ title: `${d.code} 影像病例报告 ${r.report_date || new Date().toISOString().slice(0, 10)}` })
+      })
+      await api(`/api/patients/${d.id}/docs`, { method: 'POST', body: JSON.stringify({ doc_id: doc.id, kind: 'case_report' }) })
+      current = null
+      await hooks.openDoc(doc.id)
+
+      const imgData = r.imaging_data || {}
+      const m = imgData.metrics || {}
+      const assetId = imgData.asset_id
+      const isBronchiectasis = imgData.model_id === 'bronchiectasis_mucus_analyzer' || r.title.includes('支气管')
+
+      let promptText = `请依据患者 ${d.code} 的已确认数据及最新医学影像量化分析结果写一份专业病例报告（参考 CARE 临床病例报告指南与 Fleischner 学会准则）：\n\n`
+      promptText += `【影像检查信息】\n`
+      promptText += `- 检查名称：${r.title}\n`
+      promptText += `- 检查日期：${r.report_date || '近期'}\n`
+      if (assetId) {
+        promptText += `- 关键截面插图：![${r.title}](/api/assets/${assetId})\n`
+      }
+      promptText += `\n【核心量化指标】\n`
+      if (isBronchiectasis) {
+        if (m.bar_ratio) promptText += `- 支气管-伴行动脉比 (BAR): ${m.bar_ratio} (${m.signet_ring_sign ? '印戒征阳性，确诊支气管扩张' : '正常'})\n`
+        if (m.total_mucus_volume_cm3 !== undefined) promptText += `- 气道粘液栓总体积: ${m.total_mucus_volume_cm3} cm³\n`
+        if (m.high_attenuation_mucus_cm3) promptText += `- 高密度粘液栓 (HAM) 体积: ${m.high_attenuation_mucus_cm3} cm³ (强烈提示变应性支气管肺曲霉病 ABPA 疑诊)\n`
+        if (m.airway_occlusion_rate_pct !== undefined) promptText += `- 气道管腔阻塞率: ${m.airway_occlusion_rate_pct}%\n`
+        if (m.wall_to_lumen_ratio) promptText += `- 管壁增厚比 (Wall/Lumen): ${m.wall_to_lumen_ratio}\n`
+        if (m.primary_location) promptText += `- 粘液栓主要解剖位置: ${m.primary_location}\n`
+        if (m.distribution_summary) promptText += `- 优势分布肺叶: ${m.distribution_summary}\n`
+        if (m.mucus_nodule_locations && m.mucus_nodule_locations.length > 0) {
+          promptText += `- 主要粘液结节/栓塞详情:\n`
+          m.mucus_nodule_locations.slice(0, 3).forEach((n: any, idx: number) => {
+            promptText += `  ${idx + 1}. ${n.location_name} (${n.zone_type}) · 切片: ${n.slice_range} · 体积: ${n.volume_cm3} cm³ (CT: ${n.mean_hu} HU)\n`
+          })
+        }
+      } else {
+        if (m.longest_diameter_mm) promptText += `- RECIST 1.1 靶病灶最大横截面长径: ${m.longest_diameter_mm} mm\n`
+        if (m.short_axis_mm) promptText += `- 垂直短径: ${m.short_axis_mm} mm\n`
+        if (m.total_volume_cm3) promptText += `- 3D 病灶总体积: ${m.total_volume_cm3} cm³\n`
+        if (m.key_slice_index !== undefined) promptText += `- 最大横截面层号: 第 #${m.key_slice_index} 层\n`
+      }
+      if (r.extraction_note) promptText += `- 征象摘要: ${r.extraction_note}\n`
+      promptText += `\n请按照病史摘要、影像表现与量化分析、诊断结论、鉴别诊断及下一步临床随访治疗方案展开撰写。只用患者代号 ${d.code}，不写姓名。`
+
+      hooks.prefillChat(promptText)
+      notice('已新建影像病例报告并关联到患者。AI 对话框已准备好包含量化指标与切片插图的指令，可直接确认发送。')
+    } catch (err) {
+      notice((err as Error).message, true)
+    }
+  }
+
+  /** 基于影像分析记录直接在 Heurion 原生工作台创建多页会诊幻灯片 (kind='deck') 并关联患者 */
+  async function makeImagingSlideDeck(d: Patient | Detail, r: RecordRow): Promise<void> {
+    try {
+      const title = `${d.code} 影像会诊幻灯片 ${r.report_date || new Date().toISOString().slice(0, 10)}`
+      const doc = await api<{ id: string }>('/api/docs', {
+        method: 'POST',
+        body: JSON.stringify({ title, kind: 'deck' })
+      })
+      await api(`/api/patients/${d.id}/docs`, {
+        method: 'POST',
+        body: JSON.stringify({ doc_id: doc.id, kind: 'presentation' })
+      })
+      current = null
+      await hooks.openDoc(doc.id)
+
+      const imgData = r.imaging_data || {}
+      const m = imgData.metrics || {}
+      const assetId = imgData.asset_id
+      const isBronchiectasis = imgData.model_id === 'bronchiectasis_mucus_analyzer' || r.title.includes('支气管')
+
+      let promptText = `请依据患者 ${d.code} 的医学影像量化分析数据，为当前会诊幻灯片（标题：${title}）制作多页专业幻灯片：\n\n`
+      promptText += `【影像检查信息】\n`
+      promptText += `- 检查项目：${r.title}\n`
+      promptText += `- 检查日期：${r.report_date || '近期'}\n`
+      if (assetId) {
+        promptText += `- 关键截面图（已入库资产）：![${r.title}](/api/assets/${assetId})\n`
+      }
+      promptText += `\n【核心量化指标】\n`
+      if (isBronchiectasis) {
+        if (m.bar_ratio) promptText += `- BAR 印戒征比值: ${m.bar_ratio} (${m.signet_ring_sign ? '确诊支气管扩张' : '正常'})\n`
+        if (m.total_mucus_volume_cm3 !== undefined) promptText += `- 气道粘液栓总体积: ${m.total_mucus_volume_cm3} cm³ (阻塞率: ${m.airway_occlusion_rate_pct}%)\n`
+        if (m.high_attenuation_mucus_cm3) promptText += `- 高密度粘液栓 HAM: ${m.high_attenuation_mucus_cm3} cm³ (强烈提示变应性支气管肺曲霉病 ABPA)\n`
+        if (m.primary_location) promptText += `- 主要解剖部位: ${m.primary_location}\n`
+        if (m.distribution_summary) promptText += `- 优势分布肺叶: ${m.distribution_summary}\n`
+      } else {
+        if (m.longest_diameter_mm) promptText += `- RECIST 1.1 靶病灶长径: ${m.longest_diameter_mm} mm (短径: ${m.short_axis_mm} mm)\n`
+        if (m.total_volume_cm3) promptText += `- 3D 病灶体积: ${m.total_volume_cm3} cm³\n`
+        if (m.key_slice_index !== undefined) promptText += `- 最大截面层号: 第 #${m.key_slice_index} 层\n`
+      }
+      promptText += `\n【建议幻灯片结构】\n`
+      promptText += `1. 封面页：${d.code} 影像多学科会诊 (MDT)\n`
+      promptText += `2. 临床指标与病灶测量页：三维容积、BAR 比值与管壁厚度对比\n`
+      promptText += `3. 关键截面影像插图页：插入 /api/assets/${assetId || ''} 截面图并标注病灶解剖定位与阻塞率\n`
+      promptText += `4. MDT 诊疗与随访决策页：排痰引流 (ACT) 方案、ABPA 鉴别与后续影像复查时间点\n\n`
+      promptText += `请使用 deck_edit 工具按此结构生成或修改幻灯片各页内容。`
+
+      hooks.prefillChat(promptText)
+      notice('已在 Heurion 中新建会诊幻灯片并关联患者！AI 对话框已准备好制作指令，可直接确认发送。')
+    } catch (err) {
+      notice((err as Error).message, true)
+    }
+  }
+
+  function showImageLightbox(imgUrl: string, title?: string): void {
+    const dlg = document.getElementById('dialog')!
+    dlg.innerHTML = `
+      <div class="dialog-card pt-lightbox-card" role="dialog" aria-modal="true" style="max-width: 860px; background: #0b0f19; border-color: rgba(255,255,255,0.15)">
+        <div class="dialog-head" style="border-bottom-color: rgba(255,255,255,0.1); color: #fff">
+          <h2 style="color: #fff">${esc(title || '医学影像关键截面原图 (Key Slice · MONAI 量化标尺)')}</h2>
+          <button class="quiet" data-close aria-label="关闭" style="color: #ccc">✕</button>
+        </div>
+        <div class="dialog-body" style="padding: 16px; display: flex; justify-content: center; align-items: center">
+          <img src="${imgUrl}" style="max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 4px; box-shadow: 0 8px 32px rgba(0,0,0,0.6)">
+        </div>
+      </div>`
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
+  }
+
+  async function showImagingDialog(patientId: string, d: Detail | Patient): Promise<void> {
+    const dlg = document.getElementById('dialog')!
+    dlg.innerHTML = `
+      <div class="dialog-card pt-imaging-dialog" role="dialog" aria-modal="true" style="max-width: 680px">
+        <div class="dialog-head">
+          <h2>🩺 ${esc(d.code)} 医学影像量化分析 (MONAI 3D)</h2>
+          <button class="quiet" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="dialog-body" style="gap: 14px">
+          <div class="pt-img-dlg-loading" style="padding: 24px; text-align: center; color: var(--text-2);">
+            正在连接 MONAI 影像计算节点与加载临床模型...
+          </div>
+        </div>
+      </div>`
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
+
+    let statusData: any = null
+    let modelsData: any = { models: [] }
+    let samplesData: any = { samples: [] }
+
+    try {
+      [statusData, modelsData, samplesData] = await Promise.all([
+        api<any>('/api/imaging/status').catch(() => null),
+        api<any>('/api/imaging/models').catch(() => ({ models: [] })),
+        api<any>('/api/imaging/samples').catch(() => ({ samples: [] })),
+      ])
+    } catch {}
+
+    const isHealthy = statusData && statusData.status === 'healthy'
+    const devInfo = statusData?.device || {}
+    const devName = isHealthy
+      ? `${devInfo.accelerator || 'GPU / Metal 统一内存加速'}${devInfo.total_unified_ram_gb ? ` · ${devInfo.total_unified_ram_gb}GB 统一内存` : ''}`
+      : '计算节点离线 (端口 8004 未连接)'
+
+    const samples: Array<{ id: string; name: string; modality: string; size_mb?: number }> = samplesData.samples || []
+    const modelsList: Array<{ id: string; name: string; category?: string; modality?: string; target?: string; recommended_window?: string }> = modelsData.models || []
+
+    const categories: Record<string, typeof modelsList> = {}
+    for (const m of modelsList) {
+      const cat = m.category || '通用临床模型'
+      if (!categories[cat]) categories[cat] = []
+      categories[cat].push(m)
+    }
+    const defaultDesc = modelsList.find(m => m.id === 'bronchiectasis_mucus_analyzer')?.target || '支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征'
+
+    const body = dlg.querySelector('.dialog-body')
+    if (!body) return
+    body.innerHTML = `
+      <div class="pt-img-banner ${isHealthy ? 'ok' : 'warn'}">
+        <span class="dot"></span>
+        <div>
+          <b>${isHealthy ? 'MONAI 医学影像计算引擎就绪' : '计算微服务离线'}</b>
+          <div class="muted small">${esc(devName)}</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label><b>影像数据来源</b></label>
+        <div class="row" style="gap: 16px; margin: 4px 0 8px">
+          <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
+            <input type="radio" name="imgSource" value="sample" checked> 预置高分辨临床扫描（一键分析）
+          </label>
+          <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
+            <input type="radio" name="imgSource" value="upload"> 上传本地 CT/MRI (.nii / .nii.gz / .dcm)
+          </label>
+        </div>
+
+        <div id="imgSampleBox">
+          <select id="imgSampleSelect" class="pt-dlg-select" style="width: 100%; padding: 7px 10px">
+            ${samples.length ? samples.map((s, idx) => `
+              <option value="${esc(s.id)}" ${s.id === 'chest_lung_ct' || idx === 0 ? 'selected' : ''}>
+                ${esc(s.name)} [${esc(s.modality)}] ${s.size_mb ? `(${s.size_mb} MB)` : ''}
+              </option>
+            `).join('') : `
+              <option value="chest_lung_ct" selected>真实临床全胸部 HRCT 扫描 (269层 512x512，83.6MB)</option>
+              <option value="spleen_test">真实临床腹部增强 CT 扫描 (96层 512x512，29.6MB)</option>
+              <option value="prostate_mri">真实临床前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
+            `}
+          </select>
+          <div class="muted small" style="margin-top: 4px">💡 预置真实临床三维体素扫描数据。系统会将完整 3D 原始体素序列加密归档至该患者档案，作为永久保存的医学影像资料。</div>
+        </div>
+
+        <div id="imgUploadBox" hidden>
+          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="width: 100%; border: 1px dashed var(--line-strong); padding: 14px; border-radius: 4px; background: var(--hover)">
+          <div class="muted small" style="margin-top: 4px">支持高分辨率胸部/腹部 HRCT、MRI 序列 (NIfTI / DICOM 归档)。上传后将作为该患者的原始 3D 影像资料加密归档，并自动调度 MONAI 进行量化。</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 4px">
+          <label><b>选择临床深度学习模型 (MONAI Model Zoo)</b></label>
+          <span class="muted small">${modelsList.length || 18} 款分科预训练临床模型</span>
+        </div>
+        <select id="imgModelSelect" class="pt-dlg-select" style="width: 100%; padding: 7px 10px">
+          ${Object.keys(categories).length ? Object.entries(categories).map(([cat, list]) => `
+            <optgroup label="${esc(cat)}">
+              ${list.map(m => `
+                <option value="${esc(m.id)}" data-window="${esc(m.recommended_window || 'lung')}" data-target="${esc(m.target || '')}" ${m.id === 'bronchiectasis_mucus_analyzer' ? 'selected' : ''}>
+                  ${esc(m.name)} [${esc(m.modality || 'CT')}]
+                </option>
+              `).join('')}
+            </optgroup>
+          `).join('') : `
+            <optgroup label="🫁 胸部与呼吸科">
+              <option value="bronchiectasis_mucus_analyzer" data-window="lung" data-target="支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征" selected>支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM) [Chest HRCT]</option>
+              <option value="lung_nodule_segmenter" data-window="lung" data-target="肺实质实性/磨玻璃结节 (RECIST 1.1 最大径与三维体积)">肺结节与肺实变自动分割 (MONAI 3D SegResNet) [Chest CT]</option>
+              <option value="lung_airway_segmenter" data-window="lung" data-target="全气道树管腔三维拓扑骨架与管壁厚度测量">全气道树三维拓扑重建 (MONAI AirwayUNet) [Chest HRCT]</option>
+              <option value="lung_lobe_segmenter" data-window="lung" data-target="双肺 5 大肺叶 (RUL, RML, RLL, LUL, LLL) 体积及占比">5 大解剖肺叶分割与肺容积积分 (MONAI V-Net) [Chest CT]</option>
+              <option value="covid19_lung_infection" data-window="lung" data-target="磨玻璃影 (GGO)、网格影与实变受累百分比">病毒性肺炎磨玻璃实变影定量 (MONAI COVID-Net) [Chest CT]</option>
+            </optgroup>
+            <optgroup label="🫄 腹部、消化与泌尿">
+              <option value="spleen_segmenter" data-window="abdomen" data-target="脾脏三维体积、脾肿大定量与创伤破裂评估">腹部实质脏器与脾脏分割 (MONAI 3D SegResNet) [Abdominal CT]</option>
+              <option value="multi_organ_ct" data-window="abdomen" data-target="肝、脾、双肾、胰腺、胆囊、胃、主动脉、下腔静脉等">全腹部 13 器官多任务分割 (MONAI SwinUNETR) [Abdominal CT]</option>
+              <option value="liver_lesion_segmenter" data-window="abdomen" data-target="肝实质体积、原发性肝癌 (HCC) 与转移瘤靶病灶">肝脏实质与局灶病灶/转移瘤分割 (MONAI UNet) [Abdominal CT]</option>
+              <option value="pancreas_tumor_segmenter" data-window="abdomen" data-target="胰腺实质、胰腺导管腺癌与囊性占位病变">胰腺实质与胰腺肿瘤分割 (MONAI UNet) [Abdominal CT]</option>
+              <option value="kidney_tumor_segmenter" data-window="abdomen" data-target="肾实质、肾肿瘤皮质实性占位与肾囊肿">肾脏与肾肿瘤/囊肿分割 (MONAI KiTS) [Abdominal CT]</option>
+              <option value="prostate_mri_segmenter" data-window="abdomen" data-target="前列腺腺体分带与可疑癌灶 (PI-RADS 3-5分区)">前列腺外周带/移行带与 PI-RADS 病灶 (MONAI UNet) [Pelvic MRI]</option>
+            </optgroup>
+            <optgroup label="🧠 颅脑与神经系统">
+              <option value="brain_tumor_brats" data-window="brain" data-target="强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR)">脑胶质瘤多序列分割 (MONAI BraTS DynUNet) [Brain MRI]</option>
+              <option value="brain_subcortical_segmenter" data-window="brain" data-target="双侧海马体、杏仁核、丘脑体积与阿尔茨海默病量化">皮质下深部核团与海马体萎缩量化 (FastSurfer-like) [Brain T1 MRI]</option>
+              <option value="stroke_ischemic_lesion" data-window="brain" data-target="急性脑梗死缺血半暗带与核心梗死容积">急性脑卒中缺血梗死灶测定 (MONAI UNet) [Brain MRI (DWI/FLAIR)]</option>
+              <option value="intracranial_hemorrhage_ct" data-window="brain" data-target="硬膜下、硬膜外、脑实质内及蛛网膜下腔出血">急诊颅内出血与血肿检出 (MONAI DenseNet) [Brain Head CT]</option>
+            </optgroup>
+            <optgroup label="🫀 心血管系统">
+              <option value="coronary_artery_calcification" data-window="mediastinum" data-target="左前降支、回旋支、右冠状动脉钙化积分与冠心病风险分层">冠状动脉钙化积分 (CAC / Agatston 评分) [Cardiac CT]</option>
+              <option value="cardiac_mri_segmentation" data-window="mediastinum" data-target="左心室舒张/收缩末容积、心肌质量与射血分数 (LVEF)">心脏多时相 CINE MRI 心室分割与射血分数 [Cardiac MRI]</option>
+            </optgroup>
+            <optgroup label="🦴 骨科与全身体素">
+              <option value="whole_body_ct_segmenter" data-window="bone" data-target="全身体素骨骼、主要内脏系统与主要肌群">全身体素 104 类解剖结构分割 (TotalSegmentator) [Whole-Body CT]</option>
+              <option value="vertebra_segmenter" data-window="bone" data-target="颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙测量">全脊柱 24 节椎骨与椎间盘分割 (Spine-Segmenter) [Spine CT]</option>
+            </optgroup>
+          `}
+        </select>
+        <div id="imgModelDesc" class="muted small" style="margin-top: 5px; color: var(--blue)">💡 临床靶目标：${esc(defaultDesc)}</div>
+      </div>
+
+      <details class="pt-dlg-params" open>
+        <summary style="cursor: pointer; user-select: none"><b>临床量化与重建参数设置</b> <span class="muted small">（Fleischner 准则与门限）</span></summary>
+        <div class="grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px">
+          <div>
+            <label class="small muted">支气管-伴行动脉比 (BAR) 扩张切点</label>
+            <input type="number" id="imgBarCutoff" step="0.05" value="1.10" style="width: 100%; padding: 4px 6px">
+            <span class="muted small" style="font-size: 11px">参考值: &gt;1.10 确诊印戒征扩张</span>
+          </div>
+          <div>
+            <label class="small muted">高密度粘液栓 (HAM) CT 阈值 (HU)</label>
+            <input type="number" id="imgHamThreshold" step="5" value="70.0" style="width: 100%; padding: 4px 6px">
+            <span class="muted small" style="font-size: 11px">参考值: &ge;70 HU 强烈提示 ABPA</span>
+          </div>
+          <div>
+            <label class="small muted">常规粘液栓 CT 阈值范围 (HU)</label>
+            <div class="row" style="gap: 4px">
+              <input type="number" id="imgMucusMin" step="5" value="10.0" style="width: 50%; padding: 4px 6px">
+              <span style="align-self: center">~</span>
+              <input type="number" id="imgMucusMax" step="5" value="75.0" style="width: 50%; padding: 4px 6px">
+            </div>
+          </div>
+          <div>
+            <label class="small muted">CT 窗宽窗位预设 (Window)</label>
+            <select id="imgWindowSelect" style="width: 100%; padding: 4px 6px">
+              <option value="lung" selected>肺窗 (Lung W:1500 L:-600)</option>
+              <option value="mediastinum">纵隔窗 (Mediastinum W:350 L:40)</option>
+              <option value="abdomen">腹部窗 (Abdomen W:400 L:50)</option>
+              <option value="brain">脑窗 (Brain W:80 L:40)</option>
+            </select>
+          </div>
+        </div>
+      </details>
+
+      <div class="field-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px">
+        <label style="display: flex; align-items: center; gap: 8px">
+          <span class="muted small">报告/检查日期:</span>
+          <input type="date" id="imgReportDate" value="${new Date().toISOString().slice(0, 10)}" style="padding: 3px 6px">
+        </label>
+        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px">
+          <input type="checkbox" id="imgAutoTag" checked> 发现阳性征象（如 BAR 印戒征或 HAM）时自动更新诊断标签
+        </label>
+      </div>
+
+      <div id="imgProgressBox" hidden style="margin-top: 8px; padding: 12px; border: 1px solid var(--line); background: var(--panel); border-radius: 4px">
+        <div class="row" style="align-items: center; gap: 10px">
+          <span class="dot" style="background: var(--mint)"></span>
+          <b id="imgProgressMsg">正在调度 Apple Silicon M4 Pro 执行 3D 卷积推理...</b>
+        </div>
+        <div class="muted small" style="margin-top: 4px">包含三维体素分割、支气管伴行动脉测距 (BAR)、粘液栓体积积分与高清关键截面渲染。</div>
+      </div>
+
+      <div class="row end" style="margin-top: 14px; gap: 10px">
+        <button type="button" data-close>取消</button>
+        <button type="button" class="primary" id="btnRunImaging" ${isHealthy ? '' : 'disabled'}>
+          🚀 开始 MONAI 3D 量化推理并存入档案
+        </button>
+      </div>`
+
+    // 绑定单选切换
+    const radioSample = body.querySelector('input[value="sample"]') as HTMLInputElement
+    const radioUpload = body.querySelector('input[value="upload"]') as HTMLInputElement
+    const sampleBox = body.querySelector('#imgSampleBox') as HTMLElement
+    const uploadBox = body.querySelector('#imgUploadBox') as HTMLElement
+
+    radioSample?.addEventListener('change', () => {
+      if (radioSample.checked) { sampleBox.hidden = false; uploadBox.hidden = true }
+    })
+    radioUpload?.addEventListener('change', () => {
+      if (radioUpload.checked) { sampleBox.hidden = true; uploadBox.hidden = false }
+    })
+
+    const modelSelect = body.querySelector('#imgModelSelect') as HTMLSelectElement
+    const windowSelect = body.querySelector('#imgWindowSelect') as HTMLSelectElement
+    const modelDesc = body.querySelector('#imgModelDesc') as HTMLElement
+    const sampleSelect = body.querySelector('#imgSampleSelect') as HTMLSelectElement
+
+    modelSelect?.addEventListener('change', () => {
+      const opt = modelSelect.selectedOptions[0]
+      if (opt) {
+        const win = opt.dataset.window
+        const target = opt.dataset.target
+        if (win && windowSelect) windowSelect.value = win
+        if (target && modelDesc) modelDesc.textContent = `💡 临床靶目标：${target}`
+      }
+    })
+
+    sampleSelect?.addEventListener('change', () => {
+      const sid = sampleSelect.value
+      if (sid === 'chest_lung_ct') {
+        modelSelect.value = 'bronchiectasis_mucus_analyzer'
+      } else if (sid === 'spleen_test') {
+        modelSelect.value = 'spleen_segmenter'
+      } else if (sid === 'prostate_mri') {
+        modelSelect.value = 'prostate_mri_segmenter'
+      }
+      modelSelect.dispatchEvent(new Event('change'))
+    })
+
+    // 启动分析按钮
+    const btnRun = body.querySelector('#btnRunImaging') as HTMLButtonElement
+    const progressBox = body.querySelector('#imgProgressBox') as HTMLElement
+    const progressMsg = body.querySelector('#imgProgressMsg') as HTMLElement
+
+    btnRun?.addEventListener('click', async () => {
+      const isUpload = radioUpload?.checked
+      const sampleId = (body.querySelector('#imgSampleSelect') as HTMLSelectElement)?.value
+      const modelId = (body.querySelector('#imgModelSelect') as HTMLSelectElement)?.value
+      const windowPreset = (body.querySelector('#imgWindowSelect') as HTMLSelectElement)?.value
+      const barCutoff = Number((body.querySelector('#imgBarCutoff') as HTMLInputElement)?.value || 1.10)
+      const mucusMin = Number((body.querySelector('#imgMucusMin') as HTMLInputElement)?.value || 10.0)
+      const mucusMax = Number((body.querySelector('#imgMucusMax') as HTMLInputElement)?.value || 75.0)
+      const hamThresh = Number((body.querySelector('#imgHamThreshold') as HTMLInputElement)?.value || 70.0)
+      const reportDate = (body.querySelector('#imgReportDate') as HTMLInputElement)?.value
+      const autoTag = (body.querySelector('#imgAutoTag') as HTMLInputElement)?.checked
+
+      const fileInput = body.querySelector('#imgFileInput') as HTMLInputElement
+      const uploadedFile = fileInput?.files?.[0]
+
+      if (isUpload && !uploadedFile) {
+        notice('请选择要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .dcm)', true)
+        return
+      }
+
+      btnRun.disabled = true
+      progressBox.hidden = false
+      progressMsg.textContent = '正在传输体素数据并调度 Apple Silicon Metal 执行 3D 卷积分割...'
+
+      try {
+        if (isUpload && uploadedFile) {
+          const fd = new FormData()
+          fd.append('file', uploadedFile)
+          fd.append('model_id', modelId)
+          fd.append('window_preset', windowPreset)
+          fd.append('bar_cutoff', String(barCutoff))
+          fd.append('mucus_min_hu', String(mucusMin))
+          fd.append('mucus_max_hu', String(mucusMax))
+          fd.append('ham_threshold_hu', String(hamThresh))
+          if (reportDate) fd.append('report_date', reportDate)
+          fd.append('auto_tag', String(autoTag))
+          await api(`/api/patients/${patientId}/imaging/analyze`, { method: 'POST', body: fd })
+        } else {
+          await api(`/api/patients/${patientId}/imaging/analyze`, {
+            method: 'POST',
+            body: JSON.stringify({
+              sample_id: sampleId,
+              model_id: modelId,
+              window_preset: windowPreset,
+              bar_cutoff: barCutoff,
+              mucus_min_hu: mucusMin,
+              mucus_max_hu: mucusMax,
+              ham_threshold_hu: hamThresh,
+              report_date: reportDate,
+              auto_tag: autoTag,
+            })
+          })
+        }
+
+        notice('影像量化分析完成！已生成关键截面并加密存入患者档案。')
+        close()
+        tab = 'records'
+        await loadList()
+        await openPatient(patientId, true)
+      } catch (err: any) {
+        btnRun.disabled = false
+        progressBox.hidden = true
+        notice(`影像分析失败: ${err.message || String(err)}`, true)
+      }
+    })
   }
 
   async function showClaimDialog(patientId: string, d: Detail | Patient): Promise<void> {
@@ -462,6 +1011,32 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     if (study && hooks.openStudy) { current = null; await hooks.openStudy(study.dataset.study!); return }
     const file = t.closest<HTMLElement>('[data-file]')
     if (file) { window.open(`/api/patients/${id}/files/${file.dataset.file}?token=${encodeURIComponent(hooks.token())}`, '_blank'); return }
+
+    const viewImg = t.closest<HTMLElement>('[data-view-img]')
+    if (viewImg) {
+      const url = viewImg.dataset.viewImg || (viewImg as HTMLImageElement).src
+      if (url) showImageLightbox(url)
+      return
+    }
+
+    const imgReport = t.closest<HTMLElement>('[data-img-report]')
+    if (imgReport) {
+      const recId = imgReport.dataset.imgReport
+      const detail = await api<Detail>(`/api/patients/${id}`)
+      const r = detail.records.find(x => x.id === recId)
+      if (r) await writeImagingReport(detail, r)
+      return
+    }
+
+    const imgCanvas = t.closest<HTMLElement>('[data-img-canvas]')
+    if (imgCanvas) {
+      const recId = imgCanvas.dataset.imgCanvas
+      const detail = await api<Detail>(`/api/patients/${id}`)
+      const r = detail.records.find(x => x.id === recId)
+      if (r) await makeImagingSlideDeck(detail, r)
+      return
+    }
+
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
     if (act === 'ptmore') { const m = document.getElementById('ptMore'); if (m) m.hidden = !m.hidden; return }
     document.getElementById('ptMore')?.setAttribute('hidden', '')
@@ -474,6 +1049,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         if (v !== null) { await api(`/api/patients/${id}`, { method: 'PATCH', body: JSON.stringify({ tags: v.split(/[,，、;；]/).map(x => x.trim()).filter(Boolean) }) }); await loadList(); void openPatient(id, true) }
       } else if (act === 'upload') {
         (document.getElementById('ptUpload') as HTMLInputElement).click()
+      } else if (act === 'imaging') {
+        await showImagingDialog(id, d)
       } else if (act === 'report') {
         await writeReport(d)
       } else if (act === 'claim') {
@@ -492,7 +1069,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         notice('诊疗组已更新'); void openPatient(id, true)
       } else if (act === 'log') {
         const rows = await api<any[]>(`/api/patients/${id}/access-log`)
-        const ACTION: Record<string, string> = { create: '新建', view: '查看', update: '修改', labs_read: '读化验', lab_add: '补录化验项', doc_link: '关联报告', doc_unlink: '取消关联', lab_confirm: '确认化验', lab_reject: '删除化验', lab_edit: '修改化验', file_upload: '上传报告', file_download: '查看原件', record_confirm: '确认报告', record_reject: '驳回报告', propose: '提议', proposal_accept: '采纳提议', proposal_reject: '不采纳提议', team_add: '加入诊疗组', team_remove: '移出诊疗组', break_glass: '紧急访问', delete: '删除', cohort_screen: '研究筛选', enroll: '入组研究', unenroll: '移出研究', cohort_export: '生成研究数据集' }
+        const ACTION: Record<string, string> = { create: '新建', view: '查看', update: '修改', labs_read: '读化验', lab_add: '补录化验项', doc_link: '关联报告', doc_unlink: '取消关联', lab_confirm: '确认化验', lab_reject: '删除化验', lab_edit: '修改化验', file_upload: '上传报告', file_download: '查看原件', record_confirm: '确认报告', record_reject: '驳回报告', imaging_analyze: '影像量化分析', propose: '提议', proposal_accept: '采纳提议', proposal_reject: '不采纳提议', team_add: '加入诊疗组', team_remove: '移出诊疗组', break_glass: '紧急访问', delete: '删除', cohort_screen: '研究筛选', enroll: '入组研究', unenroll: '移出研究', cohort_export: '生成研究数据集' }
         const dlg = document.getElementById('dialog')!
         dlg.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" aria-label="访问记录"><div class="dialog-head"><h2>${esc(d.code)} 访问记录</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
           <div class="dialog-body"><table class="users audit-table"><thead><tr><th>时间</th><th>谁</th><th>操作</th><th>说明</th></tr></thead><tbody>
@@ -537,17 +1114,36 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     if (input.id === 'ptUpload' && input.files?.length) {
       const failed: string[] = []
       let ok = 0
+      let hasImaging = false
       for (const f of Array.from(input.files)) {
+        const isImaging = /\.(nii|nii\.gz|dcm|dicom|mha|nrrd)$/i.test(f.name)
+        if (isImaging) {
+          hasImaging = true
+          notice(`正在上传医学影像 ${f.name} 并调度 MONAI 3D 卷积执行量化分析...`)
+          const fd = new FormData()
+          fd.append('file', f)
+          fd.append('model_id', 'bronchiectasis_mucus_analyzer')
+          fd.append('auto_tag', 'true')
+          try {
+            await api(`/api/patients/${id}/imaging/analyze`, { method: 'POST', body: fd })
+            ok++
+            notice(`已成功将 3D 影像资料 ${f.name} 关联至患者，并生成量化分析记录！`)
+          } catch (err) {
+            failed.push(`${f.name}：${(err as Error).message}`)
+          }
+          continue
+        }
         const fd = new FormData()
         fd.append('file', f)
         try { await api(`/api/patients/${id}/files`, { method: 'POST', body: fd }); ok++ } catch (err) { failed.push(`${f.name}：${(err as Error).message}`) }
       }
       input.value = ''
       // 被拦下的（重复上传等）单独说清楚，不被「已上传」覆盖
-      if (failed.length) notice((ok ? `已上传 ${ok} 份，正在自动提取。` : '') + failed.join('；'), true)
-      else notice('已上传，正在自动提取，完成后在「待确认」里审核')
+      if (failed.length) notice((ok ? `已上传 ${ok} 份。` : '') + failed.join('；'), true)
+      else if (!hasImaging) notice('已上传，正在自动提取，完成后在「待确认」里审核')
       if (!ok) return
-      tab = 'review'
+      tab = hasImaging ? 'records' : 'review'
+      await loadList()
       void openPatient(id, true)
       return
     }

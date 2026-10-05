@@ -64,15 +64,19 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       '自动生成带有半透明轮廓、测距卡尺与 5cm 标尺的高清 PNG，并自动保存为当前用户的文档资产。' +
       '返回 asset_id、RECIST 测量指标（长径、短径、体积）以及直接可插入 Markdown 的图片语法。',
     inputSchema: {
-      model_id: z.string().optional().describe('指定的临床模型 ID，例如 spleen_segmenter, lung_nodule_segmenter, liver_lesion_segmenter, brain_tumor_brats'),
-      sample_id: z.string().optional().describe('预置临床样本 ID，例如 spleen_test (真实人体腹部 CT) 或 prostate_mri (真实人体前列腺 MRI)'),
+      model_id: z.string().optional().describe('指定的临床模型 ID，例如 bronchiectasis_mucus_analyzer (支气管扩张与粘液栓), spleen_segmenter, lung_nodule_segmenter, liver_lesion_segmenter, brain_tumor_brats'),
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct (真实全胸部 HRCT 269层), spleen_test (真实人体腹部 CT 96层) 或 prostate_mri (真实人体前列腺 MRI)'),
       file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI (.nii/.nii.gz) 文件的绝对路径'),
       window_preset: z.enum(['lung', 'abdomen', 'brain', 'mediastinum']).optional().describe('CT 窗宽窗位预设'),
       benchmark: z.boolean().optional().describe('是否运行 3D 高拟真解剖体素基准测试（未指定 sample_id/file_path 时缺省为 true）'),
       z_slices: z.number().int().min(16).max(256).optional().describe('扫描层数，缺省 48'),
+      bar_cutoff: z.number().optional().describe('支气管-伴行动脉比 (BAR) 印戒征扩张切点，缺省 1.10'),
+      mucus_min_hu: z.number().optional().describe('常规粘液栓 CT 阈值下限 (HU)，缺省 10.0'),
+      mucus_max_hu: z.number().optional().describe('常规粘液栓 CT 阈值上限 (HU)，缺省 75.0'),
+      ham_threshold_hu: z.number().optional().describe('高密度粘液栓 (HAM) CT 阈值 (HU)，缺省 70.0 (提示 ABPA)'),
       label: z.string().max(60).optional().describe('生成的图注标签，例如「图 1 基线靶病灶 RECIST 截面」'),
     },
-  }, async ({ model_id, sample_id, file_path, window_preset, benchmark, z_slices, label }) => {
+  }, async ({ model_id, sample_id, file_path, window_preset, benchmark, z_slices, bar_cutoff, mucus_min_hu, mucus_max_hu, ham_threshold_hu, label }) => {
     if (!claims.p.includes('write')) return fail('forbidden', '当前令牌没有写入或上传资产权限')
     
     let resultData: any
@@ -84,6 +88,10 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
         z_slices: z_slices ?? 48,
         y_dim: 128,
         x_dim: 128,
+        bar_cutoff,
+        mucus_min_hu,
+        mucus_max_hu,
+        ham_threshold_hu,
       }
 
       if (sample_id) {
@@ -92,6 +100,10 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
           sample_id,
           model_name: model_id,
           window_preset,
+          bar_cutoff,
+          mucus_min_hu,
+          mucus_max_hu,
+          ham_threshold_hu,
         }
       } else if (file_path) {
         endpoint = `${workerUrl}/api/v1/analyze/file`
@@ -99,6 +111,10 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
           file_path,
           model_name: model_id,
           window_preset,
+          bar_cutoff,
+          mucus_min_hu,
+          mucus_max_hu,
+          ham_threshold_hu,
         }
       }
 
@@ -142,6 +158,9 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
     return json({
       status: 'success',
       asset_id: asset.id,
+      model_name: resultData.model_name,
+      modality: resultData.modality,
+      metrics: resultData.metrics,
       accelerator: resultData.accelerator,
       duration_sec: resultData.inference_duration_sec,
       recist_metrics: {

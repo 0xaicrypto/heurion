@@ -57,6 +57,7 @@ export interface RecordRow {
   /** 自动提取：排队 / 进行中 / 完成 / 失败 / 跳过（机构不允许交给外部模型，或没有可读文字） */
   extraction: 'queued' | 'running' | 'done' | 'failed' | 'skipped' | null; extraction_note: string | null
   created_by: string; created_at: string; confirmed_by: string | null; confirmed_at: string | null
+  imaging_data?: Record<string, unknown> | null
 }
 
 /** 报告文字：PDF（文字层 / 扫描件 OCR）、图片（OCR）→ 每页文字。 */
@@ -324,8 +325,17 @@ export class PatientService {
     const summary = c.db.db.prepare('SELECT summary_enc FROM patients WHERE id = ?').get(patientId) as { summary_enc: string | null }
     const team = (c.db.db.prepare('SELECT user_id, role, added_at FROM care_team WHERE patient_id = ? ORDER BY added_at').all(patientId) as Array<{ user_id: string; role: string; added_at: string }>)
       .map(m => ({ ...m, name: this.store.getUser(m.user_id)?.display_name ?? m.user_id }))
-    const records = (c.db.db.prepare('SELECT * FROM records WHERE patient_id = ? ORDER BY COALESCE(report_date, created_at) DESC').all(patientId) as unknown as RecordRow[])
-      .map(r => ({ ...r, text_enc: undefined }))
+    const records = (c.db.db.prepare('SELECT * FROM records WHERE patient_id = ? ORDER BY COALESCE(report_date, created_at) DESC').all(patientId) as unknown as Array<RecordRow & { text_enc?: string | null }>)
+      .map(r => {
+        let imaging_data: Record<string, unknown> | null = null
+        if (r.kind === 'imaging' && r.text_enc) {
+          try {
+            const dec = this.keys.decryptText(c.tenantId, r.text_enc)
+            if (dec) imaging_data = JSON.parse(dec)
+          } catch {}
+        }
+        return { ...r, text_enc: undefined, imaging_data }
+      })
     // 每项最近一次（同一天多次时取采样时间最晚、再取录入最晚的）
     const all = (c.db.db.prepare("SELECT * FROM labs WHERE patient_id = ? AND status = 'confirmed' ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at").all(patientId) as Array<Record<string, unknown>>).map(labOf)
     const latest = [...new Map(all.map(l => [l.test_key, l])).values()]
@@ -604,7 +614,9 @@ export class PatientService {
   /** 上传原始报告：内容与文件名用机构密钥加密存盘，生成一条待确认的报告记录。 */
   addFile(a: Actor, patientId: string, input: { name: string; mime: string; bytes: Uint8Array; kind?: RecordRow['kind']; report_date?: string | null; title?: string }): { file_id: string; record: RecordRow } {
     const { c } = this.requireTeam(a, patientId)
-    if (input.bytes.byteLength > 30 * 1024 * 1024) throw new PatientError('too_large', '文件超过 30 MB')
+    const isImaging = input.kind === 'imaging' || /\.(nii|nii\.gz|dcm|dicom|mha|nrrd)$/i.test(input.name)
+    const maxBytes = isImaging ? 250 * 1024 * 1024 : 30 * 1024 * 1024
+    if (input.bytes.byteLength > maxBytes) throw new PatientError('too_large', `文件超过 ${isImaging ? '250' : '30'} MB`)
     // 同一份报告重复上传：拦下并说明是哪次传过的（不再重复提取）
     const sha = createHash('sha256').update(input.bytes).digest('hex')
     const dup = c.db.db.prepare(`SELECT r.title, r.report_date, f.created_at FROM files f LEFT JOIN records r ON r.file_id = f.id WHERE f.patient_id = ? AND f.sha256 = ? AND COALESCE(r.status, '') != 'rejected'`).get(patientId, sha) as { title: string | null; report_date: string | null; created_at: string } | undefined
@@ -614,11 +626,11 @@ export class PatientService {
     c.db.db.prepare('INSERT INTO files (id, patient_id, name_enc, mime, size, sha256, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(fid, patientId, this.keys.encryptText(c.tenantId, input.name)!, input.mime, input.bytes.byteLength, sha, a.userId, now())
     const recId = rid('rc')
-    const kind = input.kind && ['lab_report', 'discharge', 'pathology', 'imaging', 'note', 'other'].includes(input.kind) ? input.kind : 'other'
+    const kind = input.kind && ['lab_report', 'discharge', 'pathology', 'imaging', 'note', 'other'].includes(input.kind) ? input.kind : isImaging ? 'imaging' : 'other'
     // 自动提取：机构允许交给外部模型、配置了模型时排队；否则跳过，由医生手工录入
     const canExtract = Boolean(this.extractor?.complete) && c.settings.external_model_for_patients
     c.db.db.prepare('INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, extraction, extraction_note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(recId, patientId, kind, (input.title ?? '').trim().slice(0, 120) || '未命名报告', input.report_date && DATE.test(input.report_date) ? input.report_date : null, fid, 'pending',
+      .run(recId, patientId, kind, (input.title ?? '').trim().slice(0, 120) || (isImaging ? '医学影像扫描序列' : '未命名报告'), input.report_date && DATE.test(input.report_date) ? input.report_date : null, fid, 'pending',
         canExtract ? 'queued' : 'skipped', canExtract ? null : this.extractor?.complete ? '本机构设置为患者数据不交给外部模型，不能自动提取：请在审核里对照原件逐项添加' : '没有配置模型，不能自动提取：请在审核里对照原件逐项添加', a.userId, now())
     this.log(c, a, patientId, 'file_upload', fid)
     if (canExtract) {
@@ -634,6 +646,112 @@ export class PatientService {
     if (!f || !existsSync(join(c.db.files, f.id))) throw new PatientError('not_found', '文件不存在', 404)
     this.log(c, a, patientId, 'file_download', fileId)
     return { name: this.keys.decryptText(c.tenantId, f.name_enc)!, mime: f.mime, bytes: this.keys.decrypt(c.tenantId, readFileSync(join(c.db.files, f.id))) }
+  }
+
+  /**
+   * 记录医学影像量化分析结果：
+   * 将 MONAI 深度学习推理产生的最大截面图（关键切片 PNG，带卡尺与标尺）加密保存到租户文件，
+   * 同时存入 Store 资产（供 OmniCanvas 与文档无缝引用），将量化指标以加密 JSON 存入 records 表，
+   * 并支持自动建议/合并患者临床诊断标签（例如支气管扩张、ABPA等）。
+   */
+  addImagingRecord(a: Actor, patientId: string, input: {
+    title: string
+    report_date: string | null
+    model_id: string
+    sample_id?: string | null
+    modality?: string
+    metrics: Record<string, unknown>
+    findings?: string[]
+    key_slice_png: Uint8Array
+    raw_volume_file?: { name: string; bytes: Uint8Array; mime?: string }
+    add_tags?: string[]
+  }): { record: RecordRow & { imaging_data?: Record<string, unknown> }; asset_id: string; file_id: string; raw_file_id?: string } {
+    const { c } = this.requireTeam(a, patientId)
+    const fid = rid('pf')
+    const pngBuffer = Buffer.from(input.key_slice_png)
+    const sha = createHash('sha256').update(pngBuffer).digest('hex')
+
+    // 1. 加密存入机构独立患者文件目录 (关键截面原图)
+    writeFileSync(join(c.db.files, fid), this.keys.encrypt(c.tenantId, pngBuffer))
+    c.db.db.prepare('INSERT INTO files (id, patient_id, name_enc, mime, size, sha256, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(fid, patientId, this.keys.encryptText(c.tenantId, `${input.title || '影像分析'}-key-slice.png`)!, 'image/png', pngBuffer.byteLength, sha, a.userId, now())
+
+    // 1b. 若提供了原始 3D 体素扫描序列文件（例如上传的或 sample 的 .nii.gz），同样加密保存入患者文件库
+    let rawFid: string | undefined
+    if (input.raw_volume_file && input.raw_volume_file.bytes.byteLength > 0) {
+      rawFid = rid('pf')
+      const rawBuf = Buffer.from(input.raw_volume_file.bytes)
+      const rawSha = createHash('sha256').update(rawBuf).digest('hex')
+      writeFileSync(join(c.db.files, rawFid), this.keys.encrypt(c.tenantId, rawBuf))
+      c.db.db.prepare('INSERT INTO files (id, patient_id, name_enc, mime, size, sha256, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(rawFid, patientId, this.keys.encryptText(c.tenantId, input.raw_volume_file.name || 'raw-scan.nii.gz')!, input.raw_volume_file.mime || 'application/gzip', rawBuf.byteLength, rawSha, a.userId, now())
+    }
+
+    // 2. 存入文档资产库（具有全局 asset_id，支持在 Markdown 或 OmniCanvas 中直接使用）
+    const asset = this.store.putAsset({
+      owner: a.userId,
+      mime: 'image/png',
+      name: `${input.title || 'imaging'}-slice.png`,
+      bytes: pngBuffer,
+    })
+
+    // 3. 构建结构化量化数据载荷
+    const imagingPayload = {
+      model_id: input.model_id,
+      sample_id: input.sample_id ?? null,
+      modality: input.modality ?? 'Chest HRCT',
+      asset_id: asset.id,
+      file_id: fid,
+      raw_file_id: rawFid ?? null,
+      raw_file_name: input.raw_volume_file?.name ?? null,
+      raw_file_size: input.raw_volume_file?.bytes?.byteLength ?? null,
+      metrics: input.metrics,
+      findings: input.findings ?? [],
+      analyzed_at: now(),
+    }
+
+    const recId = rid('rc')
+    const encText = this.keys.encryptText(c.tenantId, JSON.stringify(imagingPayload))
+
+    // 格式化提取备注 / 快速摘要
+    let summaryNote = ''
+    if (input.findings && input.findings.length > 0) {
+      summaryNote = input.findings.slice(0, 3).join(' · ')
+    } else if (input.metrics) {
+      const parts: string[] = []
+      if (input.metrics.bar_ratio !== undefined) parts.push(`BAR: ${input.metrics.bar_ratio}`)
+      if (input.metrics.mucus_volume_mm3 !== undefined) parts.push(`粘液栓: ${input.metrics.mucus_volume_mm3} mm³`)
+      if (input.metrics.longest_diameter_mm !== undefined) parts.push(`RECIST: ${input.metrics.longest_diameter_mm} mm`)
+      summaryNote = parts.join(' · ')
+    }
+
+    // 当有原始扫描文件时，records.file_id 指向 rawFid，使「原件」按钮直接下载原始体素文件；否则指向切片图
+    const primaryFileId = rawFid ?? fid
+    c.db.db.prepare(`INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, text_enc, extraction, extraction_note, created_by, created_at, confirmed_by, confirmed_at)
+      VALUES (?, ?, 'imaging', ?, ?, ?, 'confirmed', ?, 'done', ?, ?, ?, ?, ?)`)
+      .run(recId, patientId, (input.title || '医学影像量化分析').trim().slice(0, 120), input.report_date && DATE.test(input.report_date) ? input.report_date : null, primaryFileId,
+        encText, summaryNote.slice(0, 200), a.userId, now(), a.userId, now())
+
+    // 4. 若有阳性征象需要新增标签，合并到 patients.tags
+    if (input.add_tags && input.add_tags.length > 0) {
+      const pRow = c.db.db.prepare('SELECT tags FROM patients WHERE id = ?').get(patientId) as { tags: string } | undefined
+      if (pRow) {
+        const curTags = JSON.parse(pRow.tags || '[]') as string[]
+        const mergedTags = Array.from(new Set([...curTags, ...input.add_tags.map(t => t.trim()).filter(Boolean)]))
+        c.db.db.prepare('UPDATE patients SET tags = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(mergedTags), now(), patientId)
+      }
+    }
+
+    c.db.db.prepare('UPDATE patients SET updated_at = ? WHERE id = ?').run(now(), patientId)
+    this.log(c, a, patientId, 'imaging_analyze', recId)
+
+    const createdRec = c.db.db.prepare('SELECT * FROM records WHERE id = ?').get(recId) as unknown as RecordRow
+    return {
+      record: { ...createdRec, text_enc: undefined, imaging_data: imagingPayload } as any,
+      asset_id: asset.id,
+      file_id: fid,
+      raw_file_id: rawFid,
+    }
   }
 
   /** 后台提取：解密原文 → 每页文字 → 打码后交给模型 → 待确认的化验（带页码、原文核对结果）。 */

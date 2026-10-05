@@ -150,4 +150,32 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(res.data.recist_metrics.longest_diameter_mm).toBeGreaterThan(200)
     expect(res.data.recist_metrics.total_volume_cm3).toBeGreaterThan(1000)
   })
+
+  it('6. imaging_analyze (支气管扩张与粘液栓): 真实全胸部 HRCT 样本端到端推理与 Fleischner 准则量化', async () => {
+    const { env, call } = await connectImagingMcp()
+    const res = await call('imaging_analyze', {
+      sample_id: 'chest_lung_ct',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      window_preset: 'lung',
+      bar_cutoff: 1.10,
+      mucus_min_hu: 10,
+      mucus_max_hu: 75,
+      ham_threshold_hu: 70,
+      label: '图 3 真实全胸部 HRCT 支气管扩张与粘液栓分析关键截面',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.model_name).toBe('bronchiectasis_mucus_analyzer')
+    expect(res.data.modality).toBe('Chest HRCT')
+    expect(res.data.metrics.broncho_arterial_ratio).toBeGreaterThan(1.0)
+    expect(res.data.metrics.total_mucus_volume_cm3).toBeGreaterThan(0)
+    expect(res.data.metrics.signs_detected.length).toBeGreaterThanOrEqual(3)
+
+    // 验证资产已沉淀为 PNG 格式
+    const assetRow = env.docs.store.getAsset(res.data.asset_id)
+    expect(assetRow?.mime).toBe('image/png')
+    expect(assetRow?.size).toBeGreaterThan(1000)
+  }, 30000)
 })

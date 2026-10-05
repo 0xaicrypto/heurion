@@ -453,6 +453,11 @@ export function createCanvasApp(deps: CanvasAppDeps) {
         }
       }
 
+      if (body.mucus_min_hu !== undefined) reqBody.mucus_min_hu = body.mucus_min_hu
+      if (body.mucus_max_hu !== undefined) reqBody.mucus_max_hu = body.mucus_max_hu
+      if (body.ham_threshold_hu !== undefined) reqBody.ham_threshold_hu = body.ham_threshold_hu
+      if (body.bar_cutoff !== undefined) reqBody.bar_cutoff = body.bar_cutoff
+
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

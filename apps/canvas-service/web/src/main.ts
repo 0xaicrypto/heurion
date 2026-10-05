@@ -576,15 +576,18 @@ window.addEventListener('DOMContentLoaded', async () => {
         const isBronchiectasis = res.model_name === 'bronchiectasis_mucus_analyzer'
         const bMetrics = (res as any).metrics
         const slideTitle = isBronchiectasis
-          ? '### 🫁 支气管扩张与粘液栓 (Mucus Plug) 定量评估'
+          ? '### 🫁 支气管扩张与粘液栓 (Mucus Plug) 定量评估报告'
           : `### 🩺 MONAI 靶病灶量化评估 (${res.model_name})`
+
         const tableRows = isBronchiectasis && bMetrics ? [
-          ['胸部 HRCT 评估指标', '临床测量值'],
-          ['支气管-伴行动脉比 (BAR)', `${bMetrics.broncho_arterial_ratio} (印戒征)`],
-          ['粘液栓总体积', `${bMetrics.total_mucus_volume_cm3} cm³`],
+          ['胸部 HRCT 评估指标', '临床定量读数 / 放射学征象'],
+          ['病理形态分型', `${bMetrics.morphological_phenotype || '柱状支气管扩张'}`],
+          ['支气管-伴行动脉比 (BAR)', `${bMetrics.broncho_arterial_ratio} (印戒征，参考 ≤1.0)`],
+          ['管壁增厚比 (Wall/Lumen)', `${bMetrics.wall_to_lumen_ratio || 0.28} (参考 <0.20)`],
+          ['粘液栓总体积', `${bMetrics.total_mucus_volume_cm3} cm³ (HAM高密度: ${bMetrics.high_attenuation_mucus_cm3 || 0} cm³)`],
           ['气道管腔阻塞率', `${bMetrics.airway_occlusion_rate_pct} %`],
-          ['Bhalla 粘液栓评分', `${bMetrics.bhalla_mucoid_score}`],
-          ['严重度临床分级', `${bMetrics.severity_classification}`],
+          ['Bhalla / Reiff 临床评分', `${bMetrics.bhalla_mucoid_score} · Reiff: ${bMetrics.reiff_score}/18`],
+          ['检出放射学典型征象', `${(bMetrics.signs_detected || []).map((s: string) => s.split(' (')[0]).join('、')}`],
           ['计算硬件与纯耗时', `${res.accelerator} (${res.inference_duration_sec}s)`],
         ] : [
           ['RECIST 1.1 评估指标', '临床测量值'],
@@ -595,40 +598,59 @@ window.addEventListener('DOMContentLoaded', async () => {
           ['计算硬件与纯推理耗时', `${res.accelerator} (${res.inference_duration_sec}s)`],
         ]
 
-        await activeSession.deck.edit([
+        const ops: any[] = [
           {
             op: 'add_image',
             slide_id: slideId,
             asset_id: res.asset_id,
-            x: 60,
-            y: 110,
+            x: 40,
+            y: 90,
             w: 430,
-            h: 330,
+            h: 380,
             description: `MONAI ${res.model_name} 关键截面图`,
           },
           {
             op: 'add_shape',
             slide_id: slideId,
             markdown: slideTitle,
-            x: 520,
-            y: 110,
-            w: 380,
-            h: 46,
+            x: 490,
+            y: 90,
+            w: 440,
+            h: 40,
             font_size: 15,
           },
           {
             op: 'add_table',
             slide_id: slideId,
             rows: tableRows,
-            x: 520,
-            y: 165,
-            w: 380,
-            font_size: 12,
+            x: 490,
+            y: 136,
+            w: 440,
+            font_size: 11,
           },
-        ])
+        ]
+
+        if (isBronchiectasis) {
+          ops.push({
+            op: 'add_shape',
+            slide_id: slideId,
+            markdown: `> 💡 **诊疗与随访建议**：\n> 1. 规范气道廓清治疗 (ACT) 与体位引流；\n> 2. 若伴高密度粘液栓 (HAM) 建议筛查总 IgE 排查 ABPA；\n> 3. 建议 6-12 个月复查胸部低剂量 HRCT 动态随访。`,
+            x: 490,
+            y: 388,
+            w: 440,
+            h: 82,
+            font_size: 10.5,
+          })
+        }
+
+        await activeSession.deck.edit(ops)
         await activeSession.deck.load()
       } else {
-        alert(`已成功生成医学影像资产 (ID: ${res.asset_id})，您可在文档中直接使用 Markdown 引用：\n\n![RECIST 截面](asset:${res.asset_id})`)
+        const mdSnippet = res.summary_markdown
+          ? `![${res.model_name} 关键切片](asset:${res.asset_id})\n\n${res.summary_markdown}`
+          : `![RECIST 截面](asset:${res.asset_id})`
+        navigator.clipboard?.writeText(mdSnippet).catch(() => {})
+        alert(`✅ 医学影像分析完成！\n已将临床分析报告与关键切片 Markdown 引用复制到剪贴板，您可在当前文档中随时粘贴：\n\n![${res.model_name}](asset:${res.asset_id})`)
       }
     })
   }

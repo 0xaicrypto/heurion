@@ -132,11 +132,14 @@ const ALL_PARITY: Record<string, string> = {
   'GET /api/phr/directory': 'phr_share.directory', 'GET /api/phr/:ptid/shares': 'phr_share.list', 'POST /api/phr/:ptid/shares': 'phr_share.create', 'DELETE /api/phr/shares/:shid': 'phr_share.revoke',
   'GET /api/shares': 'share_list', 'GET /api/shares/:shid': 'share_read', 'GET /api/shares/:shid/docs/:id': 'share_read',
   'GET /api/shares/:shid/labs': 'share_labs', 'GET /api/shares/:shid/files/:pfid': 'share_file', 'POST /api/shares/:shid/import': 'share_import',
-  // 机构患者认领码绑定与 PHI 敏感数据扫描 (PATIENT.md §4, §8)
   'POST /api/patients/:ptid/claim_code': 'patient_claim_code',
   'GET /api/patients/:ptid/claims': 'patient_claims_list',
   'GET /api/phr/:ptid/links': 'phr_member_links',
   'POST /api/ops/phi-scan': 'phi_scan',
+  // MONAI 医学影像微服务与患者影像分析 (imaging_*)
+  'GET /api/imaging/status': 'imaging_status',
+  'GET /api/imaging/models': 'imaging_models',
+  'POST /api/patients/:ptid/imaging/analyze': 'imaging_analyze',
 }
 
 /** AI 发起后要用户在确认卡上确认才执行的动作（不可恢复的删除、权限与安全、以机构身份对外的标识）。 */
@@ -153,6 +156,8 @@ const AI_CONFIRM = [
 /** 不给 AI 的（只是界面机制，或必须本人亲自做）；每条写清理由。 */
 const NOT_FOR_AI: Record<string, string> = {
   'GET /api/images': '界面用来决定是否显示搜图入口；AI 从 image_search 返回的 unsplash_unconfigured 得知图库没配置',
+  'GET /api/imaging/samples': '界面用来获取可供医生体验的临床预置样本列表（如 chest_lung_ct 269层）；AI 可直接通过 imaging_analyze 的 sample_id 指定',
+  'GET /api/imaging/samples/:id/file': '预置 3D 样本体素文件二进制下载流，由界面下载；AI 读量化指标与关键截面',
   // 知家分享原件图片由界面展示
   'GET /api/shares/:shid/assets/:aid': '图片二进制资产由界面渲染展示；AI 读打码后的文字内容（share_file / share_read）',
   // 机构患者认领码绑定的人机分界

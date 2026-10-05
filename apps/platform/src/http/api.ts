@@ -484,6 +484,269 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return patientFailure(c, err) }
   })
   app.delete('/api/patients/:ptid/docs/:id', c => { try { pt(c).unlinkDoc(me(c), c.req.param('ptid'), c.req.param('id')); return c.json({ ok: true }) } catch (err) { return patientFailure(c, err) } })
+
+  // —— MONAI 医学影像微服务与患者影像量化分析 ——
+  const imagingWorkerUrl = (process.env.IMAGING_WORKER_URL || 'http://127.0.0.1:8004').replace(/\/+$/, '')
+
+  app.get('/api/imaging/status', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/health`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return c.json({ error: 'imaging_worker_error', status: 'error' }, 502)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message, status: 'offline' }, 503)
+    }
+  })
+
+  app.get('/api/imaging/models', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/models`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return c.json({ error: 'imaging_worker_error' }, 502)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.get('/api/imaging/samples', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/samples`, { signal: AbortSignal.timeout(3000) })
+      if (!resp.ok) return c.json({ error: 'imaging_worker_error' }, 502)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.get('/api/imaging/samples/:id/file', async c => {
+    try {
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/samples/${c.req.param('id')}/file`, { signal: AbortSignal.timeout(20000) })
+      if (!resp.ok) return c.json({ error: 'sample_not_found' }, 404)
+      const mime = resp.headers.get('content-type') || 'application/gzip'
+      return c.body(new Uint8Array(await resp.arrayBuffer()), 200, {
+        'Content-Type': mime,
+        'Content-Disposition': `attachment; filename="${c.req.param('id')}.nii.gz"`,
+      })
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/patients/:ptid/imaging/analyze', async c => {
+    try {
+      const contentType = c.req.header('content-type') || ''
+      let sampleId: string | undefined
+      let modelId: string | undefined
+      let windowPreset: string | undefined
+      let barCutoff: number | undefined
+      let mucusMinHu: number | undefined
+      let mucusMaxHu: number | undefined
+      let hamThresholdHu: number | undefined
+      let reportDate: string | undefined
+      let title: string | undefined
+      let autoTag = true
+      let fileBuffer: Buffer | null = null
+      let fileName = ''
+
+      if (contentType.includes('multipart/form-data')) {
+        const form = await c.req.parseBody()
+        sampleId = typeof form.sample_id === 'string' ? form.sample_id : undefined
+        modelId = typeof form.model_id === 'string' ? form.model_id : undefined
+        windowPreset = typeof form.window_preset === 'string' ? form.window_preset : undefined
+        barCutoff = form.bar_cutoff ? Number(form.bar_cutoff) : undefined
+        mucusMinHu = form.mucus_min_hu ? Number(form.mucus_min_hu) : undefined
+        mucusMaxHu = form.mucus_max_hu ? Number(form.mucus_max_hu) : undefined
+        hamThresholdHu = form.ham_threshold_hu ? Number(form.ham_threshold_hu) : undefined
+        reportDate = typeof form.report_date === 'string' ? form.report_date : undefined
+        title = typeof form.title === 'string' ? form.title : undefined
+        if (form.auto_tag !== undefined) autoTag = String(form.auto_tag) !== 'false'
+        if (form.file instanceof File) {
+          fileName = form.file.name
+          fileBuffer = Buffer.from(await form.file.arrayBuffer())
+        }
+      } else {
+        const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
+        sampleId = body.sample_id
+        modelId = body.model_id
+        windowPreset = body.window_preset
+        barCutoff = body.bar_cutoff
+        mucusMinHu = body.mucus_min_hu
+        mucusMaxHu = body.mucus_max_hu
+        hamThresholdHu = body.ham_threshold_hu
+        reportDate = body.report_date
+        title = body.title
+        if (body.auto_tag !== undefined) autoTag = Boolean(body.auto_tag)
+      }
+
+      const patientId = c.req.param('ptid')
+      pt(c).assertEditable(me(c), patientId)
+
+      let resultData: any
+      if (fileBuffer) {
+        const formData = new FormData()
+        const blob = new Blob([new Uint8Array(fileBuffer)], { type: 'application/octet-stream' })
+        formData.append('file', blob, fileName || 'scan.nii.gz')
+        formData.append('model_name', modelId || 'bronchiectasis_mucus_analyzer')
+        if (windowPreset) formData.append('window_preset', windowPreset)
+
+        const resp = await fetch(`${imagingWorkerUrl}/api/v1/analyze/upload`, {
+          method: 'POST',
+          body: formData,
+          signal: AbortSignal.timeout(60000),
+        })
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '')
+          return c.json({ error: 'imaging_inference_failed', message: `影像推理失败 HTTP ${resp.status}: ${errText}` }, 502)
+        }
+        resultData = await resp.json()
+      } else if (sampleId) {
+        const resp = await fetch(`${imagingWorkerUrl}/api/v1/analyze/sample`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sample_id: sampleId,
+            model_name: modelId,
+            window_preset: windowPreset,
+            bar_cutoff: barCutoff,
+            mucus_min_hu: mucusMinHu,
+            mucus_max_hu: mucusMaxHu,
+            ham_threshold_hu: hamThresholdHu,
+          }),
+          signal: AbortSignal.timeout(60000),
+        })
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '')
+          return c.json({ error: 'imaging_inference_failed', message: `影像样本推理失败 HTTP ${resp.status}: ${errText}` }, 502)
+        }
+        resultData = await resp.json()
+      } else {
+        const resp = await fetch(`${imagingWorkerUrl}/api/v1/analyze/benchmark`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model_name: modelId || 'bronchiectasis_mucus_analyzer',
+            window_preset: windowPreset || 'lung',
+            bar_cutoff: barCutoff,
+            mucus_min_hu: mucusMinHu,
+            mucus_max_hu: mucusMaxHu,
+            ham_threshold_hu: hamThresholdHu,
+          }),
+          signal: AbortSignal.timeout(60000),
+        })
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '')
+          return c.json({ error: 'imaging_inference_failed', message: `模拟推理失败 HTTP ${resp.status}: ${errText}` }, 502)
+        }
+        resultData = await resp.json()
+      }
+
+      const b64Data = String(resultData.key_slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+      if (!b64Data) return c.json({ error: 'no_image_output', message: '影像计算未返回切片图像' }, 500)
+      const pngBuffer = Buffer.from(b64Data, 'base64')
+
+      const rawMetrics = resultData.metrics || {}
+      const rm = resultData.recist_metrics
+      const barRatio = rawMetrics.broncho_arterial_ratio ?? rawMetrics.bar_ratio
+      const hasSignet = barRatio !== undefined ? barRatio > (barCutoff || 1.10) : Boolean(rawMetrics.signet_ring_sign)
+      const hamVol = rawMetrics.high_attenuation_mucus_cm3 ?? rawMetrics.ham_volume_mm3 ?? 0
+      const hasHam = hamVol > 0 || Boolean(rawMetrics.high_attenuation_mucus_ham)
+      const mucusVol = rawMetrics.total_mucus_volume_cm3 ?? rawMetrics.mucus_plug_volume_mm3 ?? 0
+      const occlusionRate = rawMetrics.airway_occlusion_rate_pct ?? rawMetrics.airway_mucus_occlusion_pct ?? 0
+      const hasTreeInBud = Boolean(rawMetrics.tree_in_bud_volume_cm3 > 0 || rawMetrics.tree_in_bud_sign)
+
+      const normalizedMetrics = {
+        ...rawMetrics,
+        bar_ratio: barRatio,
+        signet_ring_sign: hasSignet,
+        total_mucus_volume_cm3: mucusVol,
+        high_attenuation_mucus_cm3: hamVol,
+        high_attenuation_mucus_ham: hasHam,
+        airway_occlusion_rate_pct: occlusionRate,
+        longest_diameter_mm: rm?.longest_diameter_mm ?? rawMetrics.bronchus_caliber_mm ?? 0,
+        short_axis_mm: rm?.short_axis_mm ?? rawMetrics.artery_caliber_mm ?? 0,
+        total_volume_cm3: rm?.total_volume_cm3 ?? mucusVol,
+        key_slice_index: resultData.key_slice_index ?? rm?.key_slice_index ?? 0,
+      }
+
+      const findings: string[] = []
+      const tagsToAdd: string[] = []
+
+      if (barRatio !== undefined) {
+        if (hasSignet) {
+          findings.push(`印戒征阳性 (BAR ${barRatio.toFixed(2)} > ${barCutoff || 1.10})`)
+          tagsToAdd.push('支气管扩张')
+        }
+        if (hasHam) {
+          findings.push(`高密度粘液栓 (HAM) 阳性 (${hamVol} cm³，提示 ABPA 变应性支气管肺曲霉病)`)
+          tagsToAdd.push('ABPA疑诊')
+        }
+        if (mucusVol > 0) {
+          findings.push(`支气管管腔粘液栓体积 ${mucusVol} cm³ (管腔阻塞率 ${occlusionRate}%)`)
+        }
+        if (hasTreeInBud) {
+          findings.push('树芽征 (Tree-in-Bud) 细支气管炎表现阳性')
+        }
+      } else if (rm && rm.longest_diameter_mm > 0) {
+        findings.push(`RECIST 1.1 靶病灶最大截面长径 ${rm.longest_diameter_mm} mm (短径 ${rm.short_axis_mm} mm)`)
+        findings.push(`3D 病灶体积 ${rm.total_volume_cm3} cm³ (关键截面第 #${rm.key_slice_index} 层)`)
+        tagsToAdd.push('占位性病变')
+      }
+
+      const defaultTitle = modelId === 'bronchiectasis_mucus_analyzer' || resultData.model_name?.includes('bronchiectasis')
+        ? '胸部 HRCT 支气管扩张与粘液栓定量分析'
+        : `${resultData.modality || 'CT'} 3D 靶病灶 RECIST 1.1 量化分析`
+
+      let rawVolume: { name: string; bytes: Uint8Array; mime?: string } | undefined
+      if (fileBuffer) {
+        rawVolume = {
+          name: fileName || 'scan.nii.gz',
+          bytes: new Uint8Array(fileBuffer),
+          mime: fileName.endsWith('.dcm') ? 'application/dicom' : 'application/gzip',
+        }
+      } else if (sampleId) {
+        try {
+          const sResp = await fetch(`${imagingWorkerUrl}/api/v1/samples/${sampleId}/file`, { signal: AbortSignal.timeout(10000) })
+          if (sResp.ok) {
+            const buf = await sResp.arrayBuffer()
+            rawVolume = {
+              name: `${sampleId}.nii.gz`,
+              bytes: new Uint8Array(buf),
+              mime: 'application/gzip',
+            }
+          }
+        } catch (e) {
+          console.warn('[sample-download-warning]', e)
+        }
+      }
+
+      const saved = pt(c).addImagingRecord(me(c), patientId, {
+        title: title || defaultTitle,
+        report_date: reportDate || new Date().toISOString().slice(0, 10),
+        model_id: modelId || resultData.model_name || 'bronchiectasis_mucus_analyzer',
+        sample_id: sampleId || null,
+        modality: resultData.modality || 'Chest HRCT',
+        metrics: normalizedMetrics,
+        findings,
+        key_slice_png: pngBuffer,
+        raw_volume_file: rawVolume,
+        add_tags: autoTag && tagsToAdd.length > 0 ? tagsToAdd : undefined,
+      })
+
+      return c.json({
+        ok: true,
+        record: saved.record,
+        asset_id: saved.asset_id,
+        file_id: saved.file_id,
+        raw_file_id: saved.raw_file_id,
+        metrics: saved.record.imaging_data?.metrics,
+        findings,
+        tags_added: autoTag ? tagsToAdd : [],
+      }, 201)
+    } catch (err) {
+      return patientFailure(c, err)
+    }
+  })
+
   // —— 知家分享给医生（docs/design/SHARING.md）——
   const shares = deps.shares ?? (deps.patients ? new ShareService(store, tenants, deps.patients, docs) : null)
   const sh = () => {

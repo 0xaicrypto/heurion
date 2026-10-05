@@ -92,7 +92,8 @@ class MONAIEngine:
         self,
         file_path: str,
         model_name: str = "spleen_segmenter",
-        window_preset: Optional[str] = None
+        window_preset: Optional[str] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """Loads a NIfTI or DICOM dataset and runs MONAI analysis."""
         try:
@@ -124,7 +125,8 @@ class MONAIEngine:
             spacing=spacing,
             model_name=model_name,
             window_preset=window_preset,
-            modality=modality
+            modality=modality,
+            **kwargs
         )
 
     def analyze_volume(
@@ -133,7 +135,8 @@ class MONAIEngine:
         spacing: Tuple[float, float, float] = (1.5, 0.8, 0.8),
         model_name: str = "lung_nodule_segmenter",
         window_preset: str = "lung",
-        modality: str = "CT"
+        modality: str = "CT",
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Executes end-to-end MONAI inference on a 3D medical volume:
@@ -147,7 +150,15 @@ class MONAIEngine:
                 from .bronchiectasis import analyze_bronchiectasis_and_mucus
             except (ImportError, ValueError):
                 from bronchiectasis import analyze_bronchiectasis_and_mucus
-            b_res = analyze_bronchiectasis_and_mucus(volume, spacing=spacing, window_preset="lung")
+            b_args: Dict[str, Any] = {
+                "volume": volume,
+                "spacing": spacing,
+                "window_preset": window_preset or "lung"
+            }
+            for k in ("mucus_min_hu", "mucus_max_hu", "ham_threshold_hu", "bar_cutoff"):
+                if k in kwargs and kwargs[k] is not None:
+                    b_args[k] = float(kwargs[k])
+            b_res = analyze_bronchiectasis_and_mucus(**b_args)
             b_res["model_name"] = "bronchiectasis_mucus_analyzer"
             b_res["modality"] = "Chest HRCT"
             b_res["recist_metrics"] = {
