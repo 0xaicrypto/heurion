@@ -139,9 +139,26 @@ class MONAIEngine:
         Executes end-to-end MONAI inference on a 3D medical volume:
         1. Preprocessing & tensor transfer to accelerator (MPS / CUDA)
         2. 3D Segmentation inference on device
-        3. RECIST 1.1 quantitative caliper calculation (ConvexHull accelerated)
+        3. RECIST 1.1 / Broncho-Arterial Ratio & Mucus quantification
         4. Key-slice PNG generation with clinical overlay HUD
         """
+        if model_name in ("bronchiectasis_mucus_analyzer", "bronchiectasis"):
+            try:
+                from .bronchiectasis import analyze_bronchiectasis_and_mucus
+            except (ImportError, ValueError):
+                from bronchiectasis import analyze_bronchiectasis_and_mucus
+            b_res = analyze_bronchiectasis_and_mucus(volume, spacing=spacing, window_preset="lung")
+            b_res["model_name"] = "bronchiectasis_mucus_analyzer"
+            b_res["modality"] = "Chest HRCT"
+            b_res["recist_metrics"] = {
+                "longest_diameter_mm": b_res["metrics"]["bronchus_caliber_mm"],
+                "short_axis_mm": b_res["metrics"]["artery_caliber_mm"],
+                "total_volume_cm3": b_res["metrics"]["total_mucus_volume_cm3"],
+                "key_slice_index": b_res["key_slice_index"],
+                "has_lesion": True
+            }
+            return b_res
+
         t0 = time.time()
         tensor_vol = torch.from_numpy(volume).to(self.device)
         

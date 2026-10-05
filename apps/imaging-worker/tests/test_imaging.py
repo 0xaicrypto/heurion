@@ -88,3 +88,21 @@ def test_api_models_and_samples():
     assert data["status"] == "success"
     assert data["recist_metrics"]["longest_diameter_mm"] > 0
     assert data["key_slice_png_base64"].startswith("data:image/png;base64,")
+
+def test_bronchiectasis_and_mucus_analysis():
+    client = TestClient(app)
+    res = client.post("/api/v1/analyze/bronchiectasis", json={
+        "model_name": "bronchiectasis_mucus_analyzer",
+        "z_slices": 24,
+        "y_dim": 64,
+        "x_dim": 64
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["analysis_type"] == "bronchiectasis_and_mucus"
+    assert "metrics" in data
+    assert data["metrics"]["broncho_arterial_ratio"] > 1.0
+    assert data["metrics"]["total_mucus_volume_cm3"] > 0
+    assert "印戒征" in str(data["metrics"]["signs_detected"])
+    assert data["key_slice_png_base64"].startswith("data:image/png;base64,")

@@ -98,6 +98,13 @@ def list_clinical_models():
                 "modality": "Brain MRI (T1, T1c, T2, FLAIR)",
                 "target": "Enhancing Tumor, Edema, Necrotic Core",
                 "recommended_window": "brain"
+            },
+            {
+                "id": "bronchiectasis_mucus_analyzer",
+                "name": "支气管扩张与粘液栓 (Mucus Plug) 定量分析",
+                "modality": "Chest HRCT",
+                "target": "Airway Tree, Broncho-Arterial Ratio (BAR), Mucus Occlusion, Tree-in-Bud",
+                "recommended_window": "lung"
             }
         ]
     }
@@ -130,6 +137,23 @@ def list_samples():
 @app.post("/api/v1/analyze/benchmark")
 def run_benchmark_analysis(req: BenchmarkRequest = Body(...)):
     """Generates synthetic anatomical volume and runs MONAI inference on device."""
+    model_name = req.model_name or "lung_nodule_segmenter"
+    if model_name in ("bronchiectasis_mucus_analyzer", "bronchiectasis"):
+        try:
+            from .bronchiectasis import generate_synthetic_bronchiectasis_ct
+        except (ImportError, ValueError):
+            from bronchiectasis import generate_synthetic_bronchiectasis_ct
+        vol, _, _ = generate_synthetic_bronchiectasis_ct(
+            shape=(req.z_slices or 48, req.y_dim or 128, req.x_dim or 128),
+            spacing=(1.5, 0.8, 0.8)
+        )
+        return engine.analyze_volume(
+            volume=vol,
+            spacing=(1.5, 0.8, 0.8),
+            model_name="bronchiectasis_mucus_analyzer",
+            window_preset="lung"
+        )
+
     vol, _ = generate_synthetic_ct_volume(
         shape=(req.z_slices, req.y_dim, req.x_dim),
         spacing=(1.5, 0.8, 0.8)
@@ -137,10 +161,28 @@ def run_benchmark_analysis(req: BenchmarkRequest = Body(...)):
     result = engine.analyze_volume(
         volume=vol,
         spacing=(1.5, 0.8, 0.8),
-        model_name=req.model_name or "lung_nodule_segmenter",
+        model_name=model_name,
         window_preset=req.window_preset or "lung"
     )
     return result
+
+@app.post("/api/v1/analyze/bronchiectasis")
+def run_bronchiectasis_analysis(req: BenchmarkRequest = Body(...)):
+    """Specialized endpoint for HRCT Bronchiectasis & Mucus Plug quantification."""
+    try:
+        from .bronchiectasis import generate_synthetic_bronchiectasis_ct
+    except (ImportError, ValueError):
+        from bronchiectasis import generate_synthetic_bronchiectasis_ct
+    vol, _, _ = generate_synthetic_bronchiectasis_ct(
+        shape=(req.z_slices or 48, req.y_dim or 128, req.x_dim or 128),
+        spacing=(1.5, 0.8, 0.8)
+    )
+    return engine.analyze_volume(
+        volume=vol,
+        spacing=(1.5, 0.8, 0.8),
+        model_name="bronchiectasis_mucus_analyzer",
+        window_preset="lung"
+    )
 
 @app.post("/api/v1/analyze/sample")
 def run_sample_analysis(req: SampleRequest = Body(...)):

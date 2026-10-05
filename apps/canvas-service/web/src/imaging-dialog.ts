@@ -137,39 +137,72 @@ export async function openImagingDialog(
                 <!-- 右侧指标看板 -->
                 <div>
                   <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:8px;">
-                    📊 RECIST 1.1 肿瘤量化评估指标
+                    ${currentResult.model_name === 'bronchiectasis_mucus_analyzer'
+                      ? '🫁 支气管扩张与粘液栓 (Mucus Plug) 临床量化指标'
+                      : '📊 RECIST 1.1 肿瘤量化评估指标'}
                   </div>
                   <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:12px;">
-                    <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
-                      <div style="font-size:11px; color:#64748b;">RECIST 1.1 最大长径</div>
-                      <div style="font-size:18px; font-weight:700; color:#0284c7;">
-                        ${currentResult.recist_metrics.longest_diameter_mm} <span style="font-size:12px;">mm</span>
+                    ${currentResult.model_name === 'bronchiectasis_mucus_analyzer' && (currentResult as any).metrics ? `
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">支气管-伴行动脉比 (BAR)</div>
+                        <div style="font-size:18px; font-weight:700; color:#0284c7;">
+                          ${(currentResult as any).metrics.broncho_arterial_ratio} <span style="font-size:11px; color:#059669;">(正常 ≤1.0)</span>
+                        </div>
                       </div>
-                    </div>
-                    <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
-                      <div style="font-size:11px; color:#64748b;">垂直短径 (Short Axis)</div>
-                      <div style="font-size:18px; font-weight:700; color:#0f172a;">
-                        ${currentResult.recist_metrics.short_axis_mm} <span style="font-size:12px;">mm</span>
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">粘液栓总体积</div>
+                        <div style="font-size:18px; font-weight:700; color:#ef4444;">
+                          ${(currentResult as any).metrics.total_mucus_volume_cm3} <span style="font-size:12px;">cm³</span>
+                        </div>
                       </div>
-                    </div>
-                    <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
-                      <div style="font-size:11px; color:#64748b;">脏器 / 病灶总体积</div>
-                      <div style="font-size:18px; font-weight:700; color:#059669;">
-                        ${currentResult.recist_metrics.total_volume_cm3} <span style="font-size:12px;">cm³</span>
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">气道管腔阻塞率</div>
+                        <div style="font-size:18px; font-weight:700; color:#d97706;">
+                          ${(currentResult as any).metrics.airway_occlusion_rate_pct} <span style="font-size:12px;">%</span>
+                        </div>
                       </div>
-                    </div>
-                    <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
-                      <div style="font-size:11px; color:#64748b;">GPU 计算耗时</div>
-                      <div style="font-size:18px; font-weight:700; color:#7c3aed;">
-                        ${currentResult.inference_duration_sec} <span style="font-size:12px;">s</span>
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">GPU 计算耗时</div>
+                        <div style="font-size:18px; font-weight:700; color:#7c3aed;">
+                          ${currentResult.inference_duration_sec} <span style="font-size:12px;">s</span>
+                        </div>
                       </div>
-                    </div>
+                    ` : `
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">RECIST 1.1 最大长径</div>
+                        <div style="font-size:18px; font-weight:700; color:#0284c7;">
+                          ${currentResult.recist_metrics.longest_diameter_mm} <span style="font-size:12px;">mm</span>
+                        </div>
+                      </div>
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">垂直短径 (Short Axis)</div>
+                        <div style="font-size:18px; font-weight:700; color:#0f172a;">
+                          ${currentResult.recist_metrics.short_axis_mm} <span style="font-size:12px;">mm</span>
+                        </div>
+                      </div>
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">脏器 / 病灶总体积</div>
+                        <div style="font-size:18px; font-weight:700; color:#059669;">
+                          ${currentResult.recist_metrics.total_volume_cm3} <span style="font-size:12px;">cm³</span>
+                        </div>
+                      </div>
+                      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px;">
+                        <div style="font-size:11px; color:#64748b;">GPU 计算耗时</div>
+                        <div style="font-size:18px; font-weight:700; color:#7c3aed;">
+                          ${currentResult.inference_duration_sec} <span style="font-size:12px;">s</span>
+                        </div>
+                      </div>
+                    `}
                   </div>
 
                   <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px; font-size:12px; color:#334155; line-height:1.6;">
                     • <b>计算硬件</b>：<code>${esc(currentResult.accelerator)}</code><br>
                     • <b>分析模型</b>：<code>${esc(currentResult.model_name)}</code><br>
-                    • <b>资产编号</b>：<code>${esc(currentResult.asset_id)}</code> (已写入平台云端资产库)
+                    ${(currentResult as any).metrics ? `
+                      • <b>严重度分级</b>：<span style="color:#b91c1c; font-weight:600;">${esc((currentResult as any).metrics.severity_classification)}</span><br>
+                      • <b>检出征象</b>：${esc(((currentResult as any).metrics.signs_detected || []).join(' · '))}<br>
+                    ` : ''}
+                    • <b>资产编号</b>：<code>${esc(currentResult.asset_id)}</code>
                   </div>
                 </div>
               </div>

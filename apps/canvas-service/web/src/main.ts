@@ -573,6 +573,28 @@ window.addEventListener('DOMContentLoaded', async () => {
           return
         }
 
+        const isBronchiectasis = res.model_name === 'bronchiectasis_mucus_analyzer'
+        const bMetrics = (res as any).metrics
+        const slideTitle = isBronchiectasis
+          ? '### 🫁 支气管扩张与粘液栓 (Mucus Plug) 定量评估'
+          : `### 🩺 MONAI 靶病灶量化评估 (${res.model_name})`
+        const tableRows = isBronchiectasis && bMetrics ? [
+          ['胸部 HRCT 评估指标', '临床测量值'],
+          ['支气管-伴行动脉比 (BAR)', `${bMetrics.broncho_arterial_ratio} (印戒征)`],
+          ['粘液栓总体积', `${bMetrics.total_mucus_volume_cm3} cm³`],
+          ['气道管腔阻塞率', `${bMetrics.airway_occlusion_rate_pct} %`],
+          ['Bhalla 粘液栓评分', `${bMetrics.bhalla_mucoid_score}`],
+          ['严重度临床分级', `${bMetrics.severity_classification}`],
+          ['计算硬件与纯耗时', `${res.accelerator} (${res.inference_duration_sec}s)`],
+        ] : [
+          ['RECIST 1.1 评估指标', '临床测量值'],
+          ['关键横截面 (Key Slice)', `第 #${res.recist_metrics.key_slice_index} 层`],
+          ['最大长径 (Longest Diameter)', `${res.recist_metrics.longest_diameter_mm} mm`],
+          ['垂直短径 (Short Axis)', `${res.recist_metrics.short_axis_mm} mm`],
+          ['脏器 / 病灶总体积', `${res.recist_metrics.total_volume_cm3} cm³`],
+          ['计算硬件与纯推理耗时', `${res.accelerator} (${res.inference_duration_sec}s)`],
+        ]
+
         await activeSession.deck.edit([
           {
             op: 'add_image',
@@ -587,28 +609,21 @@ window.addEventListener('DOMContentLoaded', async () => {
           {
             op: 'add_shape',
             slide_id: slideId,
-            markdown: `### 🩺 MONAI 靶病灶量化评估 (${res.model_name})`,
+            markdown: slideTitle,
             x: 520,
             y: 110,
             w: 380,
-            h: 50,
-            font_size: 16,
+            h: 46,
+            font_size: 15,
           },
           {
             op: 'add_table',
             slide_id: slideId,
-            rows: [
-              ['RECIST 1.1 评估指标', '临床测量值'],
-              ['关键横截面 (Key Slice)', `第 #${res.recist_metrics.key_slice_index} 层`],
-              ['最大长径 (Longest Diameter)', `${res.recist_metrics.longest_diameter_mm} mm`],
-              ['垂直短径 (Short Axis)', `${res.recist_metrics.short_axis_mm} mm`],
-              ['脏器 / 病灶总体积', `${res.recist_metrics.total_volume_cm3} cm³`],
-              ['计算硬件与纯推理耗时', `${res.accelerator} (${res.inference_duration_sec}s)`],
-            ],
+            rows: tableRows,
             x: 520,
-            y: 170,
+            y: 165,
             w: 380,
-            font_size: 13,
+            font_size: 12,
           },
         ])
         await activeSession.deck.load()
