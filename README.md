@@ -17,10 +17,227 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License" /></a>
 </p>
 
-[功能特性](#-核心特性) • [双服务架构](#-双服务架构解耦) • [快速开始](#-快速开始) • [MCP 工具面](#-mcp-工具矩阵) • [质量保证](#-测试与质量保证) • [设计文档](#-架构与深度文档)
+<p align="center">
+  <a href="#english"><b>English</b></a> • <a href="#-heurion-20--omnicanvas-中文版"><b>简体中文</b></a> • <a href="./README_CN.md"><b>独立中文文档</b></a>
+</p>
+
+[Features](#-key-features) • [Architecture](#-dual-engine-architecture) • [Quick Start](#-quick-start) • [MCP Tools](#-mcp-tools-matrix) • [Testing](#-testing--quality-assurance) • [Docs](#-architecture--documentation)
 
 ---
 </div>
+
+<a name="english"></a>
+
+## 📖 Overview
+
+**Heurion 2.0** is an AI-native collaborative workspace and medical intelligence platform engineered for high-stakes, evidence-grounded scenarios—academic research, clinical medical documentation, slide deck design, and multi-agent collaborative editing.
+
+Unlike conventional LLM interfaces that treat documents as flat Markdown strings and overwrite entire texts, Heurion maintains a **structured document model with globally stable Block IDs**. All AI agent edits (such as DeepSeek, Claude, or GPT) interact via the standardized **Model Context Protocol (MCP)** and pass through strict operational **Write Guards** (ensuring user primacy, citation integrity, and human comment anchor preservation).
+
+The project features a **decoupled dual-engine architecture**:
+1. **Heurion Medical Platform (`@heurion2/platform`)**: Full-featured clinical & research intelligence platform with multi-source literature search (PubMed, Europe PMC, OpenAlex), personal health records (PHR), advanced cohort filtering, PHI privacy leak scanning, and multi-tenant RBAC.
+2. **OmniCanvas Microservice (`@heurion2/canvas-service`)**: Decoupled, standalone collaborative workspace inspired by Google Docs and Google Slides, equipped with 30 pure Canvas MCP tools for document layout and slide deck generation, with zero medical domain coupling.
+
+---
+
+## ✨ Key Features
+
+### 🎨 1. Google Workspace-Inspired Experience
+- **Fluid Docs & Slides Dual-Mode**: Seamlessly switch between long-form structured document authoring and 16:9 interactive presentation slide decks.
+- **Modern Designer Panel**: Built-in document outline navigation, real-time slide filmstrip, card-based layouts, instant template injection, and customizable themes.
+- **Rich Multimodal Clipboard & Live Preview**: Native clipboard extraction supporting OS screenshots, rich text, and images. Features instant local zero-latency preview (`createObjectURL`) alongside strict server-side zero-byte validation.
+
+### 🛡️ 2. Structured Document Model & Write Guards
+- **Stable Block Identifiers**: Every paragraph, heading, table, and slide possesses an immutable Block ID. AI agents insert, replace, move, or modify targeted blocks without risky whole-document overwrites.
+- **User Primacy**: Human edits take precedence in concurrent conflicts.
+- **Comment Anchor Preservation**: Re-indexes and protects inline comments and annotations across AI and human editing sessions.
+- **Atomic Transactions & Safe Rollback**: Every change to the underlying CRDT is validated, pre-checked, and applied atomically.
+
+### ⚡ 3. Self-Contained Vector Slide Rasterizer
+- **Zero Heavyweight External Dependencies**: Embedded Rust/WASM-based `@resvg/resvg-js` high-performance rendering engine.
+- **Native 4K PNG Rendering**: Renders SVG/HTML slide decks directly into high-fidelity PNG thumbnails and exports within the Node.js process—no LibreOffice (`soffice`), Docker, or headless Chrome required.
+- **Two-Tier Caching & Anti-Stampede Locks**: In-memory LRU plus on-disk caching guarded by concurrency mutexes to prevent cache stampedes under heavy traffic.
+
+### 🌐 4. Real-Time Multi-Party CRDT Collaboration
+- **Distributed Lock-Free Sync**: Powered by Yjs CRDT (Conflict-free Replicated Data Type) and WebSocket protocol for sub-millisecond human-to-human and human-to-AI co-editing.
+- **Snapshot Persistence & Reconnection**: Automatic state persistence to disk with incremental delta synchronization upon reconnecting.
+
+### 🩺 5. Academic Grounding & Clinical Compliance
+- **Multi-Source Literature Retrieval**: Integrated federated search across NCBI PubMed, Europe PMC, and OpenAlex.
+- **Citation Verification Engine**: Validates cited literature, checks DOIs/PMIDs, and automatically compiles standardized reference lists with bidirectional links.
+- **Patient Health Records (PHR) & Cohorts**: Multi-tenant patient record assets and compound cohort query builder.
+- **PHI Privacy Leak Scanner**: Built-in scanner to detect, flag, and mask Protected Health Information (PHI) before content is committed or sent off-premise.
+
+### 🤖 6. Standardized Model Context Protocol (MCP)
+- Exposes structured, safe toolsets over standard MCP transports (SSE and Stdio).
+- Out-of-the-box integration with [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh), Claude Desktop, Cursor, Gemini, and custom AI agent workflows.
+
+---
+
+## 🏛️ Dual-Engine Architecture
+
+Heurion 2.0 is structured as a modern pnpm Monorepo:
+
+```
+heurion2/
+├── apps/
+│   ├── platform/              # 🏥 Heurion 2.0 Medical Intelligence Workspace (Port: 8787)
+│   │   ├── src/
+│   │   │   ├── model/         # Structured Document/Deck schema, Block IDs & comment anchors
+│   │   │   ├── ops/           # Validation → Write Guards → Atomic application layer
+│   │   │   ├── mcp/           # Platform MCP Server (DeepSeek Harness / Claude)
+│   │   │   ├── render/        # resvg-js vector rasterizer & slide deck engine
+│   │   │   ├── literature/    # PubMed / Europe PMC / OpenAlex search & citation formatting
+│   │   │   ├── tenancy/       # Patient records, PHR share credentials & Claims
+│   │   │   ├── ops/phi-scan.ts# PHI de-identification & security scanner
+│   │   │   ├── harness/       # DeepSeek Harness sandbox process pool
+│   │   │   └── collab/        # Yjs WebSocket collaboration gateway
+│   │   └── web/               # Platform ProseMirror collaborative editing UI
+│   │
+│   ├── canvas-service/        # 🎨 OmniCanvas Standalone Canvas Microservice (Port: 8888)
+│   │   ├── src/
+│   │   │   ├── index.ts       # Standalone microservice entry (REST + WebSocket + MCP)
+│   │   │   ├── app.ts         # Pure Canvas MCP Server (30 authoring/formatting tools)
+│   │   │   └── collab.ts      # Standalone Yjs CRDT room manager
+│   │   └── web/               # Google Docs & Slides styled frontend interface
+│   │       ├── src/editor.ts  # Document editor core
+│   │       ├── src/deck.ts    # Slide deck designer core
+│   │       └── src/main.ts    # Workspace shell & command center
+│   │
+│   └── embedder/              # 🔍 Local embedding & semantic search helper service
+│
+├── docs/                      # Architectural specifications & migration plans
+└── scripts/                   # Ops, container build, and benchmarking scripts
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+- **Node.js**: $\ge 24.0.0$
+- **Package Manager**: `pnpm` ($\ge 9.0.0$)
+- *(Optional)* **Docker**: For sandboxed container deployment
+
+### 2. Installation & Configuration
+Clone the repository and prepare the environment configuration:
+
+```bash
+git clone https://github.com/0xaicrypto/heurion.git
+cd heurion2
+
+# Create environment file from template
+cp .env.example .env
+
+# Install all workspace dependencies
+pnpm install
+```
+
+Configure your credentials in `.env`:
+```ini
+# DeepSeek API Key (for dsh agent runner)
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+
+# Server ports & data directory
+PORT=8787
+HEURION_DATA_DIR=./data
+HEURION_SECRET=your_production_secret_32_bytes_string
+HEURION_DEV_TOKEN=dev
+
+# Optional: Literature search acceleration keys
+NCBI_API_KEY=
+CONTACT_EMAIL=
+```
+
+### 3. Build & Run Services
+
+#### Running Heurion Medical Platform
+```bash
+# 1. Build frontend assets
+pnpm --filter @heurion2/platform build
+
+# 2. Start platform server (Web UI + REST API + /collab + /mcp on port 8787)
+pnpm --filter @heurion2/platform dev
+```
+Open your browser at: `http://127.0.0.1:8787`
+
+> **Frontend HMR Development**: Run `pnpm --filter @heurion2/platform dev:web` to launch the Vite hot-module-reload server on `http://127.0.0.1:5173` (proxies API calls to port 8787).
+
+#### Running OmniCanvas Standalone Microservice
+```bash
+# 1. Build standalone web assets
+pnpm --filter @heurion2/canvas-service build
+
+# 2. Start standalone service (runs on port 8888)
+PORT=8888 pnpm --filter @heurion2/canvas-service dev
+```
+Open your browser at: `http://127.0.0.1:8888`
+
+---
+
+## 🛠️ MCP Tools Matrix
+
+Heurion equips AI models with a standardized, boundary-checked tool suite:
+
+### 📄 OmniCanvas General Authoring Tools (`@heurion2/canvas-service`)
+| Category | Tool Name | Description |
+| :--- | :--- | :--- |
+| **Canvas Lifecycle** | `canvas_create`, `canvas_get`, `canvas_list` | Create, inspect, and list document/slide canvas entities |
+| **Block Mutation** | `canvas_block_insert`, `canvas_block_replace` | Insert, modify, or update structured content by stable Block ID |
+| **Block Structure**| `canvas_block_move`, `canvas_block_delete` | Reorder hierarchy or safely delete blocks without corruption |
+| **Slide Authoring** | `canvas_slide_add`, `canvas_slide_update` | Add new presentation slides, apply layout templates & themes |
+| **Slide Rendering** | `canvas_slide_render`, `canvas_slide_delete`| Trigger resvg engine for 4K PNG rasterization & slide removal |
+| **Rich Elements**   | `canvas_table_insert`, `canvas_chart_insert` | Insert structured data tables and analytical charts |
+
+### 🩺 Medical Research Tools (`@heurion2/platform`)
+| Category | Tool Name | Description |
+| :--- | :--- | :--- |
+| **PubMed** | `literature_search_pubmed` | Search NCBI PubMed; retrieve structured abstracts & PMIDs |
+| **Europe PMC** | `literature_search_europepmc` | Search Europe PMC open-access articles and metadata |
+| **OpenAlex** | `literature_search_openalex` | Query OpenAlex for high-impact citations and bibliographic traces |
+| **Citations** | `format_citations` | Generate verified academic references with traceable link anchors |
+| **Clinical Records** | `patient_get`, `patient_cohort_query`| Query de-identified patient demographics & compound cohorts |
+| **PHI Protection** | `phi_scan_text` | Run HIPAA / PHI privacy leak scans against raw texts |
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+The codebase enforces strict end-to-end automated testing with a **100% test pass rate**:
+
+```bash
+# 1. Static type checking across all workspace packages and web apps
+pnpm typecheck
+
+# 2. Run unit and integration test suites (47 test suites, 361 tests passing)
+pnpm test
+
+# 3. Run real agent end-to-end evaluation (requires DEEPSEEK_API_KEY)
+pnpm --filter @heurion2/platform e2e
+
+# 4. Run browser UI end-to-end tests via Playwright
+pnpm --filter @heurion2/platform ui
+```
+
+---
+
+## 📚 Architecture & Documentation
+
+- 📘 [**Platform Architecture (PLATFORM.md)**](docs/PLATFORM.md): Document model, operational Write Guards, and DSH execution pool.
+- 📙 [**Deployment Guide (DEPLOY.md)**](docs/DEPLOY.md): Production setups, containerization, reverse proxying & TLS.
+- 📗 [**OmniCanvas Microservice Spec (canvas_mcp_standalone_architecture.md)**](file:///Users/huizhao/.gemini/antigravity-cli/brain/0c4a3943-b91a-40bb-a58c-c0bf6b82cba1/canvas_mcp_standalone_architecture.md): Pure Canvas MCP & CRDT protocol.
+- 📕 [**Cohort Architecture (COHORT.md)**](docs/design/COHORT.md): Medical cohort compound filtering rules.
+- 📒 [**Patient Data & Sharing (PATIENT.md & SHARING.md)**](docs/design/PATIENT.md): Authorization claims & record privacy.
+
+---
+
+<br />
+
+---
+
+# 🇨🇳 Heurion 2.0 & OmniCanvas (中文版)
+
+> 本节包含完整的中文版使用指南。你也可以直接查阅 [独立中文文档 (README_CN.md)](./README_CN.md)。
 
 ## 📖 平台概述 (Overview)
 
@@ -68,165 +285,28 @@
 
 ---
 
-## 🏛️ 双服务架构解耦 (Architecture)
-
-Heurion 2.0 采用现代化 pnpm Monorepo 组织代码，清晰划分医学业务工作台与通用协同微服务：
-
-```
-heurion2/
-├── apps/
-│   ├── platform/              # 🏥 Heurion 2.0 核心医学智能工作台 (Port: 8787)
-│   │   ├── src/
-│   │   │   ├── model/         # 结构化文档/幻灯片模型、Block ID、方言与评论锚点
-│   │   │   ├── ops/           # 校验 → 写前守卫 → 原子应用操作层
-│   │   │   ├── mcp/           # MCP 服务端（面向 DeepSeek Harness / Claude）
-│   │   │   ├── render/        # resvg-js 矢量光栅化与幻灯片渲染引擎
-│   │   │   ├── literature/    # PubMed / Europe PMC / OpenAlex 检索与引文格式化
-│   │   │   ├── tenancy/       # 患者档案、PHR 共享凭证与访问控制 (Claims)
-│   │   │   ├── ops/phi-scan.ts# PHI 敏感信息脱敏与安全扫描器
-│   │   │   ├── harness/       # DeepSeek Harness 沙箱进程池调度
-│   │   │   └── collab/        # Yjs WebSocket 协同网关
-│   │   └── web/               # 平台端 ProseMirror 协同编辑界面
-│   │
-│   ├── canvas-service/        # 🎨 OmniCanvas 独立画布与文档微服务 (Port: 8888)
-│   │   ├── src/
-│   │   │   ├── index.ts       # 独立微服务入口 (REST + WebSocket + MCP)
-│   │   │   ├── app.ts         # 纯净版 Canvas MCP Server（30 个排版/创作工具）
-│   │   │   └── collab.ts      # 独立 Yjs CRDT 协同房间管理
-│   │   └── web/               # Google Docs & Slides 交互工作台前端
-│   │       ├── src/editor.ts  # 文档编辑器核心
-│   │       ├── src/deck.ts    # 幻灯片设计器核心
-│   │       └── src/main.ts    # 现代工作台交互与命令体系
-│   │
-│   └── embedder/              # 🔍 本地向量与语义嵌入支持服务
-│
-├── docs/                      # 架构规范、迁移计划与设计说明
-└── scripts/                   # 自动化运维、容器构建与评测脚本
-```
-
----
-
-## 🚀 快速开始 (Quick Start)
-
-### 1. 环境准备
-- **Node.js**: $\ge 24.0.0$
-- **包管理器**: `pnpm` ($\ge 9.0.0$)
-- *(可选)* **Docker**: 用于容器化隔离沙箱部署
-
-### 2. 依赖安装与配置
-克隆代码库并配置环境变量：
+## 🚀 中文快速开始
 
 ```bash
 git clone https://github.com/0xaicrypto/heurion.git
 cd heurion2
 
-# 复制配置文件
 cp .env.example .env
-
-# 安装所有子包依赖（自动完成原生构建）
 pnpm install
-```
 
-根据需要在 `.env` 中填写配置项：
-```ini
-# DeepSeek 官方 API Key（用于 dsh 智能体）
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-
-# 服务端口与数据目录
-PORT=8787
-HEURION_DATA_DIR=./data
-HEURION_SECRET=your_production_secret_32_bytes_string
-HEURION_DEV_TOKEN=dev
-
-# 可选：文献检索提速密钥
-NCBI_API_KEY=
-CONTACT_EMAIL=
-```
-
-### 3. 编译与启动服务
-
-#### 运行全功能医学智能工作台 (Heurion Platform)
-```bash
-# 1. 编译 Web 前端资源
+# 启动 Heurion 平台 (http://127.0.0.1:8787)
 pnpm --filter @heurion2/platform build
-
-# 2. 启动服务 (默认端口 8787: 承载 Web UI + REST API + Yjs /collab + /mcp)
 pnpm --filter @heurion2/platform dev
-```
-启动后在浏览器打开：`http://127.0.0.1:8787`
 
-> **前端热重载开发**：使用 `pnpm --filter @heurion2/platform dev:web` 可在 `http://127.0.0.1:5173` 启动带 HMR 的 Vite 开发服务器，自动反向代理 API 至 8787。
-
-#### 运行独立画布微服务 (OmniCanvas Standalone)
-```bash
-# 1. 编译独立画布前端资源
+# 启动独立 OmniCanvas 画布服务 (http://127.0.0.1:8888)
 pnpm --filter @heurion2/canvas-service build
-
-# 2. 启动独立服务 (默认端口 8888)
 PORT=8888 pnpm --filter @heurion2/canvas-service dev
 ```
-启动后在浏览器打开：`http://127.0.0.1:8888`
+
+详细中文说明请查阅完整中文文档：👉 [**README_CN.md**](./README_CN.md)
 
 ---
 
-## 🛠️ MCP 工具矩阵 (Model Context Protocol)
-
-Heurion 为大模型提供了标准化、受安全约束的操作工具箱：
-
-### 📄 OmniCanvas 通用创作工具集 (`@heurion2/canvas-service`)
-| 分类 | 工具名称 | 功能描述 |
-| :--- | :--- | :--- |
-| **画布管理** | `canvas_create`, `canvas_get`, `canvas_list` | 创建、查询与列出文档/幻灯片画布实体 |
-| **区块编辑** | `canvas_block_insert`, `canvas_block_replace` | 精准按 Block ID 插入、替换或更新结构化内容 |
-| **区块操作** | `canvas_block_move`, `canvas_block_delete` | 调整内容块层级结构或安全移除内容块 |
-| **幻灯片制作**| `canvas_slide_add`, `canvas_slide_update` | 新增单页幻灯片、设置布局模版与标题排版 |
-| **视觉呈现** | `canvas_slide_render`, `canvas_slide_delete`| 实时调用内置 resvg 引擎光栅化为 4K 高清预览 |
-| **表格与图表**| `canvas_table_insert`, `canvas_chart_insert` | 插入高表现力数据表格、柱状图/折线图等结构化视图 |
-
-### 🩺 医学科研专用扩展工具集 (`@heurion2/platform`)
-| 分类 | 工具名称 | 功能描述 |
-| :--- | :--- | :--- |
-| **文献检索** | `literature_search_pubmed` | 检索 NCBI PubMed 权威医学文献，提取结构化摘要与 PMID |
-| **欧洲检索** | `literature_search_europepmc` | 检索 Europe PMC 开放获取文献及全文信息 |
-| **学术索引** | `literature_search_openalex` | 基于 OpenAlex 检索高引论文、学术作者及文献溯源信息 |
-| **引文校验** | `format_citations` | 按照规范生成带溯源链接的学术标准引用格式 |
-| **健康档案** | `patient_get`, `patient_cohort_query` | 安全读取患者基本特征、进行多维度临床队列检索 |
-| **合规与脱敏**| `phi_scan_text` | 执行 HIPAA / PHI 敏感健康信息泄露扫描 |
-
----
-
-## 🧪 测试与质量保证 (Testing & Quality)
-
-本项目坚持高覆盖率与自动化测试驱动，全代码库测试通过率保持在 **100%**：
-
-```bash
-# 1. 静态类型检查（覆盖全部子包与前端工程）
-pnpm typecheck
-
-# 2. 运行自动化单元测试与集成测试（47 套件，361 测试全部 PASS）
-pnpm test
-
-# 3. 运行端到端真实智能体评测（需配置 DEEPSEEK_API_KEY）
-pnpm --filter @heurion2/platform e2e
-
-# 4. 运行浏览器 UI 自动化交互测试
-pnpm --filter @heurion2/platform ui
-```
-
----
-
-## 📚 架构与深度文档 (Documentation)
-
-- 📘 [**平台整体技术架构 (PLATFORM.md)**](docs/PLATFORM.md)：系统模型层、操作层写前守卫、DSH 调度设计
-- 📙 [**多环境部署指南 (DEPLOY.md)**](docs/DEPLOY.md)：生产环境、容器化编排、反向代理与 TLS 配置
-- 📗 [**独立画布微服务设计规范 (canvas_mcp_standalone_architecture.md)**](file:///Users/huizhao/.gemini/antigravity-cli/brain/0c4a3943-b91a-40bb-a58c-c0bf6b82cba1/canvas_mcp_standalone_architecture.md)：纯净版 Canvas MCP、Yjs CRDT 协议设计
-- 📕 [**临床队列设计 (COHORT.md)**](docs/design/COHORT.md)：医学队列检索与多条件交并过滤
-- 📒 [**患者数据与共享凭证 (PATIENT.md & SHARING.md)**](docs/design/PATIENT.md)：患者档案授权 Claims 机制
-
----
-
-## 🤝 贡献与开源许可 (License)
-
-欢迎提交 Issue 和 Pull Request 来完善 Heurion 2.0！
+## 🤝 开源许可 (License)
 
 本项目基于 [MIT License](./LICENSE) 协议开源。
