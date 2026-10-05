@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Heurion · 临床科研全流程智能工作台 (Clinical AI Workstation)</title>
+  <title data-i18n="doc_title">Heurion · 临床科研全流程智能工作台 (Clinical AI Workstation)</title>
   <meta name="description" content="Heurion 是专为医学与临床科研打造的全流程 AI 工作台：覆盖患者数据收集、科研项目管理、数据治理与记忆演进、统计分析与论文写作（含严谨数据分析与文献溯源）全生命周期。">
   <meta name="theme-color" content="#06110D">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 2 104 96'%3E%3Crect x='-6' y='2' width='104' height='96' fill='%2306110D'/%3E%3Crect x='6' y='18' width='16' height='66' rx='8' fill='%23FFFFFF'/%3E%3Crect x='60' y='35' width='16' height='49' rx='8' fill='%23FFFFFF'/%3E%3Crect x='18' y='45' width='46' height='16' rx='8' fill='%2300FF93'/%3E%3Ccircle cx='76' cy='24' r='10' fill='%2300FF93'/%3E%3C/svg%3E">
@@ -17,17 +17,21 @@
       <span class="word">HEURION</span>
     </a>
     <nav class="links" id="links">
-      <a href="/phr">知家 (PHR)</a>
-      <a href="#pipeline">全流程</a>
-      <a href="#capabilities">核心能力</a>
-      <a href="#memory">记忆演进</a>
-      <a href="#how">工作方式</a>
-      <a href="#security">安全与合规</a>
-      <a href="#partners">数据来源</a>
+      <a href="/phr" data-i18n="nav_phr">知家 (PHR)</a>
+      <a href="#pipeline" data-i18n="nav_pipeline">全流程</a>
+      <a href="#capabilities" data-i18n="nav_capabilities">核心能力</a>
+      <a href="#memory" data-i18n="nav_memory">记忆演进</a>
+      <a href="#how" data-i18n="nav_how">工作方式</a>
+      <a href="#security" data-i18n="nav_security">安全与合规</a>
+      <a href="#partners" data-i18n="nav_partners">数据来源</a>
     </nav>
     <div class="top-cta">
-      <a class="btn ghost hide-sm" href="/app" data-app-link>登录</a>
-      <a class="btn mint" href="/app" data-app-link data-cta>进入工作台</a>
+      <button class="lang-btn" id="langBtn" aria-label="切换语言">
+        <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm7.93 9h-3.18a15.9 15.9 0 0 0-1.37-5.06A8.04 8.04 0 0 1 19.93 11zM12 4a14 14 0 0 1 1.7 7H10.3A14 14 0 0 1 12 4zM4.07 13h3.18a15.9 15.9 0 0 0 1.37 5.06A8.04 8.04 0 0 1 4.07 13zm3.18-2H4.07a8.04 8.04 0 0 1 4.55-5.06A15.9 15.9 0 0 0 7.25 11zM12 20a14 14 0 0 1-1.7-7h3.4A14 14 0 0 1 12 20zm3.38-1.94A15.9 15.9 0 0 0 16.75 13h3.18a8.04 8.04 0 0 1-4.55 5.06z"/></svg>
+        <span id="langText">EN</span>
+      </button>
+      <a class="btn ghost hide-sm" href="/app" data-app-link data-i18n="btn_login">登录</a>
+      <a class="btn mint" href="/app" data-app-link data-cta data-i18n="btn_enter">进入工作台</a>
       <button class="menu" id="menuBtn" aria-label="菜单" aria-expanded="false" aria-controls="links"><span></span><span></span></button>
     </div>
   </div>
@@ -40,16 +44,16 @@
     <div class="wrap hero-row">
       <div class="hero-copy">
         <p class="eyebrow"><span class="dot"></span>CLINICAL AI WORKSTATION · RESEARCH INTELLIGENCE</p>
-        <h1>临床科研，<br><span class="nw">从数据沉淀到成果发表的</span><em class="nw">全流程工作台。</em></h1>
-        <p class="lead">不仅是辅助写作。Heurion 贯通临床科研全链路：从患者数据收集（PHR/病历化验 OCR）与课题管理，到队列多维筛选、数据治理与自主记忆演进，再到隔离沙箱统计分析、论文撰写、严谨学术引用与学术幻灯片制作。</p>
+        <h1 data-i18n="hero_title">临床科研，<br><span class="nw">从数据沉淀到成果发表的</span><em class="nw">全流程工作台。</em></h1>
+        <p class="lead" data-i18n="hero_lead">Heurion 贯通临床科研全链路：从患者数据收集（PHR/病历化验 OCR）与课题管理，到队列多维筛选、数据治理与自主记忆演进，再到隔离沙箱统计分析、论文撰写、严谨学术引用与学术幻灯片制作。</p>
         <div class="hero-cta">
-          <a class="btn mint lg" href="/app" data-app-link data-cta>免费开启科研工作台 <span aria-hidden="true">→</span></a>
-          <a class="btn line lg" href="#pipeline">查看全流程链路</a>
+          <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="hero_cta_start">免费开启科研工作台 <span aria-hidden="true">→</span></a>
+          <a class="btn line lg" href="#pipeline" data-i18n="hero_cta_flow">查看全流程链路</a>
         </div>
         <ul class="trust">
-          <li>患者数据合规收集与 PHI 扫描</li>
-          <li>课题级自主记忆持续演进</li>
-          <li>沙箱隔离分析与 PubMed 严谨引用</li>
+          <li data-i18n="trust_1">患者数据合规收集与 PHI 扫描</li>
+          <li data-i18n="trust_2">课题级自主记忆持续演进</li>
+          <li data-i18n="trust_3">沙箱隔离分析与 PubMed 严谨引用</li>
         </ul>
       </div>
 
@@ -57,23 +61,23 @@
       <div class="mock" aria-hidden="true">
         <div class="mock-bar">
           <span></span><span></span><span></span>
-          <b>心衰 SGLT2 抑制剂多中心真实世界研究 · 课题全流程工作区</b>
+          <b data-i18n="mock_study_title">心衰 SGLT2 抑制剂多中心真实世界研究 · 课题全流程工作区</b>
         </div>
         <div class="mock-pipeline">
-          <span class="pipe-step done">① 患者数据收集 (PHR) ✓</span>
-          <span class="pipe-step done">② 队列筛选 (N=1,420) ✓</span>
-          <span class="pipe-step done">③ 记忆演进 (8条结论) ✓</span>
-          <span class="pipe-step active">④ 统计分析与论文撰写</span>
+          <span class="pipe-step done" data-i18n="pipe_1">① 患者数据收集 (PHR) ✓</span>
+          <span class="pipe-step done" data-i18n="pipe_2">② 队列筛选 (N=1,420) ✓</span>
+          <span class="pipe-step done" data-i18n="pipe_3">③ 记忆演进 (8条结论) ✓</span>
+          <span class="pipe-step active" data-i18n="pipe_4">④ 统计分析与论文撰写</span>
         </div>
         <div class="mock-body">
           <div class="paper">
             <div class="cohort-tag">
-              <span>课题入组队列</span> HFrEF 真实世界人群 (N=1,420) · 匹配化验与24个月随访
+              <span data-i18n="mock_cohort_label">课题入组队列</span> <span data-i18n="mock_cohort_val">HFrEF 真实世界人群 (N=1,420) · 匹配化验与24个月随访</span>
             </div>
-            <p class="p-h">2.1 SGLT2 抑制剂与心衰终点事件分析</p>
-            <p>在射血分数降低的心衰入组队列中，达格列净暴露组复合心血管死亡或心衰再住院风险
+            <p class="p-h" data-i18n="mock_paper_h">2.1 SGLT2 抑制剂与心衰终点事件分析</p>
+            <p data-i18n="mock_paper_p1">在射血分数降低的心衰入组队列中，达格列净暴露组复合心血管死亡或心衰再住院风险
               <del>显著下降</del><ins>降低 26%（HR 0.74, 95% CI 0.65–0.85, P&lt;0.001）</ins><sup class="cite">[1]</sup>。</p>
-            <p>经沙箱运行 Cox 比例风险回归与 Kaplan-Meier 生存曲线验证，该获益<mark>在合并与未合并糖尿病的亚组中一致</mark><sup class="cite">[1]</sup>，且<span class="flag">可稳健延伸至射血分数保留人群</span><sup class="cite">[2]</sup>。</p>
+            <p data-i18n="mock_paper_p2">经沙箱运行 Cox 比例风险回归与 Kaplan-Meier 生存曲线验证，该获益<mark>在合并与未合并糖尿病的亚组中一致</mark><sup class="cite">[1]</sup>，且<span class="flag">可稳健延伸至射血分数保留人群</span><sup class="cite">[2]</sup>。</p>
             <ol class="refs">
               <li>McMurray JJV, et al. <i>N Engl J Med</i>. 2019;381:1995-2008. (PMID: 31535829)</li>
               <li>Solomon SD, et al. <i>N Engl J Med</i>. 2022;387:1089-1098. (PMID: 36027570)</li>
@@ -81,17 +85,17 @@
           </div>
           <div class="notes">
             <div class="note ai">
-              <p class="note-h">课题记忆演进 · 提议入库</p>
-              <p>检测到本组心衰再住院基线统计口径已确立，建议将变量定义存入课题演进记忆，供后续论文与幻灯片复用。</p>
-              <div class="note-act"><span class="ok">采纳并沉淀</span><span>忽略</span></div>
+              <p class="note-h" data-i18n="mock_note_ai_h">课题记忆演进 · 提议入库</p>
+              <p data-i18n="mock_note_ai_b">检测到本组心衰再住院基线统计口径已确立，建议将变量定义存入课题演进记忆，供后续论文与幻灯片复用。</p>
+              <div class="note-act"><span class="ok" data-i18n="mock_btn_accept">采纳并沉淀</span><span data-i18n="mock_btn_ignore">忽略</span></div>
             </div>
             <div class="note warn">
-              <p class="note-h">引用核验 · [1] 匹配通过</p>
-              <p>已对照 PubMed 开放全文核对：效应量 HR 0.74 与 95% CI 完全匹配原文。</p>
+              <p class="note-h" data-i18n="mock_note_cite_h">引用核验 · [1] 匹配通过</p>
+              <p data-i18n="mock_note_cite_b">已对照 PubMed 开放全文核对：效应量 HR 0.74 与 95% CI 完全匹配原文。</p>
             </div>
             <div class="note">
-              <p class="note-h">合规审计 · PHI 安全</p>
-              <p>隐私敏感扫描完成：全文 0 处隐私信息，符合匿名化科研规范。</p>
+              <p class="note-h" data-i18n="mock_note_phi_h">合规审计 · PHI 安全</p>
+              <p data-i18n="mock_note_phi_b">隐私敏感扫描完成：全文 0 处隐私信息，符合匿名化科研规范。</p>
             </div>
           </div>
         </div>
@@ -104,23 +108,23 @@
     <div class="wrap pillar-row">
       <div class="pillar">
         <span class="num">01</span>
-        <h3>患者数据收集与资产化</h3>
-        <p>门诊住院病历录入、化验单多模态 OCR 结构化提取、知家患者健康档案（PHR）协同沉淀，授权 Claims 机制确保数据合规。</p>
+        <h3 data-i18n="pillar1_h">患者数据收集与资产化</h3>
+        <p data-i18n="pillar1_p">门诊住院病历录入、化验单多模态 OCR 结构化提取、知家患者健康档案（PHR）协同沉淀，授权 Claims 机制确保数据合规。</p>
       </div>
       <div class="pillar">
         <span class="num">02</span>
-        <h3>科研项目与人群队列管理</h3>
-        <p>多课题集中立项与多租户权限隔离，多维复杂条件交并筛选（入排标准、诊断编码、检验值区间），秒级锁定目标人群画像。</p>
+        <h3 data-i18n="pillar2_h">科研项目与人群队列管理</h3>
+        <p data-i18n="pillar2_p">多课题集中立项与多租户权限隔离，多维复杂条件交并筛选（入排标准、诊断编码、检验值区间），秒级锁定目标人群画像。</p>
       </div>
       <div class="pillar">
         <span class="num">03</span>
-        <h3>数据治理与自主记忆演进</h3>
-        <p>临床数据集标准化清洗与治理，独创课题记忆演进引擎，自动吸收研究假设、统计口径与专业偏好，知识越用越懂团队。</p>
+        <h3 data-i18n="pillar3_h">数据治理与自主记忆演进</h3>
+        <p data-i18n="pillar3_p">临床数据集标准化清洗与治理，独创课题记忆演进引擎，自动吸收研究假设、统计口径与专业偏好，知识越用越懂团队。</p>
       </div>
       <div class="pillar">
         <span class="num">04</span>
-        <h3>严谨统计、论文与汇报</h3>
-        <p>隔离沙箱秒级运行 Python/R 脚本生成 Table 1 与生存曲线，Docs & Slides 双模协同、写前守卫保护、PubMed 权威引用核验。</p>
+        <h3 data-i18n="pillar4_h">严谨统计、论文与汇报</h3>
+        <p data-i18n="pillar4_p">隔离沙箱秒级运行 Python/R 脚本生成 Table 1 与生存曲线，Docs & Slides 双模协同、写前守卫保护、PubMed 权威引用核验。</p>
       </div>
     </div>
   </section>
@@ -129,31 +133,31 @@
   <section class="section">
     <div class="wrap">
       <p class="eyebrow">WHY HEURION</p>
-      <h2><span class="nw">通用 AI 无法支撑严肃临床科研，</span><span class="nw">卡在四个关键环节。</span></h2>
+      <h2 data-i18n="why_h"><span class="nw">通用 AI 无法支撑严肃临床科研，</span><span class="nw">卡在四个关键环节。</span></h2>
       <div class="pains">
         <article class="pain">
           <span class="num">01</span>
-          <h3>数据孤岛与隐私失控</h3>
-          <p>病历、纸质化验单与随访表格散落在各处，缺乏结构化标准，直接输入外部大模型存在严重隐私泄露风险。</p>
-          <p class="answer"><b>Heurion：</b>多模态 OCR 结构化提取，知家 PHR 闭环归档，内置 PHI 敏感信息扫描拦截与多级脱敏授权。</p>
+          <h3 data-i18n="pain1_h">数据孤岛与隐私失控</h3>
+          <p data-i18n="pain1_p">病历、纸质化验单与随访表格散落在各处，缺乏结构化标准，直接输入外部大模型存在严重隐私泄露风险。</p>
+          <p class="answer"><b data-i18n="answer_prefix">Heurion：</b><span data-i18n="pain1_a">多模态 OCR 结构化提取，知家 PHR 闭环归档，内置 PHI 敏感信息扫描拦截与多级脱敏授权。</span></p>
         </article>
         <article class="pain">
           <span class="num">02</span>
-          <h3>队列圈定与分析断层</h3>
-          <p>从海量病历中人工筛选符合复杂入排条件的队列耗时数周，统计分析需要频繁在 SPSS/Excel 与文稿间手动搬运。</p>
-          <p class="answer"><b>Heurion：</b>可视化高级队列筛选器秒级圈定样本，AI 在隔离受限沙箱直接生成 Table 1 基线表与统计图表并写入文稿。</p>
+          <h3 data-i18n="pain2_h">队列圈定与分析断层</h3>
+          <p data-i18n="pain2_p">从海量病历中人工筛选符合复杂入排条件的队列耗时数周，统计分析需要频繁在 SPSS/Excel 与文稿间手动搬运。</p>
+          <p class="answer"><b data-i18n="answer_prefix">Heurion：</b><span data-i18n="pain2_a">可视化高级队列筛选器秒级圈定样本，AI 在隔离受限沙箱直接生成 Table 1 基线表与统计图表并写入文稿。</span></p>
         </article>
         <article class="pain">
           <span class="num">03</span>
-          <h3>课题记忆断代与反复交代</h3>
-          <p>课题研究假设、统计定义和团队共识散落在聊天记录里，每次更换会话或新成员加入都要从头重新交代背景。</p>
-          <p class="answer"><b>Heurion：</b>课题自主记忆演进引擎，自动提炼偏好与常用事实，人类确认后持续生长，自动合并、更新与淘汰知识。</p>
+          <h3 data-i18n="pain3_h">课题记忆断代与反复交代</h3>
+          <p data-i18n="pain3_p">课题研究假设、统计定义和团队共识散落在聊天记录里，每次更换会话或新成员加入都要从头重新交代背景。</p>
+          <p class="answer"><b data-i18n="answer_prefix">Heurion：</b><span data-i18n="pain3_a">课题自主记忆演进引擎，自动提炼偏好与常用事实，人类确认后持续生长，自动合并、更新与淘汰知识。</span></p>
         </article>
         <article class="pain">
           <span class="num">04</span>
-          <h3>引用凭空捏造与改动黑盒</h3>
-          <p>传统生成式 AI 常凭空编造不存在的假文献，一键改稿直接覆写整篇文档，改了哪里、为什么改完全看不清。</p>
-          <p class="answer"><b>Heurion：</b>所有文献经 PubMed / Crossref / OpenAlex 真实核验，写前守卫以行内高保真差异修订呈现每一个字符的修改。</p>
+          <h3 data-i18n="pain4_h">引用凭空捏造与改动黑盒</h3>
+          <p data-i18n="pain4_p">传统生成式 AI 常凭空编造不存在的假文献，一键改稿直接覆写整篇文档，改了哪里、为什么改完全看不清。</p>
+          <p class="answer"><b data-i18n="answer_prefix">Heurion：</b><span data-i18n="pain4_a">所有文献经 PubMed / Crossref / OpenAlex 真实核验，写前守卫以行内高保真差异修订呈现每一个字符的修改。</span></p>
         </article>
       </div>
     </div>
@@ -163,39 +167,39 @@
   <section class="section alt" id="capabilities">
     <div class="wrap">
       <p class="eyebrow">CAPABILITIES</p>
-      <h2><span class="nw">从临床数据到成果发表，</span><span class="nw">一个工作台贯通全链路。</span></h2>
+      <h2 data-i18n="cap_sec_h"><span class="nw">从临床数据到成果发表，</span><span class="nw">一个工作台贯通全链路。</span></h2>
       <div class="caps">
         <article class="cap">
-          <h3>患者数据采集与多模态 OCR</h3>
-          <p>支持门诊出院病历、化验单、检查报告（图片与 PDF）直接上传，自动 OCR 提取指标并建立标准化数字资产。</p>
+          <h3 data-i18n="cap1_h">患者数据采集与多模态 OCR</h3>
+          <p data-i18n="cap1_p">支持门诊出院病历、化验单、检查报告（图片与 PDF）直接上传，自动 OCR 提取指标并建立标准化数字资产。</p>
         </article>
         <article class="cap">
-          <h3>课题管理与高级队列筛选</h3>
-          <p>自由组合诊断编码、年龄、性别、检验指标阈值等多维逻辑，秒级圈定符合入排标准的研究队列，快速生成人群基线。</p>
+          <h3 data-i18n="cap2_h">课题管理与高级队列筛选</h3>
+          <p data-i18n="cap2_p">自由组合诊断编码、年龄、性别、检验指标阈值等多维逻辑，秒级圈定符合入排标准的研究队列，快速生成人群基线。</p>
         </article>
         <article class="cap">
-          <h3>数据集治理与隔离沙箱分析</h3>
-          <p>导入 CSV、Excel、SAS、SPSS、Stata 等格式数据，AI 在隔离受限沙箱中自动运行统计代码，生成 Table 1、生存曲线与组间检验。</p>
+          <h3 data-i18n="cap3_h">数据集治理与隔离沙箱分析</h3>
+          <p data-i18n="cap3_p">导入 CSV、Excel、SAS、SPSS、Stata 等格式数据，AI 在隔离受限沙箱中自动运行统计代码，生成 Table 1、生存曲线与组间检验。</p>
         </article>
         <article class="cap" id="memory">
-          <h3>课题级自主记忆演进系统</h3>
-          <p>AI 从你的采纳、拒绝与交互中主动总结科研共识与偏好，提议合并重复、更新过时与归档旧知识，知识随课题持续进化。</p>
+          <h3 data-i18n="cap4_h">课题级自主记忆演进系统</h3>
+          <p data-i18n="cap4_p">AI 从你的采纳、拒绝与交互中主动总结科研共识与偏好，提议合并重复、更新过时与归档旧知识，知识随课题持续进化。</p>
         </article>
         <article class="cap">
-          <h3>结构化文档与幻灯片双模协同</h3>
-          <p>长文排版模式与 16:9 交互式演讲幻灯片无缝切换，基于全局稳定 Block ID 精准协作，人与 AI 在同一份稿子上实时共创。</p>
+          <h3 data-i18n="cap5_h">结构化文档与幻灯片双模协同</h3>
+          <p data-i18n="cap5_p">长文排版模式与 16:9 交互式演讲幻灯片无缝切换，基于全局稳定 Block ID 精准协作，人与 AI 在同一份稿子上实时共创。</p>
         </article>
         <article class="cap">
-          <h3>多源权威文献检索与查验</h3>
-          <p>深度聚合 PubMed、Europe PMC 与 OpenAlex 文献网络，逐句对照摘要与开放获取全文核查「论断是否被原文充分支持」。</p>
+          <h3 data-i18n="cap6_h">多源权威文献检索与查验</h3>
+          <p data-i18n="cap6_p">深度聚合 PubMed、Europe PMC 与 OpenAlex 文献网络，逐句对照摘要与开放获取全文核查「论断是否被原文充分支持」。</p>
         </article>
         <article class="cap">
-          <h3>严格学术引用规范校验</h3>
-          <p>根据真实 DOI 与 PMID 自动格式化引用，支持 AMA、GB/T 等国际主流规范，生成带溯源链接的学术引注与文末书目。</p>
+          <h3 data-i18n="cap7_h">严格学术引用规范校验</h3>
+          <p data-i18n="cap7_p">根据真实 DOI 与 PMID 自动格式化引用，支持 AMA、GB/T 等国际主流规范，生成带溯源链接的学术引注与文末书目。</p>
         </article>
         <article class="cap">
-          <h3>临床隐私合规与 PHI 扫描</h3>
-          <p>针对医疗严肃场景设计，内置 PHI 隐私扫描器拦截患者敏感信息，代码隔离运行且无外网权限，全操作具备完整审计日志。</p>
+          <h3 data-i18n="cap8_h">临床隐私合规与 PHI 扫描</h3>
+          <p data-i18n="cap8_p">针对医疗严肃场景设计，内置 PHI 隐私扫描器拦截患者敏感信息，代码隔离运行且无外网权限，全操作具备完整审计日志。</p>
         </article>
       </div>
     </div>
@@ -205,27 +209,27 @@
   <section class="section" id="how">
     <div class="wrap">
       <p class="eyebrow">HOW IT WORKS</p>
-      <h2><span class="nw">四步流转，</span><span class="nw">完成一项临床科研全周期。</span></h2>
+      <h2 data-i18n="how_h"><span class="nw">四步流转，</span><span class="nw">完成一项临床科研全周期。</span></h2>
       <ol class="steps">
         <li>
           <span class="step-n">STEP 01</span>
-          <h3>采集与建档</h3>
-          <p>上传病历、检验单或知家患者健康档案，OCR 智能结构化提取指标，安全脱敏归档。</p>
+          <h3 data-i18n="step1_h">采集与建档</h3>
+          <p data-i18n="step1_p">上传病历、检验单或知家患者健康档案，OCR 智能结构化提取指标，安全脱敏归档。</p>
         </li>
         <li>
           <span class="step-n">STEP 02</span>
-          <h3>立项与圈定队列</h3>
-          <p>建立科研项目，通过多维组合条件筛选目标人群，自动生成入组样本与基线人群画像。</p>
+          <h3 data-i18n="step2_h">立项与圈定队列</h3>
+          <p data-i18n="step2_p">建立科研项目，通过多维组合条件筛选目标人群，自动生成入组样本与基线人群画像。</p>
         </li>
         <li>
           <span class="step-n">STEP 03</span>
-          <h3>沙箱分析与记忆沉淀</h3>
-          <p>隔离沙箱运行生存分析与组间差异检验，AI 自动提炼并沉淀课题核心结论与统计口径。</p>
+          <h3 data-i18n="step3_h">沙箱分析与记忆沉淀</h3>
+          <p data-i18n="step3_p">隔离沙箱运行生存分析与组间差异检验，AI 自动提炼并沉淀课题核心结论与统计口径。</p>
         </li>
         <li>
           <span class="step-n">STEP 04</span>
-          <h3>论文撰写与成果汇报</h3>
-          <p>Docs & Slides 双模协同起草，多源文献交叉查验引文真实性，一键导出 Word、PPT 投稿与汇报。</p>
+          <h3 data-i18n="step4_h">论文撰写与成果汇报</h3>
+          <p data-i18n="step4_p">Docs & Slides 双模协同起草，多源文献交叉查验引文真实性，一键导出 Word、PPT 投稿与汇报。</p>
         </li>
       </ol>
     </div>
@@ -235,28 +239,28 @@
   <section class="section alt" id="roadmap">
     <div class="wrap">
       <p class="eyebrow">ROADMAP</p>
-      <h2><span class="nw">持续演进的</span><span class="nw">临床科研智能基础设施。</span></h2>
-      <p class="lead">从患者真实世界数据出发，深度贯通临床科研的计算、证据与表达。</p>
+      <h2 data-i18n="road_h"><span class="nw">持续演进的</span><span class="nw">临床科研智能基础设施。</span></h2>
+      <p class="lead" data-i18n="road_lead">从患者真实世界数据出发，深度贯通临床科研的计算、证据与表达。</p>
       <div class="road">
         <article class="road-item">
-          <span class="status live">已上线 · 持续增强</span>
-          <h3>数据资产与队列筛选</h3>
-          <p>患者 PHR 档案建立、化验单 OCR 结构化提取与多条件组合队列筛选。下一步：智能化临床质控指标自动稽查。</p>
+          <span class="status live" data-i18n="status_live">已上线 · 持续增强</span>
+          <h3 data-i18n="road1_h">数据资产与队列筛选</h3>
+          <p data-i18n="road1_p">患者 PHR 档案建立、化验单 OCR 结构化提取与多条件组合队列筛选。下一步：智能化临床质控指标自动稽查。</p>
         </article>
         <article class="road-item">
-          <span class="status live">已上线 · 持续增强</span>
-          <h3>课题自主记忆演进</h3>
-          <p>AI 从研究交互与修改中提炼课题偏好，自动提议合并重复、修正过时与归档旧记忆，每一次变化均由人类确认。</p>
+          <span class="status live" data-i18n="status_live">已上线 · 持续增强</span>
+          <h3 data-i18n="road2_h">课题自主记忆演进</h3>
+          <p data-i18n="road2_p">AI 从研究交互与修改中提炼课题偏好，自动提议合并重复、修正过时与归档旧记忆，每一次变化均由人类确认。</p>
         </article>
         <article class="road-item">
-          <span class="status live">已上线 · 持续增强</span>
-          <h3>统计分析与双模创作</h3>
-          <p>隔离沙箱执行 Table 1 与生存分析，Docs & Slides 结构化双模协同与内置矢量光栅化渲染，导出高保真 Word / PPT。</p>
+          <span class="status live" data-i18n="status_live">已上线 · 持续增强</span>
+          <h3 data-i18n="road3_h">统计分析与双模创作</h3>
+          <p data-i18n="road3_p">隔离沙箱执行 Table 1 与生存分析，Docs & Slides 结构化双模协同与内置矢量光栅化渲染，导出高保真 Word / PPT。</p>
         </article>
         <article class="road-item">
-          <span class="status plan">规划中</span>
-          <h3>多中心联邦科研协作</h3>
-          <p>在保证原始数据不出院前提下，支持跨医疗机构的联邦队列协同分析与多中心临床试验联合撰写。</p>
+          <span class="status plan" data-i18n="status_plan">规划中</span>
+          <h3 data-i18n="road4_h">多中心联邦科研协作</h3>
+          <p data-i18n="road4_p">在保证原始数据不出院前提下，支持跨医疗机构的联邦队列协同分析与多中心临床试验联合撰写。</p>
         </article>
       </div>
     </div>
@@ -267,40 +271,120 @@
     <div class="wrap sec-row">
       <div class="sec-copy">
         <p class="eyebrow">SECURITY &amp; COMPLIANCE</p>
-        <h2><span class="nw">为医疗与科研场景</span><span class="nw">设计的严密边界。</span></h2>
-        <p class="lead">Heurion 是专为医学与科研打造的辅助工作台，严格守护患者隐私与研究合规。平台不提供诊断或治疗建议，AI 生成内容须经作者审阅确认。</p>
+        <h2 data-i18n="sec_h"><span class="nw">为医疗与科研场景</span><span class="nw">设计的严密边界。</span></h2>
+        <p class="lead" data-i18n="sec_lead">Heurion 是专为医学与科研打造的辅助工作台，严格守护患者隐私与研究合规。平台不提供诊断或治疗建议，AI 生成内容须经作者审阅确认。</p>
       </div>
       <ul class="sec-list">
         <li>
-          <h3>受限沙箱环境</h3>
-          <p>AI 编写的统计分析代码在独立用户沙箱账户中运行：无外网访问权限，无法触碰数据库、平台密钥或他人资产。</p>
+          <h3 data-i18n="sec1_h">受限沙箱环境</h3>
+          <p data-i18n="sec1_p">AI 编写的统计分析代码在独立用户沙箱账户中运行：无外网访问权限，无法触碰数据库、平台密钥或他人资产。</p>
         </li>
         <li>
-          <h3>PHI 敏感信息扫描</h3>
-          <p>内置个人健康信息（PHI）安全拦截器，在内容生成与数据流通环节自动扫描并拦截未经脱敏的姓名、身份证号与病案号。</p>
+          <h3 data-i18n="sec2_h">PHI 敏感信息扫描</h3>
+          <p data-i18n="sec2_p">内置个人健康信息（PHI）安全拦截器，在内容生成与数据流通环节自动扫描并拦截未经脱敏的姓名、身份证号与病案号。</p>
         </li>
         <li>
-          <h3>密钥不出平台</h3>
-          <p>所有大模型调用经平台安全代理转发，隔离执行环境内仅分配临时短效鉴权凭证，真实模型 API 密钥绝不暴露。</p>
+          <h3 data-i18n="sec3_h">密钥不出平台</h3>
+          <p data-i18n="sec3_p">所有大模型调用经平台安全代理转发，隔离执行环境内仅分配临时短效鉴权凭证，真实模型 API 密钥绝不暴露。</p>
         </li>
         <li>
-          <h3>受控记忆与完整审计</h3>
-          <p>AI 记忆仅能以“提议”形式生成，生效权完全属于作者；系统全程记录患者数据访问、分析执行与文件导出的合规审计日志。</p>
+          <h3 data-i18n="sec4_h">受控记忆与完整审计</h3>
+          <p data-i18n="sec4_p">AI 记忆仅能以“提议”形式生成，生效权完全属于作者；系统全程记录患者数据访问、分析执行与文件导出的合规审计日志。</p>
         </li>
       </ul>
     </div>
-    <div class="wrap"><p class="footnote">* Heurion 不是医疗器械，不用于临床诊断、治疗决策或预后判断；医疗机构部署前请按照当地医疗数据合规法规完成评估。</p></div>
+    <div class="wrap"><p class="footnote" data-i18n="sec_foot">* Heurion 不是医疗器械，不用于临床诊断、治疗决策或预后判断；医疗机构部署前请按照当地医疗数据合规法规完成评估。</p></div>
   </section>
 
-  <!-- 数据来源 -->
+  <!-- 数据来源（带权威产品官方矢量Logo） -->
   <section class="section alt" id="partners">
     <div class="wrap">
       <p class="eyebrow">DATA SOURCES</p>
-      <h2><span class="nw">建立在</span><span class="nw">权威开放学术数据之上。</span></h2>
+      <h2 data-i18n="sources_h"><span class="nw">建立在</span><span class="nw">权威开放学术数据之上。</span></h2>
       <div class="partners">
-        <div class="partner"><span class="tag">权威医学文献</span><p>NCBI PubMed · PMC</p></div>
-        <div class="partner"><span class="tag">引文与 DOI 核验</span><p>Crossref · Europe PMC</p></div>
-        <div class="partner"><span class="tag">学术图谱与文献溯源</span><p>OpenAlex</p></div>
+        <!-- 1. NCBI PubMed & PMC -->
+        <div class="partner">
+          <div class="partner-meta">
+            <span class="tag" data-i18n="partner1_tag">权威医学文献</span>
+            <div class="partner-logos">
+              <!-- PubMed Logo -->
+              <div class="brand-icon" title="NCBI PubMed">
+                <svg height="28" viewBox="0 0 106 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="28" height="28" rx="5" fill="#325288"/>
+                  <path d="M14 5v18M9 9.5h10M9 18.5h10" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+                  <circle cx="14" cy="14" r="2.8" fill="#00FF93"/>
+                  <text x="36" y="19" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="15" letter-spacing="-0.3">PubMed</text>
+                </svg>
+              </div>
+              <!-- PMC Logo -->
+              <div class="brand-icon" title="PubMed Central (PMC)">
+                <svg height="28" viewBox="0 0 70 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="70" height="28" rx="5" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+                  <path d="M12 14h6M15 11v6" stroke="#00FF93" stroke-width="2" stroke-linecap="round"/>
+                  <text x="39" y="19" fill="#00FF93" font-family="ui-monospace, Menlo, monospace" font-weight="700" font-size="13.5" letter-spacing="0.5">PMC</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <p>NCBI PubMed · PMC</p>
+        </div>
+
+        <!-- 2. Crossref & Europe PMC -->
+        <div class="partner">
+          <div class="partner-meta">
+            <span class="tag" data-i18n="partner2_tag">引文与 DOI 核验</span>
+            <div class="partner-logos">
+              <!-- Crossref Official Logo -->
+              <div class="brand-icon" title="Crossref">
+                <svg height="28" viewBox="0 0 102 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <g transform="translate(0, 0)">
+                    <circle cx="14" cy="14" r="11" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <path d="M14 6 A8 8 0 0 1 22 14" fill="none" stroke="#FFC72C" stroke-width="2.5" stroke-linecap="round"/>
+                    <path d="M22 14 A8 8 0 0 1 14 22" fill="none" stroke="#EF3340" stroke-width="2.5" stroke-linecap="round"/>
+                    <path d="M14 22 A8 8 0 0 1 6 14" fill="none" stroke="#3EB1C8" stroke-width="2.5" stroke-linecap="round"/>
+                    <path d="M6 14 A8 8 0 0 1 14 6" fill="none" stroke="#4F5858" stroke-width="2.5" stroke-linecap="round"/>
+                  </g>
+                  <text x="33" y="19" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="14.5" letter-spacing="-0.2">Crossref</text>
+                </svg>
+              </div>
+              <!-- Europe PMC Logo -->
+              <div class="brand-icon" title="Europe PMC">
+                <svg height="28" viewBox="0 0 114 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <g transform="translate(0, 0)">
+                    <polygon points="14,3 24,8.5 24,19.5 14,25 4,19.5 4,8.5" fill="rgba(6,182,128,0.18)" stroke="#06b680" stroke-width="1.5"/>
+                    <circle cx="14" cy="14" r="3" fill="#00FF93"/>
+                  </g>
+                  <text x="31" y="19" fill="#06b680" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="13.5" letter-spacing="-0.2">Europe PMC</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <p>Crossref · Europe PMC</p>
+        </div>
+
+        <!-- 3. OpenAlex -->
+        <div class="partner">
+          <div class="partner-meta">
+            <span class="tag" data-i18n="partner3_tag">学术图谱与文献溯源</span>
+            <div class="partner-logos">
+              <!-- OpenAlex Logo -->
+              <div class="brand-icon" title="OpenAlex">
+                <svg height="28" viewBox="0 0 112 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <g transform="translate(2, 2)">
+                    <line x1="12" y1="3" x2="4" y2="21" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round"/>
+                    <line x1="12" y1="3" x2="20" y2="21" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round"/>
+                    <line x1="6.8" y1="14.5" x2="17.2" y2="14.5" stroke="#FF6B35" stroke-width="2" stroke-linecap="round"/>
+                    <circle cx="12" cy="3" r="3.2" fill="#FF8C42"/>
+                    <circle cx="4" cy="21" r="3" fill="#00FF93"/>
+                    <circle cx="20" cy="21" r="3" fill="#3EB1C8"/>
+                  </g>
+                  <text x="34" y="19" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="15" letter-spacing="-0.2">OpenAlex</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <p>OpenAlex</p>
+        </div>
       </div>
     </div>
   </section>
@@ -308,10 +392,10 @@
   <!-- CTA -->
   <section class="cta">
     <div class="wrap cta-row">
-      <h2><span class="nw">让临床数据、科研记忆与论文创作，</span><span class="nw">在同一个工作台无缝流转。</span></h2>
+      <h2 data-i18n="cta_h"><span class="nw">让临床数据、科研记忆与论文创作，</span><span class="nw">在同一个工作台无缝流转。</span></h2>
       <div class="cta-act">
-        <a class="btn mint lg" href="/app" data-app-link data-cta>免费开启工作台 <span aria-hidden="true">→</span></a>
-        <p>开箱即用，支持多中心团队协同。</p>
+        <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="cta_btn">免费开启工作台 <span aria-hidden="true">→</span></a>
+        <p data-i18n="cta_sub">开箱即用，支持多中心团队协同。</p>
       </div>
     </div>
   </section>
@@ -321,33 +405,319 @@
   <div class="wrap foot-row">
     <a class="brand" href="/"><svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect fill="#fff" x="0" y="10" width="18" height="80" rx="9"/><rect fill="#fff" x="62" y="30" width="18" height="60" rx="9"/><rect fill="#00ff93" x="14" y="42" width="52" height="18" rx="9"/><circle fill="#00ff93" cx="80" cy="20" r="11"/></svg><span class="word">HEURION</span></a>
     <nav class="foot-links">
-      <a href="/phr">知家 · 患者健康档案</a>
-      <a href="#pipeline">全流程</a>
-      <a href="#capabilities">能力</a>
-      <a href="#memory">记忆演进</a>
-      <a href="#security">安全合规</a>
-      <a href="/app" data-app-link>进入工作台</a>
+      <a href="/phr" data-i18n="nav_phr_foot">知家 · 患者健康档案</a>
+      <a href="#pipeline" data-i18n="nav_pipeline">全流程</a>
+      <a href="#capabilities" data-i18n="nav_capabilities">能力</a>
+      <a href="#memory" data-i18n="nav_memory">记忆演进</a>
+      <a href="#security" data-i18n="nav_security">安全合规</a>
+      <a href="/app" data-app-link data-i18n="btn_enter">进入工作台</a>
       <a href="https://github.com/0xaicrypto/heurion" target="_blank" rel="noreferrer">GitHub</a>
     </nav>
   </div>
-  <div class="wrap foot-base"><span>© <span id="year">2026</span> Heurion</span><span>临床科研智能工作台 · 不提供诊疗建议</span></div>
+  <div class="wrap foot-base"><span>© <span id="year">2026</span> Heurion</span><span data-i18n="foot_note">临床科研智能工作台 · 不提供诊疗建议</span></div>
 </footer>
 
 <script>
 {
+  const DICT = {
+    zh: {
+      doc_title: "Heurion · 临床科研全流程智能工作台 (Clinical AI Workstation)",
+      nav_phr: "知家 (PHR)",
+      nav_pipeline: "全流程",
+      nav_capabilities: "核心能力",
+      nav_memory: "记忆演进",
+      nav_how: "工作方式",
+      nav_security: "安全与合规",
+      nav_partners: "数据来源",
+      nav_phr_foot: "知家 · 患者健康档案",
+      btn_login: "登录",
+      btn_enter: "进入工作台",
+      hero_title: "临床科研，<br><span class=\"nw\">从数据沉淀到成果发表的</span><em class=\"nw\">全流程工作台。</em>",
+      hero_lead: "Heurion 贯通临床科研全链路：从患者数据收集（PHR/病历化验 OCR）与课题管理，到队列多维筛选、数据治理与自主记忆演进，再到隔离沙箱统计分析、论文撰写、严谨学术引用与学术幻灯片制作。",
+      hero_cta_start: "免费开启科研工作台 <span aria-hidden=\"true\">→</span>",
+      hero_cta_flow: "查看全流程链路",
+      trust_1: "患者数据合规收集与 PHI 扫描",
+      trust_2: "课题级自主记忆持续演进",
+      trust_3: "沙箱隔离分析与 PubMed 严谨引用",
+      mock_study_title: "心衰 SGLT2 抑制剂多中心真实世界研究 · 课题全流程工作区",
+      pipe_1: "① 患者数据收集 (PHR) ✓",
+      pipe_2: "② 队列筛选 (N=1,420) ✓",
+      pipe_3: "③ 记忆演进 (8条结论) ✓",
+      pipe_4: "④ 统计分析与论文撰写",
+      mock_cohort_label: "课题入组队列",
+      mock_cohort_val: "HFrEF 真实世界人群 (N=1,420) · 匹配化验与24个月随访",
+      mock_paper_h: "2.1 SGLT2 抑制剂与心衰终点事件分析",
+      mock_paper_p1: "在射血分数降低的心衰入组队列中，达格列净暴露组复合心血管死亡或心衰再住院风险<del>显著下降</del><ins>降低 26%（HR 0.74, 95% CI 0.65–0.85, P&lt;0.001）</ins><sup class=\"cite\">[1]</sup>。",
+      mock_paper_p2: "经沙箱运行 Cox 比例风险回归与 Kaplan-Meier 生存曲线验证，该获益<mark>在合并与未合并糖尿病的亚组中一致</mark><sup class=\"cite\">[1]</sup>，且<span class=\"flag\">可稳健延伸至射血分数保留人群</span><sup class=\"cite\">[2]</sup>。",
+      mock_note_ai_h: "课题记忆演进 · 提议入库",
+      mock_note_ai_b: "检测到本组心衰再住院基线统计口径已确立，建议将变量定义存入课题演进记忆，供后续论文与幻灯片复用。",
+      mock_btn_accept: "采纳并沉淀",
+      mock_btn_ignore: "忽略",
+      mock_note_cite_h: "引用核验 · [1] 匹配通过",
+      mock_note_cite_b: "已对照 PubMed 开放全文核对：效应量 HR 0.74 与 95% CI 完全匹配原文。",
+      mock_note_phi_h: "合规审计 · PHI 安全",
+      mock_note_phi_b: "隐私敏感扫描完成：全文 0 处隐私信息，符合匿名化科研规范。",
+      pillar1_h: "患者数据收集与资产化",
+      pillar1_p: "门诊住院病历录入、化验单多模态 OCR 结构化提取、知家患者健康档案（PHR）协同沉淀，授权 Claims 机制确保数据合规。",
+      pillar2_h: "科研项目与人群队列管理",
+      pillar2_p: "多课题集中立项与多租户权限隔离，多维复杂条件交并筛选（入排标准、诊断编码、检验值区间），秒级锁定目标人群画像。",
+      pillar3_h: "数据治理与自主记忆演进",
+      pillar3_p: "临床数据集标准化清洗与治理，独创课题记忆演进引擎，自动吸收研究假设、统计口径与专业偏好，知识越用越懂团队。",
+      pillar4_h: "严谨统计、论文与汇报",
+      pillar4_p: "隔离沙箱秒级运行 Python/R 脚本生成 Table 1 与生存曲线，Docs & Slides 双模协同、写前守卫保护、PubMed 权威引用核验。",
+      why_h: "<span class=\"nw\">通用 AI 无法支撑严肃临床科研，</span><span class=\"nw\">卡在四个关键环节。</span>",
+      answer_prefix: "Heurion：",
+      pain1_h: "数据孤岛与隐私失控",
+      pain1_p: "病历、纸质化验单与随访表格散落在各处，缺乏结构化标准，直接输入外部大模型存在严重隐私泄露风险。",
+      pain1_a: "多模态 OCR 结构化提取，知家 PHR 闭环归档，内置 PHI 敏感信息扫描拦截与多级脱敏授权。",
+      pain2_h: "队列圈定与分析断层",
+      pain2_p: "从海量病历中人工筛选符合复杂入排条件的队列耗时数周，统计分析需要频繁在 SPSS/Excel 与文稿间手动搬运。",
+      pain2_a: "可视化高级队列筛选器秒级圈定样本，AI 在隔离受限沙箱直接生成 Table 1 基线表与统计图表并写入文稿。",
+      pain3_h: "课题记忆断代与反复交代",
+      pain3_p: "课题研究假设、统计定义和团队共识散落在聊天记录里，每次更换会话或新成员加入都要从头重新交代背景。",
+      pain3_a: "课题自主记忆演进引擎，自动提炼偏好与常用事实，人类确认后持续生长，自动合并、更新与淘汰知识。",
+      pain4_h: "引用凭空捏造与改动黑盒",
+      pain4_p: "传统生成式 AI 常凭空编造不存在的假文献，一键改稿直接覆写整篇文档，改了哪里、为什么改完全看不清。",
+      pain4_a: "所有文献经 PubMed / Crossref / OpenAlex 真实核验，写前守卫以行内高保真差异修订呈现每一个字符的修改。",
+      cap_sec_h: "<span class=\"nw\">从临床数据到成果发表，</span><span class=\"nw\">一个工作台贯通全链路。</span>",
+      cap1_h: "患者数据采集与多模态 OCR",
+      cap1_p: "支持门诊出院病历、化验单、检查报告（图片与 PDF）直接上传，自动 OCR 提取指标并建立标准化数字资产。",
+      cap2_h: "课题管理与高级队列筛选",
+      cap2_p: "自由组合诊断编码、年龄、性别、检验指标阈值等多维逻辑，秒级圈定符合入排标准的研究队列，快速生成人群基线。",
+      cap3_h: "数据集治理与隔离沙箱分析",
+      cap3_p: "导入 CSV、Excel、SAS、SPSS、Stata 等格式数据，AI 在隔离受限沙箱中自动运行统计代码，生成 Table 1、生存曲线与组间检验。",
+      cap4_h: "课题级自主记忆演进系统",
+      cap4_p: "AI 从你的采纳、拒绝与交互中主动总结科研共识与偏好，提议合并重复、更新过时与归档旧知识，知识随课题持续进化。",
+      cap5_h: "结构化文档与幻灯片双模协同",
+      cap5_p: "长文排版模式与 16:9 交互式演讲幻灯片无缝切换，基于全局稳定 Block ID 精准协作，人与 AI 在同一份稿子上实时共创。",
+      cap6_h: "多源权威文献检索与查验",
+      cap6_p: "深度聚合 PubMed、Europe PMC 与 OpenAlex 文献网络，逐句对照摘要与开放获取全文核查「论断是否被原文充分支持」。",
+      cap7_h: "严格学术引用规范校验",
+      cap7_p: "根据真实 DOI 与 PMID 自动格式化引用，支持 AMA、GB/T 等国际主流规范，生成带溯源链接的学术引注与文末书目。",
+      cap8_h: "临床隐私合规与 PHI 扫描",
+      cap8_p: "针对医疗严肃场景设计，内置 PHI 隐私扫描器拦截患者敏感信息，代码隔离运行且无外网权限，全操作具备完整审计日志。",
+      how_h: "<span class=\"nw\">四步流转，</span><span class=\"nw\">完成一项临床科研全周期。</span>",
+      step1_h: "采集与建档",
+      step1_p: "上传病历、检验单或知家患者健康档案，OCR 智能结构化提取指标，安全脱敏归档。",
+      step2_h: "立项与圈定队列",
+      step2_p: "建立科研项目，通过多维组合条件筛选目标人群，自动生成入组样本与基线人群画像。",
+      step3_h: "沙箱分析与记忆沉淀",
+      step3_p: "隔离沙箱运行生存分析与组间差异检验，AI 自动提炼并沉淀课题核心结论与统计口径。",
+      step4_h: "论文撰写与成果汇报",
+      step4_p: "Docs & Slides 双模协同起草，多源文献交叉查验引文真实性，一键导出 Word、PPT 投稿与汇报。",
+      road_h: "<span class=\"nw\">持续演进的</span><span class=\"nw\">临床科研智能基础设施。</span>",
+      road_lead: "从患者真实世界数据出发，深度贯通临床科研的计算、证据与表达。",
+      status_live: "已上线 · 持续增强",
+      status_plan: "规划中",
+      road1_h: "数据资产与队列筛选",
+      road1_p: "患者 PHR 档案建立、化验单 OCR 结构化提取与多条件组合队列筛选。下一步：智能化临床质控指标自动稽查。",
+      road2_h: "课题自主记忆演进",
+      road2_p: "AI 从研究交互与修改中提炼课题偏好，自动提议合并重复、修正过时与归档旧记忆，每一次变化均由人类确认。",
+      road3_h: "统计分析与双模创作",
+      road3_p: "隔离沙箱执行 Table 1 与生存分析，Docs & Slides 结构化双模协同与内置矢量光栅化渲染，导出高保真 Word / PPT。",
+      road4_h: "多中心联邦科研协作",
+      road4_p: "在保证原始数据不出院前提下，支持跨医疗机构的联邦队列协同分析与多中心临床试验联合撰写。",
+      sec_h: "<span class=\"nw\">为医疗与科研场景</span><span class=\"nw\">设计的严密边界。</span>",
+      sec_lead: "Heurion 是专为医学与科研打造的辅助工作台，严格守护患者隐私与研究合规。平台不提供诊断或治疗建议，AI 生成内容须经作者审阅确认。",
+      sec1_h: "受限沙箱环境",
+      sec1_p: "AI 编写的统计分析代码在独立用户沙箱账户中运行：无外网访问权限，无法触碰数据库、平台密钥或他人资产。",
+      sec2_h: "PHI 敏感信息扫描",
+      sec2_p: "内置个人健康信息（PHI）安全拦截器，在内容生成与数据流通环节自动扫描并拦截未经脱敏的姓名、身份证号与病案号。",
+      sec3_h: "密钥不出平台",
+      sec3_p: "所有大模型调用经平台安全代理转发，隔离执行环境内仅分配临时短效鉴权凭证，真实模型 API 密钥绝不暴露。",
+      sec4_h: "受控记忆与完整审计",
+      sec4_p: "AI 记忆仅能以“提议”形式生成，生效权完全属于作者；系统全程记录患者数据访问、分析执行与文件导出的合规审计日志。",
+      sec_foot: "* Heurion 不是医疗器械，不用于临床诊断、治疗决策或预后判断；医疗机构部署前请按照当地医疗数据合规法规完成评估。",
+      sources_h: "<span class=\"nw\">建立在</span><span class=\"nw\">权威开放学术数据之上。</span>",
+      partner1_tag: "权威医学文献",
+      partner2_tag: "引文与 DOI 核验",
+      partner3_tag: "学术图谱与文献溯源",
+      cta_h: "<span class=\"nw\">让临床数据、科研记忆与论文创作，</span><span class=\"nw\">在同一个工作台无缝流转。</span>",
+      cta_btn: "免费开启工作台 <span aria-hidden=\"true\">→</span>",
+      cta_sub: "开箱即用，支持多中心团队协同。",
+      foot_note: "临床科研智能工作台 · 不提供诊疗建议"
+    },
+    en: {
+      doc_title: "Heurion · Clinical Research AI Workstation (End-to-End)",
+      nav_phr: "Zhijia (PHR)",
+      nav_pipeline: "Workflow",
+      nav_capabilities: "Capabilities",
+      nav_memory: "Memory",
+      nav_how: "How It Works",
+      nav_security: "Security",
+      nav_partners: "Data Sources",
+      nav_phr_foot: "Zhijia · Patient Health Records",
+      btn_login: "Sign In",
+      btn_enter: "Open Workstation",
+      hero_title: "Clinical Research,<br><span class=\"nw\">from Patient Data to Published Evidence in </span><em class=\"nw\">One Unified Workstation.</em>",
+      hero_lead: "Heurion connects the complete clinical research lifecycle: from patient data collection (PHR & lab report OCR) and cohort management, to data governance, self-evolving memory, sandboxed statistical computing, peer-reviewed paper drafting, strict citation verification, and academic presentation design.",
+      hero_cta_start: "Launch Research Workstation <span aria-hidden=\"true\">→</span>",
+      hero_cta_flow: "Explore Workflow",
+      trust_1: "Compliant Patient Data & PHI Scans",
+      trust_2: "Self-Evolving Research Memory",
+      trust_3: "Sandboxed Analysis & PubMed Citations",
+      mock_study_title: "SGLT2i in Heart Failure Multicenter Real-World Study · Workspace",
+      pipe_1: "① Patient Data (PHR) ✓",
+      pipe_2: "② Cohort Filtering (N=1,420) ✓",
+      pipe_3: "③ Memory Evolution (8 Claims) ✓",
+      pipe_4: "④ Statistical Analysis & Paper",
+      mock_cohort_label: "Study Cohort",
+      mock_cohort_val: "HFrEF Real-World Population (N=1,420) · Matched Labs & 24-Mo Follow-Up",
+      mock_paper_h: "2.1 SGLT2 Inhibitors and Primary Heart Failure Endpoints",
+      mock_paper_p1: "In the enrolled HFrEF cohort, dapagliflozin reduced the composite risk of cardiovascular death or hospitalization for heart failure by <del>a significant margin</del><ins>26% (HR 0.74, 95% CI 0.65–0.85, P&lt;0.001)</ins><sup class=\"cite\">[1]</sup>.",
+      mock_paper_p2: "Verified via sandboxed Cox regression and Kaplan-Meier survival curves, this benefit <mark>remained consistent across subgroups with and without diabetes</mark><sup class=\"cite\">[1]</sup>, and <span class=\"flag\">solidly extended to patients with preserved ejection fraction</span><sup class=\"cite\">[2]</sup>.",
+      mock_note_ai_h: "Memory Evolution · Proposal",
+      mock_note_ai_b: "Detected established hospitalization baseline definitions. Proposed storing this statistical criteria into project memory for subsequent papers and slides.",
+      mock_btn_accept: "Accept & Persist",
+      mock_btn_ignore: "Dismiss",
+      mock_note_cite_h: "Citation Grounding · [1] Verified",
+      mock_note_cite_b: "Verified against PubMed open full text: effect size HR 0.74 (95% CI) matches source verbatim.",
+      mock_note_phi_h: "Compliance Audit · PHI Clean",
+      mock_note_phi_b: "Privacy scan complete: 0 unmasked identifiers found; compliant with HIPAA/de-identification standards.",
+      pillar1_h: "Patient Data & PHR Assets",
+      pillar1_p: "Inpatient/outpatient record digitizing, multimodal lab report OCR, and personal health record (PHR) archiving with clinical claims authorization.",
+      pillar2_h: "Study & Cohort Management",
+      pillar2_p: "Multi-project workspaces with tenant isolation. Complex compound cohort builder (inclusion/exclusion criteria, lab thresholds) generating population baselines in seconds.",
+      pillar3_h: "Data Governance & Memory",
+      pillar3_p: "Standardized clinical dataset cleaning (CSV, SAS, SPSS, Stata) and self-evolving research memory that curates hypotheses, definitions, and team preferences.",
+      pillar4_h: "Analysis, Writing & Presentation",
+      pillar4_p: "Sandboxed statistical execution (Table 1, KM survival curves), Docs & Slides dual-mode authoring, operational Write Guards, and verified PubMed citations.",
+      why_h: "<span class=\"nw\">Generic AI Fails Clinical Research</span><br><span class=\"nw\">at Four Critical Junctions.</span>",
+      answer_prefix: "Heurion: ",
+      pain1_h: "Data Silos & Privacy Leaks",
+      pain1_p: "Scattered paper records, PDF lab sheets, and unstandardized spreadsheets pose severe privacy risks when sent to external LLMs.",
+      pain1_a: "Multimodal OCR structured extraction, closed-loop PHR records, built-in PHI leak screening, and role-based de-identification.",
+      pain2_h: "Cohort Bottlenecks & Analysis Gap",
+      pain2_p: "Manual chart reviews take weeks to extract eligible cohorts. Transferring data between SPSS/Excel and Word manuscripts causes friction and errors.",
+      pain2_a: "Visual compound cohort filtering in seconds. Sandboxed Python/R automation directly outputs Table 1 and publication-grade survival charts into drafts.",
+      pain3_h: "Memory Amnesia & Repetitive Prompts",
+      pain3_p: "Research hypotheses, statistical criteria, and team consensus get lost across chat windows, requiring tedious context rebuilding.",
+      pain3_a: "Autonomous research memory engine that extracts consensus from human revisions, evolving over time with automatic deduplication.",
+      pain4_h: "Hallucinated Citations & Black-Box Edits",
+      pain4_p: "Standard generative AI often fabricates fake DOIs and overwrites entire documents without readable inline diffs.",
+      pain4_a: "Every cited study is cross-verified against PubMed / Crossref / OpenAlex. Operational Write Guards preserve human primacy with high-fidelity inline diffs.",
+      cap_sec_h: "<span class=\"nw\">From Clinical Data to Published Evidence,</span><br><span class=\"nw\">Unified in One Workstation.</span>",
+      cap1_h: "Multimodal Data Ingestion & OCR",
+      cap1_p: "Directly ingest discharge summaries, lab sheets, and exam reports (images & PDFs) with automated OCR extraction into structured clinical assets.",
+      cap2_h: "Study Projects & Cohort Builder",
+      cap2_p: "Compound logic queries combining ICD codes, age, demographics, and lab thresholds to segment target cohorts and baselines in seconds.",
+      cap3_h: "Dataset Governance & Sandboxed Analytics",
+      cap3_p: "Upload CSV, Excel, SAS, SPSS, or Stata datasets. Run statistical scripts in network-isolated sandboxes to generate Table 1 and survival plots.",
+      cap4_h: "Self-Evolving Research Memory Engine",
+      cap4_p: "AI actively synthesizes consensus, definitions, and style preferences from your feedback, proposing merges and retiring obsolete facts.",
+      cap5_h: "Structured Docs & Slide Deck Studio",
+      cap5_p: "Switch between long-form manuscripts and 16:9 presentation slide decks. Real-time multi-agent and human co-editing anchored on stable Block IDs.",
+      cap6_h: "Multi-Source Literature Grounding",
+      cap6_p: "Deep federated retrieval across PubMed, Europe PMC, and OpenAlex. Verifies sentence-by-sentence whether claims are supported by open full texts.",
+      cap7_h: "Strict Citation Standard Verification",
+      cap7_p: "Validates authentic DOIs and PMIDs, generating traceable references formatted to AMA, APA, or custom academic guidelines.",
+      cap8_h: "Clinical Compliance & PHI De-Identification",
+      cap8_p: "Engineered for medical rigors: automated PHI redaction, network-isolated code execution, zero key exposure, and tamper-proof audit trails.",
+      how_h: "<span class=\"nw\">Four Steps to Power</span><br><span class=\"nw\">Your Complete Research Lifecycle.</span>",
+      step1_h: "Ingest & Digitize",
+      step1_p: "Upload medical charts, lab sheets, or PHR patient records. Automated OCR extracts structured indicators with privacy de-identification.",
+      step2_h: "Cohort Definition & Baseline",
+      step2_p: "Configure multi-dimensional inclusion/exclusion criteria to segment cohorts and generate patient baseline demographics.",
+      step3_h: "Sandboxed Analytics & Memory",
+      step3_p: "Execute Kaplan-Meier survival curves and regression in isolated sandboxes while distilling statistical consensus into evolving memory.",
+      step4_h: "Paper Writing & Deck Presentation",
+      step4_p: "Collaborate on structured manuscripts and 16:9 presentation slides with literature grounding, exporting directly to Word (.docx) and PPT.",
+      road_h: "<span class=\"nw\">Continuous Evolution of</span><br><span class=\"nw\">Clinical Research Infrastructure.</span>",
+      road_lead: "Grounded in real-world patient data, connecting computing, evidence, and scientific publication.",
+      status_live: "Production · Enhancing",
+      status_plan: "Roadmap",
+      road1_h: "Data Assets & Cohort Filtering",
+      road1_p: "PHR patient records, lab OCR extraction, and compound cohort builders. Next: automated clinical quality control audits.",
+      road2_h: "Self-Evolving Memory System",
+      road2_p: "AI synthesizes project preferences from interaction deltas, proposing deduplication and archiving with human-in-the-loop approval.",
+      road3_h: "Sandboxed Analytics & Dual-Mode Studio",
+      road3_p: "Automated Table 1 & survival curves in sandboxes, Docs & Slides dual-mode with native vector rasterization for Word & PPT exports.",
+      road4_h: "Multi-Center Federated Collaboration",
+      road4_p: "Federated clinical cohort analysis across hospitals without raw patient data leaving local firewalls.",
+      sec_h: "<span class=\"nw\">Rigorous Boundaries Engineered for</span><br><span class=\"nw\">Medical Research Environments.</span>",
+      sec_lead: "Heurion is a clinical research and scientific evidence workstation. It does not provide medical diagnoses or treatment recommendations. All AI outputs require author verification.",
+      sec1_h: "Network-Isolated Sandboxes",
+      sec1_p: "Statistical Python/R code executes in isolated unprivileged user environments: no external internet access, with zero access to databases or secrets.",
+      sec2_h: "Automated PHI Redaction & Scans",
+      sec2_p: "Built-in Protected Health Information (PHI) guards scan and intercept unmasked patient names, national IDs, and MRNs during analysis and drafting.",
+      sec3_h: "Zero-Exposure Key Architecture",
+      sec3_p: "All LLM requests pass through secure server-side proxies. AI execution containers receive only short-lived ephemeral tokens.",
+      sec4_h: "Audited Memory & Immutable Logs",
+      sec4_p: "Memory operates on human-approved proposals only. Full audit logging tracks data access, computing executions, and export events.",
+      sec_foot: "* Heurion is not a medical device and is not intended for clinical diagnosis or treatment decisions. Institutions must comply with local medical data regulations.",
+      sources_h: "<span class=\"nw\">Built on Authoritative</span><br><span class=\"nw\">Open Academic Data Networks.</span>",
+      partner1_tag: "Biomedical Literature",
+      partner2_tag: "Citation & DOI Verification",
+      partner3_tag: "Bibliographic Graphs & Open Science",
+      cta_h: "<span class=\"nw\">Unify Clinical Data, Research Memory, and Paper Writing</span><br><span class=\"nw\">in One Intelligent Workstation.</span>",
+      cta_btn: "Open Workstation <span aria-hidden=\"true\">→</span>",
+      cta_sub: "Zero install required. Ready for multi-center research teams.",
+      foot_note: "Clinical Research AI Workstation · Non-diagnostic platform"
+    }
+  };
+
+  let currentLang = 'zh';
+
+  function applyLanguage(lang) {
+    currentLang = lang;
+    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+    const dict = DICT[lang] || DICT.zh;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      if (dict[key]) {
+        el.innerHTML = dict[key];
+      }
+    });
+    const langText = document.getElementById('langText');
+    if (langText) langText.textContent = lang === 'en' ? '中文' : 'EN';
+    try {
+      localStorage.setItem('heurion.lang', lang);
+      if (localStorage.getItem('heurion.token')) {
+        document.querySelectorAll('[data-cta]').forEach(a => {
+          a.innerHTML = (lang === 'en' ? 'Open Workstation ' : '进入工作台 ') + '<span aria-hidden="true">→</span>';
+        });
+        document.querySelectorAll('.top-cta .ghost').forEach(a => a.hidden = true);
+      }
+    } catch {}
+  }
+
+  // Detect language
   try {
-    if (localStorage.getItem('heurion.token')) {
-      document.querySelectorAll('[data-cta]').forEach(a => { a.firstChild.textContent = '进入工作台 ' })
-      document.querySelectorAll('.top-cta .ghost').forEach(a => a.hidden = true)
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramLang = urlParams.get('lang');
+    const pathLang = window.location.pathname.startsWith('/en') ? 'en' : null;
+    const storedLang = localStorage.getItem('heurion.lang');
+    const browserLang = (navigator.language || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
+    const initialLang = paramLang || pathLang || storedLang || browserLang;
+    if (initialLang === 'en') {
+      applyLanguage('en');
     }
   } catch {}
-  document.getElementById('year').textContent = new Date().getFullYear()
-  const btn = document.getElementById('menuBtn'), links = document.getElementById('links')
-  btn.onclick = () => { const open = links.classList.toggle('open'); btn.setAttribute('aria-expanded', String(open)) }
-  links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => { links.classList.remove('open'); btn.setAttribute('aria-expanded', 'false') }))
-  const header = document.getElementById('top')
-  const onScroll = () => header.classList.toggle('scrolled', scrollY > 8)
-  addEventListener('scroll', onScroll, { passive: true }); onScroll()
+
+  const langBtn = document.getElementById('langBtn');
+  if (langBtn) {
+    langBtn.addEventListener('click', () => {
+      applyLanguage(currentLang === 'zh' ? 'en' : 'zh');
+    });
+  }
+
+  // Token login check
+  try {
+    if (localStorage.getItem('heurion.token')) {
+      document.querySelectorAll('[data-cta]').forEach(a => { 
+        a.innerHTML = (currentLang === 'en' ? 'Open Workstation ' : '进入工作台 ') + '<span aria-hidden="true">→</span>';
+      });
+      document.querySelectorAll('.top-cta .ghost').forEach(a => a.hidden = true);
+    }
+  } catch {}
+
+  document.getElementById('year').textContent = new Date().getFullYear();
+  const btn = document.getElementById('menuBtn'), links = document.getElementById('links');
+  btn.onclick = () => { const open = links.classList.toggle('open'); btn.setAttribute('aria-expanded', String(open)); };
+  links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => { links.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }));
+  const header = document.getElementById('top');
+  const onScroll = () => header.classList.toggle('scrolled', scrollY > 8);
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
 }
 </script>
 </body>

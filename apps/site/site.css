@@ -165,10 +165,38 @@ h2 { font-size: clamp(30px, 3.6vw, 48px); line-height: 1.15; font-weight: 600; l
 
 /* 合作 */
 .partners { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 56px; border: 1px solid var(--line); }
-.partner { padding: 28px; min-height: 140px; display: flex; flex-direction: column; justify-content: space-between; gap: 24px; }
+.partner { padding: 28px; min-height: 180px; display: flex; flex-direction: column; justify-content: space-between; gap: 20px; transition: background .2s; }
+.partner:hover { background: rgba(0, 255, 147, .02); }
 .partner + .partner { border-left: 1px solid var(--line); }
+.partner-meta { display: flex; flex-direction: column; gap: 14px; }
 .partner .tag { font: 500 11px/1 var(--mono); letter-spacing: .14em; color: var(--muted); }
-.partner p { font-size: 17px; font-weight: 600; line-height: 1.5; }
+.partner-logos { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand-icon { display: inline-flex; align-items: center; opacity: .88; transition: opacity .2s, transform .2s; }
+.brand-icon:hover { opacity: 1; transform: translateY(-1px); }
+.partner p { font-size: 17px; font-weight: 600; line-height: 1.4; color: var(--text); }
+
+/* 语言切换按钮 */
+.lang-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  font: 500 12.5px/1 var(--mono);
+  letter-spacing: .04em;
+  cursor: pointer;
+  transition: all .15s;
+}
+.lang-btn:hover {
+  border-color: var(--mint);
+  color: var(--mint);
+  background: var(--raised);
+}
+.lang-btn svg { width: 14px; height: 14px; fill: currentColor; }
 
 /* CTA */
 .cta { position: relative; overflow: hidden; padding: 120px 0; background: var(--mint); color: var(--mint-ink); }

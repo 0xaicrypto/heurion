@@ -181,6 +181,8 @@ app.get('/phr.html', c => c.redirect('/phr'))
 // 官网：apps/site 的静态页（不用构建）；工作台在 /app
 const SITE = fileURLToPath(new URL('../../site/', import.meta.url))
 app.get('/', c => c.html(readFileSync(join(SITE, 'index.html'), 'utf8')))
+app.get('/en', c => c.html(readFileSync(join(SITE, 'index.html'), 'utf8')))
+app.get('/en/', c => c.redirect('/en'))
 app.get('/site/:file', c => {
   const file = join(SITE, basename(c.req.param('file')))
   if (!existsSync(file) || !MIME[extname(file)]) return c.notFound()
