@@ -127,7 +127,7 @@ heurion2/
 克隆代码库并配置环境变量：
 
 ```bash
-git clone https://github.com/0xaicrypto/heurion.git
+git clone https://github.com/heurion-org/heurion.git
 cd heurion2
 
 # 复制配置文件

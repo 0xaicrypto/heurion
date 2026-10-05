@@ -127,7 +127,7 @@ heurion2/
 Clone the repository and prepare the environment configuration:
 
 ```bash
-git clone https://github.com/0xaicrypto/heurion.git
+git clone https://github.com/heurion-org/heurion.git
 cd heurion2
 
 # Create environment file from template
@@ -298,7 +298,7 @@ pnpm --filter @heurion2/platform ui
 ## 🚀 中文快速开始
 
 ```bash
-git clone https://github.com/0xaicrypto/heurion.git
+git clone https://github.com/heurion-org/heurion.git
 cd heurion2
 
 cp .env.example .env
