@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   probe:
+    if: github.repository == '0xaicrypto/heurion'
     runs-on: ubuntu-latest
     steps:
       - name: 探测

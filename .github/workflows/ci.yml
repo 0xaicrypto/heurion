@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -12,6 +15,8 @@ concurrency:
 jobs:
   test:
     name: 类型检查与测试
+    # 在公开仓库始终运行 CI 校验；在私有仓库 push main 时由 deploy-v2 统一运行，避免重复消耗 runner
+    if: github.repository != '0xaicrypto/heurion' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

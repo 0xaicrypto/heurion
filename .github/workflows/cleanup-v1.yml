@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   cleanup:
+    if: github.repository == '0xaicrypto/heurion'
     runs-on: ubuntu-latest
     environment: production
     steps:
