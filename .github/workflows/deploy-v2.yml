@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_IMAGE: ghcr.io/0xaicrypto/heurion2
-  EMBEDDER_IMAGE: ghcr.io/0xaicrypto/heurion2-embedder
+  APP_IMAGE: ghcr.io/${{ github.repository_owner }}/heurion2
+  EMBEDDER_IMAGE: ghcr.io/${{ github.repository_owner }}/heurion2-embedder
 
 jobs:
   test:
@@ -30,11 +30,10 @@ jobs:
       # 资料库测试用 poppler 的 pdftotext
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @heurion2/platform exec tsc --noEmit
-      - run: pnpm --filter @heurion2/platform exec tsc --noEmit -p web
+      - run: pnpm typecheck
       # 数据集导入测试真实运行 Python 脚本（与镜像里 /opt/compute 同一组读表的包）
       - run: python3 -m venv .venv-compute && .venv-compute/bin/pip install --quiet pandas openpyxl pyreadstat
-      - run: pnpm --filter @heurion2/platform exec vitest run
+      - run: pnpm test
 
   images:
     name: 构建镜像
@@ -73,6 +72,7 @@ jobs:
     name: 部署到生产
     needs: [images]
     runs-on: ubuntu-latest
+    if: ${{ secrets.VPS_SSH_KEY != '' }}
     environment: { name: production, url: 'https://heurion.org' }
     steps:
       - uses: actions/checkout@v4
