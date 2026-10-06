@@ -296,48 +296,60 @@ export const HELP_SECTIONS: HelpSection[] = [
       </table>
 
       <h4>4.4 MONAI 3D 临床深度学习病种量化全矩阵 (MONAI Model Zoo Matrix)</h4>
-      <p>系统内置基于 MONAI 的 13+ 套临床验证级 3D 卷积与 Transformer 深度学习模型，覆盖多解剖部位：</p>
+      <p>系统内置基于 MONAI 的 <b>18+ 款分科预训练临床 3D 深度模型</b>，覆盖人体 5 大核心系统，满足多学科综合读片与专科科研需要：</p>
       <div class="help-grid-2">
         <div class="help-feature-card">
-          <div class="hfc-title">🫁 1. 胸部 HRCT · 支气管扩张与粘液栓分析</div>
+          <div class="hfc-title">🫁 1. 胸部与呼吸科 · 支气管扩张、粘液栓与气道树</div>
           <div class="hfc-desc">
             <ul>
               <li><b>支气管-伴行动脉比 (BAR)</b>：亚毫米级精确测量支气管内径与伴行动脉直径（正常 &lt; 1.0；≥ 1.0 提示典型印戒征支扩）；</li>
               <li><b>高密度粘液栓 (HAM / 指套征)</b>：基于 3D 连通域自动分割全部粘液栓簇，输出平均 CT 测值 (HU)、最大极值 HU 及 3D 总体积 (cm³)，自动与胸壁肌肉 (40~50 HU) 对比判定 HAM 标准；</li>
-              <li><b>气道壁增厚率 (T/D Ratio)</b>：计算管壁厚度与外径比率，量化慢性气道重塑。</li>
+              <li><b>气道壁增厚率 (T/D Ratio)</b> 与全气道树三维拓扑骨架 (AirwayUNet)；</li>
+              <li><b>肺结节与解剖肺叶 (SegResNet / V-Net)</b>：实性/磨玻璃结节 3D 体积与长短径，5 大解剖肺叶容积与占比。</li>
             </ul>
           </div>
         </div>
 
         <div class="help-feature-card">
-          <div class="hfc-title">🔬 2. 胸部 CT · 肺结节、肺叶与气道树</div>
-          <div class="hfc-desc">
-            <ul>
-              <li><b>肺结节与实变分割 (MONAI 3D SegResNet)</b>：自动检出实性/磨玻璃/部分实性结节，测量 3D 体积、最大长径与垂直短径，关联 Fleischner 2017 随访指南；</li>
-              <li><b>5 大解剖肺叶分割 (MONAI V-Net)</b>：右肺上中下叶 (RUL/RML/RLL) 与左肺上下叶 (LUL/LLL) 体积与受累占比；</li>
-              <li><b>全气道树拓扑重建 (MONAI AirwayUNet)</b>：全肺气道树管腔三维拓扑骨架与各级支气管壁厚测量。</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="help-feature-card">
-          <div class="hfc-title">🎯 3. 腹部与盆腔 · 多器官与肿瘤病灶</div>
+          <div class="hfc-title">🫄 2. 腹部、消化与泌尿 · 脏器与肿瘤占位</div>
           <div class="hfc-desc">
             <ul>
               <li><b>前列腺 mpMRI (Pelvic MRI)</b>：T2WI + ADC + DWI 序列对齐，外周带 (PZ) 与移行带 (TZ) 体积分割，可疑占位 3D 径线、ADC 极小值与 PI-RADS v2.1 分级；</li>
-              <li><b>腹部 13 器官多任务分割 (MONAI SwinUNETR)</b>：全自动解剖分割肝、脾、双肾、胰腺、胆囊、胃、主动脉等；</li>
-              <li><b>肝癌与胰腺肿瘤分割</b>：肝实质与 HCC/转移瘤靶病灶量化，胰腺导管腺癌与囊性占位体积分析。</li>
+              <li><b>全腹部 13 器官多任务分割 (MONAI SwinUNETR)</b>：全自动解剖分割肝、脾、双肾、胰腺、胆囊、胃、主动脉等；</li>
+              <li><b>肝癌与胰腺肿瘤分割</b>：肝实质与 HCC/转移瘤靶病灶量化，胰腺导管腺癌与囊性占位体积分析；</li>
+              <li><b>肾脏与肾肿瘤/囊肿分割 (KiTS)</b> 与脾肿大定量 (3D SegResNet)。</li>
             </ul>
           </div>
         </div>
 
         <div class="help-feature-card">
-          <div class="hfc-title">🧠 4. 神经系统 · 脑部 MRI 与急诊头颅 CT</div>
+          <div class="hfc-title">🧠 3. 颅脑与神经系统 · 脑病变与急诊出血</div>
           <div class="hfc-desc">
             <ul>
               <li><b>脑胶质瘤多模态分割 (MONAI BraTS DynUNet)</b>：强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR) 三维体积测量；</li>
+              <li><b>海马体与皮质下深部核团萎缩量化 (FastSurfer-like)</b>：阿尔茨海默病与认知功能障碍量化；</li>
               <li><b>急性脑梗死测定 (DWI/FLAIR UNet)</b>：缺血半暗带与核心梗死容积精准评估；</li>
               <li><b>急诊颅内出血检出 (MONAI DenseNet)</b>：硬膜外、硬膜下、脑实质内及蛛网膜下腔出血检出与血肿容积量化。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="help-feature-card">
+          <div class="hfc-title">🫀 4. 心血管系统 · 冠脉钙化与心功能评估</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>冠状动脉钙化积分 (CAC / Agatston 评分) [Cardiac CT]</b>：自动检出左前降支 (LAD)、回旋支 (LCX) 与右冠状动脉 (RCA) 钙化斑块，计算总 Agatston 评分评估冠心病风险分层；</li>
+              <li><b>心脏 CINE MRI 心室分割与射血分数 (LVEF)</b>：多时相动态追踪左心室舒张末/收缩末容积 (EDV/ESV)、心肌质量与射血分数。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="help-feature-card">
+          <div class="hfc-title">🦴 5. 骨科与全身体素 · 大规模解剖分割与脊柱</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>全身体素 104 类解剖结构分割 (TotalSegmentator) [Whole-Body CT]</b>：全身体素骨骼、主要内脏系统与大肌群一键全自动语义分割，适用于大样本流行病学与机体成分分析；</li>
+              <li><b>全脊柱 24 节椎骨与椎间盘分割 (Spine-Segmenter) [Spine CT]</b>：颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙高度三维精准测量。</li>
             </ul>
           </div>
         </div>
@@ -699,19 +711,25 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 3. **3D 原始影像支持与空间几何解析**：
    - 支持 DICOM 序列压缩包 (\`.zip\` / \`.tar.gz\`)、单张 DICOM (\`.dcm\`) 及 NIfTI 卷 (\`.nii\` / \`.nii.gz\`)；
    - 自动解析体素空间几何间距 (Voxel Spacing) 与矩阵维度，入库前自动彻底清洗私有敏感 Tag。
-4. **MONAI 3D 临床深度学习模型全矩阵**：
-   - **胸部 HRCT**：
+4. **MONAI 3D 临床深度学习模型全矩阵 (18+ 款分科模型)**：
+   - **胸部与呼吸科**：
      - **支气管-伴行动脉比 (BAR)**：测量内径比值（正常 < 1.0；≥ 1.0 提示典型印戒征支气管扩张）；
      - **高密度粘液栓 (HAM / 指套征)**：自动多簇分割，量化均值 HU、极值 HU 及 3D 总体积 (cm³)，自动与胸壁肌肉 (40~50 HU) 对比判定 HAM 标准；
-     - **气道壁增厚率 (T/D Ratio)**：量化慢性气道炎性重塑；
-   - **胸部 CT 肺结节与肺叶**：
+     - **气道壁增厚率 (T/D Ratio)**、全气道树三维拓扑骨架 (AirwayUNet) 与 5 大解剖肺叶 (V-Net)；
      - **肺结节与实变分割 (SegResNet)**：实性/磨玻璃结节 3D 体积与长短径，关联 Fleischner 2017 随访指南；
-     - **5 大解剖肺叶分割 (V-Net)** 与全气道树三维拓扑骨架重建 (AirwayUNet)；
-   - **腹部与盆腔**：
+   - **腹部、消化与泌尿**：
      - **前列腺 mpMRI**：T2WI+ADC+DWI 序列对齐，外周带/移行带分割，PI-RADS v2.1 3D 分级；
      - **全腹部 13 器官多任务分割 (SwinUNETR)**、肝癌/转移瘤与胰腺导管腺癌 3D 量化；
-   - **神经系统**：
-     - 脑胶质瘤多模态分割 (BraTS)、急性脑梗死缺血半暗带测定及急诊颅内出血与血肿检出。
+     - **肾肿瘤/肾囊肿 (KiTS)** 与脾肿大定量 (SegResNet)；
+   - **颅脑与神经系统**：
+     - 脑胶质瘤多模态分割 (BraTS DynUNet)、皮质下深部核团与海马体萎缩量化 (FastSurfer-like)；
+     - 急性脑梗死缺血半暗带测定及急诊颅内出血与血肿检出；
+   - **心血管系统**：
+     - **冠状动脉钙化积分 (CAC / Agatston 评分)**：评估冠状动脉硬化风险分层；
+     - **心脏 CINE MRI 心室分割与射血分数 (LVEF)**：动态测算左心室收缩舒张末容积与射血分数；
+   - **骨科与全身体素**：
+     - **全身体素 104 类解剖结构分割 (TotalSegmentator)**：全身骨骼与主要内脏肌群一键全自动分割；
+     - **全脊柱 24 节椎骨与椎间盘分割 (Spine-Segmenter)**：脊椎压缩性骨折与椎间隙测量。
 5. **诊断级交互式 MPR 三正交切片浏览器**：
    - **双引擎随心切换**：轻量极速 2D 正交切片引擎（内置 5cm 毫米标尺与 HUD 抬头显示）与 NiiVue 3D WebGL2 引擎（3D 体绘制与四视图联动）；
    - **三正交解剖平面自由切换**：横断面 (Axial)、冠状面 (Coronal)、矢状面 (Sagittal) 自由切换，切片滑动条、鼠标滚轮上下滑动或键盘方向键平滑逐层浏览；
