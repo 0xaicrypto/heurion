@@ -542,6 +542,130 @@ export const HELP_SECTIONS: HelpSection[] = [
     `
   },
   {
+    id: 'casestudy',
+    title: '【实战图解】真实患者 3D 影像全流程诊疗范例',
+    badge: '实战案例',
+    icon: icon('sparkles', { size: 16 }),
+    summary: '以真实确诊的支扩伴高密度粘液栓 (ABPA) 患者 PT-BRONCHO-001 为例，图文详解 HRCT 深度量化、三正交切片浏览、双期配准差分热力图、L3 机体成分及多模态因果诊断链全流程。',
+    contentHtml: `
+      <div class="help-section-head">
+        <h3>7. 真实病例深度实战图解 (Real-World Case Study)</h3>
+        <span class="help-tag ok">真实病例 · 诊断级图解 · 证据闭环</span>
+      </div>
+      <p class="help-lead">医学影像功能的复杂性在于“从 3D 几何体素到临床决策的全链路因果串联”。本节以真实确诊的变应性支气管肺曲霉病 (ABPA) 患者 <code>PT-BRONCHO-001</code> 为完整范例，手把手图解单期深度量化、三正交切片交互、多期配准差分热力图、全身体素肌少症预后及多模态因果诊断链的全部实战操作。</p>
+
+      <h4>7.1 患者基本资料与临床主诉 (Clinical Profile)</h4>
+      <div class="help-feature-card" style="margin: 12px 0;">
+        <div class="hfc-title">患者脱敏档案 · PT-BRONCHO-001</div>
+        <div class="hfc-desc">
+          <ul>
+            <li><b>基本信息</b>：52岁男性，教师。严格遵循零 PHI 规范建档（真实姓名仅保存在医生本地浏览器 localStorage 中，绝不上云）。</li>
+            <li><b>主诉与现病史</b>：反复咳嗽、咳黄褐色粘稠胶冻样脓痰伴间断痰中带血 6 年，活动后气促 1 年，近两周症状加重伴低热 (37.8℃)。既往有支气管哮喘病史 10 年，长期吸入 ICS/LABA。</li>
+            <li><b>诊疗痛点</b>：外院曾按普通支气管扩张合并铜绿假单胞菌感染反复静脉滴注抗生素，治疗后无根本改善，肺实质浸润及粘液嵌顿进行性加重。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>7.2 第一步：3D HRCT 上传与 MONAI 深度学习病灶量化 (Baseline HRCT)</h4>
+      <p>医生在「患者 ➔ 影像」面板上传包含 269 层的胸部高分辨 CT 序列 (DICOM/NIfTI)。系统调用 <code>bronchiectasis_mucus_analyzer</code> 深度网络完成全肺体素解析并自动聚焦病灶最大截面（第 #114 层）：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 1 真实患者胸部 HRCT 轴位关键截面 (Slice #114) · MONAI 自动量化分析</span>
+          <span class="help-case-tag">${icon('scan', { size: 12 })} MONAI 3D SegResNet</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-1-baseline-hrct.png" alt="真实患者胸部 HRCT 关键截面量化分析" />
+        <div class="help-case-caption">
+          <b>影像学关键指征解读：</b>
+          <ul>
+            <li><b>支气管-伴行动脉比 (BAR = 1.45)</b>：正常成人肺野内支气管内径通常小于等于伴行动脉内径（BAR ≤ 1.0）。黄色测量卡尺清晰标出支气管内径扩张至 7.8 mm（伴行动脉 5.4 mm），呈现教科书级典型<b>「印戒征 (Signet Ring Sign)」</b>，提示重度柱状支气管扩张；</li>
+            <li><b>管壁厚度比 (T/D Ratio = 0.28)</b>：参考值 &lt; 0.20，证实气道壁处于慢性重度炎性肥厚与纤维重塑状态；</li>
+            <li><b>高密度粘液栓 (High Attenuation Mucus, HAM)</b>：红色高亮区域标识右肺下叶基底段支气管腔内广泛嵌顿的胶冻样栓塞。AI 多簇体素聚类测得粘液栓总体积达 <b>368.29 cm³</b>，其中<b>高密度 HAM 嵌顿达 12.44 cm³</b>。测得栓体 CT 均值 98 HU（峰值 126 HU），远超胸壁肌肉平均 CT 值 (40~50 HU)。该高密度征象在病理生理学上特异性对应嗜酸性坏死蛋白（夏科-雷登结晶）与曲霉菌丝凝聚，为 ABPA 的关键影像学标志；</li>
+            <li><b>量化严重度分级</b>：Bhalla 粘液栓嵌顿评定为 2 级 (重度广泛完全嵌顿)；Reiff 支扩严重度综合评分为 12/18 分。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>7.3 第二步：诊断级 3D MPR 三正交切片交互浏览 (Interactive 3D MPR)</h4>
+      <p>点击「打开 3D 浏览器」，进入全景三正交切片工作台。克服单一切片肉眼难以观察气道立体走行的缺陷：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 2 诊断级交互式 3D MPR 三正交切片浏览器 (Triple Orthogonal Planes)</span>
+          <span class="help-case-tag">${icon('grid', { size: 12 })} 三正交联动</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-2-mpr-3view.png" alt="诊断级交互式 3D MPR 三正交切片浏览器" />
+        <div class="help-case-caption">
+          <b>三正交浏览交互核心功能：</b>
+          <ul>
+            <li><b>三联解剖空间对齐</b>：横断面 (Axial #114/269)、冠状面 (Coronal #256/512)、矢状面 (Sagittal #256/512) 实时同屏联动，立体展现粘液栓自近端大气道向下叶基底段各级支气管蔓延的“指套征 (Glove-finger shadow)”三维形态；</li>
+            <li><b>三维准星瞬时跳转 (Cursor Lock)</b>：点击「定位病灶中心」，准星自动瞬时飞跃到病灶最大几何截面层位，鼠标滚轮可在该层前后微调；</li>
+            <li><b>全模态临床窗宽窗位</b>：支持快捷键一键在肺窗 (-600/1500)、纵隔窗 (40/400) 之间切换，方便快速鉴别粘液栓与纵隔淋巴结；右下角配备 5 cm 毫米级真实物理比例尺；</li>
+            <li><b>存证截图沉淀</b>：点击「${icon('save', { size: 12 })} 保存切片为文档资产」，即刻以无损 PNG 保存当前层位，自动生成 Markdown 引用代码供论文或病历直接使用。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>7.4 第三步：TotalSegmentator 全身体素机体成分与 L3 肌少症预后分析 (Body Composition)</h4>
+      <p>为评估该长期慢性气道炎性消耗患者能否耐受大剂量激素与抗真菌治疗，医生在工作台一键运行「机体成分分析」：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 3 TotalSegmentator 3D 全身体素机体成分与 L3 骨骼肌指数 (SMI) 量化</span>
+          <span class="help-case-tag">${icon('users', { size: 12 })} 营养恶液质预后评估</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-4-l3-smi.png" alt="TotalSegmentator L3 断面机体成分与肌少症量化" />
+        <div class="help-case-caption">
+          <b>机体成分与耐受性量化指标：</b>
+          <ul>
+            <li><b>L3 骨骼肌指数 (SMI = 56.94 cm²/m²)</b>：AI 全自动定位 L3 椎体中位截面（第 #150 层），精准分割腰大肌、竖脊肌及腹前外侧肌群，骨骼肌总面积 SMA 为 174.39 cm²。结合身高 1.75m 换算 SMI 为 56.94 cm²/m²；</li>
+            <li><b>肌少症筛查</b>：依据 Prado 国际标准（男性截断值 52.4 cm²/m²），患者属于「骨骼肌量正常 (Normal Muscularity)」，无肿瘤恶液质或严重消耗性肌少症；</li>
+            <li><b>内脏脂肪与皮下脂肪比 (VAT / SAT = 0.038)</b>：内脏脂肪面积 VAT 为 15.07 cm²，皮下脂肪充足且分布均匀。评估患者骨骼肌代谢底质良好，能够充分耐受足疗程口服泼尼松及伏立康唑药物治疗。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>7.5 第四步：治疗 3 个月随访：双期配准与差分吸收热力图对比 (Follow-up Diff Heatmap)</h4>
+      <p>患者接受正规口服糖皮质激素（起始剂量 0.5 mg/kg/d，逐周规律递减）联合伏立康唑抗真菌药物治疗 3 个月后，于 2026-10-01 进行胸部 HRCT 复查。医生在工作台点击「多期随访对比」：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 4 规范治疗 3 个月后随访：3D 空间弹性配准与差分吸收热力图 (Difference Heatmap)</span>
+          <span class="help-case-tag">${icon('compare', { size: 12 })} 随访疗效评定</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-3-diff-heatmap.png" alt="随访双期 3D 空间弹性配准与差分吸收热力图" />
+        <div class="help-case-caption">
+          <b>动态随访演变量化与疗效判定：</b>
+          <ul>
+            <li><b>3D 非刚性弹性形变配准 (Deformable B-spline)</b>：系统自动克服患者两次扫描时的吸气相深浅差异与胸廓微小旋转，输出高精度形变向量场将随访 CT 空间刚性对齐；</li>
+            <li><b>差分吸收热力图图层</b>：在对齐后体素空间中计算 HU 差分，绿色图层极为醒目地勾画出原右下叶基底段支气管内嵌顿的高密度粘液栓发生大范围溶解与咳出吸收；</li>
+            <li><b>严格遵循 3D 容积吸收评估准则</b>：粘液栓总体积由基线 <b>368.29 cm³ 骤降至 92.50 cm³</b>，体积吸收率达到 <b>74.9%</b>！系统依据非实体瘤量化评估共识自动评定为 <b>「显著吸收好转 / 部分缓解 (PR)」</b>，坚决杜绝生搬硬套 RECIST 实体瘤最大长径标准带来的逻辑冲突。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>7.6 第五步：多模态因果诊断链闭环与标准报告出具 (Multimodal Evidence Chain)</h4>
+      <p>影像分析并非孤立存在，系统将 3D CT 影像征象与患者实验室多模态指标深度联动，一键拼装出符合国际共识的因果诊断链：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 5 多模态因果诊断链与证据闭环 (ABPA 证据三支柱)</span>
+          <span class="help-case-tag">${icon('sparkles', { size: 12 })} 因果推理 · 标准交换</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-5-diagnostic-chain.png" alt="多模态因果诊断链与证据闭环" />
+        <div class="help-case-caption">
+          <b>多模态证据闭环与标准文书出具：</b>
+          <ul>
+            <li><b>支柱一（3D HRCT 影像定量）</b>：柱状支扩印戒征 (BAR 1.45) + 中央型高密度粘液栓 (HAM 12.44 cm³) + 指套征；</li>
+            <li><b>支柱二（实验室免疫生化指标）</b>：外周血嗜酸粒细胞绝对值高达 1.12 × 10⁹/L (显著增高 ↑)、血清总 IgE 达到 1820 kU/L (超正常上限 18 倍 ↑)、烟曲霉特异性 sIgE 4 级强阳性；</li>
+            <li><b>支柱三（终末确诊与处置决策）</b>：完全符合 Rosenberg-Patterson 诊断标准的全部核心要素，正式确立诊断为 <b>变应性支气管肺曲霉病 (ABPA) 急性活动加重期 (Stage 1)</b>；</li>
+            <li><b>互操作国际格式导出</b>：一键生成规范四段式影像报告单，并导出标准 <b>DICOM SR</b> (SOP Class 1.2.840.10008.5.1.4.1.1.88.22) 与 <b>HL7 FHIR DiagnosticReport</b> JSON，直通医院 PACS/EMR 临床终端。</li>
+          </ul>
+        </div>
+      </div>
+    `
+  },
+  {
     id: 'research',
     title: '临床科研工作流 (Research)',
     badge: '统计分析',
@@ -549,19 +673,19 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '方案设计、多中心数据集质控清洗、Table 1 基线表一键制表、Kaplan-Meier 生存曲线与 Cox 比例风险回归。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>7. 临床科研工作流 (Clinical Research & Automated Biostatistics)</h3>
+        <h3>8. 临床科研工作流 (Clinical Research & Automated Biostatistics)</h3>
         <span class="help-tag">科研立项 · 统计分析</span>
       </div>
       <p class="help-lead">覆盖临床研究方案拟定、多源多格式数据表质控导入、自动化医学统计学制表及文章发表归档全周期。</p>
 
-      <h4>7.1 研究项目与方案管理</h4>
+      <h4>8.1 研究项目与方案管理</h4>
       <p>进入「研究」工作空间，点击「＋ 新建研究」：</p>
       <ul>
         <li>输入研究题目、临床试验注册号 (如 ChiCTR / ClinicalTrials.gov NCT ID)、研究类型（前瞻性 RCT、回顾性队列或病例对照）。</li>
         <li>结构化设定纳入与排除标准、暴露/干预因素及主要终点事件 (Primary Endpoint)。</li>
       </ul>
 
-      <h4>7.2 多格式原始数据集导入与质控</h4>
+      <h4>8.2 多格式原始数据集导入与质控</h4>
       <p>在「数据集」面板中，支持直接上传主流统计软件原始文件：</p>
       <div class="help-grid-3">
         <div class="help-chip-card"><b>.csv / .xlsx</b><span>通用表格文件</span></div>
@@ -570,7 +694,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       </div>
       <p>系统自动扫描变量字典、数据类型识别、缺失值比例报告及异常极端值警示。</p>
 
-      <h4>7.3 自动化高保真医学统计分析</h4>
+      <h4>8.3 自动化高保真医学统计分析</h4>
       <ul class="help-list-steps">
         <li>
           <span class="step-num">${icon('template', { size: 14 })}</span>
@@ -591,7 +715,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           </div>
         </li>
       </ul>
-      <h4>7.4 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
+      <h4>8.4 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
       <p>将深度学习量化指标与长期临床随访结局深度融合：</p>
       <ul>
         <li><b>肌少症 (SMI) 与脂肪分布预后分层</b>：依据 L3 骨骼肌指数 (SMI) 与内脏/皮下脂肪比 (VAT/SAT) 自动进行低 SMI 肌少症组 vs 对照组分组，一键绘制 Kaplan-Meier 生存曲线并计算 Log-Rank p 值；</li>
@@ -610,25 +734,25 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '科室诊疗组 RBAC 权限矩阵、个人专属知家家庭健康档案、患者安全扫码分享令牌及防泄密管控。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>8. 科室协作与知家家庭健康空间 (Collaboration & PHR)</h3>
+        <h3>9. 科室协作与知家家庭健康空间 (Collaboration & PHR)</h3>
         <span class="help-tag">权限矩阵 · 家人健康</span>
       </div>
       <p class="help-lead">兼顾院内科室团队高效协作与医生个人家庭健康管理，双重身份安全解耦。</p>
 
-      <h4>8.1 科室团队与诊疗组 (Care Team)</h4>
+      <h4>9.1 科室团队与诊疗组 (Care Team)</h4>
       <ul>
         <li><b>角色分工</b>：机构管理员 (Admin)、主管医师 (Attending Physician)、辅助医师 (Fellow/Resident)。</li>
         <li><b>数据可见性</b>：不同医疗组之间实行患者病历权限隔离，确保诊疗隐私与数据追溯责任到人。</li>
       </ul>
 
-      <h4>8.2 知家 (Personal Health Record, PHR) · 个人专属家庭空间</h4>
+      <h4>9.2 知家 (Personal Health Record, PHR) · 个人专属家庭空间</h4>
       <p>在右上角账户菜单点击「个人空间 (知家)」，即可切换至独立个人档案：</p>
       <ul>
         <li><b>物理级隔离</b>：知家属于医生个人空间，与医院工作台完全物理隔离。即使未来更换执业医院，知家中的家人体检报告、化验单及慢病指标永不丢失。</li>
         <li><b>AI 亲情化解读</b>：利用通俗易懂的语言对长辈体检异常指标进行科普化分析与随访建议。</li>
       </ul>
 
-      <h4>8.3 患者随访与安全扫码分享</h4>
+      <h4>9.3 患者随访与安全扫码分享</h4>
       <p>医生可为特定患者生成具有有效期的<b>外部安全访问令牌 (Secure Share Token)</b>：</p>
       <ul>
         <li>患者在微信或移动端浏览器打开，仅能查阅经过去标识化的通俗化报告与趋势图，无法看到医生内部工作流与其他患者数据。</li>
@@ -644,7 +768,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '影像上传失败排查、切片对齐精度、导出排版微调与临床法律安全边界说明。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>9. 常见问题与操作贴士 (FAQ & Troubleshooting)</h3>
+        <h3>10. 常见问题与操作贴士 (FAQ & Troubleshooting)</h3>
         <span class="help-tag warn">避坑指引 · 临床备忘</span>
       </div>
 
@@ -827,7 +951,42 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 七、 临床科研工作流 (Research)
+## 七、 【实战案例深度图解】真实患者 3D 影像全流程量化与随访评定范例
+
+医学影像功能的复杂性在于“从 3D 几何体素到临床决策的全链路因果串联”。本节以真实确诊的变应性支气管肺曲霉病 (ABPA) 患者 \`PT-BRONCHO-001\` 为完整范例：
+
+1. **患者脱敏档案与主诉**：
+   - 虚拟代号：\`PT-BRONCHO-001\` (52 岁男性，教师，零 PHI 规范建档)；
+   - 主诉：反复咳嗽咳黄粘脓痰伴间断咯血 6 年，近 2 周加重伴低热 (37.8℃)；
+   - 诊疗痛点：外院按普通支扩合并铜绿假单胞菌感染反复使用抗生素无效。
+2. **步骤一：3D HRCT 上传与 MONAI 深度学习病灶量化**：
+   - 参考图像：[图 1 真实患者胸部 HRCT 轴位关键截面量化分析](/site/real-case-1-baseline-hrct.png)；
+   - **支气管-伴行动脉比 (BAR = 1.45)**：右肺下叶支气管内径扩张至 7.8 mm（伴行动脉 5.4 mm），呈现教科书级典型「印戒征 (Signet Ring Sign)」；
+   - **管壁厚度比 (T/D = 0.28)**：气道慢性炎性重塑；
+   - **高密度粘液栓 (HAM = 12.44 cm³)**：嵌顿栓 CT 均值 98 HU（峰值 126 HU，远超胸壁肌肉 40~50 HU），高度支持嗜酸性坏死蛋白与曲霉菌丝聚集；
+   - 评分：Bhalla 2 级 (完全嵌顿)，Reiff 严重度评分 12/18 分。
+3. **步骤二：诊断级 3D MPR 三正交切片交互浏览**：
+   - 参考图像：[图 2 诊断级交互式 3D MPR 三正交切片浏览器](/site/real-case-2-mpr-3view.png)；
+   - 横断面 (Axial #114)、冠状面 (Coronal #256)、矢状面 (Sagittal #256) 实时同屏联动；
+   - 肺窗 (-600/1500) 与纵隔窗 (40/400) 快捷切换，5 cm 真实物理标尺，准星一键聚焦病灶中心。
+4. **步骤三：TotalSegmentator 全身体素机体成分与 L3 肌少症预后分析**：
+   - 参考图像：[图 3 TotalSegmentator L3 断面机体成分与肌少症量化](/site/real-case-4-l3-smi.png)；
+   - 骨骼肌指数 (SMI = 56.94 cm²/m²)，高于男性肌少症截断值 52.4 cm²/m²；
+   - 内脏/皮下脂肪比 (VAT/SAT = 0.038)，评估机体营养与肌量良好，耐受后续抗真菌疗程。
+5. **步骤四：治疗 3 个月随访：双期配准与差分吸收热力图对比**：
+   - 参考图像：[图 4 随访双期 3D 空间弹性配准与差分吸收热力图](/site/real-case-3-diff-heatmap.png)；
+   - 接受口服糖皮质激素联合伏立康唑治疗 3 个月；
+   - MONAI 非刚性弹性配准消除呼吸相差异；
+   - 差分吸收热力图（绿色高亮）：粘液栓容积由 368.29 cm³ 降至 92.50 cm³ (吸收率 74.9%)；
+   - 3D 容积吸收评估达到「显著吸收好转 / 部分缓解 (PR)」。
+6. **步骤五：多模态因果诊断链闭环与标准报告出具**：
+   - 参考图像：[图 5 多模态因果诊断链与证据闭环](/site/real-case-5-diagnostic-chain.png)；
+   - 影像征象 (BAR 1.45 + HAM 12.44 cm³) + 实验室指标 (Eos 1.12×10⁹/L + 总 IgE 1820 kU/L + 曲霉 sIgE 4级)；
+   - 确立变应性支气管肺曲霉病 (ABPA) 急性期诊断，一键出具四段式报告并导出标准 DICOM SR 与 FHIR。
+
+---
+
+## 八、 临床科研工作流 (Research)
 
 1. **科研立项与方案管理**：临床试验注册号、纳入排除标准、主要终点设定；
 2. **多格式数据集质控导入**：支持 CSV、Excel (\`.xlsx\`)、SAS (\`.sas7bdat\`)、SPSS (\`.sav\`)；自动检测缺失值与极端值；
@@ -843,7 +1002,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 八、 科室协作与知家家庭健康空间 (PHR)
+## 九、 科室协作与知家家庭健康空间 (PHR)
 
 1. **科室诊疗组 (Care Team)**：主诊医师与组员权限矩阵，敏感病历访问审计留痕；
 2. **知家个人空间 (PHR)**：医生专属家庭健康空间，与医院工作台物理隔离，终身保留家人健康档案；
@@ -851,7 +1010,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 九、 常见问题解答 (FAQ)
+## 十、 常见问题解答 (FAQ)
 
 - **Q: 为什么上传 DICOM 耗时较长？**  
   A: 建议上传单个序列的压缩包（< 500MB），去除定位像后再压缩。
