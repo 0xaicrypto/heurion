@@ -7,6 +7,8 @@
  */
 import { photoFigure } from './photos.ts'
 import { askConfirm } from './dialogs.ts'
+import { openHelpGuide } from './help.ts'
+import { icon } from './icons.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 type Notice = (msg: string, error?: boolean) => void
@@ -72,14 +74,14 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
   }
 
   /** 新建研究：名称、设计、简介（一个小表单）。 */
-  function createDialog(): void {
+  function createDialog(prefill?: { title?: string; design?: string; summary?: string }): void {
     const dlg = $('dialog')
     dlg.innerHTML = `<div class="dialog-card small" role="dialog" aria-modal="true" aria-label="新建研究">
       <div class="dialog-head"><h2>新建研究</h2><button class="quiet" data-close aria-label="关闭">✕</button></div>
       <form class="dialog-body form" id="studyForm">
-        <label>研究名称<input type="text" name="title" required maxlength="120" placeholder="例如：SGLT2 抑制剂与 CKD3 患者 eGFR 下降"></label>
-        <label>研究设计<select name="design"><option value="">（暂不确定）</option>${Object.entries(DESIGNS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
-        <label>简介（可选）<textarea name="summary" rows="3" placeholder="研究问题、人群、主要终点"></textarea></label>
+        <label>研究名称<input type="text" name="title" required maxlength="120" placeholder="例如：SGLT2 抑制剂与 CKD3 患者 eGFR 下降" value="${esc(prefill?.title ?? '')}"></label>
+        <label>研究设计<select name="design"><option value="">（暂不确定）</option>${Object.entries(DESIGNS).map(([k, v]) => `<option value="${k}"${prefill?.design === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label>简介（可选）<textarea name="summary" rows="3" placeholder="研究问题、人群、主要终点">${esc(prefill?.summary ?? '')}</textarea></label>
         <div class="row end"><button type="button" data-close>取消</button><button class="primary">创建</button></div>
       </form></div>`
     dlg.hidden = false
@@ -354,27 +356,73 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     }
   }
 
+  const STUDY_PRESETS: Record<string, { title: string; design: string; summary: string }> = {
+    hfrep: {
+      title: 'SGLT2 抑制剂在射血分数降低心衰 (HFrEF) 中的心血管终点真实世界研究',
+      design: 'retrospective_cohort',
+      summary: '评估 SGLT2 抑制剂在 HFrEF 患者中的全因死亡率与心衰再住院风险 (MACE) 生存分析与倾向评分匹配 (PSM)。'
+    },
+    radiomics: {
+      title: '晚期非小细胞肺癌免疫治疗应答的 3D CT 影像组学特征与预后模型',
+      design: 'retrospective_cohort',
+      summary: '提取病灶 IBSI 规范化 107 项高维影像组学特征，结合 LASSO 特征降维与 Cox 比例风险回归构建无进展生存期 (PFS) 预测模型。'
+    },
+    smi: {
+      title: '消化系统恶性肿瘤 TotalSegmentator L3 骨骼肌质量指数 (SMI) 与化疗不良反应关联分析',
+      design: 'prospective_cohort',
+      summary: '基于腹部 CT L3 椎体层面深度学习自动分割测量 SMI、骨骼肌衰减值 (SMD) 与内脏脂肪指数，评估重度肌少症与剂量毒性相关性。'
+    }
+  }
+
   function showWelcome(): void {
     current = null
     const page = $('page')
     page.className = 'page study-page rs-welcome'
     $('docTitle').textContent = '临床研究'
-    page.innerHTML = `<div class="pt-welcome-body">
-      <span class="pt-code big">STUDY</span>
-      <h1>${list.length ? '选择一个研究项目' : '新建第一个研究项目'}</h1>
-      <p class="muted">一个研究项目把方案、数据、分析和稿件放在一起：在研究的文档里，AI 会自动用这个研究的数据集，写论文时能直接引用分析结果。</p>
-      <ol class="pt-steps">
-        <li><b>研究方案</b><span>研究设计、纳入排除标准、终点，AI 可以帮你起草与完善。</span></li>
-        <li><b>数据集</b><span>上传 CSV、Excel、SAS、SPSS、Stata；身份信息的列处理后才能分析。</span></li>
-        <li><b>分析</b><span>Table 1、生存曲线、回归……每张图都能看到代码与数据来源。</span></li>
-        <li><b>稿件</b><span>论文、组会汇报幻灯片，写作时直接引用分析结果。</span></li>
-        <li><b>入组患者</b><span>从患者库按条件筛选入组，生成只有研究编号的研究数据集。</span></li>
-      </ol>
-      <div class="row" id="rsWelcomeActions"><button class="primary" data-rw="new">＋ 新建研究</button>${list[0] ? `<button data-rw="open">打开「${esc(list[0].title)}」</button>` : ''}</div>
+    page.innerHTML = `<div class="welcome">
+      <svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg>
+      <h1>开展一项临床研究课题</h1>
+      <p class="welcome-sub">一个研究项目集中管理方案、队列、统计与稿件；在隔离受限沙箱中秒级运行 Table 1 与生存曲线，数据与代码可追溯，自主演进科研记忆。</p>
+      <div class="welcome-cards">
+        <button class="welcome-card primary" data-rw="new"><b>＋ 新建研究项目</b><span>研究设计、纳入排除标准、主要终点与方案起草</span></button>
+        <button class="welcome-card" data-rw="dataset"><b>导入数据集</b><span>支持 CSV、Excel、SAS、SPSS、Stata 质控导入</span></button>
+        ${list[0]
+          ? `<button class="welcome-card" data-rw="open"><b>打开最近研究</b><span>打开「${esc(list[0].title)}」</span></button>`
+          : `<button class="welcome-card" data-rw="cohort"><b>筛选入组队列</b><span>从患者库多维条件筛选入组生成研究数据集</span></button>`}
+      </div>
+      <h2>试试典型科研课题与分析范例</h2>
+      <div class="welcome-examples">
+        <button data-study-preset="hfrep" title="点击体验 SGLT2 抑制剂在 HFrEF 患者中的心血管终点真实世界研究课题">
+          <span style="display:flex;align-items:center;gap:8px;">
+            <svg class="ui-icon" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5l1.5 3 3.5.5-2.5 2.5.5 3.5-3-1.5-3 1.5.5-3.5-2.5-2.5 3.5-.5z"/></svg>
+            <b>[真实世界队列]</b> SGLT2 抑制剂在射血分数降低心衰 (HFrEF) 患者中的多中心队列与主要心血管不良事件 (MACE) 生存分析
+          </span>
+        </button>
+        <button data-study-preset="radiomics" title="点击体验晚期非小细胞肺癌 3D 影像组学特征与预后模型课题">
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${icon('nsclc', { size: 16 })}
+            <b>[肿瘤影像组学]</b> 晚期非小细胞肺癌免疫治疗应答预测：IBSI 107 项组学特征提取与 LASSO-Cox 风险回归建模
+          </span>
+        </button>
+        <button data-study-preset="smi" title="点击体验消化系统恶性肿瘤骨骼肌质量指数 (SMI) 与并发症关联分析课题">
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${icon('users', { size: 16 })}
+            <b>[机体成分代谢]</b> 消化系统恶性肿瘤 L3 骨骼肌质量指数 (SMI) 与术后并发症及化疗耐受性关联分析
+          </span>
+        </button>
+      </div>
+      <div style="margin-top: 28px; text-align: center; display: flex; justify-content: center; align-items: center; gap: 16px;">
+        <button class="linkish small muted" data-guide-action="open">查阅 Heurion 临床科研工作流与生物统计分析指南 ↗</button>
+        <span id="rsAdminHandoverSlot"></span>
+      </div>
     </div>${photoFigure('research')}`
+
     // 机构管理员：离职交接入口（只换研究负责人，不看内容）
     void api<{ role?: string; members?: number }>('/api/tenant').then(t => {
-      if (t.role === 'admin' && (t.members ?? 1) > 1 && page.classList.contains('rs-welcome')) $('rsWelcomeActions').insertAdjacentHTML('beforeend', '<button data-rw="handover" title="成员离职时，把他负责的研究转交给本机构的其他同事">研究交接…</button>')
+      if (t.role === 'admin' && (t.members ?? 1) > 1 && page.classList.contains('rs-welcome')) {
+        const slot = document.getElementById('rsAdminHandoverSlot')
+        if (slot) slot.innerHTML = '<span class="muted small">·</span> <button class="linkish small muted" data-rw="handover" title="成员离职时，把他负责的研究转交给本机构的其他同事">机构研究交接…</button>'
+      }
     }).catch(() => {})
   }
 
@@ -414,10 +462,53 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     const page = $('page')
     const t = e.target as HTMLElement
     if (page.classList.contains('rs-welcome')) {
-      const b = t.closest<HTMLElement>('[data-rw]')
-      if (b?.dataset.rw === 'new') createDialog()
-      else if (b?.dataset.rw === 'handover') void handoverDialog()
-      else if (b && list[0]) void openStudy(list[0].id)
+      const b = t.closest<HTMLElement>('[data-rw], [data-study-preset], [data-guide-action]')
+      if (!b) return
+      if (b.dataset.guideAction === 'open') { openHelpGuide('overview'); return }
+      if (b.dataset.rw === 'new') { createDialog(); return }
+      if (b.dataset.rw === 'handover') { void handoverDialog(); return }
+      if (b.dataset.rw === 'open') { if (list[0]) void openStudy(list[0].id); return }
+      if (b.dataset.rw === 'dataset') {
+        if (list[0]) {
+          await openStudy(list[0].id)
+          const uploadInput = document.getElementById('rsUpload') as HTMLInputElement | null
+          if (uploadInput) uploadInput.click()
+        } else {
+          createDialog()
+        }
+        return
+      }
+      if (b.dataset.rw === 'cohort') {
+        if (list[0]) {
+          await openStudy(list[0].id)
+          const screenBtn = document.querySelector<HTMLElement>('[data-act="screen"]')
+          if (screenBtn) screenBtn.click()
+        } else {
+          createDialog()
+        }
+        return
+      }
+      if (b.dataset.studyPreset) {
+        const p = STUDY_PRESETS[b.dataset.studyPreset]
+        if (!p) return
+        const existing = list.find(s => s.title.includes(p.title.slice(0, 10)) || s.title === p.title)
+        if (existing) {
+          await openStudy(existing.id)
+        } else {
+          try {
+            const created = await api<{ id: string }>('/api/studies', {
+              method: 'POST',
+              body: JSON.stringify(p)
+            })
+            notice(`已创建科研课题：${p.title}`)
+            await loadList()
+            await openStudy(created.id)
+          } catch (err) {
+            notice((err as Error).message, true)
+          }
+        }
+        return
+      }
       return
     }
     if (!current || !page.classList.contains('study-page')) return

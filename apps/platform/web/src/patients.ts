@@ -3581,64 +3581,52 @@ ${recommendations}
     page.querySelector<HTMLElement>('[data-open-imported]')?.addEventListener('click', e => { const pid = (e.currentTarget as HTMLElement).dataset.openImported; if (pid) void openPatient(pid) })
   }
 
-  /** 患者模式下还没选患者：中间显示患者模块的引导（不显示文档的欢迎页）。 */
+  /** 患者模式下还没选患者：中间显示患者模块的引导（与写作、研究统一结构）。 */
   function showWelcome(): void {
     const page = $('page')
     page.className = 'page patient-page pt-welcome'
     $('docTitle').textContent = '患者'
-    page.innerHTML = `<div class="pt-welcome-body">
-      <div class="welcome-guide-banner" style="margin: 0 0 24px;">
-        <div class="welcome-guide-main">
-          <div class="welcome-guide-badge">Heurion 临床智能工作站 · 全流程操作指南</div>
-          <div class="welcome-guide-title">临床科研四段闭环与多场景标杆案例库</div>
-          <p class="welcome-guide-desc">打通“3D 体素量化 ➔ 纵向弹性配准 ➔ 影像组学建模 ➔ 无损双模写作”全链路，严守零 PHI 医学隐私法律底线。</p>
-          <div class="welcome-guide-actions">
-            <button class="primary welcome-guide-btn" data-guide-action="open">${icon('book', { size: 14 })} 查看产品使用手册</button>
-            <button class="welcome-guide-btn-ghost" data-guide-action="import">${icon('download', { size: 14 })} 导入手册为常驻参考</button>
-          </div>
-        </div>
-        <div class="welcome-guide-topics">
-          <button class="wgt-card" data-pt-preset="nsclc" title="点击快速进入或新建晚期非小细胞肺癌 (NSCLC) 靶向随访患者档案">
-            <div class="wgt-icon">
-              ${icon('nsclc', { size: 18 })}
-            </div>
-            <b>NSCLC 靶向评估</b>
-            <span>RECIST 1.1 PR (-45%) · 差分吸收图</span>
-          </button>
-          <button class="wgt-card" data-pt-preset="abpa" title="点击快速进入或新建变应性支气管肺曲霉病 (ABPA) 患者档案">
-            <div class="wgt-icon">
-              ${icon('scan', { size: 18 })}
-            </div>
-            <b>ABPA 支扩与粘液栓</b>
-            <span>BAR 1.45 · HAM 12.44 cm³ 容积吸收</span>
-          </button>
-          <button class="wgt-card" data-pt-preset="sarco" title="点击快速进入或新建恶液质与骨骼肌减少症 TotalSegmentator L3 患者档案">
-            <div class="wgt-icon">
-              ${icon('users', { size: 18 })}
-            </div>
-            <b>恶液质与肌少症</b>
-            <span>L3 SMI 29.9 cm²/m² · 化疗剂量预警</span>
-          </button>
-          <button class="wgt-card" data-pt-preset="ipf" title="点击快速进入或新建特发性肺纤维化 (IPF/UIP) 薄层 HRCT 患者档案">
-            <div class="wgt-icon">
-              ${icon('grid', { size: 18 })}
-            </div>
-            <b>IPF / UIP 纤维化</b>
-            <span>胸膜下蜂窝肺 (46.2 cm³) · 免活检</span>
-          </button>
-        </div>
+    page.innerHTML = `<div class="welcome">
+      <svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg>
+      <h1>开始患者管理与影像分析</h1>
+      <p class="welcome-sub">患者在平台内以去标识化虚拟代号建档，严守零 PHI 医学隐私底线；支持化验单与出院小结智能提取、3D HRCT/MR 深度学习体素量化与纵向配准对比。</p>
+      <div class="welcome-cards">
+        <button class="welcome-card primary" data-pw="new"><b>＋ 新建患者</b><span>虚拟代号建档（如 P-0001），真实姓名仅存本机浏览器</span></button>
+        <button class="welcome-card" data-pw="upload"><b>上传报告与影像</b><span>化验单、出院小结原件或 DICOM 影像自动解析</span></button>
+        ${list[0]
+          ? `<button class="welcome-card" data-pw="open"><b>打开最近患者</b><span>打开 ${esc(label(list[0]))}</span></button>`
+          : `<button class="welcome-card" data-pw="guide"><b>标杆案例导览</b><span>查阅 4 大典型病种 3D 量化与诊断证据链</span></button>`}
       </div>
-
-      <span class="pt-code big">P-····</span>
-      <h1>${list.length ? '选择一位患者' : '新建第一位患者'}</h1>
-      <p class="muted">患者在系统里只有代号，不存姓名；姓名可以在患者页「本机备注」里记，只保存在这台电脑上。</p>
-      <ol class="pt-steps">
-        <li><b>新建患者</b><span>填性别、出生年份、诊断标签。</span></li>
-        <li><b>上传化验单 / 报告</b><span>PDF、扫描件、手机照片都行；自动识别报告日期和化验项，异常值自动标出。</span></li>
-        <li><b>审核</b><span>在「待确认」里对照原件核对，确认后进入化验表和趋势。</span></li>
-        <li><b>写病例报告</b><span>依据已确认的数据起草，报告保存在患者的「病例报告」里。</span></li>
-      </ol>
-      <div class="row"><button class="primary" data-pw="new">＋ 新建患者</button>${list[0] ? `<button data-pw="open">打开 ${esc(label(list[0]))}</button>` : ''}</div>
+      <h2>试试快速体验 4 大典型临床标杆案例</h2>
+      <div class="welcome-examples">
+        <button data-pt-preset="nsclc" title="点击快速进入或新建晚期非小细胞肺癌 (NSCLC) 靶向随访患者档案">
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${icon('nsclc', { size: 16 })}
+            <b>[NSCLC 靶向评估]</b> PT-NSCLC-002 · 58岁女 · EGFR 19del 奥希替尼 12 周随访 (RECIST 1.1 PR · 3D 容积 -78.2%)
+          </span>
+        </button>
+        <button data-pt-preset="abpa" title="点击快速进入或新建变应性支气管肺曲霉病 (ABPA) 患者档案">
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${icon('scan', { size: 16 })}
+            <b>[ABPA 支扩与粘液栓]</b> PT-BRONCHO-001 · 52岁男 · BAR 1.45 印戒征 · HAM 粘液栓 12.44 cm³ (3D 容积吸收 74.9%)
+          </span>
+        </button>
+        <button data-pt-preset="sarco" title="点击快速进入或新建恶液质与骨骼肌减少症 TotalSegmentator L3 患者档案">
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${icon('users', { size: 16 })}
+            <b>[恶液质与肌少症]</b> PT-SARCO-003 · 64岁男 · TotalSegmentator L3 SMI 29.9 cm²/m² · 化疗剂量预警
+          </span>
+        </button>
+        <button data-pt-preset="ipf" title="点击快速进入或新建特发性肺纤维化 (IPF/UIP) 薄层 HRCT 患者档案">
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${icon('grid', { size: 16 })}
+            <b>[IPF / UIP 纤维化]</b> PT-IPF-004 · 69岁男 · 薄层 HRCT 蜂窝肺 46.2 cm³ · 确诊免外科肺活检
+          </span>
+        </button>
+      </div>
+      <div style="margin-top: 28px; text-align: center;">
+        <button class="linkish small muted" data-guide-action="open">查阅 Heurion 临床工作站 3D 影像量化与患者全流程手册 ↗</button>
+      </div>
     </div>${photoFigure('patients')}`
   }
 
@@ -3653,6 +3641,17 @@ ${recommendations}
     if (b.dataset.guideTopic) { openHelpGuide(b.dataset.guideTopic); return }
     if (b.dataset.pw === 'new') { void createPatient(); return }
     if (b.dataset.pw === 'open') { if (list[0]) void openPatient(list[0].id); return }
+    if (b.dataset.pw === 'upload') {
+      if (list[0]) {
+        await openPatient(list[0].id)
+        $('ptUpload')?.click()
+      } else {
+        await createPatient()
+        if (current) $('ptUpload')?.click()
+      }
+      return
+    }
+    if (b.dataset.pw === 'guide') { openHelpGuide('casestudy'); return }
     if (b.dataset.ptPreset === 'nsclc') {
       const existing = list.find(p => p.tags.some(t => /nsclc|肺癌|egfr/i.test(t)) || p.code === 'PT-NSCLC-002')
       if (existing) {

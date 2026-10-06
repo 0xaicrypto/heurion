@@ -382,14 +382,15 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .welcome-card b::after { content: '→'; color: var(--mint-text); }
 .welcome-card span { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
 .welcome-card:hover:not(:disabled) { background: var(--teal); }
-.welcome-card[data-start="doc"] { background: var(--mint); }
-.welcome-card[data-start="doc"] b, .welcome-card[data-start="doc"] b::after, .page.welcome-page .welcome-card[data-start="doc"] { color: var(--mint-ink); }
-.welcome-card[data-start="doc"] span { color: rgba(4, 23, 15, .7); }
-.welcome-card[data-start="doc"]:hover:not(:disabled) { background: var(--mint-hover); }
+.welcome-card[data-start="doc"], .welcome-card.primary { background: var(--mint); }
+.welcome-card[data-start="doc"] b, .welcome-card[data-start="doc"] b::after, .page.welcome-page .welcome-card[data-start="doc"],
+.welcome-card.primary b, .welcome-card.primary b::after, .welcome-card.primary { color: var(--mint-ink); }
+.welcome-card[data-start="doc"] span, .welcome-card.primary span { color: rgba(4, 23, 15, .7); }
+.welcome-card[data-start="doc"]:hover:not(:disabled), .welcome-card.primary:hover:not(:disabled) { background: var(--mint-hover); }
 .welcome-examples { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line-strong); }
-.welcome-examples button { text-align: left; padding: 12px 16px; border: 0 !important; border-bottom: 1px solid var(--line-strong) !important; background: var(--card-glass); display: flex; justify-content: space-between; gap: 12px; }
+.welcome-examples button { text-align: left; padding: 12px 16px; border: 0 !important; border-bottom: 1px solid var(--line-strong) !important; background: var(--card-glass); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .welcome-examples button:last-child { border-bottom: 0 !important; }
-.welcome-examples button::after { content: '→'; color: var(--mint-text); }
+.welcome-examples button::after { content: '→'; color: var(--mint-text); flex: none; }
 .welcome-examples button:hover:not(:disabled) { background: var(--teal); }
 
 /* —— 开始页（文档欢迎页、患者引导）：填满整个工作区 —— */
@@ -399,8 +400,8 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
   padding: clamp(32px, 7vh, 88px) clamp(24px, 6vw, 96px); display: flex; flex-direction: column; justify-content: center;
   background-color: transparent; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 100% 25%, 25% 100%; }
-.page.welcome-page .welcome, .page.pt-welcome .pt-welcome-body, .page.rs-welcome .pt-welcome-body { max-width: 1000px; width: 100%; margin: 0 auto; }
-.page.pt-welcome .pt-welcome-body h1, .page.rs-welcome .pt-welcome-body h1 { font-size: 44px; }
+.page.welcome-page .welcome, .page.pt-welcome .welcome, .page.rs-welcome .welcome, .page.pt-welcome .pt-welcome-body, .page.rs-welcome .pt-welcome-body { max-width: 1000px; width: 100%; margin: 0 auto; }
+.page.welcome-page h1, .page.pt-welcome h1, .page.rs-welcome h1, .page.pt-welcome .pt-welcome-body h1, .page.rs-welcome .pt-welcome-body h1 { font-size: 44px; }
 
 /* —— 右栏 —— */
 .side { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
