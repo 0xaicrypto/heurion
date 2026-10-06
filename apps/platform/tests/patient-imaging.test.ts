@@ -903,5 +903,101 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
     expect(data.asset_id).toBeDefined()
     expect(data.markdown_insert).toContain(`asset:${data.asset_id}`)
   })
+
+  it('13. HTTP API: POST /api/imaging/mpr/slice 支持 custom_png_base64 复合手动卡尺与 ROI 标注保存资产', async () => {
+    const isOnline = await fetch('http://127.0.0.1:8004/health', { signal: AbortSignal.timeout(500) }).then(r => r.ok).catch(() => false)
+    const t = env()
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    // 1x1 base64 png
+    const customB64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    const label = 'P-001 MPR 轴位 第 32 层 (含手动测量卡尺)'
+
+    const res = await app.request('/api/imaging/mpr/slice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sample_id: 'chest_lung_ct',
+        plane: 'axial',
+        slice_index: 32,
+        window_preset: 'lung',
+        overlay_mask: true,
+        save_asset: true,
+        label,
+        custom_png_base64: customB64,
+      }),
+    })
+
+    if (!isOnline) {
+      expect(res.status).toBe(503)
+      return
+    }
+
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.asset_id).toBeDefined()
+    expect(data.markdown_insert).toBe(`![${label}](asset:${data.asset_id})`)
+
+    // 验证底层资产库保存的数据与客户端合成的图片二进制完全吻合
+    const assetRow = t.store.getAsset(data.asset_id)
+    expect(assetRow).toBeDefined()
+    expect(assetRow!.mime).toBe('image/png')
+    const rawExpectedBuf = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+    const assetBytes = t.store.getAssetBytes(data.asset_id)
+    expect(Buffer.from(assetBytes!)).toEqual(rawExpectedBuf)
+  })
+
+  it('14. MPR 手动测量卡尺与 ROI 几何数学量化 (Caliper & ROI Geometry Math)', () => {
+    // 模拟非各向同性体素间距 (hSp = 0.75 mm/px, vSp = 1.25 mm/px)
+    const hSp = 0.75
+    const vSp = 1.25
+
+    // 1. 卡尺测距: (x1, y1) = (100, 100), (x2, y2) = (140, 130)
+    const x1 = 100, y1 = 100
+    const x2 = 140, y2 = 130
+    const dxMm = (x2 - x1) * hSp // 40 * 0.75 = 30.0 mm
+    const dyMm = (y2 - y1) * vSp // 30 * 1.25 = 37.5 mm
+    const distanceMm = Math.hypot(dxMm, dyMm) // sqrt(900 + 1406.25) = sqrt(2306.25) ≈ 48.023 mm
+    expect(Math.round(distanceMm * 10) / 10).toBe(48.0)
+
+    // 2. ROI 矩形截面积: 宽 40px, 高 30px
+    const wMm = Math.abs(x2 - x1) * hSp // 30.0 mm
+    const hMm = Math.abs(y2 - y1) * vSp // 37.5 mm
+    const areaMm2 = wMm * hMm // 1125.0 mm²
+    const areaCm2 = areaMm2 / 100 // 11.25 cm²
+    expect(Math.round(areaMm2 * 10) / 10).toBe(1125.0)
+    expect(Math.round(areaCm2 * 100) / 100).toBe(11.25)
+  })
 })
 

@@ -50,6 +50,8 @@ export type IconName =
   | 'grid'
   | 'edit'
   | 'book'
+  | 'caliper'
+  | 'ruler'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -177,6 +179,12 @@ const ICONS: Record<IconName, string> = {
 
   // 教程、指南、书本
   book: '<path d="M4 16.5A2.5 2.5 0 0 1 6.5 14H17"/><path d="M6.5 3H17v14H6.5A2.5 2.5 0 0 1 4 14.5v-9A2.5 2.5 0 0 1 6.5 3z"/>',
+
+  // 测距卡尺、游标测量
+  caliper: '<path d="M3 4v12M17 4v12M3 10h14M3 6h4M3 14h4M17 6h-4M17 14h-4"/>',
+
+  // 标尺、几何测量
+  ruler: '<path d="M2.5 17.5L17.5 2.5l2 2-15 15zM6 7l2 2M9 10l2 2M12 13l2 2"/>',
 }
 
 export interface IconOptions {

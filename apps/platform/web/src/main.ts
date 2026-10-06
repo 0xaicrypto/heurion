@@ -929,9 +929,18 @@ function lightMarkdown(text: string): string {
 function addMsg(role: 'user' | 'assistant', text: string, revertTurn: string | null = null): HTMLElement {
   const div = document.createElement('div')
   div.className = `msg ${role}`
-  // AI 回复常带 **粗体** 与 `代码`：转义后只渲染这两种
-  if (role === 'assistant') div.innerHTML = lightMarkdown(text)
-  else {
+  if (role === 'assistant') {
+    div.innerHTML = lightMarkdown(text)
+    if (docPatient && /影像|病灶|切片|RECIST|CT|MRI|长径|短径|密度|结节|支气管|粘液栓|MPR/i.test(text)) {
+      const actionRow = document.createElement('div')
+      actionRow.className = 'chat-assistant-imaging-actions'
+      actionRow.innerHTML = `<button type="button" class="small-btn quiet chat-go-imaging-btn" title="直接前往当前患者的影像学档案查看 3D MPR、病灶分割与定量评估">${icon('scan')} 前往患者影像中心 (3D MPR / RECIST) →</button>`
+      actionRow.querySelector('.chat-go-imaging-btn')?.addEventListener('click', () => {
+        void patientsUi.open(docPatient!, 'records')
+      })
+      div.appendChild(actionRow)
+    }
+  } else {
     // 用户消息里贴的图片（displayMessage 留下的 ⟦img:资产 id⟧）：显示缩略图
     const ids = [...text.matchAll(/⟦img:([A-Za-z0-9]+)⟧/g)].map(m => m[1]!)
     div.textContent = text.replace(/⟦img:[A-Za-z0-9]+⟧/g, '').trim()
@@ -1198,11 +1207,30 @@ let chatImages: Array<{ id: string; name: string; previewUrl: string }> = []
 function renderChatImages(): void {
   const box = $('chatImages')
   box.hidden = chatImages.length === 0
-  box.innerHTML = chatImages.map(i => {
+  if (chatImages.length === 0) {
+    box.innerHTML = ''
+    return
+  }
+  const imgsHtml = chatImages.map(i => {
     const src = i.previewUrl || `/api/assets/${i.id}?token=${encodeURIComponent(TOKEN)}`
     return `<span class="chat-img" data-id="${i.id}"><img src="${src}" alt="${esc(i.name)}"><button class="chip-x" aria-label="移除">✕</button></span>`
   }).join('')
-    + (chatImages.length ? '<span class="muted small chat-img-hint">已附图 · AI 将结合临床影像/图表视角解读（请勿上传含真实姓名/身份证号等个人敏感标识的图片；3D 容积量化与 RECIST 评估请在「患者 -> 影像」上传）</span>' : '')
+
+  const patientAction = docPatient
+    ? `<button type="button" class="chat-action-pill" data-prompt="请结合当前患者档案与既往病史，对比解读该影像截图并提供诊疗参考">🏥 结合当前患者档案诊断</button>`
+    : ''
+
+  box.innerHTML = `
+    <div class="chat-img-list">${imgsHtml}</div>
+    <div class="chat-img-actions">
+      <span class="chat-img-actions-label">快捷分析提示：</span>
+      <button type="button" class="chat-action-pill" data-prompt="请提取附图中的病灶长短径尺寸与CT密度/信号特征，并给出影像学描述与拟诊">📏 提取长短径与密度测量</button>
+      <button type="button" class="chat-action-pill" data-prompt="请根据 RECIST 1.1 标准解读此影像切片中的靶病灶，评估病灶大小与肿瘤反应状态">🎯 RECIST 靶病灶解读</button>
+      <button type="button" class="chat-action-pill" data-prompt="请将此影像截面总结为一段规范的病程记录与影像学诊断意见草案">📝 生成病程影像记录</button>
+      ${patientAction}
+    </div>
+    <span class="muted small chat-img-hint">已附图 · AI 将结合临床影像/图表视角解读（请勿上传含真实姓名/身份证号等个人敏感标识的图片；3D 容积量化与 RECIST 评估请在「患者 -> 影像」上传）</span>
+  `
 }
 
 function removeChatImage(id: string): void {
@@ -1294,28 +1322,61 @@ $<HTMLTextAreaElement>('chatInput').addEventListener('paste', async e => {
   }
 })
 
-document.querySelector('.composer')!.addEventListener('dragover', e => {
-  if ([...((e as DragEvent).dataTransfer?.items ?? [])].some(i => i.type.startsWith('image/'))) e.preventDefault()
-})
+let composerDragDepth = 0
+const composerEl = document.querySelector('.composer')
+if (composerEl) {
+  composerEl.addEventListener('dragenter', e => {
+    const dt = (e as DragEvent).dataTransfer
+    if ([...(dt?.items ?? [])].some(i => i.kind === 'file' || i.type.startsWith('image/'))) {
+      composerDragDepth++
+      composerEl.classList.add('composer-drag-over')
+    }
+  })
 
-document.querySelector('.composer')!.addEventListener('drop', e => {
-  const dt = (e as DragEvent).dataTransfer
-  const files: File[] = []
-  for (const item of [...(dt?.items ?? [])]) {
-    if (item.kind === 'file') {
-      const f = item.getAsFile()
-      if (f && f.type.startsWith('image/') && f.size > 0) files.push(f)
+  composerEl.addEventListener('dragover', e => {
+    const dt = (e as DragEvent).dataTransfer
+    if ([...(dt?.items ?? [])].some(i => i.kind === 'file' || i.type.startsWith('image/'))) {
+      e.preventDefault()
     }
-  }
-  if (files.length === 0) {
-    for (const f of [...(dt?.files ?? [])]) {
-      if (f.type.startsWith('image/') && f.size > 0) files.push(f)
+  })
+
+  composerEl.addEventListener('dragleave', () => {
+    composerDragDepth = Math.max(0, composerDragDepth - 1)
+    if (composerDragDepth === 0) composerEl.classList.remove('composer-drag-over')
+  })
+
+  composerEl.addEventListener('drop', e => {
+    composerDragDepth = 0
+    composerEl.classList.remove('composer-drag-over')
+    const dt = (e as DragEvent).dataTransfer
+    const files: File[] = []
+    for (const item of [...(dt?.items ?? [])]) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile()
+        if (f && f.type.startsWith('image/') && f.size > 0) files.push(f)
+      }
     }
-  }
-  if (files.length) { e.preventDefault(); void attachImages(files) }
-})
+    if (files.length === 0) {
+      for (const f of [...(dt?.files ?? [])]) {
+        if (f.type.startsWith('image/') && f.size > 0) files.push(f)
+      }
+    }
+    if (files.length) { e.preventDefault(); void attachImages(files) }
+  })
+}
 
 $('chatImages').onclick = e => {
+  const pill = (e.target as HTMLElement).closest<HTMLButtonElement>('.chat-action-pill')
+  if (pill) {
+    const prompt = pill.dataset.prompt
+    if (prompt) {
+      const input = $<HTMLTextAreaElement>('chatInput')
+      input.value = prompt
+      input.focus()
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    return
+  }
   const id = ((e.target as HTMLElement).closest('.chip-x')?.parentElement as HTMLElement | undefined)?.dataset.id
   if (id) removeChatImage(id)
 }

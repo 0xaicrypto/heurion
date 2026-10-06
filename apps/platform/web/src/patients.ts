@@ -163,11 +163,11 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
   // —— 患者页 ——
 
-  async function openPatient(id: string, keepTab = false): Promise<void> {
+  async function openPatient(id: string, keepTab = false, initialTab?: 'overview' | 'labs' | 'records' | 'docs' | 'review'): Promise<void> {
     if (!id) return
     if (current !== id) hooks.leaveDoc()
     current = id
-    if (!keepTab) tab = 'overview'
+    if (!keepTab) tab = initialTab || 'overview'
     if (poll) { clearTimeout(poll); poll = null }
     let d: Detail
     try { d = await api<Detail>(`/api/patients/${id}`) } catch (err) { notice((err as Error).message, true); current = null; return }
@@ -1163,6 +1163,19 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             </div>
           </div>
 
+          <div class="pt-mpr-sidebar-section" id="mprAnnotSection">
+            <div class="pt-mpr-sidebar-title">交互式测量与标注 (Manual Tool)</div>
+            <div class="pt-mpr-btn-group" id="mprToolBtns">
+              <button data-tool="browse" class="active" title="浏览模式：滚轮与点击正常切片滚动">${icon('search')} 浏览</button>
+              <button data-tool="caliper" title="测距卡尺：在切片上按住鼠标拖拽绘制线段，实时计算物理毫米 (mm) 距离">${icon('caliper')} 测距卡尺</button>
+              <button data-tool="roi" title="ROI 矩形测量：在切片上按住鼠标拖拽矩形框，计算截面面积 (mm²)">${icon('target')} ROI 区域</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px">
+              <span id="mprMeasureSummary" class="muted small" style="font-family: var(--mono); font-size: 11px">当前切片无测量</span>
+              <button class="quiet small-btn" id="mprClearAnnotBtn" style="padding: 2px 6px; font-size: 11px" title="清除当前切片上的所有手动测量标注">清除标注</button>
+            </div>
+          </div>
+
           <div class="pt-mpr-sidebar-section" style="margin-top: auto; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px">
             <div class="pt-mpr-sidebar-title">报告插图与资产沉淀</div>
             <button class="primary small-btn" id="mprSaveAssetBtn" style="width: 100%" title="保存当前 MPR 正交切片为平台资产并生成 Markdown 引用">${icon('save')} 保存切片为文档资产</button>
@@ -1175,7 +1188,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <div class="pt-mpr-viewport-container">
           <!-- 2D 切片视口 -->
           <div class="pt-mpr-screen" id="mprScreen" title="在切片区域上下滚动鼠标滚轮即可连续浏览切片">
-            <img id="mprImg" alt="3D MPR 切片" style="display: none">
+            <div class="pt-mpr-canvas-wrap" style="position: relative; display: inline-flex; align-items: center; justify-content: center; max-width: 100%; max-height: 460px;">
+              <img id="mprImg" alt="3D MPR 切片" style="display: none; max-width: 100%; max-height: 460px; object-fit: contain;">
+              <canvas id="mprAnnotCanvas" width="512" height="512" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;"></canvas>
+            </div>
             <div id="mprLoadingSpinner" style="color: var(--text-2); font-size: 13px">
               正在提取当前切片...
             </div>
@@ -1228,6 +1244,314 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const nvRenderBtn = dlg.querySelector('#nvRenderBtn') as HTMLButtonElement
     const saveAssetBtn = dlg.querySelector('#mprSaveAssetBtn') as HTMLButtonElement
     const saveNotice = dlg.querySelector('#mprSaveNotice') as HTMLElement
+    const annotCanvas = dlg.querySelector('#mprAnnotCanvas') as HTMLCanvasElement
+    const annotCtx = annotCanvas?.getContext('2d')
+    const toolBtns = dlg.querySelector('#mprToolBtns')
+    const measureSummary = dlg.querySelector('#mprMeasureSummary') as HTMLElement
+    const clearAnnotBtn = dlg.querySelector('#mprClearAnnotBtn') as HTMLButtonElement
+
+    type ToolMode = 'browse' | 'caliper' | 'roi'
+    let currentTool: ToolMode = 'browse'
+
+    interface CaliperAnnot {
+      type: 'caliper'
+      x1: number
+      y1: number
+      x2: number
+      y2: number
+      distanceMm: number
+    }
+
+    interface RoiAnnot {
+      type: 'roi'
+      x1: number
+      y1: number
+      x2: number
+      y2: number
+      areaMm2: number
+    }
+
+    type AnnotItem = CaliperAnnot | RoiAnnot
+    const sliceAnnotations = new Map<string, AnnotItem[]>()
+    const annotKey = (plane: string, slice: number) => `${plane}:${slice}`
+
+    function getSpacing(): { hSp: number; vSp: number } {
+      const curData = sliceCache.get(`${sampleId}:${currentPlane}:${currentSlice}:${currentWindow}:${overlayMask}`)
+      let hSp = curData?.pixel_spacing_mm?.horizontal
+      let vSp = curData?.pixel_spacing_mm?.vertical
+      if (!hSp || !vSp) {
+        if (currentPlane === 'axial') {
+          hSp = voxelSpacing.dx || 0.75
+          vSp = voxelSpacing.dy || 0.75
+        } else if (currentPlane === 'coronal') {
+          hSp = voxelSpacing.dx || 0.75
+          vSp = voxelSpacing.dz || 0.75
+        } else {
+          hSp = voxelSpacing.dy || 0.75
+          vSp = voxelSpacing.dz || 0.75
+        }
+      }
+      return { hSp: Number(hSp) || 0.75, vSp: Number(vSp) || 0.75 }
+    }
+
+    function drawAnnotItem(ctx: CanvasRenderingContext2D, item: AnnotItem): void {
+      ctx.save()
+      if (item.type === 'caliper') {
+        const { x1, y1, x2, y2, distanceMm } = item
+        const dx = x2 - x1
+        const dy = y2 - y1
+        const len = Math.hypot(dx, dy)
+
+        ctx.strokeStyle = '#2DD4BF'
+        ctx.lineWidth = 2
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)'
+        ctx.shadowBlur = 4
+        ctx.beginPath()
+        ctx.moveTo(x1, y1)
+        ctx.lineTo(x2, y2)
+        ctx.stroke()
+
+        if (len > 0) {
+          const perpX = -(dy / len) * 7
+          const perpY = (dx / len) * 7
+          ctx.beginPath()
+          ctx.moveTo(x1 - perpX, y1 - perpY)
+          ctx.lineTo(x1 + perpX, y1 + perpY)
+          ctx.moveTo(x2 - perpX, y2 - perpY)
+          ctx.lineTo(x2 + perpX, y2 + perpY)
+          ctx.stroke()
+        }
+
+        const midX = (x1 + x2) / 2
+        const midY = (y1 + y2) / 2
+        const text = `📏 ${distanceMm.toFixed(1)} mm`
+        ctx.font = 'bold 12px monospace, sans-serif'
+        const textMetrics = ctx.measureText(text)
+        const padX = 6
+        const boxW = textMetrics.width + padX * 2
+        const boxH = 18
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)'
+        ctx.strokeStyle = '#2DD4BF'
+        ctx.lineWidth = 1
+        ctx.shadowBlur = 0
+        const bx = midX - boxW / 2
+        const by = midY - boxH - 6
+        ctx.beginPath()
+        if (typeof (ctx as any).roundRect === 'function') {
+          (ctx as any).roundRect(bx, by, boxW, boxH, 4)
+        } else {
+          ctx.rect(bx, by, boxW, boxH)
+        }
+        ctx.fill()
+        ctx.stroke()
+
+        ctx.fillStyle = '#FFFFFF'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(text, midX, by + boxH / 2)
+      } else if (item.type === 'roi') {
+        const { x1, y1, x2, y2, areaMm2 } = item
+        const rx = Math.min(x1, x2)
+        const ry = Math.min(y1, y2)
+        const rw = Math.abs(x2 - x1)
+        const rh = Math.abs(y2 - y1)
+
+        ctx.fillStyle = 'rgba(45, 212, 191, 0.15)'
+        ctx.strokeStyle = '#2DD4BF'
+        ctx.lineWidth = 2
+        ctx.setLineDash([5, 4])
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)'
+        ctx.shadowBlur = 4
+        ctx.beginPath()
+        ctx.rect(rx, ry, rw, rh)
+        ctx.fill()
+        ctx.stroke()
+        ctx.setLineDash([])
+
+        const cmText = areaMm2 >= 100 ? ` (${(areaMm2 / 100).toFixed(2)} cm²)` : ''
+        const text = `🎯 ${areaMm2.toFixed(1)} mm²${cmText}`
+        ctx.font = 'bold 12px monospace, sans-serif'
+        const textMetrics = ctx.measureText(text)
+        const padX = 6
+        const boxW = textMetrics.width + padX * 2
+        const boxH = 18
+
+        const bx = rx
+        const by = Math.max(4, ry - boxH - 4)
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)'
+        ctx.strokeStyle = '#2DD4BF'
+        ctx.lineWidth = 1
+        ctx.shadowBlur = 0
+        ctx.beginPath()
+        if (typeof (ctx as any).roundRect === 'function') {
+          (ctx as any).roundRect(bx, by, boxW, boxH, 4)
+        } else {
+          ctx.rect(bx, by, boxW, boxH)
+        }
+        ctx.fill()
+        ctx.stroke()
+
+        ctx.fillStyle = '#FFFFFF'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(text, bx + padX, by + boxH / 2)
+      }
+      ctx.restore()
+    }
+
+    function redrawCanvas(activePreview?: AnnotItem | null): void {
+      if (!annotCtx || !annotCanvas) return
+      annotCtx.clearRect(0, 0, 512, 512)
+      const items = sliceAnnotations.get(annotKey(currentPlane, currentSlice)) || []
+      for (const item of items) {
+        drawAnnotItem(annotCtx, item)
+      }
+      if (activePreview) {
+        drawAnnotItem(annotCtx, activePreview)
+      }
+    }
+
+    function updateMeasureSummary(): void {
+      if (!measureSummary) return
+      const items = sliceAnnotations.get(annotKey(currentPlane, currentSlice)) || []
+      if (items.length === 0) {
+        measureSummary.textContent = '当前切片无测量'
+        return
+      }
+      const parts: string[] = []
+      for (const it of items) {
+        if (it.type === 'caliper') parts.push(`卡尺: ${it.distanceMm}mm`)
+        else if (it.type === 'roi') parts.push(`ROI: ${it.areaMm2}mm²`)
+      }
+      measureSummary.textContent = parts.join(' | ')
+    }
+
+    let isDrawing = false
+    let dragStart = { x: 0, y: 0 }
+
+    function getCanvasCoords(ev: MouseEvent): { x: number; y: number } {
+      const rect = annotCanvas.getBoundingClientRect()
+      const x = Math.max(0, Math.min(512, ((ev.clientX - rect.left) / rect.width) * 512))
+      const y = Math.max(0, Math.min(512, ((ev.clientY - rect.top) / rect.height) * 512))
+      return { x, y }
+    }
+
+    annotCanvas?.addEventListener('mousedown', ev => {
+      if (currentTool === 'browse' || ev.button !== 0) return
+      ev.preventDefault()
+      isDrawing = true
+      dragStart = getCanvasCoords(ev)
+    })
+
+    annotCanvas?.addEventListener('mousemove', ev => {
+      if (!isDrawing || currentTool === 'browse') return
+      ev.preventDefault()
+      const { x, y } = getCanvasCoords(ev)
+      const { hSp, vSp } = getSpacing()
+
+      if (currentTool === 'caliper') {
+        const distMm = Math.hypot((x - dragStart.x) * hSp, (y - dragStart.y) * vSp)
+        redrawCanvas({
+          type: 'caliper',
+          x1: dragStart.x,
+          y1: dragStart.y,
+          x2: x,
+          y2: y,
+          distanceMm: Math.round(distMm * 10) / 10,
+        })
+      } else if (currentTool === 'roi') {
+        const wMm = Math.abs(x - dragStart.x) * hSp
+        const hMm = Math.abs(y - dragStart.y) * vSp
+        redrawCanvas({
+          type: 'roi',
+          x1: dragStart.x,
+          y1: dragStart.y,
+          x2: x,
+          y2: y,
+          areaMm2: Math.round(wMm * hMm * 10) / 10,
+        })
+      }
+    })
+
+    const finishDrawing = () => {
+      if (!isDrawing || currentTool === 'browse') return
+      isDrawing = false
+      redrawCanvas()
+      updateMeasureSummary()
+    }
+
+    annotCanvas?.addEventListener('mouseup', ev => {
+      if (!isDrawing || currentTool === 'browse') return
+      isDrawing = false
+      const { x, y } = getCanvasCoords(ev)
+      const { hSp, vSp } = getSpacing()
+      const key = annotKey(currentPlane, currentSlice)
+      const existing = sliceAnnotations.get(key) || []
+
+      if (currentTool === 'caliper') {
+        const distMm = Math.hypot((x - dragStart.x) * hSp, (y - dragStart.y) * vSp)
+        if (distMm >= 1.5) {
+          existing.push({
+            type: 'caliper',
+            x1: dragStart.x,
+            y1: dragStart.y,
+            x2: x,
+            y2: y,
+            distanceMm: Math.round(distMm * 10) / 10,
+          })
+          sliceAnnotations.set(key, existing)
+        }
+      } else if (currentTool === 'roi') {
+        const wMm = Math.abs(x - dragStart.x) * hSp
+        const hMm = Math.abs(y - dragStart.y) * vSp
+        const area = wMm * hMm
+        if (area >= 4.0) {
+          existing.push({
+            type: 'roi',
+            x1: dragStart.x,
+            y1: dragStart.y,
+            x2: x,
+            y2: y,
+            areaMm2: Math.round(area * 10) / 10,
+          })
+          sliceAnnotations.set(key, existing)
+        }
+      }
+      redrawCanvas()
+      updateMeasureSummary()
+    })
+
+    annotCanvas?.addEventListener('mouseleave', finishDrawing)
+
+    annotCanvas?.addEventListener('wheel', ev => {
+      ev.preventDefault()
+      const delta = ev.deltaY > 0 ? 1 : -1
+      void loadSlice(currentSlice + delta)
+    }, { passive: false })
+
+    toolBtns?.addEventListener('click', e => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tool]')
+      if (!btn) return
+      toolBtns.querySelectorAll('button').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      currentTool = (btn.dataset.tool || 'browse') as ToolMode
+
+      if (currentTool === 'browse') {
+        annotCanvas.style.pointerEvents = 'none'
+        annotCanvas.style.cursor = 'default'
+      } else {
+        annotCanvas.style.pointerEvents = 'auto'
+        annotCanvas.style.cursor = 'crosshair'
+      }
+    })
+
+    clearAnnotBtn?.addEventListener('click', () => {
+      sliceAnnotations.delete(annotKey(currentPlane, currentSlice))
+      redrawCanvas()
+      updateMeasureSummary()
+    })
 
     let currentEngine = 'slice'
     let nvInstance: any = null
@@ -1319,6 +1643,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         lesionBadge.className = 'pt-mpr-status-badge no-lesion'
         lesionBadge.innerHTML = `无明显高密度病灶`
       }
+      redrawCanvas()
+      updateMeasureSummary()
     }
 
     // 渲染引擎切换 (2D 切片 vs NiiVue 3D WebGL)
@@ -1369,6 +1695,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       slider.max = String(total - 1)
       currentSlice = centerSlice[currentPlane] ?? Math.floor(total / 2)
       void loadSlice(currentSlice)
+      redrawCanvas()
+      updateMeasureSummary()
     })
 
     // 窗宽窗位切换
@@ -1436,7 +1764,22 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       saveAssetBtn.textContent = '正在保存资产...'
       try {
         const planeNameMap: Record<string, string> = { axial: '轴位', coronal: '冠状位', sagittal: '矢状位' }
-        const label = `${d.code} MPR ${planeNameMap[currentPlane] || currentPlane} 第 ${currentSlice} 层`
+        const hasAnnots = (sliceAnnotations.get(annotKey(currentPlane, currentSlice)) || []).length > 0
+        const label = `${d.code} MPR ${planeNameMap[currentPlane] || currentPlane} 第 ${currentSlice} 层${hasAnnots ? ' (含手动测量标注)' : ''}`
+
+        let customB64: string | undefined = undefined
+        if (hasAnnots && imgEl) {
+          const offCanvas = document.createElement('canvas')
+          offCanvas.width = 512
+          offCanvas.height = 512
+          const offCtx = offCanvas.getContext('2d')
+          if (offCtx) {
+            offCtx.drawImage(imgEl, 0, 0, 512, 512)
+            offCtx.drawImage(annotCanvas, 0, 0, 512, 512)
+            customB64 = offCanvas.toDataURL('image/png')
+          }
+        }
+
         const res = await api<any>('/api/imaging/mpr/slice', {
           method: 'POST',
           body: JSON.stringify({
@@ -1447,6 +1790,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             overlay_mask: overlayMask,
             save_asset: true,
             label,
+            custom_png_base64: customB64,
           }),
         })
 
@@ -1509,7 +1853,22 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         genReportBtn.textContent = '正在提取当前关键截面...'
         try {
           const planeNameMap: Record<string, string> = { axial: '轴位', coronal: '冠状位', sagittal: '矢状位' }
-          const label = `${d.code} MPR ${planeNameMap[currentPlane] || currentPlane} 第 ${currentSlice} 层`
+          const hasAnnots = (sliceAnnotations.get(annotKey(currentPlane, currentSlice)) || []).length > 0
+          const label = `${d.code} MPR ${planeNameMap[currentPlane] || currentPlane} 第 ${currentSlice} 层${hasAnnots ? ' (含手动测量标注)' : ''}`
+
+          let customB64: string | undefined = undefined
+          if (hasAnnots && imgEl) {
+            const offCanvas = document.createElement('canvas')
+            offCanvas.width = 512
+            offCanvas.height = 512
+            const offCtx = offCanvas.getContext('2d')
+            if (offCtx) {
+              offCtx.drawImage(imgEl, 0, 0, 512, 512)
+              offCtx.drawImage(annotCanvas, 0, 0, 512, 512)
+              customB64 = offCanvas.toDataURL('image/png')
+            }
+          }
+
           const res = await api<any>('/api/imaging/mpr/slice', {
             method: 'POST',
             body: JSON.stringify({
@@ -1520,6 +1879,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               overlay_mask: overlayMask,
               save_asset: true,
               label,
+              custom_png_base64: customB64,
             }),
           })
           if (res.asset_id) {
@@ -1560,6 +1920,24 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         findingsList.push(`- **当前浏览视口截面测量**: ${planeNameMap[currentPlane]} 第 #${currentSlice} 层，病灶检出截面积约为 ${Math.round((curData.lesion_pixel_count || 0) * (curData.pixel_spacing_mm?.horizontal || 1) * (curData.pixel_spacing_mm?.vertical || 1) * 10) / 10} mm²`)
       }
 
+      const manualFindings: string[] = []
+      for (const [key, items] of sliceAnnotations.entries()) {
+        const parts = key.split(':')
+        const pl = parts[0] || 'axial'
+        const sl = parts[1] || '0'
+        const pName = planeNameMap[pl] || pl
+        for (const it of items) {
+          if (it.type === 'caliper') {
+            manualFindings.push(`- **手动测距卡尺 (${pName} 第 #${sl} 层)**: 靶病灶直径 ${it.distanceMm} mm`)
+          } else if (it.type === 'roi') {
+            manualFindings.push(`- **手动感兴趣区截面 (${pName} 第 #${sl} 层)**: 病灶截面积 ${it.areaMm2} mm² (${(it.areaMm2 / 100).toFixed(2)} cm²)`)
+          }
+        }
+      }
+      if (manualFindings.length > 0) {
+        findingsList.push(...manualFindings)
+      }
+
       let impression = ''
       let recommendations = ''
       if (isBronch) {
@@ -1568,6 +1946,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       } else {
         impression = `1. ${r?.title || '占位性病变'}，符合靶病灶 RECIST 1.1 测量标准（长径 ${m.longest_diameter_mm || '--'} mm，3D 体积 ${m.total_volume_cm3 || '--'} cm³）。`
         recommendations = `1. 建议结合既往基线检查对比疗效评估；\n2. 建议按诊疗方案于 8–12 周后安排复查。`
+      }
+
+      if (manualFindings.length > 0) {
+        impression += `\n3. 经交互式测距卡尺与 ROI 复核，关键切片测值 (${manualFindings.map(n => n.replace(/^- \*\*|\*\*: /g, '')).join('; ')})，人工测量与深度学习分割高度印证。`
       }
 
       const reportMarkdown = `# 放射学结构化影像诊断报告草案
@@ -3278,8 +3660,8 @@ ${recommendations}
     setPickEnabled(on: boolean): void { document.getElementById('ptPickBtn')!.hidden = !on },
     /** 打开文档时：患者页失效 */
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
-    /** 打开患者页（从病例报告回到患者） */
-    async open(id: string): Promise<void> { hooks.goSpace('patients'); await openPatient(id) },
+    /** 打开患者页（从病例报告回到患者，可直达指定页签） */
+    async open(id: string, initialTab?: 'overview' | 'labs' | 'records' | 'docs' | 'review'): Promise<void> { hooks.goSpace('patients'); await openPatient(id, false, initialTab) },
     /** 进入患者空间（左侧图标栏）：刷新列表；中间区域空闲时显示患者引导 */
     async enter(idle: boolean): Promise<void> {
       if (idle && current && document.getElementById('page')!.classList.contains('patient-page') && !document.getElementById('page')!.classList.contains('pt-welcome')) { await loadList(); return }

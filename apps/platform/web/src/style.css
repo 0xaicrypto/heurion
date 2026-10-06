@@ -441,7 +441,9 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .step.retry { white-space: normal; }
 .step.retry button { font-size: 12px; padding: 2px 12px; margin: 2px 0 6px; }
 
-.composer { margin: 0; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 6px; }
+.composer { margin: 0; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 6px; position: relative; transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s; }
+.composer.composer-drag-over { border-color: var(--teal) !important; background: rgba(45, 212, 191, 0.06) !important; box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.25), 0 4px 16px rgba(0, 0, 0, 0.3) !important; }
+.composer.composer-drag-over::after { content: '释放以添加影像截图 / 图表'; position: absolute; inset: 4px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); border: 2px dashed var(--teal); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--teal); font-size: 13.5px; font-weight: 600; pointer-events: none; z-index: 20; }
 .composer-mode-bar { display: flex; align-items: center; gap: 8px; padding: 2px 2px 4px; }
 .mode-pill {
   display: inline-flex;
@@ -721,6 +723,14 @@ button.block { width: 100%; padding: 10px 12px; }
 .chat-img .chip-x { position: absolute; top: 3px; right: 3px; background: rgba(0, 0, 0, 0.65); color: #fff; border: 0 !important; border-radius: 50%; width: 18px; height: 18px; line-height: 18px; padding: 0; font-size: 11px; text-align: center; cursor: pointer; transition: background 0.15s; z-index: 2; display: flex; align-items: center; justify-content: center; }
 .chat-img .chip-x:hover { background: rgba(239, 68, 68, 0.9); }
 .chat-img-hint { flex-basis: 100%; }
+.chat-img-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chat-img-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; margin-bottom: 4px; }
+.chat-img-actions-label { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.chat-action-pill { appearance: none; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; padding: 3px 9px; font-size: 11.5px; color: var(--text-1, #e2e8f0); cursor: pointer; transition: all 0.15s ease; white-space: nowrap; }
+.chat-action-pill:hover { background: rgba(45, 212, 191, 0.14); border-color: rgba(45, 212, 191, 0.45); color: var(--teal); }
+.chat-assistant-imaging-actions { margin-top: 8px; display: flex; gap: 6px; }
+.chat-go-imaging-btn { border: 1px solid rgba(45, 212, 191, 0.35) !important; color: var(--teal) !important; background: rgba(45, 212, 191, 0.06) !important; padding: 4px 10px !important; border-radius: 4px !important; font-size: 11.5px !important; display: inline-flex !important; align-items: center !important; gap: 6px !important; cursor: pointer !important; transition: all 0.15s ease !important; }
+.chat-go-imaging-btn:hover { background: rgba(45, 212, 191, 0.16) !important; border-color: var(--teal) !important; }
 .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; white-space: normal; }
 .msg-images img { max-width: 140px; max-height: 120px; display: block; border: 1px solid var(--green-line); }
 
@@ -1749,12 +1759,23 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
+.pt-mpr-canvas-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 460px;
+}
 .pt-mpr-screen img {
   max-width: 100%;
   max-height: 460px;
   object-fit: contain;
   image-rendering: auto;
   transition: opacity 0.05s ease;
+}
+#mprAnnotCanvas {
+  touch-action: none;
 }
 .pt-mpr-hud-overlay {
   position: absolute;

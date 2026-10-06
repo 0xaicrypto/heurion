@@ -577,9 +577,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       if (!resp.ok) return c.json({ error: 'mpr_slice_failed' }, resp.status as any)
       const data = await resp.json()
 
-      if (body.save_asset && data.slice_png_base64) {
+      if (body.save_asset && (body.custom_png_base64 || data.slice_png_base64)) {
         const u = c.get('user' as any) || 'u1'
-        const b64Data = String(data.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+        const rawB64 = String(body.custom_png_base64 || data.slice_png_base64 || '')
+        const b64Data = rawB64.replace(/^data:image\/png;base64,/, '')
         const pngBuf = Buffer.from(b64Data, 'base64')
         const planeName = data.plane || 'mpr'
         const sliceIdx = data.slice_index ?? 0
