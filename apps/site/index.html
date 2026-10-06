@@ -64,10 +64,10 @@
           <b data-i18n="mock_study_title">心衰 SGLT2 抑制剂多中心真实世界研究 · 课题全流程工作区</b>
         </div>
         <div class="mock-pipeline">
-          <span class="pipe-step done" data-i18n="pipe_1">① 患者数据收集 (PHR) ✓</span>
-          <span class="pipe-step done" data-i18n="pipe_2">② 队列筛选 (N=1,420) ✓</span>
-          <span class="pipe-step done" data-i18n="pipe_3">③ 记忆演进 (8条结论) ✓</span>
-          <span class="pipe-step active" data-i18n="pipe_4">④ 统计分析与论文撰写</span>
+          <span class="pipe-step done" data-i18n="pipe_1">① 患者健康档案 (PHR) ✓</span>
+          <span class="pipe-step done" data-i18n="pipe_2">② 队列圈选与 MONAI 3D 量化 ✓</span>
+          <span class="pipe-step done" data-i18n="pipe_3">③ 课题记忆演进 (8条结论) ✓</span>
+          <span class="pipe-step active" data-i18n="pipe_4">④ 统计分析与成果发表</span>
         </div>
         <div class="mock-body">
           <div class="paper">
@@ -84,6 +84,10 @@
             </ol>
           </div>
           <div class="notes">
+            <div class="note img">
+              <p class="note-h" data-i18n="mock_note_img_h">MONAI 3D 影像 · RECIST 1.1</p>
+              <p data-i18n="mock_note_img_b">靶病灶最长径 24.5mm (PR 缓解)，高保真关键切片已沉淀为永久科研资产。</p>
+            </div>
             <div class="note ai">
               <p class="note-h" data-i18n="mock_note_ai_h">课题记忆演进 · 提议入库</p>
               <p data-i18n="mock_note_ai_b">检测到本组心衰再住院基线统计口径已确立，建议将变量定义存入课题演进记忆，供后续论文与幻灯片复用。</p>
@@ -248,19 +252,19 @@
           <p data-i18n="road1_p">患者 PHR 档案建立、化验单 OCR 结构化提取与多条件组合队列筛选。下一步：智能化临床质控指标自动稽查。</p>
         </article>
         <article class="road-item">
-          <span class="status live" data-i18n="status_live">已上线 · 持续增强</span>
-          <h3 data-i18n="road2_h">课题自主记忆演进</h3>
-          <p data-i18n="road2_p">AI 从研究交互与修改中提炼课题偏好，自动提议合并重复、修正过时与归档旧记忆，每一次变化均由人类确认。</p>
+          <span class="status live" data-i18n="status_live_new">已上线 · 重磅增强</span>
+          <h3 data-i18n="road2_h">3D 医学影像智能量化 (MONAI)</h3>
+          <p data-i18n="road2_p">基于 MONAI 与 PyTorch 的 CT/MR 3D 体素病灶分割、RECIST 1.1 靶病灶三维量化与胸部 HRCT 支气管扩张/粘液栓定量分析，自动提取关键截面沉淀为高保真科研资产。</p>
         </article>
         <article class="road-item">
           <span class="status live" data-i18n="status_live">已上线 · 持续增强</span>
-          <h3 data-i18n="road3_h">统计分析与双模创作</h3>
-          <p data-i18n="road3_p">隔离沙箱执行 Table 1 与生存分析，Docs & Slides 结构化双模协同与内置矢量光栅化渲染，导出高保真 Word / PPT。</p>
+          <h3 data-i18n="road3_h">课题自主记忆演进与沙箱分析</h3>
+          <p data-i18n="road3_p">AI 从研究交互与修改中提炼课题偏好，自动提议合并重复与更新旧记忆（人类确认生效）；隔离沙箱秒级执行 Table 1 与生存分析。</p>
         </article>
         <article class="road-item">
-          <span class="status plan" data-i18n="status_plan">规划中</span>
-          <h3 data-i18n="road4_h">多中心联邦科研协作</h3>
-          <p data-i18n="road4_p">在保证原始数据不出院前提下，支持跨医疗机构的联邦队列协同分析与多中心临床试验联合撰写。</p>
+          <span class="status live" data-i18n="status_live">已上线 · 持续推进</span>
+          <h3 data-i18n="road4_h">双模协同创作与多中心科研</h3>
+          <p data-i18n="road4_p">Docs &amp; Slides 结构化双模协同与矢量光栅化渲染，导出高保真 Word / PPT；单机容器化部署方案已就绪，持续推进原始数据不出院的多中心联邦科研。</p>
         </article>
       </div>
     </div>
@@ -385,6 +389,38 @@
           </div>
           <p>OpenAlex</p>
         </div>
+
+        <!-- 4. Project MONAI · PyTorch -->
+        <div class="partner">
+          <div class="partner-meta">
+            <span class="tag" data-i18n="partner4_tag">医学影像 AI 与 3D 深度学习</span>
+            <div class="partner-logos">
+              <!-- Project MONAI Official Vector Logo -->
+              <div class="brand-icon" title="Project MONAI (Medical Open Network for AI)">
+                <svg height="28" viewBox="0 0 110 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <g transform="translate(0, 0)">
+                    <polygon points="14,3 24,9 14,15 4,9" fill="#00E5C9"/>
+                    <polygon points="4,9 14,15 14,25 4,19" fill="#0298FE"/>
+                    <polygon points="14,15 24,9 24,19 14,25" fill="#1F43E8"/>
+                    <circle cx="14" cy="15" r="2.2" fill="#FFFFFF"/>
+                  </g>
+                  <text x="31" y="19" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="14.5" letter-spacing="0.3">MONAI</text>
+                </svg>
+              </div>
+              <!-- PyTorch Official Vector Logo -->
+              <div class="brand-icon" title="PyTorch">
+                <svg height="28" viewBox="0 0 98 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <g transform="translate(0, 0)">
+                    <path d="M14 6 C11 10 9 12 9 15 C9 18 11.2 20.5 14 20.5 C16.8 20.5 19 18 19 15 C19 13.5 18.2 12 17.2 10.8 C17.8 12.2 17.5 14 16.5 14.8 C15.5 15.6 14.5 15.2 14 14.2 C13.5 13.2 13.8 11.8 14.5 10.5 C14.9 9.8 15.1 8.5 14 6 Z" fill="#EE4C2C"/>
+                    <circle cx="18.5" cy="7.5" r="1.8" fill="#EE4C2C"/>
+                  </g>
+                  <text x="27" y="19" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" font-size="14" letter-spacing="-0.2">PyTorch</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <p>Project MONAI · PyTorch</p>
+        </div>
       </div>
     </div>
   </section>
@@ -440,15 +476,17 @@
       trust_2: "课题级自主记忆持续演进",
       trust_3: "沙箱隔离分析与 PubMed 严谨引用",
       mock_study_title: "心衰 SGLT2 抑制剂多中心真实世界研究 · 课题全流程工作区",
-      pipe_1: "① 患者数据收集 (PHR) ✓",
-      pipe_2: "② 队列筛选 (N=1,420) ✓",
-      pipe_3: "③ 记忆演进 (8条结论) ✓",
-      pipe_4: "④ 统计分析与论文撰写",
+      pipe_1: "① 患者健康档案 (PHR) ✓",
+      pipe_2: "② 队列圈选与 MONAI 3D 量化 ✓",
+      pipe_3: "③ 课题记忆演进 (8条结论) ✓",
+      pipe_4: "④ 统计分析与成果发表",
       mock_cohort_label: "课题入组队列",
       mock_cohort_val: "HFrEF 真实世界人群 (N=1,420) · 匹配化验与24个月随访",
       mock_paper_h: "2.1 SGLT2 抑制剂与心衰终点事件分析",
       mock_paper_p1: "在射血分数降低的心衰入组队列中，达格列净暴露组复合心血管死亡或心衰再住院风险<del>显著下降</del><ins>降低 26%（HR 0.74, 95% CI 0.65–0.85, P&lt;0.001）</ins><sup class=\"cite\">[1]</sup>。",
       mock_paper_p2: "经沙箱运行 Cox 比例风险回归与 Kaplan-Meier 生存曲线验证，该获益<mark>在合并与未合并糖尿病的亚组中一致</mark><sup class=\"cite\">[1]</sup>，且<span class=\"flag\">可稳健延伸至射血分数保留人群</span><sup class=\"cite\">[2]</sup>。",
+      mock_note_img_h: "MONAI 3D 影像 · RECIST 1.1",
+      mock_note_img_b: "靶病灶最长径 24.5mm (PR 缓解)，高保真关键切片已沉淀为永久科研资产。",
       mock_note_ai_h: "课题记忆演进 · 提议入库",
       mock_note_ai_b: "检测到本组心衰再住院基线统计口径已确立，建议将变量定义存入课题演进记忆，供后续论文与幻灯片复用。",
       mock_btn_accept: "采纳并沉淀",
@@ -508,15 +546,16 @@
       road_h: "<span class=\"nw\">持续演进的</span><span class=\"nw\">临床科研智能基础设施。</span>",
       road_lead: "从患者真实世界数据出发，深度贯通临床科研的计算、证据与表达。",
       status_live: "已上线 · 持续增强",
+      status_live_new: "已上线 · 重磅增强",
       status_plan: "规划中",
       road1_h: "数据资产与队列筛选",
       road1_p: "患者 PHR 档案建立、化验单 OCR 结构化提取与多条件组合队列筛选。下一步：智能化临床质控指标自动稽查。",
-      road2_h: "课题自主记忆演进",
-      road2_p: "AI 从研究交互与修改中提炼课题偏好，自动提议合并重复、修正过时与归档旧记忆，每一次变化均由人类确认。",
-      road3_h: "统计分析与双模创作",
-      road3_p: "隔离沙箱执行 Table 1 与生存分析，Docs & Slides 结构化双模协同与内置矢量光栅化渲染，导出高保真 Word / PPT。",
-      road4_h: "多中心联邦科研协作",
-      road4_p: "在保证原始数据不出院前提下，支持跨医疗机构的联邦队列协同分析与多中心临床试验联合撰写。",
+      road2_h: "3D 医学影像智能量化 (MONAI)",
+      road2_p: "基于 MONAI 与 PyTorch 的 CT/MR 3D 体素病灶分割、RECIST 1.1 靶病灶三维量化与胸部 HRCT 支气管扩张/粘液栓定量分析，自动提取关键截面沉淀为高保真科研资产。",
+      road3_h: "课题自主记忆演进与沙箱分析",
+      road3_p: "AI 从研究交互与修改中提炼课题偏好，自动提议合并重复与更新旧记忆（人类确认生效）；隔离沙箱秒级执行 Table 1 与生存分析。",
+      road4_h: "双模协同创作与多中心科研",
+      road4_p: "Docs & Slides 结构化双模协同与矢量光栅化渲染，导出高保真 Word / PPT；单机容器化部署方案已就绪，持续推进原始数据不出院的多中心联邦科研。",
       sec_h: "<span class=\"nw\">为医疗与科研场景</span><span class=\"nw\">设计的严密边界。</span>",
       sec_lead: "Heurion 是专为医学与科研打造的辅助工作台，严格守护患者隐私与研究合规。平台不提供诊断或治疗建议，AI 生成内容须经作者审阅确认。",
       sec1_h: "受限沙箱环境",
@@ -528,10 +567,11 @@
       sec4_h: "受控记忆与完整审计",
       sec4_p: "AI 记忆仅能以“提议”形式生成，生效权完全属于作者；系统全程记录患者数据访问、分析执行与文件导出的合规审计日志。",
       sec_foot: "* Heurion 不是医疗器械，不用于临床诊断、治疗决策或预后判断；医疗机构部署前请按照当地医疗数据合规法规完成评估。",
-      sources_h: "<span class=\"nw\">建立在</span><span class=\"nw\">权威开放学术数据之上。</span>",
+      sources_h: "<span class=\"nw\">建立在</span><span class=\"nw\">权威学术数据与 AI 计算之上。</span>",
       partner1_tag: "权威医学文献",
       partner2_tag: "引文与 DOI 核验",
       partner3_tag: "学术图谱与文献溯源",
+      partner4_tag: "医学影像 AI 与 3D 深度学习",
       cta_h: "<span class=\"nw\">让临床数据、科研记忆与论文创作，</span><span class=\"nw\">在同一个工作台无缝流转。</span>",
       cta_btn: "免费开启工作台 <span aria-hidden=\"true\">→</span>",
       cta_sub: "开箱即用，支持多中心团队协同。",
@@ -557,15 +597,17 @@
       trust_2: "Self-Evolving Research Memory",
       trust_3: "Sandboxed Analysis & PubMed Citations",
       mock_study_title: "SGLT2i in Heart Failure Multicenter Real-World Study · Workspace",
-      pipe_1: "① Patient Data ✓",
-      pipe_2: "② Cohort (N=1,420) ✓",
-      pipe_3: "③ Memory (8 Claims) ✓",
-      pipe_4: "④ Analysis & Paper",
+      pipe_1: "① Patient Records (PHR) ✓",
+      pipe_2: "② Cohort & MONAI 3D Imaging ✓",
+      pipe_3: "③ Research Memory (8 Claims) ✓",
+      pipe_4: "④ Analytics & Publication",
       mock_cohort_label: "Cohort",
       mock_cohort_val: "HFrEF Real-World (N=1,420) · Matched Labs & Follow-Up",
       mock_paper_h: "2.1 SGLT2 Inhibitors and Primary Heart Failure Endpoints",
       mock_paper_p1: "In the enrolled HFrEF cohort, dapagliflozin reduced cardiovascular death or heart failure hospitalization by <del>a significant margin</del><ins>26% (HR 0.74, 95% CI 0.65–0.85, P&lt;0.001)</ins><sup class=\"cite\">[1]</sup>.",
       mock_paper_p2: "Verified via sandboxed Cox regression and KM curves, this benefit <mark>remained consistent across diabetic subgroups</mark><sup class=\"cite\">[1]</sup> and <span class=\"flag\">solidly extended to HFpEF</span><sup class=\"cite\">[2]</sup>.",
+      mock_note_img_h: "MONAI 3D Imaging · RECIST 1.1",
+      mock_note_img_b: "Target lesion diameter 24.5mm (PR response). Key slice persisted into publication asset database.",
       mock_note_ai_h: "Memory Evolution · Proposal",
       mock_note_ai_b: "Baseline hospitalization criteria established. Proposed persisting into project memory for upcoming papers and slides.",
       mock_btn_accept: "Accept & Save",
@@ -625,15 +667,16 @@
       road_h: "<span class=\"nw\">Continuous Evolution of</span><br><span class=\"nw\">Clinical Research Infrastructure.</span>",
       road_lead: "Grounded in real-world patient data, connecting computing, evidence, and scientific publication.",
       status_live: "Production · Enhancing",
+      status_live_new: "Production · Major Feature",
       status_plan: "Roadmap",
       road1_h: "Data Assets & Cohort Filtering",
       road1_p: "PHR patient records, lab OCR extraction, and compound cohort builders. Next: automated clinical quality control audits.",
-      road2_h: "Self-Evolving Memory System",
-      road2_p: "AI synthesizes project preferences from interaction deltas, proposing deduplication and archiving with human-in-the-loop approval.",
-      road3_h: "Sandboxed Analytics & Dual-Mode Studio",
-      road3_p: "Automated Table 1 & survival curves in sandboxes, Docs & Slides dual-mode with native vector rasterization for Word & PPT exports.",
-      road4_h: "Multi-Center Federated Collaboration",
-      road4_p: "Federated clinical cohort analysis across hospitals without raw patient data leaving local firewalls.",
+      road2_h: "3D Medical Imaging & Deep Learning (MONAI)",
+      road2_p: "MONAI & PyTorch 3D deep learning for CT/MR: automated lesion segmentation, RECIST 1.1 3D quantification, chest HRCT bronchiectasis/mucus analysis, and high-fidelity key slice asset persistence.",
+      road3_h: "Self-Evolving Memory & Sandboxed Analytics",
+      road3_p: "AI curates hypotheses and statistical definitions with human-in-the-loop approval; unprivileged sandboxes execute Table 1 and survival curves.",
+      road4_h: "Dual-Mode Studio & Federated Research",
+      road4_p: "Structured Docs & Slides dual-mode co-authoring with vector rasterization for Word & PPT exports; advancing multi-center federated trials where raw data stays in-hospital.",
       sec_h: "<span class=\"nw\">Rigorous Boundaries Engineered for</span><br><span class=\"nw\">Medical Research Environments.</span>",
       sec_lead: "Heurion is a clinical research and scientific evidence workstation. It does not provide medical diagnoses or treatment recommendations. All AI outputs require author verification.",
       sec1_h: "Network-Isolated Sandboxes",
@@ -645,10 +688,11 @@
       sec4_h: "Audited Memory & Immutable Logs",
       sec4_p: "Memory operates on human-approved proposals only. Full audit logging tracks data access, computing executions, and export events.",
       sec_foot: "* Heurion is not a medical device and is not intended for clinical diagnosis or treatment decisions. Institutions must comply with local medical data regulations.",
-      sources_h: "<span class=\"nw\">Built on Authoritative</span><br><span class=\"nw\">Open Academic Data Networks.</span>",
+      sources_h: "<span class=\"nw\">Built on Authoritative</span><br><span class=\"nw\">Academic Data & AI Computing.</span>",
       partner1_tag: "Biomedical Literature",
       partner2_tag: "Citation & DOI Verification",
       partner3_tag: "Bibliographic Graphs & Open Science",
+      partner4_tag: "Medical Imaging AI & 3D Deep Learning",
       cta_h: "<span class=\"nw\">Unify Clinical Data, Research Memory, and Paper Writing</span><br><span class=\"nw\">in One Intelligent Workstation.</span>",
       cta_btn: "Open Workstation <span aria-hidden=\"true\">→</span>",
       cta_sub: "Zero install required. Ready for multi-center research teams.",

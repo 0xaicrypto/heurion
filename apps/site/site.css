@@ -88,8 +88,10 @@ h1 em { font-style: normal; color: var(--mint); }
 .note { border: 1px solid var(--line-strong); background: var(--raised); padding: 10px; font-size: 11.5px; line-height: 1.5; color: var(--text-2); }
 .note.ai { border-color: var(--green-line); }
 .note.warn { border-color: rgba(245, 181, 68, .45); }
+.note.img { border-color: rgba(2, 152, 254, .45); }
 .note-h { font: 500 10.5px/1 var(--mono); letter-spacing: .08em; margin-bottom: 6px; color: var(--mint); }
 .note.warn .note-h { color: var(--warn); }
+.note.img .note-h { color: #0298FE; }
 .note-act { display: flex; gap: 6px; margin-top: 8px; }
 .note-act span { padding: 3px 8px; border: 1px solid var(--line-strong); font-size: 10.5px; }
 .note-act .ok { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); font-weight: 600; }
@@ -163,8 +165,8 @@ h2 { font-size: clamp(30px, 3.6vw, 48px); line-height: 1.15; font-weight: 600; l
 .sec-list p { font-size: 15px; line-height: 1.75; color: var(--text-2); }
 .footnote { margin-top: 56px; font-size: 13px; color: var(--faint); }
 
-/* 合作 */
-.partners { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 56px; border: 1px solid var(--line); }
+/* 合作与数据来源 */
+.partners { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 56px; border: 1px solid var(--line); }
 .partner { padding: 28px; min-height: 180px; display: flex; flex-direction: column; justify-content: space-between; gap: 20px; transition: background .2s; }
 .partner:hover { background: rgba(0, 255, 147, .02); }
 .partner + .partner { border-left: 1px solid var(--line); }
@@ -258,7 +260,10 @@ html[lang="en"] .mock-body {
 @media (max-width: 1080px) {
   .hero-row { grid-template-columns: 1fr; gap: 56px; padding-top: 72px; padding-bottom: 96px; }
   .mock { max-width: 720px; }
-  .pillar-row, .caps, .pains, .road { grid-template-columns: repeat(2, 1fr); }
+  .pillar-row, .caps, .pains, .road, .partners { grid-template-columns: repeat(2, 1fr); }
+  .partner:nth-child(2) { border-right: 1px solid var(--line); }
+  .partner:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .partner:nth-child(2n+1) { border-left: 0; }
   .pain:nth-child(2) { border-right: 1px solid var(--line); }
   .pain:nth-child(-n+2) { border-bottom: 1px solid var(--line); padding-bottom: 24px; }
   .pillar:nth-child(2) { border-right: 1px solid var(--line); }
