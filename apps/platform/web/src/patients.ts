@@ -3808,13 +3808,17 @@ ${recommendations}
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } if (!$('patientList').hidden) renderList() },
     /** 打开患者页（从病例报告回到患者，可直达指定页签） */
     async open(id: string, initialTab?: 'overview' | 'labs' | 'records' | 'docs' | 'review'): Promise<void> { hooks.goSpace('patients'); await openPatient(id, false, initialTab) },
-    /** 进入患者空间（左侧图标栏）：刷新列表；中间区域空闲时显示患者引导 */
-    async enter(idle: boolean): Promise<void> {
-      if (idle && current && document.getElementById('page')!.classList.contains('patient-page') && !document.getElementById('page')!.classList.contains('pt-welcome')) { await loadList(); return }
+    /** 进入患者空间（左侧图标栏）：刷新列表；中间区域显示患者或引导页 */
+    async enter(): Promise<void> {
+      const page = document.getElementById('page')!
+      if (current && page.classList.contains('patient-page') && !page.classList.contains('pt-welcome')) {
+        await loadList()
+        return
+      }
       current = null
       await loadList()
       // 列表加载期间已经打开了某位患者（从研究页 / 病例报告跳过来）：不要再用引导页盖掉
-      if (idle && current === null && !document.getElementById('page')!.classList.contains('share-page')) showWelcome()
+      if (current === null && !page.classList.contains('share-page')) showWelcome()
     },
   }
 }

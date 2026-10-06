@@ -12,8 +12,8 @@ export interface SpaceDef {
   actions: string
   list: string
   placeholder: string
-  /** 进入空间；idle = 中间区域没有在编辑文档（该显示这个空间的开始页） */
-  enter(idle: boolean): void | Promise<void>
+  /** 进入空间 */
+  enter(): void | Promise<void>
 }
 
 const KEY = 'heurion.space'
@@ -22,12 +22,6 @@ export function initSpaces(defs: Record<Space, SpaceDef>) {
   const $ = (id: string) => document.getElementById(id)!
   let cur: Space = 'patients'
   const hidden = new Set<Space>()
-
-  /** 中间区域没在编辑文档：开始页、患者页、研究页、资料库页、数据集页或空白 */
-  const idle = () => {
-    const page = $('page')
-    return page.childElementCount === 0 || ['welcome-page', 'patient-page', 'study-page', 'library-page', 'datasets-page'].some(c => page.classList.contains(c))
-  }
 
   function set(space: Space): void {
     if (hidden.has(space)) space = 'patients'
@@ -46,7 +40,7 @@ export function initSpaces(defs: Record<Space, SpaceDef>) {
     $('newProject').hidden = space !== 'write'
     ;($('docSearch') as HTMLInputElement).placeholder = d.placeholder
     try { localStorage.setItem(KEY, space) } catch { /* 无痕模式 */ }
-    void d.enter(idle())
+    void d.enter()
   }
 
   document.querySelector('.rail-spaces')!.addEventListener('click', e => {

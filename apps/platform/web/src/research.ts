@@ -619,10 +619,10 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
   $('docSearch').addEventListener('input', () => { if (!$('studyList').hidden) renderList() })
 
   return {
-    async enter(idle: boolean): Promise<void> {
+    async enter(): Promise<void> {
       await loadList()
-      if (idle && current && $('page').classList.contains('study-page') && !$('page').classList.contains('rs-welcome')) return
-      if (idle) showWelcome()
+      if (current && $('page').classList.contains('study-page') && !$('page').classList.contains('rs-welcome')) return
+      showWelcome()
     },
     leave(): void { current = null; if (poll) { clearTimeout(poll); poll = null } },
     /** 从研究里的文档回到研究页 */

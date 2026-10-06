@@ -250,12 +250,36 @@ new MutationObserver(() => {
 }).observe($('page'), { attributes: true, attributeFilter: ['class'] })
 // 左侧图标栏：患者 / 临床研究 / 写作
 const spaces = initSpaces({
-  patients: { title: '患者', label: '患者', actions: 'ptActions', list: 'patientList', placeholder: '按代号、本机备注、标签筛选',
-    enter: idle => { if (idle) researchUi.leave(); return patientsUi.enter(idle) } },
-  research: { title: '临床研究', label: '研究项目', actions: 'rsActions', list: 'studyList', placeholder: '按研究名称筛选',
-    enter: idle => { if (idle) { patientsUi.leave(); leaveDoc() } return researchUi.enter(idle) } },
-  write: { title: '写作', label: '文档', actions: 'docActions', list: 'docList', placeholder: '搜索文档（标题与正文）',
-    enter: idle => { if (idle) { patientsUi.leave(); researchUi.leave(); leaveDoc(); showWelcome() } } },
+  patients: {
+    title: '患者', label: '患者', actions: 'ptActions', list: 'patientList', placeholder: '按代号、本机备注、标签筛选',
+    enter: () => {
+      researchUi.leave()
+      leaveDoc()
+      return patientsUi.enter()
+    }
+  },
+  research: {
+    title: '临床研究', label: '研究项目', actions: 'rsActions', list: 'studyList', placeholder: '按研究名称筛选',
+    enter: () => {
+      patientsUi.leave()
+      leaveDoc()
+      return researchUi.enter()
+    }
+  },
+  write: {
+    title: '写作', label: '文档', actions: 'docActions', list: 'docList', placeholder: '搜索文档（标题与正文）',
+    enter: () => {
+      patientsUi.leave()
+      researchUi.leave()
+      const page = $('page')
+      // 如果当前正开着文档（非患者页、非研究页），保留当前文档
+      if (session && !page.classList.contains('patient-page') && !page.classList.contains('study-page') && !page.classList.contains('welcome-page')) {
+        return
+      }
+      leaveDoc()
+      showWelcome()
+    }
+  },
 })
 
 async function openTrash(): Promise<void> {
