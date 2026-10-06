@@ -2117,5 +2117,273 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   color: #FBBF24;
 }
 
+/* 临床多模态主动预警 Banner */
+.pt-proactive-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.pt-proactive-banner.alert-ham {
+  background: rgba(239, 68, 68, 0.09);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.pt-proactive-banner.alert-nodule {
+  background: rgba(245, 158, 11, 0.09);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.pt-proactive-main {
+  flex: 1;
+  min-width: 280px;
+}
+.pt-proactive-pill {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+}
+.pt-proactive-pill.high {
+  background: rgba(239, 68, 68, 0.25);
+  color: #F87171;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+.pt-proactive-pill.medium {
+  background: rgba(245, 158, 11, 0.25);
+  color: #FBBF24;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+}
+.pt-proactive-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* 全景多模态影像诊断报告单排版 */
+.pt-full-report-dialog {
+  max-width: 900px;
+  width: 95vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.pt-report-paper {
+  background: #0f141f;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 24px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.pt-report-hospital-head {
+  text-align: center;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+.pt-report-hospital-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #fff;
+}
+.pt-report-hospital-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.pt-report-patient-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  font-size: 12.5px;
+  margin-bottom: 16px;
+}
+.pt-report-patient-grid .item-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.pt-report-patient-grid .item-val {
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 2px;
+}
+
+.pt-report-sec {
+  margin-bottom: 18px;
+}
+.pt-report-sec-h {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+  border-left: 3px solid #38BDF8;
+  padding-left: 8px;
+  margin-bottom: 8px;
+}
+
+.pt-report-metrics-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.pt-report-metric-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 140px;
+}
+.pt-report-metric-card.alert {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
+.pt-report-metric-title {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pt-report-metric-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 2px;
+}
+
+.pt-report-impression-box {
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pt-report-recommendations-box {
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pt-report-signature-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.15);
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #fullReportPrintArea, #fullReportPrintArea * {
+    visibility: visible !important;
+  }
+  #fullReportPrintArea {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 16mm !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  .pt-report-paper {
+    background: #ffffff !important;
+    color: #111827 !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+  .pt-report-hospital-head {
+    border-bottom: 2px solid #111827 !important;
+  }
+  .pt-report-hospital-title {
+    color: #000000 !important;
+    font-size: 20px !important;
+  }
+  .pt-report-hospital-sub {
+    color: #4B5563 !important;
+  }
+  .pt-report-patient-grid {
+    background: #F3F4F6 !important;
+    border: 1px solid #D1D5DB !important;
+    color: #111827 !important;
+  }
+  .pt-report-patient-grid .item-label {
+    color: #4B5563 !important;
+  }
+  .pt-report-patient-grid .item-val {
+    color: #000000 !important;
+  }
+  .pt-report-sec-h {
+    color: #000000 !important;
+    border-left-color: #2563EB !important;
+  }
+  .pt-report-metric-card {
+    background: #F9FAFB !important;
+    border: 1px solid #E5E7EB !important;
+    color: #111827 !important;
+  }
+  .pt-report-metric-card.alert {
+    background: #FEF2F2 !important;
+    border-color: #F87171 !important;
+    color: #991B1B !important;
+  }
+  .pt-report-metric-title {
+    color: #4B5563 !important;
+  }
+  .pt-report-metric-value {
+    color: #000000 !important;
+  }
+  .pt-evidence-table th {
+    background: #F3F4F6 !important;
+    color: #111827 !important;
+    border-color: #D1D5DB !important;
+  }
+  .pt-evidence-table td {
+    border-color: #D1D5DB !important;
+    color: #111827 !important;
+  }
+  .pt-report-impression-box {
+    background: #EFF6FF !important;
+    border: 1px solid #93C5FD !important;
+    color: #1E3A8A !important;
+  }
+  .pt-report-recommendations-box {
+    background: #ECFDF5 !important;
+    border: 1px solid #6EE7B7 !important;
+    color: #064E3B !important;
+  }
+  .pt-report-signature-row {
+    border-top: 1px dashed #9CA3AF !important;
+    color: #4B5563 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
 
 

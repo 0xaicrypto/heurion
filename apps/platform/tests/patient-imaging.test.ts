@@ -702,5 +702,122 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
     expect(data.statistics_3d).toBeTruthy()
     expect(data.slice_png_base64).toBeTruthy()
   })
+
+  it('11. 全景多模态影像诊断报告生成 (generateComprehensiveReport & HTTP API)', async () => {
+    const t = env()
+    const a = t.as(t.user)
+    const patient = t.svc.create(a, { sex: 'M', birth_year: 1974, tags: ['支气管扩张', '咯血'] })
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    // 录入血清总 IgE 与嗜酸粒细胞
+    t.svc.addLab(a, patient.id, {
+      test_name: '血清总 IgE',
+      value: 1560,
+      unit: 'kU/L',
+      ref_low: 0,
+      ref_high: 100,
+      flag: 'H',
+      collected_on: '2026-10-02',
+    }, { status: 'confirmed' })
+
+    t.svc.addLab(a, patient.id, {
+      test_name: '嗜酸性粒细胞绝对值 (EOS#)',
+      value: 0.95,
+      unit: '10^9/L',
+      ref_low: 0.02,
+      ref_high: 0.52,
+      flag: 'H',
+      collected_on: '2026-10-02',
+    }, { status: 'confirmed' })
+
+    // 录入带 HAM 粘液栓的 CT 影像记录
+    const imgRec = t.svc.addImagingRecord(a, patient.id, {
+      title: '胸部 HRCT 轴位连续平扫',
+      report_date: '2026-10-05',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      metrics: {
+        longest_diameter_mm: 7.2,
+        short_axis_mm: 5.4,
+        total_volume_cm3: 4.86,
+        bar_max: 1.84,
+        ham_max_hu: 94.5,
+        high_attenuation_mucus: true,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    // 1. Service 层调用
+    const reportRes = t.svc.generateComprehensiveReport(a, patient.id, {
+      record_id: imgRec.record.id,
+      save_to_records: true,
+    })
+
+    expect(reportRes.ok).toBe(true)
+    expect(reportRes.saved_record_id).toBeTruthy()
+    expect(reportRes.urgency).toBe('high')
+    expect(reportRes.full_report_markdown).toContain('全景多模态影像诊断报告单')
+    expect(reportRes.full_report_markdown).toContain('高密度粘液栓 HAM')
+    expect(reportRes.full_report_markdown).toContain('变应性支气管肺曲霉病')
+    expect(reportRes.full_report_markdown).toContain('血清总 IgE')
+    expect(reportRes.full_report_markdown).toContain('1560')
+
+    // 验证新保存的病历记录
+    const patientDetail = t.svc.read(a, patient.id)
+    const savedRec = patientDetail.records.find(r => r.id === reportRes.saved_record_id)
+    expect(savedRec).toBeTruthy()
+    expect(savedRec?.kind).toBe('report')
+    expect(savedRec?.status).toBe('confirmed')
+
+    // 2. HTTP API 接口调用测试
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    const apiRes = await app.request(`/api/patients/${patient.id}/imaging/full-report`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        record_id: imgRec.record.id,
+        save_to_records: false,
+      }),
+    })
+
+    expect(apiRes.status).toBe(200)
+    const apiData = await apiRes.json()
+    expect(apiData.ok).toBe(true)
+    expect(apiData.findings).toContain('高密度粘液栓')
+    expect(apiData.impression).toContain('ABPA')
+    expect(apiData.recommendations).toBeTruthy()
+  })
 })
 

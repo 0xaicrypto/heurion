@@ -15,6 +15,8 @@ except (ImportError, ValueError):
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import FileResponse
 import tempfile
+import zipfile
+import shutil
 from pathlib import Path
 
 app = FastAPI(
@@ -499,27 +501,58 @@ async def run_upload_analysis(
     ham_threshold_hu: Optional[float] = Form(None),
     bar_cutoff: Optional[float] = Form(None),
 ):
-    """Uploads a .nii or .nii.gz file and executes MONAI inference."""
-    suffix = ".nii.gz" if file.filename.endswith(".nii.gz") else ".nii"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+    """Uploads a .nii, .nii.gz, .dcm, or .zip (DICOM series archive) file and executes MONAI inference."""
+    fn_lower = file.filename.lower() if file.filename else ""
+    content = await file.read()
 
-    try:
-        res = engine.analyze_file(
-            file_path=tmp_path,
-            model_name=model_name,
-            window_preset=window_preset,
-            mucus_min_hu=mucus_min_hu,
-            mucus_max_hu=mucus_max_hu,
-            ham_threshold_hu=ham_threshold_hu,
-            bar_cutoff=bar_cutoff
-        )
-        return res
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    if fn_lower.endswith(".zip"):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_path = os.path.join(tmp_dir, "upload.zip")
+            with open(zip_path, "wb") as f_out:
+                f_out.write(content)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(tmp_dir)
+            return engine.analyze_file(
+                file_path=tmp_dir,
+                model_name=model_name,
+                window_preset=window_preset,
+                mucus_min_hu=mucus_min_hu,
+                mucus_max_hu=mucus_max_hu,
+                ham_threshold_hu=ham_threshold_hu,
+                bar_cutoff=bar_cutoff
+            )
+    elif fn_lower.endswith((".dcm", ".dicom")):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dcm_path = os.path.join(tmp_dir, file.filename or "slice.dcm")
+            with open(dcm_path, "wb") as f_out:
+                f_out.write(content)
+            return engine.analyze_file(
+                file_path=tmp_dir,
+                model_name=model_name,
+                window_preset=window_preset,
+                mucus_min_hu=mucus_min_hu,
+                mucus_max_hu=mucus_max_hu,
+                ham_threshold_hu=ham_threshold_hu,
+                bar_cutoff=bar_cutoff
+            )
+    else:
+        suffix = ".nii.gz" if fn_lower.endswith(".nii.gz") else ".nii"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            return engine.analyze_file(
+                file_path=tmp_path,
+                model_name=model_name,
+                window_preset=window_preset,
+                mucus_min_hu=mucus_min_hu,
+                mucus_max_hu=mucus_max_hu,
+                ham_threshold_hu=ham_threshold_hu,
+                bar_cutoff=bar_cutoff
+            )
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
 def start_server():
     port = int(os.environ.get("PORT", "8004"))

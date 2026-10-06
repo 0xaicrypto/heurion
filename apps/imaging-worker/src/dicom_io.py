@@ -65,9 +65,14 @@ def load_dicom_series(folder_path: str) -> Tuple[np.ndarray, Tuple[float, float,
     Reads a folder of DICOM slices, sorts them by spatial position, and returns (Z, Y, X) volume and spacing.
     """
     import pydicom
-    files = glob.glob(os.path.join(folder_path, "*.dcm"))
+    files = []
+    for root, _, filenames in os.walk(folder_path):
+        for f in filenames:
+            fl = f.lower()
+            if fl.endswith(('.dcm', '.dicom', '.ima')) or (not '.' in f and not f.startswith('.')):
+                files.append(os.path.join(root, f))
     if not files:
-        files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+        files = glob.glob(os.path.join(folder_path, "*"))
     
     slices = []
     for f in files:

@@ -486,6 +486,64 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(srRes.data.format).toBe('dicom-sr')
     expect(srRes.data.data.SOPClassUID).toBe('1.2.840.10008.5.1.4.1.1.88.22')
   })
+
+  it('11. imaging_generate_full_report: 生成全景多模态影像诊断报告并自动存入档案', async () => {
+    const { env, call } = await connectImagingMcp()
+    const a = { userId: (env as any).userId, via: 'user' as const }
+    const patient = env.patients.create(a, {
+      sex: 'M',
+      birth_year: 1968,
+      tags: ['支气管扩张', 'ABPA 疑诊'],
+    })
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    env.patients.addLab(a, patient.id, {
+      test_name: '血清总 IgE',
+      value: 1820,
+      unit: 'kU/L',
+      ref_low: 0,
+      ref_high: 100,
+      flag: 'H',
+      collected_on: '2026-10-02',
+    }, { status: 'confirmed' })
+
+    const rec = env.patients.addImagingRecord(a, patient.id, {
+      title: '高分辨胸部 CT 扫描',
+      report_date: '2026-10-04',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      metrics: {
+        longest_diameter_mm: 8.5,
+        short_axis_mm: 6.0,
+        total_volume_cm3: 5.2,
+        bar_max: 1.92,
+        ham_max_hu: 98.0,
+        high_attenuation_mucus: true,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    const reportRes = await call('imaging_generate_full_report', {
+      patient_id: patient.id,
+      record_id: rec.record.id,
+      save_to_records: true,
+    })
+
+    expect(reportRes.isError).toBe(false)
+    expect(reportRes.data.status).toBe('success')
+    expect(reportRes.data.patient_id).toBe(patient.id)
+    expect(reportRes.data.urgency).toBe('high')
+    expect(reportRes.data.saved_record_id).toBeDefined()
+    expect(reportRes.data.full_report_markdown).toContain('全景多模态影像诊断报告单')
+    expect(reportRes.data.full_report_markdown).toContain('高密度粘液栓 HAM')
+    expect(reportRes.data.full_report_markdown).toContain('变应性支气管肺曲霉病')
+    expect(reportRes.data.full_report_markdown).toContain('1820')
+
+    // 验证病历档案中多了一份 confirmed 的诊断报告
+    const detail = env.patients.read(a, patient.id)
+    const reportDoc = detail.records.find((r: any) => r.id === reportRes.data.saved_record_id)
+    expect(reportDoc).toBeDefined()
+    expect(reportDoc?.kind).toBe('report')
+  })
 })
 
 

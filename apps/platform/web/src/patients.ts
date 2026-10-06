@@ -218,6 +218,56 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         ? `/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}`
         : ''
 
+      const m = (imgData.metrics || imgData.raw_metrics || {}) as Record<string, any>
+      const isHAM = Boolean(m.high_attenuation_mucus || (m.ham_max_hu && m.ham_max_hu > 70) || (m.high_attenuation_mucus_cm3 && m.high_attenuation_mucus_cm3 > 0))
+      const isHighRiskNodule = Boolean(m.longest_diameter_mm && m.longest_diameter_mm > 8)
+      const igeLab = d.latest_labs.find(l => l.test_key === 'ige' || l.test_name.includes('IgE'))
+
+      let proactiveBanner = ''
+      if (isHAM) {
+        proactiveBanner = `
+          <div class="pt-proactive-banner alert-ham">
+            <div class="pt-proactive-main">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+                <span class="pt-proactive-pill high">⚠️ 临床高危主动预警 (Clinical Decision Support)</span>
+                <span class="muted small">高密度粘液栓 (HAM) · CT &gt; 70 HU</span>
+              </div>
+              <div style="font-weight: 600; font-size: 13.5px; color: #FCA5A5; margin-bottom: 4px">
+                检出支气管管腔高密度粘液栓嵌顿，高度疑似变应性支气管肺曲霉病 (ABPA)
+              </div>
+              <div class="muted small" style="line-height: 1.5; color: var(--text-1)">
+                3D 体素测值显示嵌顿物 CT 衰减均值超标（高密度粘液栓 HAM）${igeLab ? `，已协同关联患者近期异常总 IgE (${igeLab.value_num ?? igeLab.std_value} ${igeLab.unit || 'kU/L'})` : ''}。系统已触发 ABPA 临床多模态确诊因果链，建议立即开具全景报告或完善曲霉 sIgE 复查。
+              </div>
+            </div>
+            <div class="pt-proactive-actions">
+              <button class="primary small-btn" data-generate-full-report="${latestImg.id}">📄 一键生成全景诊断报告</button>
+              <button class="small-btn quiet" data-open-evidence="${latestImg.id}">🔬 查看多模态因果链</button>
+            </div>
+          </div>
+        `
+      } else if (isHighRiskNodule) {
+        proactiveBanner = `
+          <div class="pt-proactive-banner alert-nodule">
+            <div class="pt-proactive-main">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+                <span class="pt-proactive-pill medium">💡 靶病灶干预预警 (Fleischner Criteria)</span>
+                <span class="muted small">实性靶病灶长径超标 (${m.longest_diameter_mm} mm &gt; 8 mm)</span>
+              </div>
+              <div style="font-weight: 600; font-size: 13.5px; color: #FDE68A; margin-bottom: 4px">
+                检出 RECIST 1.1 靶病灶长径超标，达到高危实性结节随访/穿刺干预阈值
+              </div>
+              <div class="muted small" style="line-height: 1.5; color: var(--text-1)">
+                MONAI 3D 卷积网络测得靶病灶长径达 ${m.longest_diameter_mm} mm（三维体积 ${m.total_volume_cm3 ?? '--'} cm³）。建议进一步排查肿瘤标志物 (CEA/CYFRA21-1) 并生成全景诊断报告指导多学科会诊 (MDT)。
+              </div>
+            </div>
+            <div class="pt-proactive-actions">
+              <button class="primary small-btn" data-generate-full-report="${latestImg.id}">📄 一键生成全景诊断报告</button>
+              <button class="small-btn quiet" data-open-evidence="${latestImg.id}">🔬 查看多模态因果链</button>
+            </div>
+          </div>
+        `
+      }
+
       imgWidget = `
       <section class="pt-overview-imaging">
         <div class="row" style="align-items: baseline; margin-bottom: 8px">
@@ -226,6 +276,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           ${hasMultiImaging ? `<button class="primary small-btn" data-act="compare-imaging" style="margin-right: 8px" title="对比多期影像并计算 RECIST 1.1 疗效等级">📊 多期影像随访对比 (RECIST 1.1)</button>` : ''}
           <button class="quiet small-btn" data-tab="records">查看全部影像档案 (${imagingRecords.length}) ➔</button>
         </div>
+        ${proactiveBanner}
         <div class="pt-overview-img-card" data-rec="${latestImg.id}">
           <div class="pt-overview-thumb-wrap" style="position: relative; width: 140px; height: 110px; flex-shrink: 0; background: #000; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center">
             ${imgUrl ? `<img src="${imgUrl}" class="pt-overview-thumb" data-view-img="${imgUrl}" title="点击查看切片大图" style="width: 100%; height: 100%; object-fit: contain; cursor: pointer" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex'">` : ''}
@@ -236,7 +287,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             <div class="row" style="align-items: center; justify-content: space-between"><b>${esc(latestImg.title)}</b><span class="muted small">${esc(latestImg.report_date || '')}</span></div>
             <div class="muted small" style="margin: 6px 0 10px; line-height: 1.5">${esc(latestImg.extraction_note || '已完成三维体素分割与定量测量')}</div>
             <div class="row" style="gap: 8px; flex-wrap: wrap">
-              <button class="primary small-btn" data-img-report="${latestImg.id}">📝 基于此影像写报告</button>
+              <button class="primary small-btn" data-generate-full-report="${latestImg.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">📄 全景诊断报告</button>
+              <button class="small-btn quiet" data-img-report="${latestImg.id}">📝 基于此影像写报告</button>
               <button class="small-btn" data-img-canvas="${latestImg.id}">🎨 会诊 Slide</button>
               <button class="small-btn quiet" data-open-mpr="${latestImg.id}" title="进入 3D 多平面重建 (MPR) 互动切片浏览器">🖥️ 3D 切片</button>
               <button class="small-btn quiet" data-open-evidence="${latestImg.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
@@ -301,6 +353,67 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const EXTRACT: Record<string, string> = { queued: '排队提取', running: '提取中…', done: '', failed: '提取失败', skipped: '' }
 
     const hasMultiImaging = imagingRecords.length >= 2
+
+    // 检查是否有任何影像存在高危征象 (HAM 或结节 > 8mm)
+    const anyHamRec = imagingRecords.find(r => {
+      const imgD = (r.imaging_data || {}) as Record<string, any>
+      const m = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
+      return Boolean(m.high_attenuation_mucus || (m.ham_max_hu && m.ham_max_hu > 70) || (m.high_attenuation_mucus_cm3 && m.high_attenuation_mucus_cm3 > 0))
+    })
+    const anyNoduleRec = imagingRecords.find(r => {
+      const imgD = (r.imaging_data || {}) as Record<string, any>
+      const m = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
+      return Boolean(m.longest_diameter_mm && m.longest_diameter_mm > 8)
+    })
+    const igeLab = d.latest_labs.find(l => l.test_key === 'ige' || l.test_name.includes('IgE'))
+
+    let sectionAlertBanner = ''
+    if (anyHamRec) {
+      sectionAlertBanner = `
+        <div class="pt-proactive-banner alert-ham" style="margin-top: 10px">
+          <div class="pt-proactive-main">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+              <span class="pt-proactive-pill high">⚠️ 临床高危主动预警 (Clinical Decision Support)</span>
+              <span class="muted small">高密度粘液栓 (HAM) · CT &gt; 70 HU</span>
+            </div>
+            <div style="font-weight: 600; font-size: 13.5px; color: #FCA5A5; margin-bottom: 4px">
+              检出支气管管腔高密度粘液栓嵌顿，高度疑似变应性支气管肺曲霉病 (ABPA)
+            </div>
+            <div class="muted small" style="line-height: 1.5; color: var(--text-1)">
+              3D 体素测值显示嵌顿物 CT 衰减均值超标（高密度粘液栓 HAM）${igeLab ? `，已协同关联患者近期异常总 IgE (${igeLab.value_num ?? igeLab.std_value} ${igeLab.unit || 'kU/L'})` : ''}。系统已触发 ABPA 临床多模态确诊因果链，建议立即开具全景报告或完善曲霉 sIgE 复查。
+            </div>
+          </div>
+          <div class="pt-proactive-actions">
+            <button class="primary small-btn" data-generate-full-report="${anyHamRec.id}">📄 一键生成全景诊断报告</button>
+            <button class="small-btn quiet" data-open-evidence="${anyHamRec.id}">🔬 查看多模态因果链</button>
+          </div>
+        </div>
+      `
+    } else if (anyNoduleRec) {
+      const imgD = (anyNoduleRec.imaging_data || {}) as Record<string, any>
+      const nm = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
+      sectionAlertBanner = `
+        <div class="pt-proactive-banner alert-nodule" style="margin-top: 10px">
+          <div class="pt-proactive-main">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+              <span class="pt-proactive-pill medium">💡 靶病灶干预预警 (Fleischner Criteria)</span>
+              <span class="muted small">实性靶病灶长径超标 (${nm.longest_diameter_mm} mm &gt; 8 mm)</span>
+            </div>
+            <div style="font-weight: 600; font-size: 13.5px; color: #FDE68A; margin-bottom: 4px">
+              检出 RECIST 1.1 靶病灶长径超标，达到高危实性结节随访/穿刺干预阈值
+            </div>
+            <div class="muted small" style="line-height: 1.5; color: var(--text-1)">
+              MONAI 3D 卷积网络测得靶病灶长径达 ${nm.longest_diameter_mm} mm（三维体积 ${nm.total_volume_cm3 ?? '--'} cm³）。建议进一步排查肿瘤标志物 (CEA/CYFRA21-1) 并生成全景诊断报告指导多学科会诊 (MDT)。
+            </div>
+          </div>
+          <div class="pt-proactive-actions">
+            <button class="primary small-btn" data-generate-full-report="${anyNoduleRec.id}">📄 一键生成全景诊断报告</button>
+            <button class="small-btn quiet" data-open-evidence="${anyNoduleRec.id}">🔬 查看多模态因果链</button>
+          </div>
+        </div>
+      `
+    }
+
     const imagingHtml = imagingRecords.length ? `
       <div class="pt-imaging-section">
         <div class="row pt-section-head">
@@ -314,6 +427,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             <button class="primary small-btn" data-act="imaging">＋ 新建影像量化分析</button>
           </div>
         </div>
+        ${sectionAlertBanner}
         ${hasMultiImaging ? `
           <div class="pt-imaging-recist-banner">
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
@@ -380,11 +494,12 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                   </div>
                   ${r.extraction_note ? `<div class="pt-imaging-note muted small">${esc(r.extraction_note)}</div>` : ''}
                   <div class="pt-imaging-actions">
+                    <button class="primary small-btn" data-generate-full-report="${r.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">📄 全景诊断报告</button>
                     <button class="small-btn quiet" data-open-mpr="${r.id}" title="打开 3D 多平面重建 (MPR) 互动浏览器：实时滑动轴位/冠状位/矢状位连续切片、切换窗宽窗位并定位病灶">🖥️ 3D 切片 (MPR)</button>
                     <button class="small-btn quiet" data-open-evidence="${r.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
                     <button class="small-btn quiet" data-export-standard="${r.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">📥 导出标准数据</button>
                     ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${r.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">📊 随访对比</button>` : ''}
-                    <button class="primary small-btn" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">📝 写影像病例报告</button>
+                    <button class="small-btn quiet" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">📝 写影像病例报告</button>
                     <button class="small-btn" data-img-canvas="${r.id}" title="在 Heurion 原生幻灯片工作台制作包含此影像指标的多页会诊 Slide (PPTX)">🎨 制作会诊 Slide</button>
                     ${imgUrl ? `<button class="quiet small-btn" data-view-img="${imgUrl}">🔍 查看量化切片</button>` : ''}
                     ${rawFid ? `<a class="quiet small-btn" href="/api/patients/${d.id}/files/${rawFid}?token=${encodeURIComponent(hooks.token())}" target="_blank" download="${esc(rawFileName)}" title="下载该患者已归档的原始 3D 序列扫描文件">💾 下载 3D 原卷${rawSizeText ? ` (${esc(rawSizeText)})` : ''}</a>` : ''}
@@ -676,7 +791,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             <input type="radio" name="imgSource" value="sample" checked> 预置高分辨临床扫描（一键分析）
           </label>
           <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
-            <input type="radio" name="imgSource" value="upload"> 上传本地 CT/MRI (.nii / .nii.gz / .dcm)
+            <input type="radio" name="imgSource" value="upload"> 上传本地 CT/MRI (.nii / .nii.gz / .dcm / .zip 序列包)
           </label>
         </div>
 
@@ -697,7 +812,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
         <div id="imgUploadBox" hidden>
           <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="width: 100%; border: 1px dashed var(--line-strong); padding: 14px; border-radius: 4px; background: var(--hover)">
-          <div class="muted small" style="margin-top: 4px">支持高分辨率胸部/腹部 HRCT、MRI 序列 (NIfTI / DICOM 归档)。上传后将作为该患者的原始 3D 影像资料加密归档，并自动调度 MONAI 进行量化。</div>
+          <div class="muted small" style="margin-top: 4px">支持高分辨率 CT/MRI 序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或包含整套 DICOM 序列切片的 ZIP 压缩包 (.zip)。上传后流式递归解压、加密归档并自动调度 MONAI 3D 进行量化。</div>
         </div>
       </div>
 
@@ -869,7 +984,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       const uploadedFile = fileInput?.files?.[0]
 
       if (isUpload && !uploadedFile) {
-        notice('请选择要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .dcm)', true)
+        notice('请选择要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .dcm / .zip 序列包)', true)
         return
       }
 
@@ -2279,8 +2394,9 @@ ${recommendations}
             <div class="muted small" style="margin-top: 6px">${esc(data.match_summary || '')}</div>
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap">
+            <button class="primary small-btn" id="evGenFullReportBtn">📄 生成全景影像诊断报告</button>
             <button class="small-btn quiet" id="evCopyMdBtn">📋 复制 Markdown</button>
-            <button class="primary small-btn" id="evInjectReportBtn">📝 注入病例报告草案</button>
+            <button class="small-btn quiet" id="evInjectReportBtn">📝 注入病例报告草案</button>
           </div>
         </div>
 
@@ -2353,6 +2469,10 @@ ${recommendations}
       </div>
     `
 
+    container.querySelector('#evGenFullReportBtn')?.addEventListener('click', () => {
+      void showFullDiagnosticReportDialog(patientId, d, data.record_id)
+    })
+
     container.querySelector('#evCopyMdBtn')?.addEventListener('click', async () => {
       if (data.summary_markdown) {
         await navigator.clipboard.writeText(data.summary_markdown).catch(() => {})
@@ -2397,6 +2517,224 @@ ${recommendations}
     } catch (err: any) {
       const b = dlg.querySelector('.dialog-body')
       if (b) b.innerHTML = `<div style="padding: 24px; text-align: center; color: #FCA5A5">获取证据链失败: ${esc(err.message || String(err))}</div>`
+    }
+  }
+
+  async function showFullDiagnosticReportDialog(patientId: string, d: Detail | Patient, recordId?: string): Promise<void> {
+    const dlg = document.getElementById('dialog')!
+    dlg.innerHTML = `
+      <div class="dialog-card pt-full-report-dialog" role="dialog" aria-modal="true">
+        <div class="dialog-head no-print">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <h2>🏥 全景多模态影像诊断报告</h2>
+            <span class="muted small">${esc(d.code)}</span>
+          </div>
+          <button class="quiet" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="dialog-body" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 20px">
+          <div class="muted small" style="text-align: center; padding: 36px">
+            <div class="pt-img-dlg-loading">正在调取 MONAI 3D 量化体素、RECIST 靶病灶长短径及多模态实验室化验，撰写全景结构化诊断报告...</div>
+          </div>
+        </div>
+      </div>`
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
+
+    try {
+      const res = await api<any>(`/api/patients/${patientId}/imaging/full-report`, {
+        method: 'POST',
+        body: JSON.stringify({ record_id: recordId, save_to_records: true }),
+      })
+
+      const body = dlg.querySelector('.dialog-body')
+      if (!body) return
+
+      const urg = res.urgency || 'routine'
+      const urgBadge = urg === 'high'
+        ? `<span class="pt-evidence-urgency-badge high">⚠️ 临床高危 · 强烈提示专科干预</span>`
+        : urg === 'medium'
+        ? `<span class="pt-evidence-urgency-badge medium">💡 密切随访</span>`
+        : `<span class="pt-evidence-urgency-badge routine">✓ 常规评估</span>`
+
+      const m = res.metrics || {}
+      const ev = res.evidence || {}
+      const matchedLabs: any[] = ev.matched_labs || []
+      const rptId = `RPT-${res.patient_code}-${(res.exam_date || '').replace(/-/g, '')}-01`
+
+      body.innerHTML = `
+        <!-- 视图切换与顶部操作栏 -->
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px">
+          <div style="display: flex; gap: 6px" id="reportViewTabs">
+            <button class="small-btn primary" data-view="formatted">👁️ 临床标准报告排版</button>
+            <button class="small-btn quiet" data-view="markdown">📝 Markdown 源码编辑</button>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center">
+            ${urgBadge}
+            <button class="small-btn quiet" id="btnCopyFullReportMd">📋 复制 Markdown</button>
+            <button class="small-btn primary" id="btnPrintFullReport">🖨️ 打印 / 导出 PDF</button>
+          </div>
+        </div>
+
+        <!-- 格式化排版区 (同时作为打印区域) -->
+        <div id="fullReportPrintArea" class="pt-report-paper" style="display: block">
+          <div class="pt-report-hospital-head">
+            <div class="pt-report-hospital-title">🏥 Heurion 临床影像诊断中心 · 全景多模态影像诊断报告</div>
+            <div class="pt-report-hospital-sub">Medical Imaging &amp; Multimodal Diagnostic Report · 依据 RECIST 1.1 / Fleischner / CARE 规范生成</div>
+          </div>
+
+          <div class="pt-report-patient-grid">
+            <div><div class="item-label">患者代号</div><div class="item-val">${esc(res.patient_code)}</div></div>
+            <div><div class="item-label">性别 / 出生年</div><div class="item-val">${d.sex === 'M' ? '男' : d.sex === 'F' ? '女' : '未知'} / ${d.birth_year || '--'}</div></div>
+            <div><div class="item-label">检查日期</div><div class="item-val">${esc(res.exam_date)}</div></div>
+            <div><div class="item-label">设备模态</div><div class="item-val">${esc(res.modality)}</div></div>
+            <div><div class="item-label">检查项目</div><div class="item-val">${esc(res.title)}</div></div>
+            <div><div class="item-label">报告流水号</div><div class="item-val">${esc(rptId)}</div></div>
+          </div>
+
+          <!-- 核心量化指标面板 -->
+          <div class="pt-report-sec">
+            <div class="pt-report-sec-h">一、 核心 3D 定量与靶病灶测值 (Quantitative Measurements)</div>
+            <div class="pt-report-metrics-grid">
+              ${m.longest_diameter_mm !== undefined ? `
+                <div class="pt-report-metric-card ${m.longest_diameter_mm > 8 ? 'alert' : ''}">
+                  <div class="pt-report-metric-title">RECIST 1.1 最大长径</div>
+                  <div class="pt-report-metric-value">${m.longest_diameter_mm} mm</div>
+                </div>
+              ` : ''}
+              ${m.short_axis_mm !== undefined ? `
+                <div class="pt-report-metric-card">
+                  <div class="pt-report-metric-title">垂直短径 (Short Axis)</div>
+                  <div class="pt-report-metric-value">${m.short_axis_mm} mm</div>
+                </div>
+              ` : ''}
+              ${m.total_volume_cm3 !== undefined ? `
+                <div class="pt-report-metric-card">
+                  <div class="pt-report-metric-title">3D 病灶总体积 (Volume)</div>
+                  <div class="pt-report-metric-value">${m.total_volume_cm3} cm³</div>
+                </div>
+              ` : ''}
+              ${m.bar_ratio !== undefined ? `
+                <div class="pt-report-metric-card ${m.bar_ratio > 1.10 ? 'alert' : ''}">
+                  <div class="pt-report-metric-title">支气管-伴行动脉比 (BAR)</div>
+                  <div class="pt-report-metric-value">${m.bar_ratio} ${m.bar_ratio > 1.10 ? '(印戒征+)' : ''}</div>
+                </div>
+              ` : ''}
+              ${m.high_attenuation_mucus_cm3 !== undefined || m.ham_density_confirmed ? `
+                <div class="pt-report-metric-card alert">
+                  <div class="pt-report-metric-title">高密度粘液栓 (HAM)</div>
+                  <div class="pt-report-metric-value">${m.high_attenuation_mucus_cm3 ? `${m.high_attenuation_mucus_cm3} cm³` : '阳性 (>70HU)'}</div>
+                </div>
+              ` : ''}
+              ${m.key_slice_index !== undefined ? `
+                <div class="pt-report-metric-card">
+                  <div class="pt-report-metric-title">靶病灶中心层号</div>
+                  <div class="pt-report-metric-value">第 #${m.key_slice_index} 层</div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+
+          <!-- 多模态实验室化验 -->
+          ${matchedLabs.length > 0 ? `
+            <div class="pt-report-sec">
+              <div class="pt-report-sec-h">二、 协同实验室化验与因果依据链 (Multimodal Correlation)</div>
+              <table class="pt-evidence-table">
+                <thead>
+                  <tr><th>关键化验项目</th><th>测得数值</th><th>状态标识</th><th>采样日期</th><th>临床因果关联解读</th></tr>
+                </thead>
+                <tbody>
+                  ${matchedLabs.map(l => `
+                    <tr>
+                      <td><b>${esc(l.test_name)}</b></td>
+                      <td>${esc(l.value)} ${esc(l.unit || '')}</td>
+                      <td><span class="${l.flag === 'H' ? 'flag-H' : l.flag === 'L' ? 'flag-L' : 'muted'}">${l.flag === 'H' ? '↑ 升高' : l.flag === 'L' ? '↓ 降低' : '正常'}</span></td>
+                      <td class="muted small">${esc(l.date)}</td>
+                      <td style="font-size: 12px">${esc(l.clinical_significance)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
+
+          <!-- 影像学所见 -->
+          <div class="pt-report-sec">
+            <div class="pt-report-sec-h">三、 影像学所见 (Findings)</div>
+            <div style="font-size: 13px; line-height: 1.7; white-space: pre-line">${esc(res.findings)}</div>
+          </div>
+
+          <!-- 诊断结论与印象 -->
+          <div class="pt-report-sec">
+            <div class="pt-report-sec-h">四、 影像学诊断印象 (Impression &amp; Conclusion)</div>
+            <div class="pt-report-impression-box">
+              <div style="font-size: 13px; font-weight: 600; line-height: 1.7; white-space: pre-line">${esc(res.impression)}</div>
+            </div>
+          </div>
+
+          <!-- 临床处置与随访建议 -->
+          <div class="pt-report-sec">
+            <div class="pt-report-sec-h">五、 临床处置与随访建议 (Recommendations)</div>
+            <div class="pt-report-recommendations-box">
+              <div style="font-size: 13px; line-height: 1.7; white-space: pre-line">${esc(res.recommendations)}</div>
+            </div>
+          </div>
+
+          <!-- 报告落款 -->
+          <div class="pt-report-signature-row">
+            <div>报告时间: <b>${esc(res.exam_date)}</b> · 诊断引擎: <b>MONAI 3D Quantitative Core</b></div>
+            <div>审核状态: <span class="pill ok">✓ 已存入病历记录 (${esc(res.saved_record_id || '已归档')})</span></div>
+          </div>
+        </div>
+
+        <!-- Markdown 源码微调编辑区 (默认隐藏) -->
+        <div id="fullReportMarkdownArea" style="display: none; flex-direction: column; gap: 10px">
+          <textarea id="fullReportMarkdownText" style="width: 100%; min-height: 480px; resize: vertical; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: var(--text)">${esc(res.full_report_markdown)}</textarea>
+          <div class="muted small">您可以在上方直接微调 Markdown 文本，并复制用于学术讨论或病历系统录入。</div>
+        </div>
+      `
+
+      // 绑定 Tab 切换
+      const tabs = body.querySelector('#reportViewTabs')
+      const printArea = body.querySelector('#fullReportPrintArea') as HTMLElement
+      const mdArea = body.querySelector('#fullReportMarkdownArea') as HTMLElement
+      const textarea = body.querySelector('#fullReportMarkdownText') as HTMLTextAreaElement
+
+      tabs?.addEventListener('click', e => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-view]')
+        if (!btn) return
+        tabs.querySelectorAll('button').forEach(b => {
+          b.className = 'small-btn quiet'
+        })
+        btn.className = 'small-btn primary'
+        if (btn.dataset.view === 'markdown') {
+          printArea.style.display = 'none'
+          mdArea.style.display = 'flex'
+        } else {
+          printArea.style.display = 'block'
+          mdArea.style.display = 'none'
+        }
+      })
+
+      // 复制 Markdown
+      body.querySelector('#btnCopyFullReportMd')?.addEventListener('click', async () => {
+        const text = textarea ? textarea.value : res.full_report_markdown
+        await navigator.clipboard.writeText(text).catch(() => {})
+        notice('全景影像诊断报告 Markdown 已成功复制到剪贴板！')
+      })
+
+      // 打印 / 导出 PDF
+      body.querySelector('#btnPrintFullReport')?.addEventListener('click', () => {
+        window.print()
+      })
+
+      notice('全景多模态影像诊断报告已生成，并自动同步存入病历档案！')
+      void openPatient(patientId, true)
+    } catch (err: any) {
+      const body = dlg.querySelector('.dialog-body')
+      if (body) {
+        body.innerHTML = `<div style="padding: 30px; text-align: center; color: #FCA5A5">生成全景报告失败: ${esc(err.message || String(err))}</div>`
+      }
     }
   }
 
@@ -2552,6 +2890,14 @@ ${recommendations}
     if (viewImg) {
       const url = viewImg.dataset.viewImg || (viewImg as HTMLImageElement).src
       if (url) showImageLightbox(url)
+      return
+    }
+
+    const genFullReport = t.closest<HTMLElement>('[data-generate-full-report]')
+    if (genFullReport) {
+      const recId = genFullReport.dataset.generateFullReport
+      const detail = await api<Detail>(`/api/patients/${id}`)
+      await showFullDiagnosticReportDialog(id, detail, recId === 'latest' ? undefined : recId)
       return
     }
 

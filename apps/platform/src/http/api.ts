@@ -899,6 +899,35 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
   })
 
+  app.post('/api/patients/:ptid/imaging/full-report', async c => {
+    try {
+      const patientId = c.req.param('ptid')
+      const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
+      const result = pt(c).generateComprehensiveReport(me(c), patientId, {
+        record_id: typeof body.record_id === 'string' ? body.record_id : undefined,
+        save_to_records: body.save_to_records !== undefined ? Boolean(body.save_to_records) : true,
+        title: typeof body.title === 'string' ? body.title : undefined,
+      })
+      return c.json(result)
+    } catch (err) {
+      return patientFailure(c, err)
+    }
+  })
+
+  app.get('/api/patients/:ptid/imaging/full-report', c => {
+    try {
+      const patientId = c.req.param('ptid')
+      const recordId = c.req.query('record_id') || undefined
+      const result = pt(c).generateComprehensiveReport(me(c), patientId, {
+        record_id: recordId,
+        save_to_records: false,
+      })
+      return c.json(result)
+    } catch (err) {
+      return patientFailure(c, err)
+    }
+  })
+
   // —— 知家分享给医生（docs/design/SHARING.md）——
   const shares = deps.shares ?? (deps.patients ? new ShareService(store, tenants, deps.patients, docs) : null)
   const sh = () => {

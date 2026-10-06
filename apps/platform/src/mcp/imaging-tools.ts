@@ -513,6 +513,47 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       return fail('imaging_export_error', err.message || String(err))
     }
   })
+
+  // 11. 全景多模态影像诊断报告生成 (imaging_generate_full_report)
+  server.registerTool('imaging_generate_full_report', {
+    description:
+      '根据患者的医学影像资料（MONAI 3D 病灶量化、RECIST 1.1 靶病灶长短径、CT值分布、关键截面切片）' +
+      '与实验室化验（总 IgE、嗜酸粒细胞、肿瘤标志物等）及既往病史，一键生成符合三甲医院与国际放射学标准的' +
+      '《全景多模态影像诊断报告》，涵盖检查方法、影像学所见、影像诊断印象与鉴别处置建议，并可自动存入患者病历档案。',
+    inputSchema: {
+      patient_id: z.string().describe('患者 ID'),
+      record_id: z.string().optional().describe('指定的医学影像记录 ID，缺省为最新影像记录'),
+      save_to_records: z.boolean().optional().describe('是否将生成的全景报告自动存入患者病历记录档案中（默认为 true）'),
+      title: z.string().optional().describe('自定义报告标题'),
+    },
+  }, async ({ patient_id, record_id, save_to_records, title }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const aiActor = { userId: claims.u, via: 'ai' as const }
+      const result = deps.patients.generateComprehensiveReport(aiActor, patient_id, {
+        record_id,
+        save_to_records: save_to_records !== undefined ? save_to_records : true,
+        title,
+      })
+      return json({
+        status: 'success',
+        patient_id: result.patient_id,
+        patient_code: result.patient_code,
+        title: result.title,
+        exam_date: result.exam_date,
+        modality: result.modality,
+        urgency: result.urgency,
+        saved_record_id: result.saved_record_id,
+        findings: result.findings,
+        impression: result.impression,
+        recommendations: result.recommendations,
+        full_report_markdown: result.full_report_markdown,
+        metrics: result.metrics,
+      })
+    } catch (err: any) {
+      return fail('imaging_full_report_error', err.message || String(err))
+    }
+  })
 }
 
 function round(n: number, d = 1): number {

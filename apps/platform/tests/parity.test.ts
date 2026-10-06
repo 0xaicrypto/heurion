@@ -148,6 +148,8 @@ const ALL_PARITY: Record<string, string> = {
   'POST /api/patients/:ptid/imaging/compare': 'imaging_longitudinal_compare',
   'GET /api/patients/:ptid/imaging/evidence-chain': 'imaging_evidence_chain',
   'GET /api/patients/:ptid/imaging/export': 'imaging_export_standard',
+  'POST /api/patients/:ptid/imaging/full-report': 'imaging_generate_full_report',
+  'GET /api/patients/:ptid/imaging/full-report': 'imaging_generate_full_report',
 }
 
 /** AI 发起后要用户在确认卡上确认才执行的动作（不可恢复的删除、权限与安全、以机构身份对外的标识）。 */
