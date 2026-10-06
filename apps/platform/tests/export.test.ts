@@ -159,4 +159,41 @@ describe('docx 导出：图、不可编辑段落、列表样式', () => {
     expect(numbering).not.toContain('w:abstractNumId="9001"')
     expect(bodyOf(t.exportNow().bytes)).toMatch(/<w:pStyle w:val="ListBullet"\/><w:numPr><w:ilvl w:val="0"\/><w:numId w:val="9001"\/>/)
   })
+
+  it('SVG 矢量图分析图表导出为 docx：光栅化为 PNG 嵌入并带 SVG 扩展，不降级为文字占位符', () => {
+    const store = new Store(':memory:')
+    const docs = new Documents(store)
+    const ops = new OpService(docs)
+    const row = docs.create({ owner: 'u', title: '分析报告', content: schema.node('doc', null, parseBlocks('# 分析报告\n\n正文描述。')) })
+    const svgStr = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" width="800" height="400"><rect width="800" height="400" fill="#2563eb"/><text x="400" y="200" fill="#ffffff" font-size="24" text-anchor="middle">分析图表</text></svg>'
+    const svgBytes = strToU8(svgStr)
+    const asset = store.putAsset({ owner: 'u', mime: 'image/svg+xml', name: 'analysis.svg', bytes: svgBytes })
+    const para = docs.get(row.id).child(1).attrs.id as string
+    ops.edit({ doc_id: row.id, base_rev: 0, mode: 'apply', ops: [
+      { op: 'insert_after', anchor_id: para, markdown: `![粘液栓定量分析](asset:${asset.id} "图 1 支气管粘液栓定量指标对比")` },
+    ] }, { actor: 'ai', turnId: null })
+
+    const out = exportDocx({
+      doc: docs.get(row.id), baseline: null, pkg: null, src: () => null,
+      citations: store.listCitations(row.id), comments: store.listComments(row.id),
+      asset: id => {
+        const cleanId = String(id).replace(/^asset:/, '')
+        const a = store.getAsset(cleanId)
+        return a ? { mime: a.mime, bytes: store.getAssetBytes(cleanId)! } : null
+      },
+    })
+
+    expect(out.warnings).toEqual([])
+    const files = unzipSync(out.bytes)
+    const body = strFromU8(files['word/document.xml']!)
+    expect(body).not.toContain('[图：')
+    expect(body).not.toContain('[图:')
+    expect(body).toContain('<w:drawing>')
+    expect(body).toContain('asvg:svgBlip')
+    expect(body).toContain('图 1 支气管粘液栓定量指标对比')
+    expect(files[`word/media/heurion-${asset.id}.png`]).toBeDefined()
+    expect(files[`word/media/heurion-${asset.id}.svg`]).toBeDefined()
+    expect(strFromU8(files['[Content_Types].xml']!)).toContain('Extension="png"')
+    expect(strFromU8(files['[Content_Types].xml']!)).toContain('Extension="svg"')
+  })
 })

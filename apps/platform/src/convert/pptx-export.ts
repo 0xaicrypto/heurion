@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { Mark, Node as PMNode } from 'prosemirror-model'
+import { Resvg } from '@resvg/resvg-js'
 import { DECK_THEMES } from '../model/deck-themes.ts'
 import { chartWorkbook, newChartXml, patchChart, readChart, type ChartData } from './pptx-chart.ts'
 import type { CitationRow } from '../store/db.ts'
@@ -282,11 +283,38 @@ export function exportPptx(input: PptxExportInput): { bytes: Uint8Array; warning
 
   // 新插入的图片：写进 ppt/media（同一资产只写一份），在所在页的关系表里登记
   const media = new Map<string, string>()
-  const ensureMedia = (assetId: string): string | null => {
+  const ensureMedia = (rawAssetId: string): string | null => {
+    const assetId = rawAssetId.replace(/^asset:/, '')
     if (media.has(assetId)) return media.get(assetId)!
-    const a = input.asset?.(assetId)
-    const ext = a ? ({ 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' } as Record<string, string>)[a.mime] : undefined
-    if (!a || !ext) return null
+    let a = input.asset?.(assetId)
+    if (!a) return null
+
+    let ext = ({
+      'image/png': 'png',
+      'image/x-png': 'png',
+      'image/jpeg': 'jpeg',
+      'image/jpg': 'jpeg',
+      'image/pjpeg': 'jpeg',
+      'image/gif': 'gif',
+      'image/bmp': 'bmp',
+      'image/x-ms-bmp': 'bmp',
+      'image/webp': 'webp',
+    } as Record<string, string>)[a.mime]
+
+    if (a.mime === 'image/svg+xml') {
+      try {
+        const rendered = new Resvg(Buffer.from(a.bytes), {
+          fitTo: { mode: 'width', value: 1920 },
+          font: { loadSystemFonts: true, defaultFontFamily: 'Noto Sans CJK SC' },
+        }).render()
+        a = { mime: 'image/png', bytes: new Uint8Array(rendered.asPng()) }
+        ext = 'png'
+      } catch {
+        return null
+      }
+    }
+
+    if (!ext) return null
     const name = `heurion-${assetId}.${ext}`
     files[`ppt/media/${name}`] = new Uint8Array(a.bytes)
     if (!new RegExp(`<Default Extension="${ext}"`, 'i').test(contentTypes)) {

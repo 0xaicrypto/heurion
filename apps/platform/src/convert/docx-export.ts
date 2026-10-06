@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { Mark, Node as PMNode } from 'prosemirror-model'
+import { Resvg } from '@resvg/resvg-js'
 import type { CitationRow, CommentRow } from '../store/db.ts'
 import { citationOrder } from '../views/read.ts'
 import { bodyChildrenRaw } from './docx-import.ts'
@@ -107,9 +108,9 @@ function styleIndex(stylesXml: string | null): Map<string, string> {
 function imageSize(bytes: Uint8Array, mime: string): { w: number; h: number } | null {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   try {
-    if (mime === 'image/png' && bytes.length > 24) return { w: dv.getUint32(16), h: dv.getUint32(20) }
+    if ((mime === 'image/png' || mime === 'image/x-png') && bytes.length > 24) return { w: dv.getUint32(16), h: dv.getUint32(20) }
     if (mime === 'image/gif' && bytes.length > 10) return { w: dv.getUint16(6, true), h: dv.getUint16(8, true) }
-    if (mime === 'image/jpeg') {
+    if (mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/pjpeg') {
       let i = 2
       while (i + 9 < bytes.length) {
         if (bytes[i] !== 0xff) return null
@@ -123,7 +124,17 @@ function imageSize(bytes: Uint8Array, mime: string): { w: number; h: number } | 
   return null
 }
 
-const IMAGE_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' }
+const IMAGE_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/x-png': 'png',
+  'image/jpeg': 'jpeg',
+  'image/jpg': 'jpeg',
+  'image/pjpeg': 'jpeg',
+  'image/gif': 'gif',
+  'image/bmp': 'bmp',
+  'image/x-ms-bmp': 'bmp',
+  'image/webp': 'webp',
+}
 
 export function exportDocx(input: ExportInput): ExportResult {
   const warnings: string[] = []
@@ -294,23 +305,59 @@ export function exportDocx(input: ExportInput): ExportResult {
   const paragraph = (node: PMNode, extraPPr = ''): string => verbatim(node) ?? `<w:p>${pPr(node, extraPPr)}${inline(node)}</w:p>`
 
   const figure = (node: PMNode): string => {
-    const asset = input.asset(String(node.attrs.asset_id))
-    const ext = asset ? IMAGE_EXT[asset.mime] : undefined
+    const rawId = String(node.attrs.asset_id || '')
+    const assetId = rawId.replace(/^asset:/, '')
+    let asset = input.asset(assetId)
+    let ext = asset ? IMAGE_EXT[asset.mime] : undefined
+    let svgBytes: Uint8Array | null = null
+    let size: { w: number; h: number } | null = null
+
+    if (asset && (asset.mime === 'image/svg+xml' || (!ext && String(node.attrs.alt || '').includes('svg')))) {
+      try {
+        const svgBuf = Buffer.from(asset.bytes)
+        const nat = new Resvg(svgBuf).render()
+        const natW = nat.width || 800
+        const natH = nat.height || 600
+        size = { w: natW, h: natH }
+        const targetW = Math.max(1600, natW * 2)
+        const rendered = new Resvg(svgBuf, {
+          fitTo: { mode: 'width', value: targetW },
+          font: { loadSystemFonts: true, defaultFontFamily: 'Noto Sans CJK SC' },
+        }).render()
+        svgBytes = asset.bytes
+        asset = { mime: 'image/png', bytes: new Uint8Array(rendered.asPng()) }
+        ext = 'png'
+      } catch (err) {
+        warnings.push(`矢量图 ${node.attrs.asset_id} 光栅化失败（${(err as Error).message}），以文字占位`)
+        return `<w:p><w:r><w:t xml:space="preserve">[图：${esc(String(node.attrs.alt || node.attrs.caption || ''))}]</w:t></w:r></w:p>`
+      }
+    }
+
     if (!asset || !ext) {
       warnings.push(`图片 ${node.attrs.asset_id} 无法嵌入（${asset ? asset.mime : '资产不存在'}），以文字占位`)
       return `<w:p><w:r><w:t xml:space="preserve">[图：${esc(String(node.attrs.alt || node.attrs.caption || ''))}]</w:t></w:r></w:p>`
     }
-    const name = `media/heurion-${node.attrs.asset_id}.${ext}`
+    const name = `media/heurion-${assetId}.${ext}`
     pkg.put(`word/${name}`, asset.bytes)
     pkg.contentDefault(ext, asset.mime)
     const rid = pkg.rel('image', name)
-    const size = imageSize(asset.bytes, asset.mime) ?? { w: 800, h: 600 }
+
+    let blipXml = `<a:blip r:embed="${rid}"/>`
+    if (svgBytes) {
+      const svgName = `media/heurion-${assetId}.svg`
+      pkg.put(`word/${svgName}`, svgBytes)
+      pkg.contentDefault('svg', 'image/svg+xml')
+      const svgRid = pkg.rel('image', svgName)
+      blipXml = `<a:blip r:embed="${rid}"><a:extLst><a:ext uri="{96DAC542-7CC2-4485-AB96-5902FA35C682}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="${svgRid}"/></a:ext></a:extLst></a:blip>`
+    }
+
+    size = size ?? imageSize(asset.bytes, asset.mime) ?? { w: 800, h: 600 }
     const maxW = 5_486_400 // 6 英寸
     let cx = size.w * 9525
     let cy = size.h * 9525
     if (cx > maxW) { cy = Math.round(cy * maxW / cx); cx = maxW }
     const docPr = nextDocPr++
-    const drawing = `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${docPr}" name="${esc(String(node.attrs.alt || 'figure'))}" descr="${esc(String(node.attrs.alt ?? ''))}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="${esc(name)}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`
+    const drawing = `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${docPr}" name="${esc(String(node.attrs.alt || 'figure'))}" descr="${esc(String(node.attrs.alt ?? ''))}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="${esc(name)}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>${blipXml}<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`
     const caption = node.attrs.caption
       ? `<w:p><w:pPr>${styles.has('caption') ? `<w:pStyle w:val="${styles.get('caption')}"/>` : ''}<w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">${esc(String(node.attrs.caption))}</w:t></w:r></w:p>`
       : ''

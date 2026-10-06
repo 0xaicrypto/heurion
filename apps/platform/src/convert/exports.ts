@@ -24,8 +24,10 @@ export function docxFor(docs: Documents, docId: string) {
     citations: store.listCitations(docId),
     comments: store.listComments(docId),
     asset: id => {
-      const a = store.getAsset(id)
-      return a ? { mime: a.mime, bytes: store.getAssetBytes(id)! } : null
+      const cleanId = String(id).replace(/^asset:/, '')
+      const a = store.getAsset(cleanId)
+      const bytes = a ? store.getAssetBytes(cleanId) : null
+      return a && bytes ? { mime: a.mime, bytes } : null
     },
   })
 }
@@ -44,10 +46,11 @@ export function pptxFor(docs: Documents, docId: string) {
     src: id => store.getNodeSrc(docId, id),
     citations: store.listCitations(docId),
     asset: id => {
-      const builtin = themePhoto(id) ?? orgLogo(id) // 带图模板的内置照片、机构模板的院徽
+      const cleanId = String(id).replace(/^asset:/, '')
+      const builtin = themePhoto(cleanId) ?? orgLogo(cleanId) // 带图模板的内置照片、机构模板的院徽
       if (builtin) return builtin
-      const a = store.getAsset(id)
-      const bytes = a ? store.getAssetBytes(id) : null
+      const a = store.getAsset(cleanId)
+      const bytes = a ? store.getAssetBytes(cleanId) : null
       return a && bytes ? { mime: a.mime, bytes } : null
     },
   })
