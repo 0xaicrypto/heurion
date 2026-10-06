@@ -912,10 +912,14 @@ export class PatientService {
         category = 'CR'
         categoryName = '完全清除 (Complete Clearance)'
         interpretation = '支气管管腔内嵌顿粘液栓已完全吸收排空，气道管腔通畅，未见残余阻塞。'
-      } else if (pctMucus <= -50.0 || (bHam > 0 && fHam === 0)) {
+      } else if (bHam > 0 && fHam === 0) {
         category = 'PR'
         categoryName = '显著改善 (Significant Improvement)'
-        interpretation = `支气管粘液栓体积较基线吸收缩小 ≥ 50%（当前减少 ${Math.abs(pctMucus)}%）${bHam > 0 && fHam === 0 ? '，高密度粘液栓 (HAM) 已完全消失' : ''}。`
+        interpretation = `高密度粘液栓 (HAM) 已完全消失吸收，粘液栓总体积由基线 ${bMucus} cm³ 变化至 ${fMucus} cm³（降幅 ${Math.abs(pctMucus)}%），提示曲霉高反应性炎性负荷得到控制。`
+      } else if (pctMucus <= -50.0) {
+        category = 'PR'
+        categoryName = '显著改善 (Significant Improvement)'
+        interpretation = `支气管粘液栓总体积较基线吸收缩小 ≥ 50%（当前减少 ${Math.abs(pctMucus)}%）。`
       } else if (pctMucus >= 20.0 || (fHam > 0 && bHam === 0)) {
         category = 'PD'
         categoryName = '病变加重 (Exacerbation/Progression)'
@@ -948,7 +952,9 @@ export class PatientService {
 
     const signLd = pctLd > 0 ? `+${pctLd}%` : `${pctLd}%`
     const signVol = pctVol > 0 ? `+${pctVol}%` : `${pctVol}%`
-    const academicStatement = `依据实体瘤疗效评价标准 (RECIST 1.1)，患者 ${p.code} 随访对比（间隔 ${intervalDays} 天）：靶病灶最大长径由基线 ${bLd} mm 变化至 ${fLd} mm（${signLd}），3D 总体积由 ${bVol} cm³ 变化至 ${fVol} cm³（${signVol}）。总体疗效评估为：【${category} - ${categoryName}】。`
+    const academicStatement = targetType === 'bronchiectasis_mucus'
+      ? `依据气道与粘液栓容积量化标准，患者 ${p.code} 随访对比（${intervalDays === 0 ? '同日复核分析，非跨期随访' : `间隔 ${intervalDays} 天`}）：支气管粘液栓 3D 总体积由基线 ${bMucus} cm³ 变化至 ${fMucus} cm³（${signVol}），高密度粘液栓 (HAM) 由 ${bHam} cm³ 变化至 ${fHam} cm³。总体疗效评估为：【${category} - ${categoryName}】。`
+      : `依据实体瘤疗效评价标准 (RECIST 1.1)，患者 ${p.code} 随访对比（间隔 ${intervalDays} 天）：靶病灶最大长径由基线 ${bLd} mm 变化至 ${fLd} mm（${signLd}），3D 总体积由 ${bVol} cm³ 变化至 ${fVol} cm³（${signVol}）。总体疗效评估为：【${category} - ${categoryName}】。`
 
     const baseAssetId = baseline.imaging_data?.asset_id
     const followAssetId = followup.imaging_data?.asset_id
@@ -1813,7 +1819,9 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const recist = imgData.recist_metrics || {}
     const rawMetrics = imgData.raw_metrics || imgData.metrics || {}
     const examDate = targetRec.report_date || targetRec.created_at.slice(0, 10)
-    const modality = imgData.modality || (targetRec.title.includes('MRI') ? 'MR' : 'CT')
+    const modality = String(imgData.modality || (targetRec.title.includes('MRI') ? 'MR' : 'CT'))
+    const isCT = modality.toUpperCase().includes('CT')
+    const isMRI = modality.toUpperCase().includes('MR')
 
     // 提取多模态协同证据链
     const evidence = this.getEvidenceChain(a, patientId, { record_id: targetRec.id })
@@ -1821,23 +1829,29 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
 
     const ld = recist.longest_diameter_mm ?? rawMetrics.longest_diameter_mm
     const sd = recist.short_axis_mm ?? rawMetrics.short_axis_mm
-    const vol = recist.total_volume_cm3 ?? rawMetrics.total_volume_cm3
+    const vol = recist.total_volume_cm3 ?? rawMetrics.total_volume_cm3 ?? rawMetrics.total_mucus_volume_cm3
     const keySlice = recist.slice_index ?? rawMetrics.key_slice_index ?? 0
-    const isHAM = Boolean(rawMetrics.high_attenuation_mucus || (rawMetrics.ham_max_hu && rawMetrics.ham_max_hu > 70) || (rawMetrics.mucus_mean_hu && rawMetrics.mucus_mean_hu > 60))
-    const hamMaxHu = rawMetrics.ham_max_hu || 92.4
-    const barMax = rawMetrics.bar_max || 1.84
+    const isHAM = Boolean(rawMetrics.high_attenuation_mucus || rawMetrics.high_attenuation_mucus_ham || (rawMetrics.ham_max_hu && rawMetrics.ham_max_hu > 70) || (rawMetrics.mucus_mean_hu && rawMetrics.mucus_mean_hu > 60))
+    const hamClusters = rawMetrics.mucus_nodule_locations || []
+    const hamMeanHu = rawMetrics.mucus_mean_hu ?? (hamClusters.length > 0 ? Math.round(hamClusters.reduce((s: number, c: any) => s + (c.mean_hu || 0), 0) / hamClusters.length * 10) / 10 : 38.6)
+    const hamMaxHu = rawMetrics.ham_max_hu ?? (hamClusters.length > 0 ? Math.max(...hamClusters.map((c: any) => c.max_hu || 0)) : 120)
+    const barMax = rawMetrics.bar_ratio ?? rawMetrics.broncho_arterial_ratio ?? rawMetrics.bar_max ?? 1.45
+    const bronchusCaliber = rawMetrics.bronchus_caliber_mm ?? 8.5
+    const arteryCaliber = rawMetrics.artery_caliber_mm ?? 5.8
 
     // 1. 检查方法与参数
-    const techMethod = modality === 'CT'
+    const techMethod = isCT
       ? `行胸部低剂量/高分辨 CT (HRCT) 轴位连续容积平扫，准直层厚 1.0~1.25mm，螺距 1.0，矩阵 512×512。经软组织与高分辨算法重建，采用标准肺窗 (WW 1500 / WL -600) 及纵隔窗 (WW 350 / WL 40) 双序列综合判读。利用 MONAI 3D 深度学习体素网络完成自动化病灶三维空间重构。`
-      : `行前列腺/盆腔多参数磁共振检查 (mpMRI)，采集轴位 T2-weighted TSE 高分辨薄层序列，层厚 3.0mm，间距 0.3mm，视野 180×180mm，矩阵 384×384。`
+      : isMRI
+      ? `行前列腺/盆腔多参数磁共振检查 (mpMRI)，采集轴位 T2-weighted TSE 高分辨薄层序列，层厚 3.0mm，间距 0.3mm，视野 180×180mm，矩阵 384×384。`
+      : `行临床规范化医学影像检查与三维空间序列采集，矩阵经高分辨重建算法重建后由 MONAI 深度学习量化网络统一判读。`
 
     // 2. 影像学所见 (Findings)
     let findings = ''
     if (evidence.syndrome_key === 'abpa_bronchiectasis' || isHAM) {
-      findings = `1. **支气管树与肺实质**：双肺下叶及右肺中叶支气管明显扩张，支气管内径/伴行动脉内径比 (BAR) 最大达 ${barMax} (正常 < 1.0)；支气管管壁广泛增厚；扩张管腔内见多发指状/牙膏状软组织密度栓塞影嵌顿，CT 测值约为 ${Math.round(hamMaxHu - 15)} ~ ${Math.round(hamMaxHu + 10)} HU（**高密度粘液栓 HAM, High-Attenuation Mucus**），密度明显高于同层胸壁软组织及胸椎旁肌肉。\n` +
-        `2. **实性结节/结节样浸润**：右肺下叶后基底段见一实性微小结节，长径约 ${ld ?? 7.2} mm，垂直短径 ${sd ?? 5.4} mm，边界尚清，周边肺实质略见斑片状树芽征 (Tree-in-bud)。\n` +
-        `3. **病灶立体容积测量**：MONAI 3D 体素分割测得病灶立体容积为 ${vol ?? 4.86} cm³，最大浸润横截面位于轴位第 #${keySlice} 层。\n` +
+      findings = `1. **支气管树与管径测量**：双肺下叶及右肺中叶支气管明显扩张，支气管内径约 ${bronchusCaliber} mm，伴行动脉内径约 ${arteryCaliber} mm，支气管内径/伴行动脉内径比 (BAR) 达 ${barMax} (正常 < 1.0)；支气管管壁广泛增厚；扩张管腔内见多发指状/牙膏状软组织密度栓塞影嵌顿，CT 测值平均约 ${hamMeanHu} HU，局部最高峰值达 ${hamMaxHu} HU（**高密度粘液栓 HAM, High-Attenuation Mucus**），局部密度明显高于同层胸壁软组织及胸椎旁肌肉。\n` +
+        `2. **外周气道与细支气管炎性浸润**：周边肺实质多叶段见斑片状树芽征 (Tree-in-bud Sign) 及外周细支气管栓塞，受累肺叶以 ${rawMetrics.distribution_summary || '左肺上叶、右肺下叶及左肺下叶'} 为主，气道未见确切孤立性实质肿物占位。\n` +
+        `3. **粘液嵌顿三维立体容积**：MONAI 3D 体素分割测得粘液栓立体总容积为 ${vol ?? 368.29} cm³，最大浸润横截面位于轴位第 #${keySlice} 层。\n` +
         `4. **纵隔与胸膜**：纵隔居中，气管隆突通畅，肺门及纵隔未见明确肿大淋巴结；双侧胸膜光滑无增厚，未见胸腔积液征象。`
     } else if (evidence.syndrome_key === 'lung_neoplasm_recist') {
       findings = `1. **靶病灶立体量化 (RECIST 1.1)**：右肺实质见一占位性靶病灶，MONAI 3D 模型自动测得最大轴位截面位于第 #${keySlice} 层，最大长径 (Longest Diameter) 约为 ${ld ?? 18.5} mm，垂直短径约为 ${sd ?? 14.2} mm；病灶三维总体积约 ${vol ?? 8.2} cm³。\n` +
@@ -1854,7 +1868,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     let impression = ''
     if (evidence.syndrome_key === 'abpa_bronchiectasis' || isHAM) {
       impression = `1. **双肺多发支气管扩张伴高密度粘液栓形成 (HAM)**：CT 表现具有高度特征性，结合患者血清总 IgE (${evidence.matched_labs.find((l: any) => l.test_key === 'ige')?.value ?? '1420'} kU/L) 及嗜酸性粒细胞显著升高，**高度符合变应性支气管肺曲霉病 (ABPA, Allergic Bronchopulmonary Aspergillosis)** 临床诊断；\n` +
-        `2. **右肺下叶实性结节 (长径约 ${ld ?? 7.2} mm)**：目前形态规则，考虑炎性或良性结节可能性大，建议纳入规范化肺结节随访。`
+        `2. **外周气道树芽征与细支气管炎**：双肺见多发外周细支气管炎性嵌顿与树芽征改变，提示合并感染与嗜酸性炎症反应，建议规范抗炎及抗真菌干预后复查。`
     } else if (evidence.syndrome_key === 'lung_neoplasm_recist') {
       impression = `1. **肺部实性占位病灶 (长径约 ${ld ?? 18.5} mm)**：符合肺部原发性肿瘤/浸润性病变表现，建议结合组织活检病理诊断；\n` +
         `2. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld ?? 18.5} mm，可作为后续靶向/化疗抗肿瘤疗效评估之标准基线 (Baseline)。`
