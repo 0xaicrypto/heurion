@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { issueToken, verifyToken } from '../src/auth/token.ts'
 import { ClaimService } from '../src/claims/service.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
@@ -12,6 +12,107 @@ import { TurnRegistry } from '../src/mcp/turns.ts'
 import { setup } from './helpers.ts'
 
 const SECRET = 'test-secret'
+const originalFetch = globalThis.fetch
+
+beforeAll(async () => {
+  const isOnline = await originalFetch('http://127.0.0.1:8004/health', { signal: AbortSignal.timeout(500) }).then(r => r.ok).catch(() => false)
+  if (!isOnline) {
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (urlStr.includes('8004') || urlStr.startsWith('http://127.0.0.1:8004')) {
+        const u = new URL(urlStr)
+        if (u.pathname === '/health') {
+          return new Response(JSON.stringify({
+            status: 'healthy',
+            service: 'heurion-monai-worker',
+            device: { device_type: 'cpu', device_name: 'CPU' },
+            supported_modalities: ['CT', 'MR']
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/models') {
+          return new Response(JSON.stringify({
+            models: [
+              { id: 'lung_nodule_segmenter', name: '肺结节分割模型' },
+              { id: 'multi_organ_ct', name: '腹部多器官分割模型' },
+              { id: 'brain_tumor_brats', name: '脑胶质瘤 BraTS 分割模型' },
+              { id: 'spleen_segmenter', name: '脾脏分割模型' },
+              { id: 'bronchiectasis_mucus_analyzer', name: '胸部 HRCT 支气管扩张与粘液栓定量分析' },
+            ]
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/samples') {
+          return new Response(JSON.stringify({
+            samples: [
+              { sample_id: 'spleen_test', name: '脾脏增强 CT', modality: 'CT' },
+              { sample_id: 'chest_lung_ct', name: '胸部 HRCT 支气管扩张', modality: 'CT' }
+            ]
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname.includes('/analyze/')) {
+          let body: any = {}
+          try {
+            if (typeof init?.body === 'string') body = JSON.parse(init.body)
+          } catch {}
+          const isBronch = body.model_name === 'bronchiectasis_mucus_analyzer' || body.model_id === 'bronchiectasis_mucus_analyzer' || body.sample_id === 'chest_lung_ct'
+          const isSpleen = body.sample_id === 'spleen_test' || body.model_id === 'spleen_segmenter'
+
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          const key_slice_png_base64 = 'data:image/png;base64,' + pngBuf.toString('base64')
+
+          if (isBronch) {
+            return new Response(JSON.stringify({
+              status: 'success',
+              model_name: 'bronchiectasis_mucus_analyzer',
+              modality: 'Chest HRCT',
+              key_slice_png_base64,
+              recist_metrics: { longest_diameter_mm: 28.5, short_axis_mm: 18.2, total_volume_cm3: 12.8, key_slice_index: 114 },
+              metrics: {
+                broncho_arterial_ratio: 1.45,
+                bronchus_caliber_mm: 8.5,
+                artery_caliber_mm: 5.8,
+                wall_thickness_mm: 2.4,
+                wall_to_lumen_ratio: 0.28,
+                total_mucus_volume_cm3: 368.29,
+                high_attenuation_mucus_cm3: 12.44,
+                total_airway_volume_cm3: 3545.92,
+                airway_occlusion_rate_pct: 10.4,
+                signs_detected: ['印戒征 (Signet Ring Sign, BAR = 1.45 > 1.0)', '双轨征', '指套征', '树芽征', '高密度粘液栓 (HAM Sign)'],
+              },
+              findings: ['印戒征阳性 (BAR 1.45 > 1.1)', '高密度粘液栓 (HAM) 阳性 (12.44 cm³，提示 ABPA 变应性支气管肺曲霉病)'],
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          }
+
+          if (isSpleen) {
+            return new Response(JSON.stringify({
+              status: 'success',
+              model_name: 'spleen_segmenter',
+              modality: 'Abdominal CT',
+              key_slice_png_base64,
+              recist_metrics: { longest_diameter_mm: 215.0, short_axis_mm: 125.0, total_volume_cm3: 1250.0, key_slice_index: 35 },
+              findings: ['脾脏体积增大'],
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          }
+
+          return new Response(JSON.stringify({
+            status: 'success',
+            model_name: body.model_name || 'lung_nodule_segmenter',
+            modality: 'CT',
+            key_slice_png_base64,
+            recist_metrics: { longest_diameter_mm: 24.5, short_axis_mm: 18.2, total_volume_cm3: 12.8, key_slice_index: 16 },
+            findings: ['右肺下叶实性结节'],
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+      }
+      return originalFetch(input, init)
+    }
+  }
+})
+
+afterAll(() => {
+  globalThis.fetch = originalFetch
+})
 
 async function connectImagingMcp() {
   const env = setup('# 医学影像科研研究方案\n\n评估新药靶向治疗实体瘤的 RECIST 影像响应。')

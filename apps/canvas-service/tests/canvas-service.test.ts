@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +18,63 @@ import { attachCanvasCollab } from '../src/collab.ts'
 import { createCanvasApp } from '../src/app.ts'
 
 const SECRET = 'canvas-service-test-secret-12345'
+const originalFetch = globalThis.fetch
+
+beforeAll(async () => {
+  const isOnline = await originalFetch('http://127.0.0.1:8004/health', { signal: AbortSignal.timeout(500) }).then(r => r.ok).catch(() => false)
+  if (!isOnline) {
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (urlStr.includes('8004') || urlStr.startsWith('http://127.0.0.1:8004')) {
+        const u = new URL(urlStr)
+        if (u.pathname === '/health') {
+          return new Response(JSON.stringify({
+            status: 'healthy',
+            service: 'heurion-monai-worker',
+            device: { device_type: 'cpu', device_name: 'CPU' },
+            supported_modalities: ['CT', 'MR']
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/models') {
+          return new Response(JSON.stringify({
+            models: [
+              { id: 'lung_nodule_segmenter', name: '肺结节分割模型' },
+              { id: 'multi_organ_ct', name: '腹部多器官分割模型' },
+              { id: 'spleen_segmenter', name: '脾脏分割模型' },
+            ]
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/samples') {
+          return new Response(JSON.stringify({
+            samples: [
+              { sample_id: 'spleen_test', name: '脾脏增强 CT', modality: 'CT' },
+            ]
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname.includes('/analyze/')) {
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          const key_slice_png_base64 = 'data:image/png;base64,' + pngBuf.toString('base64')
+
+          return new Response(JSON.stringify({
+            status: 'success',
+            model_name: 'spleen_segmenter',
+            modality: 'Abdominal CT',
+            key_slice_png_base64,
+            recist_metrics: { longest_diameter_mm: 215.0, short_axis_mm: 125.0, total_volume_cm3: 1250.0, key_slice_index: 35 },
+            findings: ['脾脏体积增大'],
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+      }
+      return originalFetch(input, init)
+    }
+  }
+})
+
+afterAll(() => {
+  globalThis.fetch = originalFetch
+})
 
 function setupTestEnv() {
   const store = new Store(':memory:')
