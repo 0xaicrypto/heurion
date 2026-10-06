@@ -589,6 +589,79 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
     }
   })
+
+  // 13. 交互式点选万物分割 (imaging_interactive_segment - MONAI VISTA-3D)
+  server.registerTool('imaging_interactive_segment', {
+    description:
+      '运行 MONAI VISTA-3D 范式交互式点选万物分割：' +
+      '支持接收前景正样本点（Foreground Positive Click，如病灶中心）与背景负样本点（Background Negative Click，如需剔除的邻近骨质/血管），' +
+      '结合 3D 边界框约束即时自适应分割任意非标解剖结构或疑难病灶。' +
+      '自动生成带有点击标记与半透明轮廓的高清切片资产，返回 RECIST 测值、3D 体积与可直接插入报告的 Markdown 语法。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct, spleen_test, prostate_mri'),
+      file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI 文件的绝对路径'),
+      points: z.array(z.object({
+        z: z.number().int().describe('层号索引 Z'),
+        y: z.number().int().describe('纵坐标 Y'),
+        x: z.number().int().describe('横坐标 X'),
+        is_positive: z.boolean().optional().describe('true 为正样本前景点，false 为负样本排斥点，缺省 true'),
+      })).optional().describe('交互式点选提示集合 (Prompt Points)'),
+      bbox: z.object({
+        z_min: z.number().int(),
+        z_max: z.number().int(),
+        y_min: z.number().int(),
+        y_max: z.number().int(),
+        x_min: z.number().int(),
+        x_max: z.number().int(),
+      }).optional().describe('3D 空间外接包围盒提示 (Bounding Box)'),
+      window_preset: z.enum(['lung', 'abdomen', 'brain', 'mediastinum', 'bone']).optional().describe('CT 窗宽窗位预设'),
+      plane: z.enum(['axial', 'coronal', 'sagittal']).optional().describe('显示平面，缺省 axial'),
+      slice_index: z.number().int().optional().describe('指定渲染切片层号（缺省自动对齐至点击层或最大截面）'),
+      save_asset: z.boolean().optional().describe('是否将带轮廓切片保存为用户文档资产，缺省 true'),
+      label: z.string().max(80).optional().describe('图注标签，例如「图 3 VISTA-3D 交互点选分割截面」'),
+    },
+  }, async ({ sample_id, file_path, points, bbox, window_preset, plane, slice_index, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/analyze/interactive-segment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: sample_id || (!file_path ? 'chest_lung_ct' : undefined),
+          file_path,
+          points: points || [{ z: 115, y: 256, x: 256, is_positive: true }],
+          bbox,
+          window_preset: window_preset || 'lung',
+          plane: plane || 'axial',
+          slice_index,
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('interactive_segment_failed', `交互式分割失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (save_asset !== false && resultData.slice_png_base64 && claims.p.includes('write')) {
+      const b64Data = resultData.slice_png_base64.replace(/^data:image\/png;base64,/, '')
+      const pngBuf = Buffer.from(b64Data, 'base64')
+      const assetName = `${label || `vista3d-interactive-slice-${resultData.key_slice_index}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuf,
+      })
+      resultData.asset_id = asset.id
+      resultData.markdown_insert = `![${label || `MONAI VISTA-3D 交互分割 #${resultData.key_slice_index}`}](asset:${asset.id})`
+    }
+
+    return json(resultData)
+  })
 }
 
 function round(n: number, d = 1): number {

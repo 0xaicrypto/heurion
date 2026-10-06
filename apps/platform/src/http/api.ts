@@ -652,6 +652,40 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
   })
 
+  app.post('/api/imaging/interactive-segment', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/analyze/interactive-segment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) return c.json({ error: 'interactive_segment_failed' }, resp.status as any)
+      const data = await resp.json()
+
+      if (body.save_asset && data.slice_png_base64) {
+        const u = c.get('user' as any) || 'u1'
+        const b64Data = String(data.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+        const pngBuf = Buffer.from(b64Data, 'base64')
+        const sliceIdx = data.key_slice_index ?? 0
+        const assetName = `${body.label || `interactive-slice-${sliceIdx}`}.png`
+        const asset = store.putAsset({
+          owner: u,
+          mime: 'image/png',
+          name: assetName,
+          bytes: pngBuf,
+        })
+        data.asset_id = asset.id
+        data.markdown_insert = `![${body.label || `MONAI VISTA-3D 交互分割 #${sliceIdx}`}](asset:${asset.id})`
+      }
+
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
   app.post('/api/patients/:ptid/imaging/analyze', async c => {
     try {
       const contentType = c.req.header('content-type') || ''

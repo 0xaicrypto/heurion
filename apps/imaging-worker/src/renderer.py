@@ -11,11 +11,12 @@ def render_key_slice_png(
     modality: str = "CT",
     lesion_name: str = "Target Lesion",
     scale_bar_mm: float = 50.0, # 5cm scale bar
-    pixel_spacing_mm: float = 0.8
+    pixel_spacing_mm: float = 0.8,
+    prompt_points: Optional[list] = None
 ) -> bytes:
     """
     Renders a publication-ready radiological key-slice image with contour mask overlay,
-    RECIST measurement caliper, diagnostic HUD overlay, and clinical scale bar.
+    RECIST measurement caliper, prompt click markers, diagnostic HUD overlay, and clinical scale bar.
     """
     h, w = ct_slice_uint8.shape
     
@@ -34,8 +35,27 @@ def render_key_slice_png(
         mask_img = Image.fromarray(mask_rgba, mode="RGBA")
         base_img = Image.alpha_composite(base_img, mask_img)
     
-    # 3. Draw calipers & HUD on a clean overlay
+    # 3. Draw calipers, prompt clicks & HUD on a clean overlay
     draw = ImageDraw.Draw(base_img)
+
+    # Draw interactive prompt points on current slice
+    if prompt_points:
+        key_slice_idx = recist.get("key_slice_index", 0)
+        for pt in prompt_points:
+            pz = pt.get("z", key_slice_idx)
+            if pz == key_slice_idx or abs(pz - key_slice_idx) <= 1:
+                px = int(pt.get("x", 0))
+                py = int(pt.get("y", 0))
+                is_pos = pt.get("is_positive", True)
+                color = (52, 211, 153, 255) if is_pos else (248, 113, 113, 255) # emerald vs rose
+                r = 5
+                draw.ellipse([(px - r, py - r), (px + r, py + r)], outline=color, width=2)
+                if is_pos:
+                    draw.line([(px - 3, py), (px + 3, py)], fill=color, width=2)
+                    draw.line([(px, py - 3), (px, py + 3)], fill=color, width=2)
+                else:
+                    draw.line([(px - 3, py - 3), (px + 3, py + 3)], fill=color, width=2)
+                    draw.line([(px - 3, py + 3), (px + 3, py - 3)], fill=color, width=2)
     
     # Caliper line if RECIST points are present
     caliper = recist.get("caliper_longest")

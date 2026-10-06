@@ -140,6 +140,26 @@ beforeAll(async () => {
             markdown_report: '### 3D 影像组学定量特征分析报告 (IBSI 标准)\n- 体积: 5.35 cm³\n- 球形度: 0.673'
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
+        if (u.pathname.includes('interactive-segment')) {
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            status: 'success',
+            model_name: 'vista3d_interactive_segmenter',
+            voxel_count: 1420,
+            volume_cm3: 2.84,
+            key_slice_index: 115,
+            target_hu: 55.0,
+            tolerance_hu: 45.0,
+            positive_prompts_count: 1,
+            negative_prompts_count: 0,
+            recist_metrics: { longest_diameter_mm: 18.5, short_axis_mm: 12.0, total_volume_cm3: 2.84, key_slice_index: 115 },
+            slice_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            slice_png_size_bytes: 1500,
+            summary_markdown: '**MONAI VISTA-3D 交互式点选分割结果**\n- 病灶总体积: 2.84 cm³'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
         if (u.pathname.includes('/analyze/')) {
           let body: any = {}
           try {
@@ -586,6 +606,30 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(res.data.features_flat).toBeDefined()
     expect(res.data.features_flat.shape_volume_cm3).toBeGreaterThan(0)
     expect(res.data.markdown_report).toContain('3D 影像组学定量特征分析报告')
+  }, 30000)
+
+  it('13. imaging_interactive_segment: VISTA-3D 交互式正负点选分割与病灶边界动态雕刻', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_interactive_segment', {
+      sample_id: 'chest_lung_ct',
+      points: [
+        { z: 115, y: 256, x: 256, is_positive: true },
+        { z: 115, y: 300, x: 256, is_positive: false },
+      ],
+      plane: 'axial',
+      window_preset: 'lung',
+      save_asset: true,
+      label: '图 6 VISTA-3D 交互点选分割',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.model_name).toBe('vista3d_interactive_segmenter')
+    expect(res.data.slice_png_base64).toBeDefined()
+    expect(res.data.recist_metrics).toBeDefined()
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
+    expect(res.data.positive_prompts_count).toBeGreaterThanOrEqual(1)
   }, 30000)
 })
 

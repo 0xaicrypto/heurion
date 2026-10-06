@@ -6,19 +6,21 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 import numpy as np
 import torch
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 try:
     from .device import get_optimal_device, get_device_info
     from .dicom_io import apply_ct_window, CT_WINDOWS
     from .recist import calculate_recist_metrics
     from .renderer import render_key_slice_png, png_to_base64
     from .radiomics import extract_radiomics_features
+    from .interactive import interactive_segment_3d
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window, CT_WINDOWS
     from recist import calculate_recist_metrics
     from renderer import render_key_slice_png, png_to_base64
     from radiomics import extract_radiomics_features
+    from interactive import interactive_segment_3d
 
 def generate_synthetic_ct_volume(
     shape: Tuple[int, int, int] = (48, 128, 128),
@@ -631,6 +633,92 @@ class MONAIEngine:
             mask = extract_largest_component(raw_mask_np)
 
         return extract_radiomics_features(volume=volume, mask=mask, spacing=spacing, num_bins=num_bins)
+
+    def run_interactive_segmentation(
+        self,
+        sample_id_or_path: Optional[str] = None,
+        volume: Optional[np.ndarray] = None,
+        spacing: Optional[Tuple[float, float, float]] = None,
+        points: Optional[List[Dict[str, Any]]] = None,
+        bbox: Optional[Dict[str, int]] = None,
+        current_mask: Optional[np.ndarray] = None,
+        window_preset: Optional[str] = "lung",
+        plane: str = "axial",
+        slice_index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Executes interactive click/prompt-based segmentation (VISTA-3D paradigm):
+        Takes foreground/background prompt points and/or bounding boxes,
+        extracts the 3D lesion mask, computes RECIST 1.1 metrics,
+        and renders a high-definition 2D slice with contour and prompt point markers.
+        """
+        modality = "CT"
+        if volume is None:
+            if sample_id_or_path:
+                volume, detected_spacing, modality = self.load_volume_data(sample_id_or_path)
+                if spacing is None:
+                    spacing = detected_spacing
+            else:
+                volume, _ = generate_synthetic_ct_volume(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
+                if spacing is None:
+                    spacing = (1.5, 0.8, 0.8)
+
+        if spacing is None:
+            spacing = (1.5, 0.8, 0.8)
+
+        seg_res = interactive_segment_3d(
+            volume=volume,
+            spacing=spacing,
+            points=points,
+            bbox=bbox,
+            current_mask=current_mask,
+        )
+
+        mask = seg_res["mask"]
+        recist = calculate_recist_metrics(mask, spacing=spacing)
+        key_slice_idx = slice_index if slice_index is not None else seg_res["key_slice_index"]
+        key_slice_idx = int(np.clip(key_slice_idx, 0, volume.shape[0] - 1))
+
+        # Windowing and slice extraction
+        ct_windowed = apply_ct_window(volume, window_name=window_preset or "lung")
+        ct_slice = ct_windowed[key_slice_idx]
+        mask_slice = mask[key_slice_idx]
+
+        png_bytes = render_key_slice_png(
+            ct_slice_uint8=ct_slice,
+            mask_slice_2d=mask_slice,
+            recist=recist,
+            modality=f"{modality} (VISTA-3D Interactive)",
+            lesion_name="交互式点选靶病灶 (VISTA-3D ROI)",
+            scale_bar_mm=50.0,
+            pixel_spacing_mm=spacing[1],
+            prompt_points=points,
+        )
+
+        return {
+            "status": "success",
+            "model_name": "vista3d_interactive_segmenter",
+            "voxel_count": seg_res["voxel_count"],
+            "volume_cm3": seg_res["volume_cm3"],
+            "key_slice_index": key_slice_idx,
+            "target_hu": seg_res["target_hu"],
+            "tolerance_hu": seg_res["tolerance_hu"],
+            "positive_prompts_count": seg_res["positive_prompts_count"],
+            "negative_prompts_count": seg_res["negative_prompts_count"],
+            "recist_metrics": recist,
+            "slice_png_base64": png_to_base64(png_bytes),
+            "slice_png_size_bytes": len(png_bytes),
+            "summary_markdown": (
+                f"**MONAI VISTA-3D 交互式点选分割结果**\n"
+                f"- **交互提示点**: 正样本点 (Foreground) `{seg_res['positive_prompts_count']}` 个，"
+                f"负样本点 (Background) `{seg_res['negative_prompts_count']}` 个\n"
+                f"- **自适应灰度靶区**: `{seg_res['target_hu']} ± {seg_res['tolerance_hu']} HU`\n"
+                f"- **病灶总体积**: **`{seg_res['volume_cm3']} cm³`** ({seg_res['voxel_count']} 个体素)\n"
+                f"- **RECIST 1.1 最大截面长径**: `{recist['longest_diameter_mm']} mm` (垂直短径: `{recist['short_axis_mm']} mm`)\n"
+                f"- **显示截面**: 第 `#{key_slice_idx}` 层 (已自动标定提示点与半透明红圈轮廓)"
+            )
+        }
+
 
 
 

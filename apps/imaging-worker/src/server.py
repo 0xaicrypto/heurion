@@ -94,6 +94,21 @@ class RadiomicsRequest(BaseModel):
     model_name: Optional[str] = "lung_nodule_segmenter"
     num_bins: Optional[int] = 16
 
+class InteractivePromptPoint(BaseModel):
+    z: int = 0
+    y: int = 0
+    x: int = 0
+    is_positive: bool = True
+
+class InteractiveSegmentRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    points: Optional[List[InteractivePromptPoint]] = None
+    bbox: Optional[Dict[str, int]] = None
+    window_preset: Optional[str] = "lung"
+    plane: Optional[str] = "axial"
+    slice_index: Optional[int] = None
+
 
 @app.get("/health")
 def health_check():
@@ -287,6 +302,17 @@ def list_clinical_models():
                 "modality": "Spine CT",
                 "target": "颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙测量",
                 "recommended_window": "bone",
+                "is_ready": True
+            },
+
+            # 6. 交互式万物分割与自监督 (Interactive & Foundation Models)
+            {
+                "id": "vista3d_interactive_segmenter",
+                "name": "VISTA-3D 交互式点选/提示万物分割 (MONAI VISTA 3D / Click-to-Segment)",
+                "category": "交互式万物分割",
+                "modality": "CT / MRI / PET 通用",
+                "target": "任意解剖结构或病灶的正负点选提示 (Point Clicks) 与 3D 边界框即时自适应分割",
+                "recommended_window": "lung",
                 "is_ready": True
             }
         ]
@@ -509,6 +535,23 @@ def run_radiomics_analysis(req: RadiomicsRequest = Body(...)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Radiomics extraction failed: {str(e)}")
+
+@app.post("/api/v1/analyze/interactive-segment")
+def run_interactive_segmentation_endpoint(req: InteractiveSegmentRequest = Body(...)):
+    """Executes MONAI VISTA-3D style interactive click-prompt segmentation."""
+    target = req.file_path or req.sample_id
+    points_dict = [p.dict() if hasattr(p, "dict") else p.model_dump() for p in (req.points or [])]
+    try:
+        return engine.run_interactive_segmentation(
+            sample_id_or_path=target,
+            points=points_dict,
+            bbox=req.bbox,
+            window_preset=req.window_preset,
+            plane=req.plane or "axial",
+            slice_index=req.slice_index,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Interactive segmentation failed: {str(e)}")
 
 @app.post("/api/v1/analyze/upload")
 async def run_upload_analysis(
