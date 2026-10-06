@@ -203,18 +203,19 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
   function overview(d: Detail, canEdit: boolean): string {
     const imagingRecords = d.records.filter(r => r.kind === 'imaging')
-    const hasMultiImaging = imagingRecords.length >= 2
-    const latestImg = imagingRecords[0]
+    const scanRecords = imagingRecords.filter(r => r.imaging_data?.model_id !== 'recist_longitudinal_comparator')
+    const hasMultiImaging = scanRecords.length >= 2
+    const latestImg = scanRecords[0] || imagingRecords[0]
     let imgWidget = ''
     if (latestImg) {
       const imgData = (latestImg.imaging_data || {}) as Record<string, any>
       const aid = imgData.asset_id
       const sliceFid = imgData.file_id
       const rawFid = imgData.raw_file_id || (latestImg.file_id && latestImg.file_id !== sliceFid ? latestImg.file_id : null)
-      const imgUrl = sliceFid
-        ? `/api/patients/${d.id}/files/${sliceFid}?token=${encodeURIComponent(hooks.token())}`
-        : aid
+      const imgUrl = aid
         ? `/api/assets/${aid}?token=${encodeURIComponent(hooks.token())}`
+        : (sliceFid && sliceFid !== rawFid)
+        ? `/api/patients/${d.id}/files/${sliceFid}?token=${encodeURIComponent(hooks.token())}`
         : (!rawFid && latestImg.file_id)
         ? `/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}`
         : ''
@@ -353,15 +354,16 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回' }
     const EXTRACT: Record<string, string> = { queued: '排队提取', running: '提取中…', done: '', failed: '提取失败', skipped: '' }
 
-    const hasMultiImaging = imagingRecords.length >= 2
+    const scanRecords = d.records.filter(r => r.kind === 'imaging' && r.imaging_data?.model_id !== 'recist_longitudinal_comparator')
+    const hasMultiImaging = scanRecords.length >= 2
 
     // 检查是否有任何影像存在高危征象 (HAM 或结节 > 8mm)
-    const anyHamRec = imagingRecords.find(r => {
+    const anyHamRec = scanRecords.find(r => {
       const imgD = (r.imaging_data || {}) as Record<string, any>
       const m = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
       return Boolean(m.high_attenuation_mucus || (m.ham_max_hu && m.ham_max_hu > 70) || (m.high_attenuation_mucus_cm3 && m.high_attenuation_mucus_cm3 > 0))
     })
-    const anyNoduleRec = imagingRecords.find(r => {
+    const anyNoduleRec = scanRecords.find(r => {
       const imgD = (r.imaging_data || {}) as Record<string, any>
       const nm = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
       return Boolean(nm.longest_diameter_mm && nm.longest_diameter_mm > 8)
@@ -436,7 +438,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                 ${icon('compare')} RECIST 1.1 纵向对比就绪
               </span>
               <span style="font-size: 13px; color: var(--text)">
-                检测到患者已有 <b>${imagingRecords.length}</b> 份纵向影像记录，支持基线与多期随访疗效自动对比评估。
+                检测到患者已有 <b>${scanRecords.length}</b> 份纵向影像记录，支持基线与多期随访疗效自动对比评估。
               </span>
               <span class="grow"></span>
               <button class="primary small-btn" data-act="compare-imaging" title="对比基线与最新随访影像，自动计算 RECIST 1.1 靶病灶长径变化率与疗效评级">
@@ -451,16 +453,20 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             const m = data.metrics || {}
             const aid = data.asset_id
             const sliceFid = data.file_id
-            const imgUrl = sliceFid ? `/api/patients/${d.id}/files/${sliceFid}?token=${encodeURIComponent(hooks.token())}` : aid ? `/api/assets/${aid}?token=${encodeURIComponent(hooks.token())}` : ''
             const rawFid = data.raw_file_id || (r.file_id && r.file_id !== sliceFid ? r.file_id : null)
+            const imgUrl = aid
+              ? `/api/assets/${aid}?token=${encodeURIComponent(hooks.token())}`
+              : (sliceFid && sliceFid !== rawFid)
+              ? `/api/patients/${d.id}/files/${sliceFid}?token=${encodeURIComponent(hooks.token())}`
+              : ''
             const rawFileName = data.raw_file_name || (rawFid ? 'scan.nii.gz' : '')
             const rawSizeText = data.raw_file_size ? `${(data.raw_file_size / (1024 * 1024)).toFixed(1)} MB` : ''
             const isBronchiectasis = data.model_id === 'bronchiectasis_mucus_analyzer' || r.title.includes('支气管')
             return `
               <div class="pt-imaging-card" data-rec="${r.id}">
-                <div class="pt-imaging-thumb-wrap" data-view-img="${imgUrl}" title="点击查看切片大图">
-                  ${imgUrl ? `<img src="${imgUrl}" alt="${esc(r.title)}" class="pt-imaging-thumb">` : '<div class="pt-imaging-no-img">暂无预览</div>'}
-                  <span class="pt-imaging-badge-overlay">${esc(data.modality || 'CT')}</span>
+                <div class="pt-imaging-thumb-wrap" ${imgUrl ? `data-view-img="${imgUrl}" title="点击查看切片大图"` : ''}>
+                  ${imgUrl ? `<img src="${imgUrl}" alt="${esc(r.title)}" class="pt-imaging-thumb" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex'"><div class="pt-imaging-no-img" style="display:none">暂无预览</div>` : '<div class="pt-imaging-no-img">暂无预览</div>'}
+                  <span class="pt-imaging-badge-overlay">${esc(data.modality || (data.model_id === 'recist_longitudinal_comparator' ? 'RECIST 1.1' : 'CT'))}</span>
                 </div>
                 <div class="pt-imaging-content">
                   <div class="pt-imaging-head">
@@ -471,7 +477,11 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                     <span class="muted small">${esc(r.report_date || r.created_at.slice(0, 10))}</span>
                   </div>
                   <div class="pt-imaging-metrics">
-                    ${isBronchiectasis ? `
+                    ${data.model_id === 'recist_longitudinal_comparator' ? `
+                      <span class="pt-imaging-badge" style="background: rgba(16,185,129,0.18); color: #34D399; font-weight: 700">${icon('compare')} 随访疗效评定 (${esc(m.recist_category || 'RECIST')})</span>
+                      <span class="pt-imaging-pill ${m.recist_category === 'PR' || m.recist_category === 'CR' ? 'ok' : m.recist_category === 'PD' ? 'alert' : ''}">长径变化: ${m.percent_change_ld > 0 ? `+${m.percent_change_ld}%` : `${m.percent_change_ld}%`}</span>
+                      <span class="pt-imaging-pill">体积变化: ${m.percent_change_volume > 0 ? `+${m.percent_change_volume}%` : `${m.percent_change_volume}%`}</span>
+                    ` : isBronchiectasis ? `
                       ${m.bar_ratio ? `<span class="pt-imaging-pill ${m.signet_ring_sign ? 'alert' : 'ok'}">BAR 印戒征: ${m.bar_ratio}${m.signet_ring_sign ? ' (阳性)' : ''}</span>` : ''}
                       ${m.total_mucus_volume_cm3 !== undefined ? `<span class="pt-imaging-pill">粘液栓体积: ${m.total_mucus_volume_cm3} cm³</span>` : ''}
                       ${m.high_attenuation_mucus_cm3 ? `<span class="pt-imaging-pill alert">高密度粘液栓 HAM: ${m.high_attenuation_mucus_cm3} cm³ (ABPA疑诊)</span>` : ''}
@@ -496,10 +506,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                   ${r.extraction_note ? `<div class="pt-imaging-note muted small">${esc(r.extraction_note)}</div>` : ''}
                   <div class="pt-imaging-actions">
                     <button class="primary small-btn" data-generate-full-report="${r.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">${icon('report')} 全景诊断报告</button>
-                    <button class="small-btn quiet" data-open-mpr="${r.id}" title="打开 3D 多平面重建 (MPR) 互动浏览器：实时滑动轴位/冠状位/矢状位连续切片、切换窗宽窗位并定位病灶">${icon('mpr')} 3D 切片 (MPR)</button>
+                    ${data.model_id !== 'recist_longitudinal_comparator' ? `<button class="small-btn quiet" data-open-mpr="${r.id}" title="打开 3D 多平面重建 (MPR) 互动浏览器：实时滑动轴位/冠状位/矢状位连续切片、切换窗宽窗位并定位病灶">${icon('mpr')} 3D 切片 (MPR)</button>` : ''}
                     <button class="small-btn quiet" data-open-evidence="${r.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">${icon('evidence')} 因果诊断链</button>
                     <button class="small-btn quiet" data-export-standard="${r.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">${icon('download')} 导出标准数据</button>
-                    ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${r.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">${icon('compare')} 随访对比</button>` : ''}
+                    ${hasMultiImaging && data.model_id !== 'recist_longitudinal_comparator' ? `<button class="small-btn quiet" data-compare-with="${r.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">${icon('compare')} 随访对比</button>` : ''}
                     <button class="small-btn quiet" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">${icon('write')} 写影像病例报告</button>
                     <button class="small-btn" data-img-canvas="${r.id}" title="在 Heurion 原生幻灯片工作台制作包含此影像指标的多页会诊 Slide (PPTX)">${icon('deck')} 制作会诊 Slide</button>
                     ${imgUrl ? `<button class="quiet small-btn" data-view-img="${imgUrl}">${icon('eye')} 查看量化切片</button>` : ''}
@@ -1680,9 +1690,9 @@ ${recommendations}
 
   async function showImagingCompareDialog(patientId: string, d: Detail | Patient, selectedRecordId?: string): Promise<void> {
     const detail = 'records' in d ? (d as Detail) : await api<Detail>(`/api/patients/${patientId}`)
-    const imgRecords = detail.records.filter(r => r.kind === 'imaging' && r.imaging_data)
+    const imgRecords = detail.records.filter(r => r.kind === 'imaging' && r.imaging_data && r.imaging_data.model_id !== 'recist_longitudinal_comparator')
     if (imgRecords.length < 2) {
-      notice('患者需要至少 2 份医学影像记录才能进行纵向对比评估', true)
+      notice('患者需要至少 2 份原始医学影像记录（CT/MRI）才能进行纵向对比评估', true)
       return
     }
 
@@ -2236,8 +2246,20 @@ ${recommendations}
     function renderComparisonResult(res: any) {
       const rec = res.recist || {}
       const cat = (rec.category || 'SD').toLowerCase()
-      const bImgUrl = res.baseline?.file_id ? `/api/patients/${patientId}/files/${res.baseline.file_id}?token=${encodeURIComponent(hooks.token())}` : res.baseline?.asset_id ? `/api/assets/${res.baseline.asset_id}?token=${encodeURIComponent(hooks.token())}` : ''
-      const fImgUrl = res.followup?.file_id ? `/api/patients/${patientId}/files/${res.followup.file_id}?token=${encodeURIComponent(hooks.token())}` : res.followup?.asset_id ? `/api/assets/${res.followup.asset_id}?token=${encodeURIComponent(hooks.token())}` : ''
+      const bImgUrl = res.baseline?.asset_id
+        ? `/api/assets/${res.baseline.asset_id}?token=${encodeURIComponent(hooks.token())}`
+        : res.baseline?.slice_file_id
+        ? `/api/patients/${patientId}/files/${res.baseline.slice_file_id}?token=${encodeURIComponent(hooks.token())}`
+        : (res.baseline?.file_id && res.baseline?.file_id !== res.baseline?.raw_file_id)
+        ? `/api/patients/${patientId}/files/${res.baseline.file_id}?token=${encodeURIComponent(hooks.token())}`
+        : ''
+      const fImgUrl = res.followup?.asset_id
+        ? `/api/assets/${res.followup.asset_id}?token=${encodeURIComponent(hooks.token())}`
+        : res.followup?.slice_file_id
+        ? `/api/patients/${patientId}/files/${res.followup.slice_file_id}?token=${encodeURIComponent(hooks.token())}`
+        : (res.followup?.file_id && res.followup?.file_id !== res.followup?.raw_file_id)
+        ? `/api/patients/${patientId}/files/${res.followup.file_id}?token=${encodeURIComponent(hooks.token())}`
+        : ''
 
       const signLd = rec.percent_change_ld > 0 ? `+${rec.percent_change_ld}%` : `${rec.percent_change_ld}%`
       const signVol = rec.percent_change_volume > 0 ? `+${rec.percent_change_volume}%` : `${rec.percent_change_volume}%`
@@ -2268,7 +2290,14 @@ ${recommendations}
               <span class="muted small">${esc(res.baseline?.date)}</span>
             </div>
             <div class="muted small">${esc(res.baseline?.title)}</div>
-            ${bImgUrl ? `<img src="${bImgUrl}" alt="基线切片" class="pt-recist-card-thumb">` : '<div class="pt-imaging-no-img" style="height: 220px">暂无截面图</div>'}
+            ${bImgUrl ? `
+              <div class="pt-recist-thumb-wrap" style="position: relative; overflow: hidden; border-radius: 6px">
+                <a href="${bImgUrl}" target="_blank" rel="noreferrer" title="点击新窗口查看基线切片大图" style="display: block; width: 100%; height: 220px; text-decoration: none">
+                  <img src="${bImgUrl}" alt="基线切片" class="pt-recist-card-thumb" onerror="this.style.display='none'; if(this.parentElement && this.parentElement.nextElementSibling) this.parentElement.nextElementSibling.style.display='flex'">
+                </a>
+              </div>
+              <div class="pt-imaging-no-img" style="height: 220px; display: none">暂无截面图</div>
+            ` : '<div class="pt-imaging-no-img" style="height: 220px">暂无截面图</div>'}
             <div style="font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; margin-top: 4px">
               <div>最大截面长径 (LD): <b>${rec.baseline_ld_mm ?? '--'} mm</b></div>
               <div>3D 总体积 (Volume): <b>${rec.baseline_volume_cm3 ?? '--'} cm³</b></div>
@@ -2281,7 +2310,14 @@ ${recommendations}
               <span class="muted small">${esc(res.followup?.date)}</span>
             </div>
             <div class="muted small">${esc(res.followup?.title)}</div>
-            ${fImgUrl ? `<img src="${fImgUrl}" alt="随访切片" class="pt-recist-card-thumb">` : '<div class="pt-imaging-no-img" style="height: 220px">暂无截面图</div>'}
+            ${fImgUrl ? `
+              <div class="pt-recist-thumb-wrap" style="position: relative; overflow: hidden; border-radius: 6px">
+                <a href="${fImgUrl}" target="_blank" rel="noreferrer" title="点击新窗口查看随访切片大图" style="display: block; width: 100%; height: 220px; text-decoration: none">
+                  <img src="${fImgUrl}" alt="随访切片" class="pt-recist-card-thumb" onerror="this.style.display='none'; if(this.parentElement && this.parentElement.nextElementSibling) this.parentElement.nextElementSibling.style.display='flex'">
+                </a>
+              </div>
+              <div class="pt-imaging-no-img" style="height: 220px; display: none">暂无截面图</div>
+            ` : '<div class="pt-imaging-no-img" style="height: 220px">暂无截面图</div>'}
             <div style="font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; margin-top: 4px">
               <div>最大截面长径 (LD): <b>${rec.followup_ld_mm ?? '--'} mm</b> <span class="pt-recist-badge ${cat}" style="padding: 2px 6px; font-size: 11px">${signLd}</span></div>
               <div>3D 总体积 (Volume): <b>${rec.followup_volume_cm3 ?? '--'} cm³</b> <span class="pt-recist-badge ${cat}" style="padding: 2px 6px; font-size: 11px">${signVol}</span></div>

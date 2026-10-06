@@ -300,6 +300,18 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
     expect(pdRes.recist?.category_name).toContain('疾病进展')
     expect(pdRes.recist?.percent_change_ld).toBe(27.3)
     expect(pdRes.recist?.diff_ld_mm).toBe(9.0)
+
+    // 4.5 验证在存在已保存的 RECIST 评估记录时，默认对比自动忽略评估记录，纯粹对比原始影像
+    const autoRes = t.svc.compareImaging(a, patient.id)
+    expect(autoRes.ok).toBe(true)
+    expect(autoRes.baseline.record_id).toBe(baseRec.record.id)
+    expect(autoRes.followup.record_id).toBe(follow2Rec.record.id)
+    expect(autoRes.baseline.asset_id).toBeTruthy()
+    expect(autoRes.followup.asset_id).toBeTruthy()
+    expect(autoRes.baseline.slice_file_id).toBeTruthy()
+    expect(autoRes.followup.slice_file_id).toBeTruthy()
+    // 验证对比记录本身不能作为基线或随访点
+    expect(() => t.svc.compareImaging(a, patient.id, { followup_record_id: prRes.record_id })).toThrow('未找到指定的随访影像记录')
   })
 
   it('5. compareImaging: 支气管扩张与粘液栓随访改善评定', () => {

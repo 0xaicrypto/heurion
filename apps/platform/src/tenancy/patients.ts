@@ -814,7 +814,7 @@ export class PatientService {
         return { ...r, text_enc: undefined, imaging_data }
       })
 
-    const validRows = rows.filter(r => r.imaging_data && r.status !== 'rejected')
+    const validRows = rows.filter(r => r.imaging_data && r.status !== 'rejected' && r.imaging_data.model_id !== 'recist_longitudinal_comparator')
     if (validRows.length === 0) {
       throw new PatientError('no_imaging_records', '该患者尚无已记录的医学影像量化分析数据', 400)
     }
@@ -836,6 +836,7 @@ export class PatientService {
           modality: single.imaging_data?.modality || 'CT',
           metrics: sm,
           asset_id: single.imaging_data?.asset_id,
+          slice_file_id: single.imaging_data?.file_id,
           file_id: single.imaging_data?.file_id || (single.file_id !== single.imaging_data?.raw_file_id ? single.file_id : undefined),
           raw_file_id: single.imaging_data?.raw_file_id,
         },
@@ -1031,7 +1032,9 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           `体积变化: ${signVol} (${bVol} cm³ → ${fVol} cm³)`,
         ],
         asset_id: followAssetId || baseAssetId,
-        file_id: followup.file_id || baseline.file_id,
+        slice_file_id: followup.imaging_data?.file_id || baseline.imaging_data?.file_id || null,
+        file_id: followup.imaging_data?.file_id || baseline.imaging_data?.file_id || null,
+        raw_file_id: followup.imaging_data?.raw_file_id || followup.file_id || null,
         analyzed_at: now(),
       }
       const encText = this.keys.encryptText(c.tenantId, JSON.stringify(comparisonPayload))
@@ -1056,6 +1059,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         modality: baseline.imaging_data?.modality || 'CT',
         metrics: bm,
         asset_id: baseAssetId,
+        slice_file_id: baseline.imaging_data?.file_id,
         file_id: baseline.imaging_data?.file_id || (baseline.file_id !== baseline.imaging_data?.raw_file_id ? baseline.file_id : undefined),
         raw_file_id: baseline.imaging_data?.raw_file_id,
       },
@@ -1066,6 +1070,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         modality: followup.imaging_data?.modality || 'CT',
         metrics: fm,
         asset_id: followAssetId,
+        slice_file_id: followup.imaging_data?.file_id,
         file_id: followup.imaging_data?.file_id || (followup.file_id !== followup.imaging_data?.raw_file_id ? followup.file_id : undefined),
         raw_file_id: followup.imaging_data?.raw_file_id,
       },
@@ -1148,8 +1153,11 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
       throw new PatientError('imaging_record_not_found', '该患者尚无医学影像量化分析记录', 404)
     }
 
+    const scanRecs = imagingRecs.filter(r => r.imaging_data && r.imaging_data.model_id !== 'recist_longitudinal_comparator')
+    const pool = scanRecs.length > 0 ? scanRecs : imagingRecs
+
     // 解析目标记录
-    let targetRec = imagingRecs[0]!
+    let targetRec = pool[0]!
     if (input?.record_id) {
       const found = imagingRecs.find(r => r.id === input.record_id)
       if (found) targetRec = found

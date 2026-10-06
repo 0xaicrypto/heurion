@@ -2,7 +2,7 @@
  * 工作空间（左侧图标栏）：写作 / 患者 / 临床研究。每个空间在内容栏里有自己的标题、主操作、列表与搜索提示。
  * 切换时：中间区域如果停在开始页或别的空间的页面上（患者页、研究页），换成新空间的开始页；正在编辑的文档保留。
  */
-export type Space = 'write' | 'patients' | 'research'
+export type Space = 'patients' | 'research' | 'write'
 
 export interface SpaceDef {
   title: string
@@ -20,7 +20,7 @@ const KEY = 'heurion.space'
 
 export function initSpaces(defs: Record<Space, SpaceDef>) {
   const $ = (id: string) => document.getElementById(id)!
-  let cur: Space = 'write'
+  let cur: Space = 'patients'
   const hidden = new Set<Space>()
 
   /** 中间区域没在编辑文档：开始页、患者页、研究页、资料库页、数据集页或空白 */
@@ -30,7 +30,7 @@ export function initSpaces(defs: Record<Space, SpaceDef>) {
   }
 
   function set(space: Space): void {
-    if (hidden.has(space)) space = 'write'
+    if (hidden.has(space)) space = 'patients'
     cur = space
     for (const [k, d] of Object.entries(defs) as Array<[Space, SpaceDef]>) {
       const on = k === space
@@ -61,14 +61,14 @@ export function initSpaces(defs: Record<Space, SpaceDef>) {
     saved(): Space {
       try {
         const v = localStorage.getItem(KEY) ?? (localStorage.getItem('heurion.navMode') === 'patients' ? 'patients' : null)
-        return v === 'patients' || v === 'research' ? v : 'write'
-      } catch { return 'write' }
+        return v === 'patients' || v === 'research' || v === 'write' ? v : 'patients'
+      } catch { return 'patients' }
     },
     /** 机构没开患者模块时隐藏患者空间 */
     setEnabled(space: Space, on: boolean): void {
       document.querySelector<HTMLElement>(`.rail-btn[data-space="${space}"]`)!.hidden = !on
       if (on) hidden.delete(space)
-      else { hidden.add(space); if (cur === space) set('write') }
+      else { hidden.add(space); if (cur === space) set('research') }
     },
   }
 }
