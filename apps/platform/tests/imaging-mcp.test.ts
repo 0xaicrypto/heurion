@@ -118,6 +118,28 @@ beforeAll(async () => {
             slice_png_size_bytes: 1500,
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
+        if (u.pathname.includes('radiomics')) {
+          return new Response(JSON.stringify({
+            status: 'success',
+            lesion_voxel_count: 2675,
+            feature_count: 46,
+            voxel_spacing_mm: [1.5, 0.8, 0.8],
+            feature_groups: {
+              shape_3d: { volume_cm3: 5.35, sphericity: 0.673, surface_area_mm2: 2198.0, max_3d_diameter_mm: 24.0 },
+              first_order: { mean: 55.22, std: 8.4, skewness: 0.12, kurtosis: 2.85, entropy: 3.42 },
+              glcm: { contrast: 1.25, homogeneity: 0.33, energy_asm: 0.04, joint_entropy: 3.65 },
+              glrlm: { short_run_emphasis: 0.91, long_run_emphasis: 2.3, run_percentage: 0.82 }
+            },
+            features_flat: {
+              shape_volume_cm3: 5.35,
+              shape_sphericity: 0.673,
+              firstorder_mean: 55.22,
+              glcm_homogeneity: 0.33,
+              glrlm_short_run_emphasis: 0.91
+            },
+            markdown_report: '### 3D 影像组学定量特征分析报告 (IBSI 标准)\n- 体积: 5.35 cm³\n- 球形度: 0.673'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
         if (u.pathname.includes('/analyze/')) {
           let body: any = {}
           try {
@@ -544,6 +566,27 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(reportDoc).toBeDefined()
     expect(reportDoc?.kind).toBe('report')
   })
+
+  it('12. imaging_radiomics: 提取 IBSI 标准 3D 影像组学多维定量特征', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_radiomics', {
+      sample_id: 'chest_lung_ct',
+      model_name: 'lung_nodule_segmenter',
+      num_bins: 16,
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.feature_count).toBeGreaterThanOrEqual(40)
+    expect(res.data.feature_groups).toBeDefined()
+    expect(res.data.feature_groups.shape_3d).toBeDefined()
+    expect(res.data.feature_groups.first_order).toBeDefined()
+    expect(res.data.feature_groups.glcm).toBeDefined()
+    expect(res.data.feature_groups.glrlm).toBeDefined()
+    expect(res.data.features_flat).toBeDefined()
+    expect(res.data.features_flat.shape_volume_cm3).toBeGreaterThan(0)
+    expect(res.data.markdown_report).toContain('3D 影像组学定量特征分析报告')
+  }, 30000)
 })
 
 

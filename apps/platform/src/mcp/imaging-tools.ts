@@ -554,6 +554,41 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       return fail('imaging_full_report_error', err.message || String(err))
     }
   })
+
+  // 12. 3D 影像组学定量特征抽取 (imaging_radiomics)
+  server.registerTool('imaging_radiomics', {
+    description:
+      '提取 IBSI 标准 3D 影像组学多维定量生物标志物 (Shape 几何形态、一阶直方图统计、GLCM 灰度共生矩阵、GLRLM 灰度游程矩阵)。' +
+      '支持从预置样本、本地路径或患者影像中提取 46 项量化特征，输出扁平特征行（可直接沉淀为科研数据集行）与排版精美的临床报告。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct, spleen_test, prostate_mri'),
+      file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI 文件的绝对路径'),
+      model_name: z.string().optional().describe('用于靶病灶自动分割的模型名称，缺省 lung_nodule_segmenter'),
+      num_bins: z.number().int().min(8).max(64).optional().describe('纹理矩阵离散化区间数，缺省 16'),
+    },
+  }, async ({ sample_id, file_path, model_name, num_bins }) => {
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/analyze/radiomics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: sample_id || (!file_path ? 'chest_lung_ct' : undefined),
+          file_path,
+          model_name: model_name || 'lung_nodule_segmenter',
+          num_bins: num_bins || 16,
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('radiomics_failed', `影像组学特征提取失败 HTTP ${resp.status}: ${errText}`)
+      }
+      const data = await resp.json()
+      return json(data)
+    } catch (err: any) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
 }
 
 function round(n: number, d = 1): number {

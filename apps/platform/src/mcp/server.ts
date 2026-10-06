@@ -826,6 +826,66 @@ export function registerHealthcareTools(server: McpServer, ctx: Ctx): void {
     } catch (err) { return datasetFail(err) }
   })
 
+  server.registerTool('dataset_survival', {
+    description: '为数据集自动执行临床科研标准的生存分析 (Survival Analysis)，包括 Kaplan-Meier 累积生存率曲线、Log-rank 检验、Cox 比例风险回归、Number at Risk 风险表与出版级矢量 SVG 图表。' +
+      '返回结构化生存数据、Log-rank 检验量与 P 值、中位生存期、Cox HR (95% CI)、临床论文叙述段落及 SVG 图表。若提供 doc_id 和 anchor_id，可一键将结果与图表插入文档。',
+    inputSchema: {
+      dataset_id: z.string().describe('数据集 ID'),
+      time_col: z.string().describe('随访生存时间列名（天或月，数值型，如 os_months, pfs_days）'),
+      event_col: z.string().describe('事件结局状态列名（1=发生事件, 0=删失）'),
+      group_col: z.string().optional().describe('分组分层列名（如 arm, treatment, ham_status）'),
+      covariates: z.array(z.string()).optional().describe('多变量 Cox 回归协变量列表（如 [age, stage, treatment]）'),
+      time_unit: z.string().optional().default('Months').describe('随访时间单位，如 Months, Days, Years'),
+      milestones: z.array(z.number()).optional().describe('评估累积生存率的时间点列表（如 [12, 24, 36, 60]）'),
+      title: z.string().optional().describe('图表与分析标题'),
+      labels: z.record(z.string()).optional().describe('自定义变量与类别的显示名称映射'),
+      doc_id: z.string().optional().describe('可选：需要将生存分析结果插入的文档 ID'),
+      anchor_id: z.string().optional().describe('可选：插入到该块 ID 之后（配合 doc_id）'),
+    },
+  }, async ({ dataset_id, time_col, event_col, group_col, covariates, time_unit, milestones, title, labels, doc_id, anchor_id }) => {
+    if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
+    try {
+      const d = deps.datasets.get(claims.u, dataset_id)
+      const blocked = cohortGuard(d.origin)
+      if (blocked) return blocked
+
+      const res = deps.datasets.survival(claims.u, dataset_id, {
+        time_col,
+        event_col,
+        group_col,
+        covariates,
+        time_unit,
+        milestones,
+        title,
+        labels,
+      })
+
+      let insertResult: { doc_id: string; rev: number; inserted: boolean } | undefined
+      if (doc_id && anchor_id) {
+        const docRow = store.getDoc(doc_id)
+        if (docRow && (!access || access.canDoc(claims.u, docRow, 'write'))) {
+          const insertText = `${res.markdown_table}\n\n${res.narrative}`
+          const edit = deps.ops.edit({
+            doc_id,
+            base_rev: docRow.rev,
+            mode: 'apply',
+            ops: [{ op: 'insert_after', anchor_id, markdown: insertText }],
+          }, { actor: 'ai', turnId: ctx.turnId })
+          insertResult = { doc_id, rev: edit.rev, inserted: true }
+        }
+      }
+
+      return json({
+        survival: res,
+        narrative: res.narrative,
+        markdown: res.markdown_table,
+        svg: res.svg,
+        forest_svg: res.forest_svg,
+        ...(insertResult ? { doc_edit: insertResult } : {}),
+      })
+    } catch (err) { return datasetFail(err) }
+  })
+
 
   const patientFail = (err: unknown) => {
     if (err instanceof PatientError || err instanceof TenantError) return fail(err.code, err.message, err.code === 'external_model_off' ? { hint: '告诉用户本机构设置为患者数据不交给外部模型分析，需要机构管理员调整。' } : {})

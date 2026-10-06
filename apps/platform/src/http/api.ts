@@ -10,7 +10,7 @@ import { duplicateDoc } from '../model/duplicate.ts'
 import type { SearchIndex } from '../model/search-index.ts'
 import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
-import { DatasetError, type DatasetService, type Table1Options } from '../datasets/service.ts'
+import { DatasetError, type DatasetService, type Table1Options, type SurvivalOptions } from '../datasets/service.ts'
 import { TenantError, TenantService } from '../auth/tenants.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
@@ -629,6 +629,23 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         data.markdown_insert = `![${body.label || `3D 差分热力图 ${planeName} 切片 #${sliceIdx}`}](asset:${asset.id})`
       }
 
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/radiomics', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/analyze/radiomics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) return c.json({ error: 'radiomics_failed' }, resp.status as any)
+      const data = await resp.json()
       return c.json(data)
     } catch (err: any) {
       return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
@@ -1850,6 +1867,14 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
     const body = await c.req.json<Table1Options>().catch(() => ({} as Table1Options))
     try { return c.json(deps.datasets.table1(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
+  })
+  app.post('/api/datasets/:did/survival', async c => {
+    if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
+    const body = await c.req.json<SurvivalOptions>().catch(() => ({} as SurvivalOptions))
+    if (!body.time_col || !body.event_col) {
+      return c.json({ error: '必须指定随访时间列 (time_col) 与事件结局列 (event_col)' }, 400)
+    }
+    try { return c.json(deps.datasets.survival(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
   })
 
 

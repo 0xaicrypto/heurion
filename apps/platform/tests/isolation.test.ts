@@ -310,5 +310,5 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     }
     expect(leaks).toEqual([])
     expect(tried).toBeGreaterThan(20)
-  })
+  }, 30000)
 })

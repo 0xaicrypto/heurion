@@ -5,8 +5,9 @@ import { extname, join } from 'node:path'
 import type { DatasetRow, Store } from '../store/db.ts'
 import type { ColumnProfile, Ingest, Profile } from './ingest.ts'
 import { generateTable1FromData, type Table1Options, type Table1Result } from './table1.ts'
+import { generateSurvivalAnalysis, type SurvivalOptions, type SurvivalAnalysisResult } from './survival.ts'
 
-export type { Table1Options, Table1Result }
+export type { Table1Options, Table1Result, SurvivalOptions, SurvivalAnalysisResult }
 
 
 /**
@@ -227,6 +228,38 @@ export class DatasetService {
     }
 
     return generateTable1FromData(records, mergedOpts)
+  }
+
+  /** 生存分析：根据时间列、事件列与分组变量拟合 KM 生存曲线与 Cox 比例风险回归 */
+  survival(user: string, id: string, opts: SurvivalOptions): SurvivalAnalysisResult {
+    const dataset = this.get(user, id)
+    const row = this.own(user, id, 'read')
+    const csvFile = this.csvPath(row)
+    if (!existsSync(csvFile)) throw new DatasetError('not_ready', '数据集尚未处理完成')
+
+    const csvText = readFileSync(csvFile, 'utf8')
+    const parsed = parseCsv(csvText)
+    if (parsed.length < 2) throw new DatasetError('empty', '数据集为空')
+
+    const header = parsed[0]!
+    const records: Array<Record<string, unknown>> = []
+    for (let i = 1; i < parsed.length; i++) {
+      const r = parsed[i]!
+      if (!r || r.length === 0 || (r.length === 1 && !r[0])) continue
+      const rec: Record<string, unknown> = {}
+      for (let j = 0; j < header.length; j++) {
+        const col = header[j]!
+        rec[col] = r[j] ?? ''
+      }
+      records.push(rec)
+    }
+
+    const mergedOpts: SurvivalOptions = {
+      ...opts,
+      labels: { ...dataset.labels, ...opts.labels }
+    }
+
+    return generateSurvivalAnalysis(records, mergedOpts)
   }
 
 

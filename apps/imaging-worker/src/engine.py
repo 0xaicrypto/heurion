@@ -12,11 +12,13 @@ try:
     from .dicom_io import apply_ct_window, CT_WINDOWS
     from .recist import calculate_recist_metrics
     from .renderer import render_key_slice_png, png_to_base64
+    from .radiomics import extract_radiomics_features
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window, CT_WINDOWS
     from recist import calculate_recist_metrics
     from renderer import render_key_slice_png, png_to_base64
+    from radiomics import extract_radiomics_features
 
 def generate_synthetic_ct_volume(
     shape: Tuple[int, int, int] = (48, 128, 128),
@@ -584,5 +586,51 @@ class MONAIEngine:
             "slice_png_base64": png_to_base64(png_bytes),
             "slice_png_size_bytes": len(png_bytes)
         }
+
+    def extract_radiomics(
+        self,
+        sample_id_or_path: Optional[str] = None,
+        volume: Optional[np.ndarray] = None,
+        mask: Optional[np.ndarray] = None,
+        spacing: Optional[Tuple[float, float, float]] = None,
+        model_name: str = "lung_nodule_segmenter",
+        num_bins: int = 16,
+    ) -> Dict[str, Any]:
+        """
+        Extracts 3D IBSI-compliant radiomics biomarkers from a volume and its lesion mask.
+        If volume or mask is not provided, loads volume and performs automatic segmentation.
+        """
+        if volume is None:
+            if sample_id_or_path:
+                volume, detected_spacing, modality = self.load_volume_data(sample_id_or_path)
+                if spacing is None:
+                    spacing = detected_spacing
+            else:
+                volume, synth_mask = generate_synthetic_ct_volume(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
+                if mask is None:
+                    mask = synth_mask
+                if spacing is None:
+                    spacing = (1.5, 0.8, 0.8)
+
+        if spacing is None:
+            spacing = (1.5, 0.8, 0.8)
+
+        if mask is None:
+            tensor_vol = torch.from_numpy(volume).to(self.device)
+            if "lung" in model_name:
+                pred_mask_tensor = (tensor_vol > -150.0) & (tensor_vol < 180.0)
+                cx = volume.shape[2] // 2
+                roi = torch.zeros_like(pred_mask_tensor)
+                roi[:, :, cx:] = True
+                pred_mask_tensor = pred_mask_tensor & roi
+            elif "brain" in model_name:
+                pred_mask_tensor = (tensor_vol > 60.0) & (tensor_vol < 220.0)
+            else:
+                pred_mask_tensor = (tensor_vol > 30.0) & (tensor_vol < 110.0)
+            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            mask = extract_largest_component(raw_mask_np)
+
+        return extract_radiomics_features(volume=volume, mask=mask, spacing=spacing, num_bins=num_bins)
+
 
 

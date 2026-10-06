@@ -88,6 +88,12 @@ class DiffSliceRequest(BaseModel):
     window_preset: Optional[str] = None
     threshold_hu: Optional[float] = 50.0
 
+class RadiomicsRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    model_name: Optional[str] = "lung_nodule_segmenter"
+    num_bins: Optional[int] = 16
+
 
 @app.get("/health")
 def health_check():
@@ -490,6 +496,19 @@ def run_file_analysis(req: FileAnalysisRequest = Body(...)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
+
+@app.post("/api/v1/analyze/radiomics")
+def run_radiomics_analysis(req: RadiomicsRequest = Body(...)):
+    """Extracts 3D IBSI-compliant radiomics features (Shape, First-order, GLCM, GLRLM)."""
+    target = req.file_path or req.sample_id
+    try:
+        return engine.extract_radiomics(
+            sample_id_or_path=target,
+            model_name=req.model_name or "lung_nodule_segmenter",
+            num_bins=req.num_bins or 16
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Radiomics extraction failed: {str(e)}")
 
 @app.post("/api/v1/analyze/upload")
 async def run_upload_analysis(
