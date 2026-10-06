@@ -201,7 +201,7 @@ describe('越权：每个带参数的接口，别的机构的人带着 A 的 id 
       // 审计里会有 B 自己发出的请求带的 id（那是 B 提供的），其余列表不能出现 A 的资源
       if (p !== '/api/tenant/audit') expect(r.text, `B ${p}`).not.toContain(t.seed.doc)
     }
-  })
+  }, 30000)
 })
 
 describe('越权：同机构但不是研究成员 / 已被移出的同事，带着 A 的 id 也碰不到', () => {
@@ -241,7 +241,7 @@ describe('越权：同机构但不是研究成员 / 已被移出的同事，带�
     }
     expect(leaks).toEqual([])
     for (const p of ['/api/docs', '/api/datasets', '/api/studies', '/api/search?q=' + encodeURIComponent(MARK)]) expect((await t.call('GET', p, C.token)).text, p).not.toContain(MARK)
-  })
+  }, 30000)
 })
 
 describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到', () => {

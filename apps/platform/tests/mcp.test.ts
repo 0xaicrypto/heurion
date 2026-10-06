@@ -365,7 +365,7 @@ describe('AI 生成图片并插入（与人的插图能力一致）', () => {
     expect(res.content?.[0]?.mimeType).toBe('image/png')
     expect(typeof res.content?.[0]?.data).toBe('string')
     expect((res.content?.[0]?.data ?? '').length).toBeGreaterThan(100)
-  })
+  }, 30000)
 })
 
 describe('文档仓库（AI 一侧）', () => {

@@ -649,6 +649,7 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
   })
 
   it('10. HTTP API: POST /api/imaging/mpr/diff-slice 3D 体素配准与差分吸收热力图', async () => {
+    const isOnline = await fetch('http://127.0.0.1:8004/health', { signal: AbortSignal.timeout(500) }).then(r => r.ok).catch(() => false)
     const t = env()
     const { buildApi } = await import('../src/http/api.ts')
     const { Documents } = await import('../src/model/runtime.ts')
@@ -694,6 +695,11 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
         threshold_hu: 50,
       }),
     })
+
+    if (!isOnline) {
+      expect(res.status).toBe(503)
+      return
+    }
 
     expect(res.status).toBe(200)
     const data = await res.json()
