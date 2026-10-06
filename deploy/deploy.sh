@@ -11,9 +11,22 @@ DIR="${DEPLOY_DIR:-/opt/heurion2}"
 cd "$DIR"
 : "${HEURION2_IMAGE:?需要 HEURION2_IMAGE}"
 : "${EMBEDDER_IMAGE:?需要 EMBEDDER_IMAGE}"
-export HEURION2_IMAGE EMBEDDER_IMAGE
+: "${IMAGING_WORKER_IMAGE:?需要 IMAGING_WORKER_IMAGE}"
+export HEURION2_IMAGE EMBEDDER_IMAGE IMAGING_WORKER_IMAGE
 [ -f .env.production ] || { echo "缺少 $DIR/.env.production" >&2; exit 1; }
 chmod 600 .env.production
+
+# 自动 Swap 检查（确保 8GB 机器具备至少 2GB Swap 充当防 OOM 救生圈）
+SWAP_TOTAL_MB=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}' || echo 0)
+if [ -n "$SWAP_TOTAL_MB" ] && [ "$SWAP_TOTAL_MB" -lt 2048 ]; then
+  if [ ! -f /swapfile ] && command -v fallocate >/dev/null 2>&1; then
+    echo "== 配置 4GB NVMe Swap 虚拟内存（防 OOM 救生圈）..."
+    ( fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile ) || true
+    if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab 2>/dev/null || true
+    fi
+  fi
+fi
 
 COMPOSE=(docker compose -p heurion2 --env-file .env.production -f docker-compose.yml)
 HOSTNAME=$(grep '^HOSTNAME=' .env.production | head -1 | cut -d= -f2-)
@@ -22,6 +35,7 @@ HOSTNAME=$(grep '^HOSTNAME=' .env.production | head -1 | cut -d= -f2-)
 # 回滚点：当前在跑的 2.0 镜像 ID（不是 tag）
 PREV_APP=$(docker inspect --format '{{.Image}}' heurion2 2>/dev/null || true)
 PREV_EMB=$(docker inspect --format '{{.Image}}' heurion2-embedder 2>/dev/null || true)
+PREV_IMG=$(docker inspect --format '{{.Image}}' heurion2-imaging-worker 2>/dev/null || true)
 
 docker image prune -f >/dev/null 2>&1 || true
 docker builder prune -f >/dev/null 2>&1 || true
@@ -114,7 +128,7 @@ if [ "$CUTOVER" -eq 1 ]; then
 fi
 if [ -n "$PREV_APP" ]; then
   echo "↩️  回滚到上一个镜像 $PREV_APP"
-  HEURION2_IMAGE="$PREV_APP" EMBEDDER_IMAGE="${PREV_EMB:-$EMBEDDER_IMAGE}" "${COMPOSE[@]}" up -d
+  HEURION2_IMAGE="$PREV_APP" EMBEDDER_IMAGE="${PREV_EMB:-$EMBEDDER_IMAGE}" IMAGING_WORKER_IMAGE="${PREV_IMG:-$IMAGING_WORKER_IMAGE}" "${COMPOSE[@]}" up -d
   wait_health && echo "↩️  已回滚并恢复健康，请查日志修复后再发" || echo "❌ 回滚后仍不健康，需要人工介入"
 fi
 exit 1

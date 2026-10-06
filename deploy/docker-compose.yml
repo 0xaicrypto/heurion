@@ -18,7 +18,7 @@ services:
     container_name: heurion2
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 4g
+    mem_limit: 3.5g
     # AI 代码出站白名单（入口用 iptables 只放行本机平台端口）
     cap_add: [NET_ADMIN]
     env_file: [.env.production]
@@ -28,11 +28,14 @@ services:
       - HEURION_DATA_DIR=/app/data
       - PORT=8787
       - EMBEDDING_URL=http://embedder:8003
+      - IMAGING_WORKER_URL=http://imaging-worker:8004
     volumes:
       # 平台数据：SQLite（文档、版本、评论、资料库、记忆、账户）、用户工作区、渲染缓存、OCR 语言模型
       - data:/app/data
     depends_on:
       embedder:
+        condition: service_started
+      imaging-worker:
         condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -47,16 +50,36 @@ services:
     container_name: heurion2-embedder
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 3g
+    mem_limit: 2.5g
     networks: [web]
     # 不映射端口：只给平台用（嵌入服务没起来时平台退回关键词检索）
+
+  imaging-worker:
+    image: ${IMAGING_WORKER_IMAGE:-heurion2-imaging-worker:latest}
+    container_name: heurion2-imaging-worker
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 2.8g
+    environment:
+      - PORT=8004
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+    networks: [web]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+    # 不映射端口：只在内部网络给平台与 MCP 代理调用
 
   caddy:
     image: caddy:2.8-alpine
     container_name: heurion2-caddy
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 512m
+    mem_limit: 256m
     ports:
       - "80:80"
       - "443:443"

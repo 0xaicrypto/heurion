@@ -18,6 +18,7 @@ concurrency:
 env:
   APP_IMAGE: ghcr.io/0xaicrypto/heurion2
   EMBEDDER_IMAGE: ghcr.io/0xaicrypto/heurion2-embedder
+  IMAGING_WORKER_IMAGE: ghcr.io/0xaicrypto/heurion2-imaging-worker
 
 jobs:
   test:
@@ -71,6 +72,15 @@ jobs:
           tags: ${{ env.EMBEDDER_IMAGE }}:${{ steps.vars.outputs.sha }},${{ env.EMBEDDER_IMAGE }}:latest
           cache-from: type=gha,scope=embedder
           cache-to: type=gha,mode=max,scope=embedder
+      - name: 医学影像 Worker 镜像（MONAI + PyTorch CPU）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/imaging-worker/Dockerfile
+          push: true
+          tags: ${{ env.IMAGING_WORKER_IMAGE }}:${{ steps.vars.outputs.sha }},${{ env.IMAGING_WORKER_IMAGE }}:latest
+          cache-from: type=gha,scope=imaging
+          cache-to: type=gha,mode=max,scope=imaging
 
   deploy:
     name: 部署到生产
@@ -128,7 +138,7 @@ jobs:
           # 镜像是私有包：本次部署用 GITHUB_TOKEN 登录 GHCR 拉取
           echo "$GHCR_TOKEN" | $SSH "$HOST" "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
           $SSH "$HOST" "cd /opt/heurion2 && chmod 600 .env.production && chmod +x scripts/*.sh && \
-            HEURION2_IMAGE=${APP_IMAGE}:${SHA} EMBEDDER_IMAGE=${EMBEDDER_IMAGE}:${SHA} bash scripts/deploy.sh"
+            HEURION2_IMAGE=${APP_IMAGE}:${SHA} EMBEDDER_IMAGE=${EMBEDDER_IMAGE}:${SHA} IMAGING_WORKER_IMAGE=${IMAGING_WORKER_IMAGE}:${SHA} bash scripts/deploy.sh"
       - name: AI 代码隔离自检（容器里以两个测试 uid 尝试读密钥、数据库、别人的工作区）
         env:
           HOST: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
