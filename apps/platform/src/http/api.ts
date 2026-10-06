@@ -10,7 +10,7 @@ import { duplicateDoc } from '../model/duplicate.ts'
 import type { SearchIndex } from '../model/search-index.ts'
 import { ExtractError } from '../kb/extract.ts'
 import type { KbService } from '../kb/service.ts'
-import { DatasetError, type DatasetService } from '../datasets/service.ts'
+import { DatasetError, type DatasetService, type Table1Options } from '../datasets/service.ts'
 import { TenantError, TenantService } from '../auth/tenants.ts'
 import { StudyError, type StudyService } from '../research/service.ts'
 import { PatientError, type PatientService } from '../tenancy/patients.ts'
@@ -532,6 +532,109 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
   })
 
+  app.get('/api/imaging/mpr/info', async c => {
+    try {
+      const sampleId = c.req.query('sample_id') || 'chest_lung_ct'
+      const filePath = c.req.query('file_path') || undefined
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/info`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sample_id: sampleId, file_path: filePath }),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!resp.ok) return c.json({ error: 'mpr_info_failed' }, resp.status as any)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/mpr/info', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/info`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!resp.ok) return c.json({ error: 'mpr_info_failed' }, resp.status as any)
+      return c.json(await resp.json())
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/mpr/slice', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/slice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      })
+      if (!resp.ok) return c.json({ error: 'mpr_slice_failed' }, resp.status as any)
+      const data = await resp.json()
+
+      if (body.save_asset && data.slice_png_base64) {
+        const u = c.get('user' as any) || 'u1'
+        const b64Data = String(data.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+        const pngBuf = Buffer.from(b64Data, 'base64')
+        const planeName = data.plane || 'mpr'
+        const sliceIdx = data.slice_index ?? 0
+        const assetName = `${body.label || `mpr-${planeName}-${sliceIdx}`}.png`
+        const asset = store.putAsset({
+          owner: u,
+          mime: 'image/png',
+          name: assetName,
+          bytes: pngBuf,
+        })
+        data.asset_id = asset.id
+        data.markdown_insert = `![${body.label || `MPR ${planeName} 切片 #${sliceIdx}`}](asset:${asset.id})`
+      }
+
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/mpr/diff-slice', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/diff-slice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20000),
+      })
+      if (!resp.ok) return c.json({ error: 'mpr_diff_failed' }, resp.status as any)
+      const data = await resp.json()
+
+      if (body.save_asset && data.slice_png_base64) {
+        const u = c.get('user' as any) || 'u1'
+        const b64Data = String(data.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+        const pngBuf = Buffer.from(b64Data, 'base64')
+        const planeName = data.plane || 'mpr'
+        const sliceIdx = data.slice_index ?? 0
+        const assetName = `${body.label || `diff-${planeName}-${sliceIdx}`}.png`
+        const asset = store.putAsset({
+          owner: u,
+          mime: 'image/png',
+          name: assetName,
+          bytes: pngBuf,
+        })
+        data.asset_id = asset.id
+        data.markdown_insert = `![${body.label || `3D 差分热力图 ${planeName} 切片 #${sliceIdx}`}](asset:${asset.id})`
+      }
+
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
   app.post('/api/patients/:ptid/imaging/analyze', async c => {
     try {
       const contentType = c.req.header('content-type') || ''
@@ -742,6 +845,55 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         findings,
         tags_added: autoTag ? tagsToAdd : [],
       }, 201)
+    } catch (err) {
+      return patientFailure(c, err)
+    }
+  })
+
+  app.post('/api/patients/:ptid/imaging/compare', async c => {
+    try {
+      const patientId = c.req.param('ptid')
+      const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
+      const result = pt(c).compareImaging(me(c), patientId, {
+        baseline_record_id: typeof body.baseline_record_id === 'string' ? body.baseline_record_id : undefined,
+        followup_record_id: typeof body.followup_record_id === 'string' ? body.followup_record_id : undefined,
+        save_as_record: Boolean(body.save_as_record),
+      })
+      return c.json(result)
+    } catch (err) {
+      return patientFailure(c, err)
+    }
+  })
+
+  app.get('/api/patients/:ptid/imaging/evidence-chain', c => {
+    try {
+      const patientId = c.req.param('ptid')
+      const recordId = c.req.query('record_id') || undefined
+      const baselineId = c.req.query('baseline_record_id') || undefined
+      const followupId = c.req.query('followup_record_id') || undefined
+      const result = pt(c).getEvidenceChain(me(c), patientId, {
+        record_id: recordId,
+        baseline_record_id: baselineId,
+        followup_record_id: followupId,
+      })
+      return c.json(result)
+    } catch (err) {
+      return patientFailure(c, err)
+    }
+  })
+
+  app.get('/api/patients/:ptid/imaging/export', c => {
+    try {
+      const patientId = c.req.param('ptid')
+      const format = (c.req.query('format') || 'fhir') as 'fhir' | 'dicom-sr'
+      const recordId = c.req.query('record_id') || undefined
+      const isDownload = c.req.query('download') === '1'
+      const res = pt(c).exportImagingStandard(me(c), patientId, { format, record_id: recordId })
+      if (isDownload) {
+        c.header('Content-Type', res.mime)
+        c.header('Content-Disposition', `attachment; filename="${res.filename}"`)
+      }
+      return c.json(res.data)
     } catch (err) {
       return patientFailure(c, err)
     }
@@ -1665,6 +1817,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.delete('/api/datasets/:did', c => {
     try { deps.datasets!.remove(c.get('user'), c.req.param('did')); return c.json({ ok: true }) } catch (err) { return datasetFailure(c, err) }
   })
+  app.post('/api/datasets/:did/table1', async c => {
+    if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
+    const body = await c.req.json<Table1Options>().catch(() => ({} as Table1Options))
+    try { return c.json(deps.datasets.table1(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
+  })
+
 
   app.post('/api/docs/:id/chat', async c => {
     const row = owned(c)

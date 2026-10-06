@@ -63,6 +63,30 @@ class FileAnalysisRequest(BaseModel):
     ham_threshold_hu: Optional[float] = 70.0
     bar_cutoff: Optional[float] = 1.10
 
+class MprInfoRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+
+class MprSliceRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    plane: Optional[str] = "axial"  # axial, coronal, sagittal
+    slice_index: Optional[int] = None
+    window_preset: Optional[str] = None
+    overlay_mask: Optional[bool] = True
+    model_name: Optional[str] = None
+
+class DiffSliceRequest(BaseModel):
+    baseline_id: Optional[str] = "chest_lung_ct"
+    followup_id: Optional[str] = "chest_lung_ct"
+    baseline_path: Optional[str] = None
+    followup_path: Optional[str] = None
+    plane: Optional[str] = "axial"
+    slice_index: Optional[int] = None
+    window_preset: Optional[str] = None
+    threshold_hu: Optional[float] = 50.0
+
+
 @app.get("/health")
 def health_check():
     dev_info = get_device_info()
@@ -307,7 +331,57 @@ def get_sample_file(sample_id: str):
                 filename=f"{sample_id}{ext}"
             )
     raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found in data directory")
- 
+
+@app.post("/api/v1/mpr/info")
+def get_mpr_volume_info(req: MprInfoRequest = Body(...)):
+    """Returns 3D volume dimensions, spacing, slice counts and bounding box for a volume."""
+    target = req.file_path if req.file_path else (req.sample_id or "chest_lung_ct")
+    try:
+        return engine.get_mpr_info(target)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read volume info: {str(e)}")
+
+@app.get("/api/v1/mpr/info")
+def get_mpr_volume_info_get(sample_id: str = "chest_lung_ct"):
+    """GET variant for retrieving volume MPR info by sample_id."""
+    try:
+        return engine.get_mpr_info(sample_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read volume info: {str(e)}")
+
+@app.post("/api/v1/mpr/slice")
+def get_mpr_slice(req: MprSliceRequest = Body(...)):
+    """Extracts an arbitrary orthogonal 2D slice (Axial/Coronal/Sagittal) with windowing & overlay."""
+    target = req.file_path if req.file_path else (req.sample_id or "chest_lung_ct")
+    try:
+        return engine.extract_mpr_slice(
+            sample_id_or_path=target,
+            plane=req.plane or "axial",
+            slice_index=req.slice_index,
+            window_preset=req.window_preset,
+            overlay=req.overlay_mask if req.overlay_mask is not None else True,
+            model_name=req.model_name
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extract MPR slice: {str(e)}")
+
+@app.post("/api/v1/mpr/diff-slice")
+def get_diff_slice(req: DiffSliceRequest = Body(...)):
+    """Extracts a registered 3D difference slice with regression/progression heatmap."""
+    base_target = req.baseline_path if req.baseline_path and os.path.exists(req.baseline_path) else (req.baseline_id or "chest_lung_ct")
+    follow_target = req.followup_path if req.followup_path and os.path.exists(req.followup_path) else (req.followup_id or "chest_lung_ct")
+    try:
+        return engine.extract_diff_slice(
+            baseline_id_or_path=base_target,
+            followup_id_or_path=follow_target,
+            plane=req.plane or "axial",
+            slice_index=req.slice_index,
+            window_preset=req.window_preset,
+            threshold_hu=req.threshold_hu if req.threshold_hu is not None else 50.0
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extract diff slice: {str(e)}")
+
 @app.post("/api/v1/analyze/benchmark")
 def run_benchmark_analysis(req: BenchmarkRequest = Body(...)):
     """Generates synthetic anatomical volume and runs MONAI inference on device."""

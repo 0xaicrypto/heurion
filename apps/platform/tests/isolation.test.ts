@@ -253,6 +253,10 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     to_user_id: s => s.userA, template_id: s => s.orgTemplate, share_id: s => s.share, department_id: s => s.department, doctor_id: s => s.userA, user_ids: s => [s.userA], tenant_id: s => s.tenantA, project_id: s => s.project, turn_id: s => s.turn, memory_id: s => s.memory, job_id: s => s.job, action_id: s => s.action, member_id: s => s.patient,
     model_id: () => 'lung_nodule_segmenter',
     sample_id: () => 'spleen_test',
+    baseline_sample_id: () => 'spleen_test',
+    followup_sample_id: () => 'spleen_test',
+    baseline_record_id: s => s.record,
+    followup_record_id: s => s.record,
   }
 
   it('机构 B 的令牌调用每个带 id 的工具', async () => {

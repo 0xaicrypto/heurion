@@ -458,7 +458,15 @@ describe('文档仓库（AI 一侧）', () => {
     expect(prov.code).toContain('KM 曲线')
     expect(prov.datasets.map(d => d.name)).toEqual(['trial'])
     expect(t.store.getAssetProvenance((await t.call('asset_upload', { path: 'km.png' })).body.asset_id)).toBeNull()
+
+
+    // Table 1 自动计算与三线表生成
+    const t1 = await t.call('dataset_table1', { dataset_id: ok.id, group_col: 'arm' })
+    expect(t1.body.markdown).toContain('Table 1')
+    expect(t1.body.table1.groups.map((g: any) => g.name)).toEqual(['A', 'B'])
+    expect(t1.body.markdown).toContain('年龄（岁）')
   })
+
 
   it('记忆：memory_review 生成待用户采纳的建议（与界面「整理记忆」同一方法），本轮关闭记忆时不可用', async () => {
     const t = await connect('一段。')

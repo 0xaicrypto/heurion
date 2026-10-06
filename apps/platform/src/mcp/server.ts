@@ -764,6 +764,69 @@ export function registerHealthcareTools(server: McpServer, ctx: Ctx): void {
     } catch (err) { return datasetFail(err) }
   })
 
+  server.registerTool('dataset_table1', {
+    description: '为数据集自动生成临床科研标准的 Table 1（基线特征表与显著性检验套件）。' +
+      '连续变量自动正态性检验并分流呈现为 Mean±SD 或 Median[IQR]（Welch’s t-test / Mann-Whitney U / ANOVA / Kruskal-Wallis）；' +
+      '分类变量呈现为 N (%) 并进行卡方检验或 Fisher 精确检验；自动计算标化均数差 (SMD)。' +
+      '返回标准 Markdown 三线表与结构化数据。若提供 doc_id 和 anchor_id，可一键将三线表插入文档对应块后。',
+    inputSchema: {
+      dataset_id: z.string().describe('数据集 ID'),
+      group_col: z.string().optional().describe('分组列（如 arm、treatment、group、status 等），不传则仅生成 Overall 全体人群'),
+      columns: z.array(z.string()).optional().describe('纳入的变量名列表（按序），默认自动纳入所有分析变量'),
+      continuous_vars: z.array(z.string()).optional().describe('显式声明为连续型的变量'),
+      categorical_vars: z.array(z.string()).optional().describe('显式声明为分类型的变量'),
+      non_normal_vars: z.array(z.string()).optional().describe('显式声明为偏态/非正态的变量（以 Median [IQR] 展示并采用非参数秩和检验）'),
+      include_overall: z.boolean().optional().default(true).describe('是否包含 Overall 列'),
+      include_p_value: z.boolean().optional().default(true).describe('是否计算并显示 P 值'),
+      include_smd: z.boolean().optional().default(true).describe('是否计算并显示标化均数差 SMD（两组时）'),
+      title: z.string().optional().describe('表格标题，如 "Table 1. Baseline Characteristics of Participants"'),
+      labels: z.record(z.string()).optional().describe('自定义变量与类别的显示名称映射'),
+      doc_id: z.string().optional().describe('可选：需要将 Table 1 插入的文档 ID'),
+      anchor_id: z.string().optional().describe('可选：插入到该块 ID 之后（配合 doc_id）'),
+    },
+  }, async ({ dataset_id, group_col, columns, continuous_vars, categorical_vars, non_normal_vars, include_overall, include_p_value, include_smd, title, labels, doc_id, anchor_id }) => {
+    if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
+    try {
+      const d = deps.datasets.get(claims.u, dataset_id)
+      const blocked = cohortGuard(d.origin)
+      if (blocked) return blocked
+
+      const res = deps.datasets.table1(claims.u, dataset_id, {
+        group_col,
+        columns,
+        continuous_vars,
+        categorical_vars,
+        non_normal_vars,
+        include_overall,
+        include_p_value,
+        include_smd,
+        title,
+        labels,
+      })
+
+      let insertResult: { doc_id: string; rev: number; inserted: boolean } | undefined
+      if (doc_id && anchor_id) {
+        const docRow = store.getDoc(doc_id)
+        if (docRow && (!access || access.canDoc(claims.u, docRow, 'write'))) {
+          const edit = deps.ops.edit({
+            doc_id,
+            base_rev: docRow.rev,
+            mode: 'apply',
+            ops: [{ op: 'insert_after', anchor_id, markdown: res.markdown }],
+          }, { actor: 'ai', turnId: ctx.turnId })
+          insertResult = { doc_id, rev: edit.rev, inserted: true }
+        }
+      }
+
+      return json({
+        table1: res,
+        markdown: res.markdown,
+        ...(insertResult ? { doc_edit: insertResult } : {}),
+      })
+    } catch (err) { return datasetFail(err) }
+  })
+
+
   const patientFail = (err: unknown) => {
     if (err instanceof PatientError || err instanceof TenantError) return fail(err.code, err.message, err.code === 'external_model_off' ? { hint: '告诉用户本机构设置为患者数据不交给外部模型分析，需要机构管理员调整。' } : {})
     throw err
@@ -1285,7 +1348,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
 
   registerCanvasTools(server, ctx)
   registerHealthcareTools(server, ctx)
-  registerImagingTools(server, { store, claims })
+  registerImagingTools(server, { store, claims, patients: deps.patients })
   registerAdminTools(server, { store, turns: deps.turns, invoke: deps.invoke, workspaceDir: deps.workspaceDir }, claims.u)
   return server
 }

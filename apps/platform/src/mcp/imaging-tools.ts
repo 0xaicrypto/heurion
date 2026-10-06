@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { TokenClaims } from '../auth/token.ts'
 import type { Store } from '../store/db.ts'
+import type { PatientService } from '../tenancy/patients.ts'
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 const json = (value: unknown) => text(JSON.stringify(value, null, 2))
@@ -13,6 +14,7 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 export interface ImagingToolsDeps {
   store: Store
   claims: TokenClaims
+  patients?: PatientService
   workerUrl?: string
 }
 
@@ -213,6 +215,303 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       interpretation,
       academic_statement: `根据 RECIST 1.1 评价标准，患者靶病灶长径总和由基线 ${baseline_sum_mm} mm 变化至 ${followup_sum_mm} mm（${percentChange > 0 ? '+' : ''}${percentChange}%），疗效评估为 ${evaluation}（${interpretation.split('：')[0]}）。`,
     })
+  })
+
+  // 5. 3D 体积几何与空间分布探测 (imaging_volume_info)
+  server.registerTool('imaging_volume_info', {
+    description:
+      '查询 3D 医学影像的几何体素元数据与病灶空间分布：' +
+      '返回体素空间维度 (Z/Y/X)、空间分辨率/层厚间距 (dz, dy, dx mm)、' +
+      '三大正交切面（轴位 Axial、冠状位 Coronal、矢状位 Sagittal）的总层数与中心推荐层，' +
+      '以及病灶的三维空间包围盒 (Bounding Box) 和推荐窗位。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct (全胸部 HRCT 269层), spleen_test, prostate_mri'),
+      file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI (.nii/.nii.gz) 文件的绝对路径'),
+    },
+  }, async ({ sample_id, file_path }) => {
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/mpr/info`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sample_id: sample_id || 'chest_lung_ct', file_path }),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('mpr_info_failed', `获取 3D 体积信息失败 HTTP ${resp.status}: ${errText}`)
+      }
+      const data = await resp.json()
+      return json({
+        status: 'success',
+        ...data,
+      })
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  // 6. 3D 多平面重建正交切片提取与资产沉淀 (imaging_mpr_slice)
+  server.registerTool('imaging_mpr_slice', {
+    description:
+      '提取 3D 医学影像的任意正交多平面重建切片 (MPR: 轴位 Axial、冠状位 Coronal、矢状位 Sagittal)：' +
+      '支持应用临床窗宽窗位（肺窗 lung、纵隔窗 mediastinum、腹窗 abdomen、骨窗 bone、脑窗 brain）' +
+      '与 MONAI 病灶半透明红色遮罩 (Mask Overlay)。切片将自动渲染带有 5cm 标尺、层号 HUD 与物理分辨率的高清图像，' +
+      '并直接保存为用户文档资产，返回 asset_id、病灶面积与可直接插入 Markdown 报告的图片语法。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct, spleen_test, prostate_mri'),
+      file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI 文件的绝对路径'),
+      plane: z.enum(['axial', 'coronal', 'sagittal']).optional().describe('正交切片平面：axial (轴位/横断面), coronal (冠状位/额状面), sagittal (矢状位/侧面)。缺省为 axial'),
+      slice_index: z.number().int().min(0).optional().describe('切片层号索引 (0 到 total_slices - 1)。如不提供，则自动定位至病灶中心切片或正中层'),
+      window_preset: z.enum(['lung', 'abdomen', 'brain', 'mediastinum', 'bone']).optional().describe('CT 窗宽窗位预设'),
+      overlay_mask: z.boolean().optional().describe('是否在切片上叠加 MONAI 自动分割的半透明红色病灶遮罩，缺省为 true'),
+      save_asset: z.boolean().optional().describe('是否保存为当前用户的平台文档资产以供报告引用，缺省为 true'),
+      label: z.string().max(80).optional().describe('生成的图注标签，例如「图 2 轴位第 115 层支气管扩张病灶」'),
+    },
+  }, async ({ sample_id, file_path, plane, slice_index, window_preset, overlay_mask, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/mpr/slice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: sample_id || 'chest_lung_ct',
+          file_path,
+          plane: plane || 'axial',
+          slice_index,
+          window_preset,
+          overlay_mask: overlay_mask !== false,
+        }),
+        signal: AbortSignal.timeout(15000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('mpr_slice_failed', `提取 MPR 切片失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    const b64Data = String(resultData.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+    if (!b64Data) return fail('no_slice_output', '切片生成成功但未返回图像数据')
+    const pngBuffer = Buffer.from(b64Data, 'base64')
+
+    const planeNameMap: Record<string, string> = {
+      axial: '轴位',
+      coronal: '冠状位',
+      sagittal: '矢状位',
+    }
+    const planeZh = planeNameMap[resultData.plane] || resultData.plane
+    const hSpacing = resultData.pixel_spacing_mm?.horizontal ?? 1
+    const vSpacing = resultData.pixel_spacing_mm?.vertical ?? 1
+    const lesionPx = resultData.lesion_pixel_count ?? 0
+    const lesionAreaMm2 = round(lesionPx * hSpacing * vSpacing, 2)
+
+    let assetId: string | undefined
+    let markdownInsert: string | undefined
+
+    if (save_asset !== false && claims.p.includes('write')) {
+      const assetName = `${label || `mpr-${resultData.plane}-slice-${resultData.slice_index}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuffer,
+      })
+      assetId = asset.id
+
+      const figCaption = label || `图 MPR ${planeZh}第 ${resultData.slice_index} 层（共 ${resultData.total_slices} 层）`
+      const figNote = `3D MPR ${planeZh}第 ${resultData.slice_index} 层切片（窗宽窗位: ${resultData.window?.preset || '标准'}, 分辨率: ${hSpacing}x${vSpacing} mm${lesionAreaMm2 > 0 ? `, 病灶截面积: ${lesionAreaMm2} mm²` : ''}）`
+      markdownInsert = `![${figCaption}](asset:${asset.id} "${figNote}")`
+    }
+
+    return json({
+      status: 'success',
+      plane: resultData.plane,
+      slice_index: resultData.slice_index,
+      total_slices: resultData.total_slices,
+      window: resultData.window,
+      dimensions: resultData.dimensions,
+      pixel_spacing_mm: resultData.pixel_spacing_mm,
+      lesion_present: resultData.lesion_present,
+      lesion_pixel_count: lesionPx,
+      lesion_area_mm2: lesionAreaMm2,
+      asset_id: assetId,
+      markdown_insert: markdownInsert,
+    })
+  })
+
+  // 7. 多期随访 RECIST 1.1 影像对比评估 (imaging_longitudinal_compare)
+  server.registerTool('imaging_longitudinal_compare', {
+    description:
+      '对患者的多期医学影像进行纵向随访对比（RECIST 1.1 实体瘤疗效评估 / 气道粘液栓演变）：' +
+      '对比基线检查 (Baseline) 与随访检查 (Follow-up) 的靶病灶最大长径 (LD)、短径与 3D 体积变化率，' +
+      '自动评定疗效等级（CR 完全缓解 / PR 部分缓解 / SD 疾病稳定 / PD 疾病进展 / 清除 / 改善），' +
+      '生成包含双期影像对照、量化演变表格与临床建议的完整结构化评估报告，并支持选择性将对比报告落库为新的病历记录。',
+    inputSchema: {
+      patient_id: z.string().describe('患者 ID'),
+      baseline_record_id: z.string().optional().describe('基线影像记录 ID（如不提供则自动选择最早的基线影像）'),
+      followup_record_id: z.string().optional().describe('随访影像记录 ID（如不提供则自动选择最新的随访影像）'),
+      save_as_record: z.boolean().optional().describe('是否将对比评估报告保存为患者的新病历记录，缺省为 false'),
+    },
+  }, async ({ patient_id, baseline_record_id, followup_record_id, save_as_record }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const aiActor = { userId: claims.u, via: 'ai' as const }
+      const result = deps.patients.compareImaging(aiActor, patient_id, {
+        baseline_record_id,
+        followup_record_id,
+        save_as_record,
+      })
+      return json(result)
+    } catch (err: any) {
+      return fail('imaging_compare_error', err.message || String(err))
+    }
+  })
+
+  // 8. 多模态因果诊断证据链分析 (imaging_evidence_chain)
+  server.registerTool('imaging_evidence_chain', {
+    description:
+      '多模态因果诊断证据链分析：' +
+      '自动将患者医学影像量化病征（如支气管扩张/高密度粘液栓 HAM、或肺结节占位 RECIST 1.1）' +
+      '与患者实际化验检验指标（嗜酸性粒细胞 EOS、血清总 IgE、曲霉特异性 sIgE、肿瘤标志物 CEA/CYFRA21-1、炎症指标 CRP/WBC）' +
+      '及既往病史标签进行因果三角校验，评估临床指南确诊符合度（如 ISHAM ABPA 标准、RECIST 1.1），' +
+      '输出结构化临床证据矩阵、缺漏待查项目建议与诊断印象 Markdown。',
+    inputSchema: {
+      patient_id: z.string().describe('患者 ID'),
+      record_id: z.string().optional().describe('待评估的医学影像记录 ID（如不传则自动选择最新的一份影像分析）'),
+      baseline_record_id: z.string().optional().describe('基线影像记录 ID（多期对比场景）'),
+      followup_record_id: z.string().optional().describe('随访影像记录 ID（多期对比场景）'),
+    },
+  }, async ({ patient_id, record_id, baseline_record_id, followup_record_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const aiActor = { userId: claims.u, via: 'ai' as const }
+      const result = deps.patients.getEvidenceChain(aiActor, patient_id, {
+        record_id,
+        baseline_record_id,
+        followup_record_id,
+      })
+      return json(result)
+    } catch (err: any) {
+      return fail('imaging_evidence_chain_error', err.message || String(err))
+    }
+  })
+
+  // 9. 3D 体素刚性配准与差分吸收热力图切片 (imaging_diff_slice)
+  server.registerTool('imaging_diff_slice', {
+    description:
+      '提取两期 3D 纵向随访 CT 之间的体素刚性配准与差分吸收热力图切片 (Difference Heatmap Overlay)：' +
+      '将随访 CT 空间三线性插值对齐至基线 CT 坐标系，计算三维体素差分矩阵 (ΔHU = Followup - Baseline)。' +
+      '生成叠加差分吸收热力图的切片（🟢 绿色为吸收退缩区域 ΔHU < -thresh，🔴 红色为进展增大/浸润区域 ΔHU > thresh），' +
+      '并返回全容积 3D 吸收体素量、新发浸润体素量、净变化体积与总体动态演变趋势。',
+    inputSchema: {
+      baseline_sample_id: z.string().optional().describe('基线样本 ID，缺省为 chest_lung_ct'),
+      followup_sample_id: z.string().optional().describe('随访样本 ID，缺省为 chest_lung_ct'),
+      baseline_file_path: z.string().optional().describe('基线 3D 影像本地文件路径'),
+      followup_file_path: z.string().optional().describe('随访 3D 影像本地文件路径'),
+      plane: z.enum(['axial', 'coronal', 'sagittal']).optional().describe('正交切片平面：axial, coronal, sagittal，缺省为 axial'),
+      slice_index: z.number().int().min(0).optional().describe('切片层号索引'),
+      window_preset: z.enum(['lung', 'abdomen', 'brain', 'mediastinum', 'bone']).optional().describe('CT 窗位预设'),
+      threshold_hu: z.number().optional().describe('差分检测灵敏度阈值 (HU)，缺省为 50 HU'),
+      save_asset: z.boolean().optional().describe('是否将差分切片保存为资产'),
+      label: z.string().max(80).optional().describe('图注说明'),
+    },
+  }, async ({ baseline_sample_id, followup_sample_id, baseline_file_path, followup_file_path, plane, slice_index, window_preset, threshold_hu, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/mpr/diff-slice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseline_id: baseline_sample_id || 'chest_lung_ct',
+          followup_id: followup_sample_id || 'chest_lung_ct',
+          baseline_path: baseline_file_path,
+          followup_path: followup_file_path,
+          plane: plane || 'axial',
+          slice_index,
+          window_preset,
+          threshold_hu: threshold_hu ?? 50,
+        }),
+        signal: AbortSignal.timeout(20000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('mpr_diff_failed', `计算 3D 差分热力图失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    const b64Data = String(resultData.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+    if (!b64Data) return fail('no_diff_slice_output', '差分切片生成成功但未返回图像数据')
+    const pngBuffer = Buffer.from(b64Data, 'base64')
+
+    const planeNameMap: Record<string, string> = { axial: '轴位', coronal: '冠状位', sagittal: '矢状位' }
+    const planeZh = planeNameMap[resultData.plane] || resultData.plane
+
+    let assetId: string | undefined
+    let markdownInsert: string | undefined
+
+    if (save_asset !== false && claims.p.includes('write')) {
+      const assetName = `${label || `diff-${resultData.plane}-slice-${resultData.slice_index}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuffer,
+      })
+      assetId = asset.id
+      const figCaption = label || `图 3D 差分热力图 ${planeZh}第 ${resultData.slice_index} 层`
+      const figNote = `3D 差分热力图（🟢 吸收: ${resultData.statistics_3d?.regressed_volume_cm3} cm³, 🔴 进展: ${resultData.statistics_3d?.progressed_volume_cm3} cm³, 总体演变: ${resultData.statistics_3d?.dominant_trend}）`
+      markdownInsert = `![${figCaption}](asset:${asset.id} "${figNote}")`
+    }
+
+    return json({
+      status: 'success',
+      plane: resultData.plane,
+      slice_index: resultData.slice_index,
+      total_slices: resultData.total_slices,
+      window: resultData.window,
+      dimensions: resultData.dimensions,
+      statistics_3d: resultData.statistics_3d,
+      slice_metrics: resultData.slice_metrics,
+      asset_id: assetId,
+      markdown_insert: markdownInsert,
+    })
+  })
+
+  // 10. 标准化医学数据交换格式导出 (imaging_export_standard)
+  server.registerTool('imaging_export_standard', {
+    description:
+      '将患者的医学影像量化分析与多模态因果诊断链导出为国际医学行业标准交换格式：' +
+      '支持 HL7 FHIR R4 DiagnosticReport (包含 ImagingStudy 与 Observations) 或 ' +
+      'DICOM SR (Structured Reporting, SOP Class 1.2.840.10008.5.1.4.1.1.88.22, TID 1500) 结构化 JSON，' +
+      '以便无缝对接三甲医院内网 PACS、EMR/HIS 或区域健康信息平台。',
+    inputSchema: {
+      patient_id: z.string().describe('患者 ID'),
+      format: z.enum(['fhir', 'dicom-sr']).describe('导出格式：fhir (HL7 FHIR R4) 或 dicom-sr (DICOM Structured Reporting)'),
+      record_id: z.string().optional().describe('指定的医学影像记录 ID（如不传则导出最新影像分析记录）'),
+    },
+  }, async ({ patient_id, format, record_id }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    try {
+      const aiActor = { userId: claims.u, via: 'ai' as const }
+      const result = deps.patients.exportImagingStandard(aiActor, patient_id, {
+        format,
+        record_id,
+      })
+      return json({
+        status: 'success',
+        format: result.format,
+        filename: result.filename,
+        mime: result.mime,
+        data: result.data,
+      })
+    } catch (err: any) {
+      return fail('imaging_export_error', err.message || String(err))
+    }
   })
 }
 

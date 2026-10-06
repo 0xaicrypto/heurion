@@ -20,20 +20,19 @@ function env() {
 }
 
 describe('患者影像量化分析与病历关联 (Patient Imaging Integration)', () => {
+  const dummyPng = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+    0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+    0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+  ])
+
   it('1. addImagingRecord: 支气管扩张与粘液栓分析结果自动加密入库、生成资产并更新患者标签', () => {
     const t = env()
     const a = t.as(t.user)
     const patient = t.svc.create(a, { sex: 'M', birth_year: 1968, tags: ['反复咳嗽', '咳脓痰'] })
-
-    // 创建测试切片 PNG（以有效 PNG 头部为示例）
-    const dummyPng = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-      0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-      0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
-      0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
-      0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
-      0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
-    ])
 
     const res = t.svc.addImagingRecord(a, patient.id, {
       title: '胸部 HRCT 支气管扩张与粘液栓定量分析',
@@ -211,4 +210,497 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
     const updatedPatient = t.svc.read(a, patient.id)
     expect(updatedPatient.tags).toContain('支气管扩张')
   }, 30000)
+
+  it('4. compareImaging: 多期随访 RECIST 1.1 疗效对比与学术报告生成 (PR 部分缓解 / PD 疾病进展 / 单期基线)', () => {
+    const t = env()
+    const a = t.as(t.user)
+    const patient = t.svc.create(a, { sex: 'M', birth_year: 1960, tags: ['非小细胞肺癌'] })
+
+    // 4.1 尚未录入任何影像时报错
+    expect(() => t.svc.compareImaging(a, patient.id)).toThrow('该患者尚无已记录的医学影像量化分析数据')
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    // 4.2 录入第 1 期基线影像 (Baseline)
+    const baseRec = t.svc.addImagingRecord(a, patient.id, {
+      title: '基线胸部 CT 靶病灶评估',
+      report_date: '2026-06-01',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 50.0,
+        short_axis_mm: 32.0,
+        total_volume_cm3: 35.0,
+        key_slice_index: 30,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    // 仅有 1 期基线时，返回 is_single_baseline
+    const singleRes = t.svc.compareImaging(a, patient.id)
+    expect(singleRes.ok).toBe(true)
+    expect(singleRes.is_single_baseline).toBe(true)
+    expect(singleRes.message).toContain('仅有 1 份基线影像')
+
+    // 4.3 录入第 2 期随访影像 (Follow-up 1): 缩小 34% (50.0 -> 33.0)，评定为 PR (部分缓解)
+    const follow1Rec = t.svc.addImagingRecord(a, patient.id, {
+      title: '化疗 2 周期后胸部 CT 随访评估',
+      report_date: '2026-08-15',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 33.0,
+        short_axis_mm: 20.0,
+        total_volume_cm3: 16.5,
+        key_slice_index: 29,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    const prRes = t.svc.compareImaging(a, patient.id, {
+      baseline_record_id: baseRec.record.id,
+      followup_record_id: follow1Rec.record.id,
+      save_as_record: true,
+    })
+
+    expect(prRes.ok).toBe(true)
+    expect(prRes.is_single_baseline).toBe(false)
+    expect(prRes.interval_days).toBe(75) // 6月1日到8月15日
+    expect(prRes.recist?.category).toBe('PR')
+    expect(prRes.recist?.category_name).toContain('部分缓解')
+    expect(prRes.recist?.percent_change_ld).toBe(-34.0)
+    expect(prRes.recist?.diff_ld_mm).toBe(-17.0)
+    expect(prRes.summary_markdown).toContain('PR (部分缓解 (Partial Response))')
+    expect(prRes.summary_markdown).toContain('| **最大截面长径 (LD)** | 50 mm | 33 mm | -17 mm | **-34%** |')
+    expect(prRes.record_id).toBeTruthy() // 验证生成了病历记录
+
+    // 验证新生成的对比记录存在于患者详情中
+    const detailAfterPr = t.svc.read(a, patient.id)
+    const compareRec = detailAfterPr.records.find(r => r.id === prRes.record_id)
+    expect(compareRec).toBeTruthy()
+    expect(compareRec?.title).toContain('RECIST 1.1 疗效评估 (PR)')
+
+    // 4.4 录入第 3 期随访影像 (Follow-up 2): 增大至 42.0 (较 follow1 增加 +27.3% 且绝对值 +9.0mm)，评定为 PD
+    const follow2Rec = t.svc.addImagingRecord(a, patient.id, {
+      title: '随访 6 个月胸部 CT 复查',
+      report_date: '2026-12-01',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 42.0,
+        short_axis_mm: 28.0,
+        total_volume_cm3: 25.0,
+        key_slice_index: 31,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    const pdRes = t.svc.compareImaging(a, patient.id, {
+      baseline_record_id: follow1Rec.record.id,
+      followup_record_id: follow2Rec.record.id,
+    })
+    expect(pdRes.recist?.category).toBe('PD')
+    expect(pdRes.recist?.category_name).toContain('疾病进展')
+    expect(pdRes.recist?.percent_change_ld).toBe(27.3)
+    expect(pdRes.recist?.diff_ld_mm).toBe(9.0)
+  })
+
+  it('5. compareImaging: 支气管扩张与粘液栓随访改善评定', () => {
+    const t = env()
+    const a = t.as(t.user)
+    const patient = t.svc.create(a, { sex: 'F', birth_year: 1980, tags: ['支气管扩张', 'ABPA'] })
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    // 基线：粘液栓体积 1200 mm³，HAM 阳性 (300 mm³)
+    const baseRec = t.svc.addImagingRecord(a, patient.id, {
+      title: '基线 HRCT 支气管粘液栓分析',
+      report_date: '2026-03-01',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      metrics: {
+        bar_ratio: 1.5,
+        total_mucus_volume_cm3: 12.0,
+        high_attenuation_mucus_cm3: 3.0,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    // 随访：抗真菌与糖皮质激素治疗 3 个月后，粘液栓吸收至 4.0 cm³ (-66.7%)，HAM 降至 0 (完全吸收)
+    const followRec = t.svc.addImagingRecord(a, patient.id, {
+      title: 'ABPA 治疗后 HRCT 随访复查',
+      report_date: '2026-06-01',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      metrics: {
+        bar_ratio: 1.45,
+        total_mucus_volume_cm3: 4.0,
+        high_attenuation_mucus_cm3: 0,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    const res = t.svc.compareImaging(a, patient.id, {
+      baseline_record_id: baseRec.record.id,
+      followup_record_id: followRec.record.id,
+    })
+
+    expect(res.recist?.target_type).toBe('bronchiectasis_mucus')
+    expect(res.recist?.category).toBe('PR')
+    expect(res.recist?.category_name).toContain('显著改善')
+    expect(res.recist?.interpretation).toContain('高密度粘液栓 (HAM) 已完全消失')
+  })
+
+  it('6. HTTP API: POST /api/patients/:ptid/imaging/compare 端点测试', async () => {
+    const t = env()
+    const a = t.as(t.user)
+    const patient = t.svc.create(a, { sex: 'M', birth_year: 1965, tags: ['肿瘤'] })
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    t.svc.addImagingRecord(a, patient.id, {
+      title: '基线检查',
+      report_date: '2026-01-10',
+      model_id: 'lung_nodule_segmenter',
+      metrics: { longest_diameter_mm: 40.0, total_volume_cm3: 20.0 },
+      key_slice_png: dummyPng,
+    })
+
+    t.svc.addImagingRecord(a, patient.id, {
+      title: '随访检查',
+      report_date: '2026-04-10',
+      model_id: 'lung_nodule_segmenter',
+      metrics: { longest_diameter_mm: 25.0, total_volume_cm3: 10.0 },
+      key_slice_png: dummyPng,
+    })
+
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    const res = await app.request(`/api/patients/${patient.id}/imaging/compare`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ save_as_record: true }),
+    })
+
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(json.recist.category).toBe('PR')
+    expect(json.recist.percent_change_ld).toBe(-37.5)
+    expect(json.record_id).toBeTruthy()
+  })
+
+  it('7. getEvidenceChain: 多模态因果诊断链分析 (支扩伴 HAM + 嗜酸粒细胞 + IgE)', () => {
+    const t = env()
+    const a = t.as(t.user)
+    const patient = t.svc.create(a, { sex: 'M', birth_year: 1968, tags: ['反复咳嗽', '支气管扩张待查'] })
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    // 录入化验：嗜酸粒细胞升高，血清总 IgE 显著升高
+    t.svc.addLab(a, patient.id, {
+      test_name: '嗜酸性粒细胞绝对值 (EOS#)',
+      value: 1.15,
+      unit: '×10⁹/L',
+      ref_low: 0.02,
+      ref_high: 0.5,
+      flag: 'H',
+      collected_on: '2026-10-02',
+    }, { status: 'confirmed' })
+
+    t.svc.addLab(a, patient.id, {
+      test_name: '血清总 IgE',
+      value: 1480,
+      unit: 'IU/mL',
+      ref_low: 0,
+      ref_high: 100,
+      flag: 'H',
+      collected_on: '2026-10-02',
+    }, { status: 'confirmed' })
+
+    // 录入影像：胸部 HRCT 支扩伴 HAM 阳性
+    const imgRec = t.svc.addImagingRecord(a, patient.id, {
+      title: '胸部 HRCT 支气管扩张与粘液栓定量分析',
+      report_date: '2026-10-05',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      sample_id: 'chest_lung_ct',
+      metrics: {
+        bar_ratio: 1.52,
+        signet_ring_sign: true,
+        high_attenuation_mucus_ham: true,
+        high_attenuation_mucus_cm3: 2.8,
+        total_mucus_volume_cm3: 8.5,
+      },
+      findings: ['印戒征阳性 (BAR 1.52)', '高密度粘液栓 (HAM) 阳性 (2.8 cm³)'],
+      key_slice_png: dummyPng,
+    })
+
+    // 执行多模态证据链三角比对
+    const chain = t.svc.getEvidenceChain(a, patient.id, { record_id: imgRec.record.id })
+
+    expect(chain.ok).toBe(true)
+    expect(chain.syndrome_key).toBe('abpa_bronchiectasis')
+    expect(chain.clinical_urgency).toBe('high')
+    expect(chain.criteria_table.length).toBeGreaterThanOrEqual(5)
+    
+    // 验证影像与化验阳性证据
+    const hamRow = chain.criteria_table.find(r => r.criterion.includes('高密度粘液栓'))
+    expect(hamRow?.status).toBe('positive')
+
+    const igeRow = chain.criteria_table.find(r => r.criterion.includes('血清总 IgE'))
+    expect(igeRow?.status).toBe('positive')
+
+    const eosRow = chain.criteria_table.find(r => r.criterion.includes('嗜酸性粒细胞'))
+    expect(eosRow?.status).toBe('positive')
+
+    // 验证缺漏待查项识别 (烟曲霉特异性 sIgE)
+    const sigeRow = chain.criteria_table.find(r => r.criterion.includes('烟曲霉特异性 IgE'))
+    expect(sigeRow?.status).toBe('missing')
+    expect(chain.suggested_workup.some(w => w.includes('烟曲霉'))).toBe(true)
+
+    // 验证 Markdown 报告片段生成
+    expect(chain.summary_markdown).toContain('变应性支气管肺曲霉病')
+    expect(chain.summary_markdown).toContain('高密度粘液栓')
+    expect(chain.summary_markdown).toContain('1480')
+  })
+
+  it('8. HTTP API: GET /api/patients/:ptid/imaging/evidence-chain 端点测试', async () => {
+    const t = env()
+    const a = t.as(t.user)
+    const patient = t.svc.create(a, { sex: 'F', birth_year: 1955, tags: ['肺占位待查'] })
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    t.svc.addLab(a, patient.id, {
+      test_name: '癌胚抗原 (CEA)',
+      value: 18.6,
+      unit: 'ng/mL',
+      ref_low: 0,
+      ref_high: 5.0,
+      flag: 'H',
+      collected_on: '2026-10-01',
+    }, { status: 'confirmed' })
+
+    const imgRec = t.svc.addImagingRecord(a, patient.id, {
+      title: '胸部 CT 靶病灶 RECIST 1.1 测量',
+      report_date: '2026-10-05',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 36.5,
+        short_axis_mm: 22.0,
+        total_volume_cm3: 25.4,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    const res = await app.request(`/api/patients/${patient.id}/imaging/evidence-chain?record_id=${imgRec.record.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(json.syndrome_key).toBe('lung_neoplasm_recist')
+    expect(json.matched_labs.some((l: any) => l.test_key === 'cea' && l.flag === 'H')).toBe(true)
+    expect(json.criteria_table.some((c: any) => c.criterion.includes('RECIST 1.1'))).toBe(true)
+  })
+
+  it('9. 标准医学交换格式导出 (HL7 FHIR DiagnosticReport 与 DICOM SR)', async () => {
+    const t = env()
+    const a = { userId: t.user, via: 'user' as const }
+    const patient = t.svc.create(a, {
+      sex: 'M',
+      birth_year: 1968,
+      tags: ['支气管扩张', '高密度粘液栓'],
+    })
+
+    const rec = t.svc.addImagingRecord(a, patient.id, {
+      title: '高分辨胸部 CT 支气管粘液栓评估',
+      report_date: '2026-09-01',
+      model_id: 'bronchiectasis_mucus_analyzer',
+      metrics: {
+        longest_diameter_mm: 28.5,
+        short_axis_mm: 14.0,
+        total_volume_cm3: 18.2,
+        bar_ratio: 1.45,
+        ham_density_confirmed: true,
+        max_hu: 92.0,
+        key_slice_index: 22,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    // 9.1 导出 HL7 FHIR R4 DiagnosticReport
+    const fhirRes = t.svc.exportImagingStandard(a, patient.id, {
+      record_id: rec.record.id,
+      format: 'fhir',
+    })
+    expect(fhirRes.format).toBe('fhir')
+    expect(fhirRes.data.resourceType).toBe('DiagnosticReport')
+    expect(fhirRes.data.status).toBe('final')
+    expect(fhirRes.data.category[0].coding[0].code).toBe('RAD')
+    expect(fhirRes.data.subject.reference).toContain(`Patient/${patient.id}`)
+    expect(fhirRes.data.contained.some((o: any) => o.code?.text?.includes('RECIST 1.1') && o.valueQuantity?.value === 28.5)).toBe(true)
+    expect(fhirRes.data.contained.some((o: any) => o.code?.text?.includes('BAR') && o.valueQuantity?.value === 1.45)).toBe(true)
+
+    // 9.2 导出 DICOM SR (TID 1500)
+    const dicomRes = t.svc.exportImagingStandard(a, patient.id, {
+      record_id: rec.record.id,
+      format: 'dicom-sr',
+    })
+    expect(dicomRes.format).toBe('dicom-sr')
+    expect(dicomRes.data.SOPClassUID).toBe('1.2.840.10008.5.1.4.1.1.88.22')
+    expect(dicomRes.data.Modality).toBe('SR')
+    expect(dicomRes.data.TemplateID).toBe('TID 1500')
+    expect(dicomRes.data.FindingsGroup.Measurements.some((m: any) => m.Value === 28.5)).toBe(true)
+    expect(dicomRes.data.FindingsGroup.Measurements.some((m: any) => m.ConceptName.CodeMeaning.includes('BAR'))).toBe(true)
+
+    // 9.3 HTTP API GET /api/patients/:ptid/imaging/export
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    const apiRes = await app.request(`/api/patients/${patient.id}/imaging/export?format=fhir&record_id=${rec.record.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    expect(apiRes.status).toBe(200)
+    const apiJson = await apiRes.json()
+    expect(apiJson.resourceType).toBe('DiagnosticReport')
+  })
+
+  it('10. HTTP API: POST /api/imaging/mpr/diff-slice 3D 体素配准与差分吸收热力图', async () => {
+    const t = env()
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    const res = await app.request('/api/imaging/mpr/diff-slice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        baseline_id: 'chest_lung_ct',
+        followup_id: 'chest_lung_ct',
+        plane: 'axial',
+        slice_index: 24,
+        threshold_hu: 50,
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.plane).toBe('axial')
+    expect(data.slice_index).toBe(24)
+    expect(data.statistics_3d).toBeTruthy()
+    expect(data.slice_png_base64).toBeTruthy()
+  })
 })
+

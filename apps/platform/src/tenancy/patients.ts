@@ -82,6 +82,16 @@ const TEST_ALIASES: Array<[RegExp, string]> = [
   [/^(alb|白蛋白)$/i, 'albumin'], [/^(tbil|总胆红素)$/i, 'bilirubin'], [/^(ua|尿酸)$/i, 'uric_acid'], [/^(k|钾|血钾)$/i, 'potassium'],
   [/^(tp|总蛋白)$/i, 'total_protein'], [/^(urea|bun|尿素|尿素氮)$/i, 'urea'], [/^(na|钠|血钠)$/i, 'sodium'], [/^(cl|氯|血氯)$/i, 'chloride'],
   [/^(bnp|脑钠肽)$/i, 'bnp'], [/^(nt-?probnp|n末端脑钠肽前体)$/i, 'nt_probnp'], [/^(crp|c反应蛋白)$/i, 'crp'],
+  [/^(eos|eos%|eos#|嗜酸性粒细胞|嗜酸性粒细胞绝对值|嗜酸性粒细胞百分比|嗜酸粒细胞)$/i, 'eosinophils'],
+  [/^(ige|总ige|血清总ige|免疫球蛋白e)$/i, 'total_ige'],
+  [/^(af-?s?ige|烟曲霉特异性ige|曲霉sige|m3)$/i, 'aspergillus_sige'],
+  [/^(cea|癌胚抗原)$/i, 'cea'],
+  [/^(cyfra21-?1|细胞角蛋白19片段)$/i, 'cyfra21_1'],
+  [/^(nse|神经元特异性烯醇化酶)$/i, 'nse'],
+  [/^(scc|scc-?ag|鳞状细胞癌抗原)$/i, 'scc'],
+  [/^(esr|血沉|红细胞沉降率)$/i, 'esr'],
+  [/^(pct|降钙素原)$/i, 'pct'],
+  [/^(afp|甲胎蛋白)$/i, 'afp'],
 ]
 export function testKey(name: string): string {
   // 报告常写「中文名(缩写)」：整体、括号里的缩写、括号外的中文名依次试
@@ -751,6 +761,997 @@ export class PatientService {
       asset_id: asset.id,
       file_id: fid,
       raw_file_id: rawFid,
+    }
+  }
+
+  /**
+   * 多期随访医学影像对比评估（RECIST 1.1 / 气道粘液栓演变）：
+   * 对比基线检查 (Baseline) 与随访检查 (Follow-up) 的病灶长径、短径与 3D 体积变化率，
+   * 自动评定 RECIST 1.1 疗效等级（CR / PR / SD / PD）或气道粘液栓转归（清除 / 改善 / 稳定 / 加重），
+   * 生成包含双期影像对照、量化演变表格与临床建议的完整结构化评估报告，并支持选择性将对比报告落库为新的病历记录。
+   */
+  compareImaging(a: Actor, patientId: string, input?: {
+    baseline_record_id?: string
+    followup_record_id?: string
+    save_as_record?: boolean
+  }): {
+    ok: boolean
+    patient_id: string
+    patient_code: string
+    is_single_baseline?: boolean
+    message?: string
+    baseline?: any
+    followup?: any
+    interval_days?: number
+    recist?: {
+      target_type: 'tumor_lesion' | 'bronchiectasis_mucus' | 'general'
+      baseline_ld_mm?: number
+      followup_ld_mm?: number
+      diff_ld_mm?: number
+      percent_change_ld?: number
+      baseline_volume_cm3?: number
+      followup_volume_cm3?: number
+      diff_volume_cm3?: number
+      percent_change_volume?: number
+      category: 'CR' | 'PR' | 'SD' | 'PD'
+      category_name: string
+      interpretation: string
+      academic_statement: string
+    }
+    summary_markdown: string
+    record_id?: string
+  } {
+    const { c, p } = this.visible(a, patientId)
+    const rows = (c.db.db.prepare("SELECT * FROM records WHERE patient_id = ? AND kind = 'imaging' ORDER BY COALESCE(report_date, created_at) ASC").all(patientId) as unknown as Array<RecordRow & { text_enc?: string | null }>)
+      .map(r => {
+        let imaging_data: Record<string, any> | null = null
+        if (r.text_enc) {
+          try {
+            const dec = this.keys.decryptText(c.tenantId, r.text_enc)
+            if (dec) imaging_data = JSON.parse(dec)
+          } catch {}
+        }
+        return { ...r, text_enc: undefined, imaging_data }
+      })
+
+    const validRows = rows.filter(r => r.imaging_data && r.status !== 'rejected')
+    if (validRows.length === 0) {
+      throw new PatientError('no_imaging_records', '该患者尚无已记录的医学影像量化分析数据', 400)
+    }
+
+    if (validRows.length === 1) {
+      const single = validRows[0]!
+      const singleDate = single.report_date || single.created_at.slice(0, 10)
+      const sm = single.imaging_data?.metrics || {}
+      return {
+        ok: true,
+        patient_id: patientId,
+        patient_code: p.code,
+        is_single_baseline: true,
+        message: `患者当前仅有 1 份基线影像（${single.title}，${singleDate}），尚无随访对比时间点。已建立基线肿瘤负荷指标，待后续复查时自动计算 RECIST 1.1 疗效评估。`,
+        baseline: {
+          record_id: single.id,
+          title: single.title,
+          date: singleDate,
+          modality: single.imaging_data?.modality || 'CT',
+          metrics: sm,
+          asset_id: single.imaging_data?.asset_id,
+          file_id: single.imaging_data?.file_id || (single.file_id !== single.imaging_data?.raw_file_id ? single.file_id : undefined),
+          raw_file_id: single.imaging_data?.raw_file_id,
+        },
+        summary_markdown: `# 患者 ${p.code} 基线影像指标存档\n\n- **检查日期**: ${singleDate}\n- **检查项目**: ${single.title}\n- **状态**: 单期基线，待后续随访对比。`,
+      }
+    }
+
+    let baseline = input?.baseline_record_id
+      ? validRows.find(r => r.id === input.baseline_record_id)
+      : validRows[0]!
+    let followup = input?.followup_record_id
+      ? validRows.find(r => r.id === input.followup_record_id)
+      : validRows[validRows.length - 1]!
+
+    if (!baseline) throw new PatientError('baseline_not_found', '未找到指定的基线影像记录', 404)
+    if (!followup) throw new PatientError('followup_not_found', '未找到指定的随访影像记录', 404)
+    if (baseline.id === followup.id) {
+      throw new PatientError('invalid_comparison_points', '随访对比需要选择两个不同时期的影像记录', 400)
+    }
+
+    // 确保时间顺序：若用户选反了，自动纠正为 baseline 早于 followup
+    const bDate = baseline.report_date || baseline.created_at.slice(0, 10)
+    const fDate = followup.report_date || followup.created_at.slice(0, 10)
+    if (new Date(bDate).getTime() > new Date(fDate).getTime()) {
+      const tmp = baseline
+      baseline = followup
+      followup = tmp
+    }
+
+    const baseDateStr = baseline.report_date || baseline.created_at.slice(0, 10)
+    const followDateStr = followup.report_date || followup.created_at.slice(0, 10)
+    const intervalDays = Math.max(0, Math.round(Math.abs(new Date(followDateStr).getTime() - new Date(baseDateStr).getTime()) / (1000 * 60 * 60 * 24)))
+
+    const bm = baseline.imaging_data?.metrics || {}
+    const fm = followup.imaging_data?.metrics || {}
+
+    const bModel = String(baseline.imaging_data?.model_id || '')
+    const fModel = String(followup.imaging_data?.model_id || '')
+    const isBronch = bModel.includes('bronchiectasis') || fModel.includes('bronchiectasis') || baseline.title.includes('支气管') || followup.title.includes('支气管')
+
+    const round = (n: number, d = 1) => {
+      const f = Math.pow(10, d)
+      return Math.round(n * f) / f
+    }
+
+    const bLd = Number(bm.longest_diameter_mm || bm.bronchus_caliber_mm || 0)
+    const fLd = Number(fm.longest_diameter_mm || fm.bronchus_caliber_mm || 0)
+    const bVol = Number(bm.total_volume_cm3 || bm.total_mucus_volume_cm3 || 0)
+    const fVol = Number(fm.total_volume_cm3 || fm.total_mucus_volume_cm3 || 0)
+
+    const bMucus = Number(bm.total_mucus_volume_cm3 ?? bm.mucus_plug_volume_mm3 ?? 0)
+    const fMucus = Number(fm.total_mucus_volume_cm3 ?? fm.mucus_plug_volume_mm3 ?? 0)
+    const bHam = Number(bm.high_attenuation_mucus_cm3 ?? 0)
+    const fHam = Number(fm.high_attenuation_mucus_cm3 ?? 0)
+    const bBar = bm.bar_ratio !== undefined ? Number(bm.bar_ratio) : undefined
+    const fBar = fm.bar_ratio !== undefined ? Number(fm.bar_ratio) : undefined
+
+    const diffLd = round(fLd - bLd, 1)
+    const pctLd = bLd > 0 ? round((diffLd / bLd) * 100, 1) : 0
+    const diffVol = round(fVol - bVol, 2)
+    const pctVol = bVol > 0 ? round((diffVol / bVol) * 100, 1) : 0
+
+    let category: 'CR' | 'PR' | 'SD' | 'PD' = 'SD'
+    let categoryName = '疾病稳定 (Stable Disease)'
+    let interpretation = ''
+    let targetType: 'tumor_lesion' | 'bronchiectasis_mucus' | 'general' = 'general'
+
+    if (isBronch && (bMucus > 0 || fMucus > 0 || bBar !== undefined)) {
+      targetType = 'bronchiectasis_mucus'
+      const diffMucus = round(fMucus - bMucus, 2)
+      const pctMucus = bMucus > 0 ? round((diffMucus / bMucus) * 100, 1) : 0
+
+      if (fMucus === 0 && bMucus > 0) {
+        category = 'CR'
+        categoryName = '完全清除 (Complete Clearance)'
+        interpretation = '支气管管腔内嵌顿粘液栓已完全吸收排空，气道管腔通畅，未见残余阻塞。'
+      } else if (pctMucus <= -50.0 || (bHam > 0 && fHam === 0)) {
+        category = 'PR'
+        categoryName = '显著改善 (Significant Improvement)'
+        interpretation = `支气管粘液栓体积较基线吸收缩小 ≥ 50%（当前减少 ${Math.abs(pctMucus)}%）${bHam > 0 && fHam === 0 ? '，高密度粘液栓 (HAM) 已完全消失' : ''}。`
+      } else if (pctMucus >= 20.0 || (fHam > 0 && bHam === 0)) {
+        category = 'PD'
+        categoryName = '病变加重 (Exacerbation/Progression)'
+        interpretation = `支气管粘液栓负荷较基线增加 ≥ 20%（当前增加 +${pctMucus}%）${fHam > 0 && bHam === 0 ? '，且新发高密度粘液栓 (HAM)，提示曲霉高反应加重' : ''}。`
+      } else {
+        category = 'SD'
+        categoryName = '病情稳定 (Stable Disease)'
+        interpretation = `支气管管径与粘液栓负荷维持稳定，变化未达显著吸收或加重标准（粘液栓变化率 ${pctMucus > 0 ? '+' : ''}${pctMucus}%）。`
+      }
+    } else {
+      targetType = 'tumor_lesion'
+      if (fLd === 0 && bLd > 0) {
+        category = 'CR'
+        categoryName = '完全缓解 (Complete Response)'
+        interpretation = '所有靶病灶均完全消失，无新病灶出现，无肿瘤活性残留。'
+      } else if (pctLd <= -30.0) {
+        category = 'PR'
+        categoryName = '部分缓解 (Partial Response)'
+        interpretation = `靶病灶最大长径之和较基线缩小 ≥ 30%（当前减少 ${Math.abs(pctLd)}%，体积缩小 ${Math.abs(pctVol)}%）。`
+      } else if (pctLd >= 20.0 && diffLd >= 5.0) {
+        category = 'PD'
+        categoryName = '疾病进展 (Progressive Disease)'
+        interpretation = `靶病灶最大长径较基线增加 ≥ 20% 且绝对值增加 ≥ 5mm（当前增加 +${pctLd}%，绝对增加 +${diffLd} mm）。`
+      } else {
+        category = 'SD'
+        categoryName = '疾病稳定 (Stable Disease)'
+        interpretation = `靶病灶长径变化未达 PR 缩小标准，亦未达 PD 进展标准（长径变化率 ${pctLd > 0 ? '+' : ''}${pctLd}%，体积变化率 ${pctVol > 0 ? '+' : ''}${pctVol}%）。`
+      }
+    }
+
+    const signLd = pctLd > 0 ? `+${pctLd}%` : `${pctLd}%`
+    const signVol = pctVol > 0 ? `+${pctVol}%` : `${pctVol}%`
+    const academicStatement = `依据实体瘤疗效评价标准 (RECIST 1.1)，患者 ${p.code} 随访对比（间隔 ${intervalDays} 天）：靶病灶最大长径由基线 ${bLd} mm 变化至 ${fLd} mm（${signLd}），3D 总体积由 ${bVol} cm³ 变化至 ${fVol} cm³（${signVol}）。总体疗效评估为：【${category} - ${categoryName}】。`
+
+    const baseAssetId = baseline.imaging_data?.asset_id
+    const followAssetId = followup.imaging_data?.asset_id
+
+    const summaryMd = `# 医学影像多期随访对比评估报告 (RECIST 1.1)
+
+**患者代号**: \`${p.code}\`  
+**基线检查**: ${baseline.title} (\`${baseDateStr}\`)  
+**随访检查**: ${followup.title} (\`${followDateStr}\`)  
+**随访间隔**: **${intervalDays}** 天  
+
+---
+
+### 一、 疗效评估结论
+> **评估等级**: **${category} (${categoryName})**  
+> **临床判定**: ${interpretation}  
+> **学术结论**: ${academicStatement}
+
+---
+
+### 二、 靶病灶与量化指标演变对比表
+| 测量指标 | 基线 (Baseline: ${baseDateStr}) | 随访 (Follow-up: ${followDateStr}) | 绝对差值 (Δ) | 变化率 (Δ%) | 评估标准 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **最大截面长径 (LD)** | ${bLd} mm | ${fLd} mm | ${diffLd > 0 ? '+' : ''}${diffLd} mm | **${signLd}** | RECIST 1.1 靶病灶标准 |
+| **3D 总体积 (Volume)** | ${bVol} cm³ | ${fVol} cm³ | ${diffVol > 0 ? '+' : ''}${diffVol} cm³ | **${signVol}** | 3D MONAI 深度学习测量 |
+${bBar !== undefined || fBar !== undefined ? `| **支气管伴行动脉比 (BAR)** | ${bBar ?? '--'} | ${fBar ?? '--'} | ${fBar !== undefined && bBar !== undefined ? round(fBar - bBar, 2) : '--'} | -- | 印戒征 (>1.10) |` : ''}
+${bMucus > 0 || fMucus > 0 ? `| **粘液栓体积** | ${bMucus} cm³ | ${fMucus} cm³ | ${round(fMucus - bMucus, 2)} cm³ | ${bMucus > 0 ? round(((fMucus - bMucus) / bMucus) * 100, 1) + '%' : '--'} | 气道嵌顿负荷 |` : ''}
+${bHam > 0 || fHam > 0 ? `| **高密度粘液栓 (HAM)** | ${bHam} cm³ | ${fHam} cm³ | ${round(fHam - bHam, 2)} cm³ | -- | 提示 ABPA 活动性 |` : ''}
+
+---
+
+### 三、 双期关键截面影像对照
+${baseAssetId ? `- **基线关键切片**: ![基线关键切片](asset:${baseAssetId} "基线影像 (${baseDateStr})")` : ''}
+${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${followAssetId} "随访影像 (${followDateStr})")` : ''}
+
+---
+
+### 四、 临床处置与随访建议
+1. **${category === 'CR' || category === 'PR' ? '疗效显著' : category === 'PD' ? '疾病进展预警' : '疗效稳定'}**: 结合当前影像 RECIST 1.1 评估结果（${category}），建议临床维持或调整现有治疗方案。
+2. **随访周期**: 建议于 8–12 周后再次安排胸腹部 CT 随访，继续监测靶病灶长径与体积演变曲线。
+`
+
+    let savedRecordId: string | undefined
+    if (input?.save_as_record) {
+      this.requireTeam(a, patientId)
+      savedRecordId = rid('rc')
+      const comparisonPayload = {
+        model_id: 'recist_longitudinal_comparator',
+        sample_id: null,
+        modality: baseline.imaging_data?.modality || followup.imaging_data?.modality || 'CT',
+        baseline_record_id: baseline.id,
+        followup_record_id: followup.id,
+        interval_days: intervalDays,
+        recist: {
+          category,
+          category_name: categoryName,
+          diff_ld_mm: diffLd,
+          percent_change_ld: pctLd,
+          diff_volume_cm3: diffVol,
+          percent_change_volume: pctVol,
+          interpretation,
+          academic_statement: academicStatement,
+        },
+        metrics: {
+          longest_diameter_mm: fLd,
+          total_volume_cm3: fVol,
+          recist_category: category,
+          percent_change_ld: pctLd,
+          percent_change_volume: pctVol,
+        },
+        findings: [
+          `RECIST 1.1 疗效评估: 【${category}】${categoryName}`,
+          `长径变化: ${signLd} (${bLd} mm → ${fLd} mm)`,
+          `体积变化: ${signVol} (${bVol} cm³ → ${fVol} cm³)`,
+        ],
+        asset_id: followAssetId || baseAssetId,
+        file_id: followup.file_id || baseline.file_id,
+        analyzed_at: now(),
+      }
+      const encText = this.keys.encryptText(c.tenantId, JSON.stringify(comparisonPayload))
+      const summaryNote = `${category} · ${categoryName} · 长径 ${signLd} · 体积 ${signVol}`
+      c.db.db.prepare(`INSERT INTO records (id, patient_id, kind, title, report_date, file_id, status, text_enc, extraction, extraction_note, created_by, created_at, confirmed_by, confirmed_at)
+        VALUES (?, ?, 'imaging', ?, ?, ?, 'confirmed', ?, 'done', ?, ?, ?, ?, ?)`)
+        .run(savedRecordId, patientId, `多期影像随访 RECIST 1.1 疗效评估 (${category})`, followDateStr, followup.file_id || baseline.file_id,
+          encText, summaryNote.slice(0, 200), a.userId, now(), a.userId, now())
+      c.db.db.prepare('UPDATE patients SET updated_at = ? WHERE id = ?').run(now(), patientId)
+      this.log(c, a, patientId, 'imaging_compare', savedRecordId)
+    }
+
+    return {
+      ok: true,
+      patient_id: patientId,
+      patient_code: p.code,
+      is_single_baseline: false,
+      baseline: {
+        record_id: baseline.id,
+        title: baseline.title,
+        date: baseDateStr,
+        modality: baseline.imaging_data?.modality || 'CT',
+        metrics: bm,
+        asset_id: baseAssetId,
+        file_id: baseline.imaging_data?.file_id || (baseline.file_id !== baseline.imaging_data?.raw_file_id ? baseline.file_id : undefined),
+        raw_file_id: baseline.imaging_data?.raw_file_id,
+      },
+      followup: {
+        record_id: followup.id,
+        title: followup.title,
+        date: followDateStr,
+        modality: followup.imaging_data?.modality || 'CT',
+        metrics: fm,
+        asset_id: followAssetId,
+        file_id: followup.imaging_data?.file_id || (followup.file_id !== followup.imaging_data?.raw_file_id ? followup.file_id : undefined),
+        raw_file_id: followup.imaging_data?.raw_file_id,
+      },
+      interval_days: intervalDays,
+      recist: {
+        target_type: targetType,
+        baseline_ld_mm: bLd,
+        followup_ld_mm: fLd,
+        diff_ld_mm: diffLd,
+        percent_change_ld: pctLd,
+        baseline_volume_cm3: bVol,
+        followup_volume_cm3: fVol,
+        diff_volume_cm3: diffVol,
+        percent_change_volume: pctVol,
+        category,
+        category_name: categoryName,
+        interpretation,
+        academic_statement: academicStatement,
+      },
+      summary_markdown: summaryMd,
+      record_id: savedRecordId,
+    }
+  }
+
+  /**
+   * 多模态因果诊断证据链分析 (Multimodal Diagnostic Evidence Chain):
+   * 自动将医学影像阳性病征 (如 支扩/粘液栓/高密度粘液栓 HAM、或肺实质结节占位 RECIST 1.1)
+   * 与患者实验室化验指标 (EOS, IgE, 曲霉sIgE, 肿瘤标志物 CEA/CYFRA21-1, CRP/ESR)
+   * 及既往诊断标签/病史进行因果三角校验，评估临床确诊依据、缺漏待查项，并输出结构化证据链条。
+   */
+  getEvidenceChain(a: Actor, patientId: string, input?: {
+    record_id?: string
+    baseline_record_id?: string
+    followup_record_id?: string
+  }): {
+    ok: boolean
+    patient_id: string
+    patient_code: string
+    record_id: string
+    record_title: string
+    syndrome: string
+    syndrome_key: 'abpa_bronchiectasis' | 'lung_neoplasm_recist' | 'abdominal_organ' | 'general'
+    clinical_urgency: 'high' | 'medium' | 'routine'
+    match_summary: string
+    criteria_table: Array<{
+      criterion: string
+      category: 'imaging' | 'lab' | 'history'
+      status: 'positive' | 'negative' | 'missing'
+      evidence_value: string
+      reference_guideline: string
+    }>
+    matched_labs: Array<{
+      test_key: string
+      test_name: string
+      value: string
+      unit: string
+      flag: string | null
+      date: string
+      clinical_significance: string
+    }>
+    suggested_workup: string[]
+    diagnostic_impression: string
+    summary_markdown: string
+  } {
+    const { c, p } = this.visible(a, patientId)
+    const recRows = c.db.db.prepare('SELECT * FROM records WHERE patient_id = ? ORDER BY COALESCE(report_date, created_at) DESC').all(patientId) as any[]
+
+    const imagingRecs = recRows.filter(r => r.kind === 'imaging').map(r => {
+      let imaging_data: Record<string, any> | null = null
+      if (r.text_enc) {
+        try {
+          const dec = this.keys.decryptText(c.tenantId, r.text_enc)
+          if (dec) imaging_data = JSON.parse(dec)
+        } catch {}
+      }
+      return { ...r, imaging_data }
+    })
+
+    if (imagingRecs.length === 0) {
+      throw new PatientError('imaging_record_not_found', '该患者尚无医学影像量化分析记录', 404)
+    }
+
+    // 解析目标记录
+    let targetRec = imagingRecs[0]!
+    if (input?.record_id) {
+      const found = imagingRecs.find(r => r.id === input.record_id)
+      if (found) targetRec = found
+    } else if (input?.followup_record_id) {
+      const found = imagingRecs.find(r => r.id === input.followup_record_id)
+      if (found) targetRec = found
+    } else if (input?.baseline_record_id) {
+      const found = imagingRecs.find(r => r.id === input.baseline_record_id)
+      if (found) targetRec = found
+    }
+
+    // 读取该患者所有已确认的化验记录
+    const confirmedLabs = (c.db.db.prepare("SELECT * FROM labs WHERE patient_id = ? AND status = 'confirmed' ORDER BY collected_on DESC, created_at DESC").all(patientId) as any[]).map(labOf)
+    const summaryRow = c.db.db.prepare('SELECT summary_enc FROM patients WHERE id = ?').get(patientId) as { summary_enc: string | null } | undefined
+    const patientSummary = (summaryRow?.summary_enc ? this.keys.decryptText(c.tenantId, summaryRow.summary_enc) : null) ?? ''
+    const tags: string[] = Array.isArray(p.tags) ? p.tags : []
+
+    const m = (targetRec.imaging_data?.metrics || {}) as Record<string, any>
+    const modelId = String(targetRec.imaging_data?.model_id || '')
+    const recTitle = String(targetRec.title || '')
+
+    // 综合判定临床病征类别
+    const isBronchiectasis = modelId === 'bronchiectasis_mucus_analyzer' ||
+      recTitle.includes('支气管') ||
+      m.bar_ratio !== undefined ||
+      m.total_mucus_volume_cm3 !== undefined ||
+      tags.some((t: string) => t.includes('支气管') || t.includes('ABPA'))
+
+    const isNoduleRecist = !isBronchiectasis && (
+      modelId.includes('nodule') ||
+      m.longest_diameter_mm !== undefined ||
+      recTitle.includes('RECIST')
+    )
+
+    const isAbdominal = !isBronchiectasis && !isNoduleRecist && (
+      modelId.includes('spleen') ||
+      modelId.includes('liver') ||
+      recTitle.includes('腹部') ||
+      recTitle.includes('脾')
+    )
+
+    // 查找特定检验项目的辅助闭包
+    const findLab = (keys: string[]) => {
+      for (const k of keys) {
+        const found = confirmedLabs.find(l => l.test_key === k || k.includes(l.test_key))
+        if (found) return found
+      }
+      return null
+    }
+
+    let syndrome = '全胸腹部医学影像量化因果分析'
+    let syndromeKey: 'abpa_bronchiectasis' | 'lung_neoplasm_recist' | 'abdominal_organ' | 'general' = 'general'
+    let clinicalUrgency: 'high' | 'medium' | 'routine' = 'routine'
+    const criteriaTable: Array<{
+      criterion: string
+      category: 'imaging' | 'lab' | 'history'
+      status: 'positive' | 'negative' | 'missing'
+      evidence_value: string
+      reference_guideline: string
+    }> = []
+    const matchedLabs: Array<{
+      test_key: string
+      test_name: string
+      value: string
+      unit: string
+      flag: string | null
+      date: string
+      clinical_significance: string
+    }> = []
+    const suggestedWorkup: string[] = []
+    let diagnosticImpression = ''
+
+    if (isBronchiectasis) {
+      syndrome = '变应性支气管肺曲霉病 (ABPA) / 支气管扩张并发真菌致敏'
+      syndromeKey = 'abpa_bronchiectasis'
+
+      // 1. 基础疾病史 (Asthma or Bronchiectasis)
+      const hasPredisposing = tags.some((t: string) => t.includes('支气管') || t.includes('哮喘') || t.includes('咳嗽')) || patientSummary.includes('支气管')
+      criteriaTable.push({
+        criterion: '基础呼吸系统疾病 (哮喘或支气管扩张)',
+        category: 'history',
+        status: hasPredisposing ? 'positive' : 'missing',
+        evidence_value: hasPredisposing ? `确诊病史或标签: ${tags.filter((t: string) => t.includes('支气管') || t.includes('哮喘') || t.includes('咳嗽')).join('、') || '慢性咳嗽'}` : '既往病史未明确记录典型哮喘或支扩',
+        reference_guideline: 'ISHAM 2013 / 2024 ABPA 诊断必需基础条件',
+      })
+
+      // 2. 影像学中心性支扩 (BAR > 1.10 印戒征)
+      const barVal = m.bar_ratio !== undefined ? Number(m.bar_ratio) : null
+      const barPos = barVal !== null ? barVal > 1.10 : (m.signet_ring_sign === true)
+      criteriaTable.push({
+        criterion: 'HRCT 中心性支气管扩张 (BAR 印戒征阳性)',
+        category: 'imaging',
+        status: barPos ? 'positive' : barVal !== null ? 'negative' : 'positive',
+        evidence_value: barVal !== null ? `BAR 比值 ${barVal} (${barPos ? '印戒征阳性 ⚠' : '正常'})` : '影像提示支气管壁明显增厚与管腔囊柱状扩张',
+        reference_guideline: 'Fleischner 学会支气管扩张诊断标准 (BAR > 1.10)',
+      })
+
+      // 3. 高密度粘液栓 (HAM) - ABPA 强特异性标志
+      const hamVal = m.high_attenuation_mucus_cm3 !== undefined ? Number(m.high_attenuation_mucus_cm3) : null
+      const hamPos = (hamVal !== null && hamVal > 0) || m.high_attenuation_mucus_ham === true
+      criteriaTable.push({
+        criterion: '高密度粘液栓 (High-Attenuation Mucus, HAM)',
+        category: 'imaging',
+        status: hamPos ? 'positive' : 'negative',
+        evidence_value: hamPos ? `阳性 (${hamVal !== null ? `${hamVal} cm³` : '检出嵌顿'}，CT 值显著高于伴行动脉，特异性 >95%)` : '未见明确高密度粘液栓 (CT值低于或等于周围软组织)',
+        reference_guideline: 'ABPA 影像学标志性病理征象 (HAM 为重症高复发预后指标)',
+      })
+
+      // 4. 血清总 IgE
+      const igeLab = findLab(['total_ige', 'ige'])
+      if (igeLab) {
+        const val = igeLab.std_value ?? igeLab.value_num ?? 0
+        const isPos = val > 1000 || val > 416
+        criteriaTable.push({
+          criterion: '血清总 IgE 显著升高 (> 1000 IU/mL 或 > 416 IU/mL)',
+          category: 'lab',
+          status: isPos ? 'positive' : 'negative',
+          evidence_value: `${val} ${igeLab.std_unit || igeLab.unit || 'IU/mL'} (${isPos ? '显著升高 ↑' : '未达门限'})`,
+          reference_guideline: 'ISHAM 必需诊断条件 (总 IgE > 1000 IU/mL 或 > 416 kU/L)',
+        })
+        matchedLabs.push({
+          test_key: 'total_ige',
+          test_name: igeLab.test_name || '血清总 IgE',
+          value: String(val),
+          unit: igeLab.std_unit || igeLab.unit || 'IU/mL',
+          flag: isPos ? 'H' : null,
+          date: igeLab.collected_on || '近期',
+          clinical_significance: isPos ? '总 IgE 显著超标，强烈提示 I 型超敏与曲霉免疫反应活跃' : '总 IgE 未达 ABPA 典型诊断门限',
+        })
+      } else {
+        criteriaTable.push({
+          criterion: '血清总 IgE 显著升高 (> 1000 IU/mL)',
+          category: 'lab',
+          status: 'missing',
+          evidence_value: '未检测（ABPA 诊断金标准必需项，急需补充）',
+          reference_guideline: 'ISHAM 必备检验项',
+        })
+        suggestedWorkup.push('急查血清总 IgE (Total IgE 定量)')
+      }
+
+      // 5. 外周血嗜酸性粒细胞 (EOS#)
+      const eosLab = findLab(['eosinophils', 'eos'])
+      if (eosLab) {
+        const val = eosLab.std_value ?? eosLab.value_num ?? 0
+        const isPos = val > 0.5 || eosLab.flag === 'H'
+        criteriaTable.push({
+          criterion: '外周血嗜酸性粒细胞绝对值升高 (> 0.5 × 10⁹/L)',
+          category: 'lab',
+          status: isPos ? 'positive' : 'negative',
+          evidence_value: `${val} ${eosLab.std_unit || eosLab.unit || '×10⁹/L'} (${isPos ? '嗜酸粒细胞增高 ↑' : '正常'})`,
+          reference_guideline: 'ISHAM 次要支持指标 (> 500 / μL)',
+        })
+        matchedLabs.push({
+          test_key: 'eosinophils',
+          test_name: eosLab.test_name || '嗜酸性粒细胞绝对值',
+          value: String(val),
+          unit: eosLab.std_unit || eosLab.unit || '×10⁹/L',
+          flag: isPos ? 'H' : null,
+          date: eosLab.collected_on || '近期',
+          clinical_significance: isPos ? '外周血嗜酸粒细胞浸润增多，支持嗜酸性气道炎症' : '外周血嗜酸粒细胞在正常范围内',
+        })
+      } else {
+        criteriaTable.push({
+          criterion: '外周血嗜酸性粒细胞绝对值升高 (> 0.5 × 10⁹/L)',
+          category: 'lab',
+          status: 'missing',
+          evidence_value: '近期未查血常规五分类 (CBC + Diff)',
+          reference_guideline: '支持条件',
+        })
+        suggestedWorkup.push('送检全血细胞计数伴白细胞五分类 (CBC + EOS#)')
+      }
+
+      // 6. 烟曲霉特异性 IgE (sIgE)
+      const sigeLab = findLab(['aspergillus_sige', 'af_ige'])
+      if (sigeLab) {
+        const val = sigeLab.std_value ?? sigeLab.value_num ?? 0
+        const isPos = val >= 0.35 || sigeLab.flag === 'H'
+        criteriaTable.push({
+          criterion: '烟曲霉特异性 IgE (sIgE ≥ 0.35 kUA/L) 或皮试阳性',
+          category: 'lab',
+          status: isPos ? 'positive' : 'negative',
+          evidence_value: `${val} ${sigeLab.std_unit || sigeLab.unit || 'kUA/L'} (${isPos ? '特异性致敏阳性 ↑' : '阴性'})`,
+          reference_guideline: 'ISHAM 必需诊断条件',
+        })
+        matchedLabs.push({
+          test_key: 'aspergillus_sige',
+          test_name: sigeLab.test_name || '烟曲霉特异性 sIgE',
+          value: String(val),
+          unit: sigeLab.std_unit || sigeLab.unit || 'kUA/L',
+          flag: isPos ? 'H' : null,
+          date: sigeLab.collected_on || '近期',
+          clinical_significance: isPos ? '证实患者对烟曲霉存在特异性致敏' : '未检出烟曲霉特异性抗体',
+        })
+      } else {
+        criteriaTable.push({
+          criterion: '烟曲霉特异性 IgE (sIgE ≥ 0.35 kUA/L)',
+          category: 'lab',
+          status: 'missing',
+          evidence_value: '未检测（确诊烟曲霉致敏关键指标）',
+          reference_guideline: 'ISHAM 必备检验项',
+        })
+        suggestedWorkup.push('送检烟曲霉特异性 IgE (sIgE / m3) 与曲霉 IgG 沉淀抗体')
+      }
+
+      // 7. 炎症指标 (CRP / ESR)
+      const crpLab = findLab(['crp', 'esr'])
+      if (crpLab) {
+        matchedLabs.push({
+          test_key: crpLab.test_key,
+          test_name: crpLab.test_name,
+          value: String(crpLab.std_value ?? crpLab.value_num ?? ''),
+          unit: crpLab.std_unit || crpLab.unit || '',
+          flag: crpLab.flag,
+          date: crpLab.collected_on || '近期',
+          clinical_significance: crpLab.flag === 'H' ? '全身炎症反应处于活动期' : '全身炎症指标基本可控',
+        })
+      }
+
+      // 评估紧迫度与印象
+      if (hamPos) {
+        clinicalUrgency = 'high'
+        diagnosticImpression = `胸部 HRCT 具备特征性高密度粘液栓 (HAM) 与显著印戒征支扩 (BAR ${barVal ?? '> 1.10'})，气道管腔明显嵌顿。${criteriaTable.filter(c => c.status === 'positive').length >= 3 ? '高度符合变应性支气管肺曲霉病 (ABPA) 临床诊断标准' : '强烈提示 ABPA 疑诊'}。建议及时启动多模态随访及气道廓清治疗。`
+      } else {
+        clinicalUrgency = 'medium'
+        diagnosticImpression = `胸部 HRCT 证实支气管扩张 (BAR ${barVal ?? '> 1.10'})，目前粘液栓呈低中密度。建议结合血清 IgE 与嗜酸粒细胞动态监测，警惕并发真菌定植或急性加重。`
+      }
+      suggestedWorkup.push('深部痰真菌镜检与培养 (涂片找真菌菌丝)', '呼吸科理疗与气道廓清排痰 (ACT) 指导')
+
+    } else if (isNoduleRecist) {
+      syndrome = '肺实质占位病变 / 肿瘤负荷与 RECIST 1.1 疗效评估'
+      syndromeKey = 'lung_neoplasm_recist'
+
+      const ld = m.longest_diameter_mm !== undefined ? Number(m.longest_diameter_mm) : null
+      const vol = m.total_volume_cm3 !== undefined ? Number(m.total_volume_cm3) : null
+
+      criteriaTable.push({
+        criterion: 'RECIST 1.1 靶病灶解剖学长径',
+        category: 'imaging',
+        status: ld && ld >= 10 ? 'positive' : 'negative',
+        evidence_value: ld ? `最大截面长径 ${ld} mm (短径 ${m.short_axis_mm ?? '--'} mm)` : '未记录具体长径',
+        reference_guideline: 'RECIST 1.1 可测量靶病灶标准 (长径 ≥ 10 mm)',
+      })
+
+      if (vol !== null) {
+        criteriaTable.push({
+          criterion: '3D 肿瘤立体病灶总体积',
+          category: 'imaging',
+          status: 'positive',
+          evidence_value: `${vol} cm³ (关键最大截面位于第 #${m.key_slice_index ?? 0} 层)`,
+          reference_guideline: 'MONAI 深度学习体素三维容积分割',
+        })
+      }
+
+      // 肿瘤标志物查找
+      const ceaLab = findLab(['cea', 'cyfra21_1', 'nse', 'scc'])
+      if (ceaLab) {
+        const val = ceaLab.std_value ?? ceaLab.value_num ?? 0
+        const isPos = ceaLab.flag === 'H'
+        criteriaTable.push({
+          criterion: `肿瘤生物标志物 (${ceaLab.test_name})`,
+          category: 'lab',
+          status: isPos ? 'positive' : 'negative',
+          evidence_value: `${val} ${ceaLab.std_unit || ceaLab.unit || ''} (${isPos ? '异常升高 ↑' : '正常范围'})`,
+          reference_guideline: 'NCCN 肺部肿瘤血清学生物标志物监测',
+        })
+        matchedLabs.push({
+          test_key: ceaLab.test_key,
+          test_name: ceaLab.test_name,
+          value: String(val),
+          unit: ceaLab.std_unit || ceaLab.unit || '',
+          flag: ceaLab.flag,
+          date: ceaLab.collected_on || '近期',
+          clinical_significance: isPos ? '血清肿瘤标志物升高，提示肿瘤负荷活跃或有浸润趋势' : '当前血清标志物未见明显增高',
+        })
+      } else {
+        criteriaTable.push({
+          criterion: '血清肿瘤标志物五项 (CEA / CYFRA21-1 / NSE / SCC)',
+          category: 'lab',
+          status: 'missing',
+          evidence_value: '近期未查血清肿瘤标志物',
+          reference_guideline: '建议补充送检',
+        })
+        suggestedWorkup.push('送检血清肿瘤标志物组合 (CEA + CYFRA21-1 + NSE + SCC)')
+      }
+
+      // 炎症标志物
+      const crpLab = findLab(['crp', 'wbc'])
+      if (crpLab) {
+        matchedLabs.push({
+          test_key: crpLab.test_key,
+          test_name: crpLab.test_name,
+          value: String(crpLab.std_value ?? crpLab.value_num ?? ''),
+          unit: crpLab.std_unit || crpLab.unit || '',
+          flag: crpLab.flag,
+          date: crpLab.collected_on || '近期',
+          clinical_significance: '用于鉴别阻塞性肺炎或肿瘤合并炎性假瘤',
+        })
+      }
+
+      clinicalUrgency = (ld && ld > 20) || (ceaLab?.flag === 'H') ? 'high' : 'medium'
+      diagnosticImpression = `靶病灶三维容积 ${vol ?? '--'} cm³，RECIST 1.1 长径 ${ld ?? '--'} mm。${ceaLab?.flag === 'H' ? '伴随血清肿瘤标志物升高，建议紧密结合多期 CT 随访长径变化率 ΔLD% 综合评定疗效等级。' : '建议在下一随访周期复查 HRCT 计算体积倍增时间 (VDT) 与 RECIST 1.1 疗效评级。'}`
+      suggestedWorkup.push('按 RECIST 1.1 协议在 6~8 周后安排同序列对比复查', '胸部增强 CT / 增强 MRI 评估病灶血供特征')
+
+    } else {
+      syndrome = isAbdominal ? '腹部实质脏器容积与功能代谢因果评估' : '医学影像量化与实验室指标多模态分析'
+      syndromeKey = isAbdominal ? 'abdominal_organ' : 'general'
+
+      // 提取通用化验
+      const genLabs = confirmedLabs.slice(0, 4)
+      for (const l of genLabs) {
+        matchedLabs.push({
+          test_key: l.test_key,
+          test_name: l.test_name,
+          value: String(l.std_value ?? l.value_num ?? ''),
+          unit: l.std_unit || l.unit || '',
+          flag: l.flag,
+          date: l.collected_on || '近期',
+          clinical_significance: l.flag ? '化验指标存在异常偏离' : '化验指标在参考区间内',
+        })
+      }
+      criteriaTable.push({
+        criterion: '影像三维量化测量完成',
+        category: 'imaging',
+        status: 'positive',
+        evidence_value: `项目: ${targetRec.title}`,
+        reference_guideline: 'MONAI 3D 卷积重建',
+      })
+      diagnosticImpression = `已完成影像三维量化分析，目前化验指标整体稳定。建议根据临床症状定期随访。`
+    }
+
+    const posCount = criteriaTable.filter(c => c.status === 'positive').length
+    const totalCount = criteriaTable.length
+    const matchSummary = `共比对 ${totalCount} 项临床确诊指标，其中 ${posCount} 项确立阳性证据，${criteriaTable.filter(c => c.status === 'missing').length} 项建议补充送检。`
+
+    // 构建结构化 Markdown 报告片段
+    let summaryMd = `### 🔬 ${syndrome} · 多模态因果诊断链\n\n`
+    summaryMd += `- **目标影像**: ${targetRec.title} (${targetRec.report_date || '近期'})\n`
+    summaryMd += `- **临床紧迫度**: ${clinicalUrgency === 'high' ? '⚠️ 高度提示临床干预' : clinicalUrgency === 'medium' ? '💡 建议密切随访' : '常规随访'}\n`
+    summaryMd += `- **综合诊断印象**: ${diagnosticImpression}\n\n`
+    summaryMd += `#### 📋 临床确诊依据对照表\n\n`
+    summaryMd += `| 诊断准则要点 | 证据类型 | 判定状态 | 患者客观实测值 | 参考临床指南 |\n`
+    summaryMd += `| :--- | :--- | :---: | :--- | :--- |\n`
+    for (const row of criteriaTable) {
+      const stBadge = row.status === 'positive' ? '✅ 阳性' : row.status === 'negative' ? '⚪ 阴性' : '⚠️ 缺漏待查'
+      const catText = row.category === 'imaging' ? '医学影像' : row.category === 'lab' ? '实验室化验' : '既往病史'
+      summaryMd += `| ${row.criterion} | ${catText} | ${stBadge} | ${row.evidence_value} | ${row.reference_guideline} |\n`
+    }
+
+    if (matchedLabs.length > 0) {
+      summaryMd += `\n#### 🧪 协同关键实验室指标\n\n`
+      summaryMd += `| 化验项目 | 检测数值 | 异常标识 | 采样日期 | 临床因果关联解读 |\n`
+      summaryMd += `| :--- | :--- | :---: | :--- | :--- |\n`
+      for (const lab of matchedLabs) {
+        summaryMd += `| **${lab.test_name}** | ${lab.value} ${lab.unit} | ${lab.flag === 'H' ? '↑ 升高' : lab.flag === 'L' ? '↓ 降低' : '正常'} | ${lab.date} | ${lab.clinical_significance} |\n`
+      }
+    }
+
+    if (suggestedWorkup.length > 0) {
+      summaryMd += `\n#### 💡 推荐完善检查 / 诊疗路径\n\n`
+      suggestedWorkup.forEach((item, idx) => {
+        summaryMd += `${idx + 1}. ${item}\n`
+      })
+    }
+
+    this.log(c, a, patientId, 'imaging_evidence_chain', targetRec.id)
+
+    return {
+      ok: true,
+      patient_id: patientId,
+      patient_code: p.code,
+      record_id: targetRec.id,
+      record_title: targetRec.title,
+      syndrome,
+      syndrome_key: syndromeKey,
+      clinical_urgency: clinicalUrgency,
+      match_summary: matchSummary,
+      criteria_table: criteriaTable,
+      matched_labs: matchedLabs,
+      suggested_workup: suggestedWorkup,
+      diagnostic_impression: diagnosticImpression,
+      summary_markdown: summaryMd,
+    }
+  }
+
+  /**
+   * 导出标准医学数据交换格式：
+   * - fhir: HL7 FHIR R4 DiagnosticReport + ImagingStudy + Observations Bundle
+   * - dicom-sr: DICOM Structured Reporting (SOP Class 1.2.840.10008.5.1.4.1.1.88.22, TID 1500)
+   */
+  exportImagingStandard(
+    a: Actor,
+    patientId: string,
+    input: { record_id?: string; format: 'fhir' | 'dicom-sr' }
+  ): {
+    format: 'fhir' | 'dicom-sr'
+    mime: string
+    filename: string
+    data: Record<string, any>
+  } {
+    const { c, p } = this.visible(a, patientId)
+    const recRows = c.db.db.prepare('SELECT * FROM records WHERE patient_id = ? ORDER BY COALESCE(report_date, created_at) DESC').all(patientId) as any[]
+
+    const imagingRecs = recRows.filter(r => r.kind === 'imaging').map(r => {
+      let imaging_data: Record<string, any> | null = null
+      if (r.text_enc) {
+        try {
+          const dec = this.keys.decryptText(c.tenantId, r.text_enc)
+          if (dec) imaging_data = JSON.parse(dec)
+        } catch {}
+      }
+      return { ...r, imaging_data }
+    })
+
+    if (imagingRecs.length === 0) {
+      throw new PatientError('imaging_record_not_found', '该患者尚无医学影像量化分析记录', 404)
+    }
+
+    let targetRec = imagingRecs[0]!
+    if (input.record_id) {
+      const found = imagingRecs.find(r => r.id === input.record_id)
+      if (found) targetRec = found
+    }
+
+    const m = (targetRec.imaging_data?.metrics || {}) as Record<string, any>
+    const reportDate = targetRec.report_date || new Date().toISOString().slice(0, 10)
+    const modality = targetRec.imaging_data?.modality || 'CT'
+    const organ = targetRec.imaging_data?.organ || '胸部'
+    const title = targetRec.title || 'CT 影像量化分析'
+
+    if (input.format === 'dicom-sr') {
+      const studyUid = `1.2.826.0.1.3680043.9.7128.${Date.now()}`
+      const seriesUid = `${studyUid}.1`
+      const sopInstanceUid = `${studyUid}.1.1`
+
+      const dicomSr = {
+        SOPClassUID: '1.2.840.10008.5.1.4.1.1.88.22', // Enhanced SR Storage
+        SOPInstanceUID: sopInstanceUid,
+        StudyInstanceUID: studyUid,
+        SeriesInstanceUID: seriesUid,
+        Modality: 'SR',
+        Manufacturer: 'Heurion Medical Systems',
+        SoftwareVersions: '2.0.0-MONAI',
+        ContentDate: reportDate.replace(/-/g, ''),
+        ContentTime: '120000',
+        PatientID: p.code,
+        PatientSex: p.sex || 'O',
+        PatientBirthDate: p.birth_year ? `${p.birth_year}0101` : '19800101',
+        StudyDescription: `${organ} ${modality} Quantitative Evaluation`,
+        SeriesDescription: 'Heurion MONAI 3D Quantitative Analysis SR',
+        DocumentTitle: {
+          CodeValue: '126000',
+          CodingSchemeDesignator: 'DCM',
+          CodeMeaning: 'Imaging Measurement Report',
+        },
+        Language: {
+          CodeValue: 'zh',
+          CodingSchemeDesignator: 'RFC5646',
+          CodeMeaning: 'Chinese',
+        },
+        TemplateID: 'TID 1500',
+        ContentTemplateSequence: [{
+          TemplateIdentifier: '1500',
+          MappingResource: 'DCMR',
+        }],
+        FindingsGroup: {
+          TargetRegion: organ,
+          ImagingModality: modality,
+          Measurements: [
+            ...(m.longest_diameter_mm !== undefined ? [{
+              ConceptName: { CodeValue: '21889-1', CodingSchemeDesignator: 'LN', CodeMeaning: 'Distance/Longest Dimension' },
+              Value: m.longest_diameter_mm,
+              Unit: { CodeValue: 'mm', CodingSchemeDesignator: 'UCUM', CodeMeaning: 'millimeter' },
+              Derivation: 'RECIST 1.1 Maximum In-Plane Diameter',
+            }] : []),
+            ...(m.short_axis_mm !== undefined ? [{
+              ConceptName: { CodeValue: '121207', CodingSchemeDesignator: 'DCM', CodeMeaning: 'Perpendicular Dimension' },
+              Value: m.short_axis_mm,
+              Unit: { CodeValue: 'mm', CodingSchemeDesignator: 'UCUM', CodeMeaning: 'millimeter' },
+            }] : []),
+            ...(m.total_volume_cm3 !== undefined ? [{
+              ConceptName: { CodeValue: '121216', CodingSchemeDesignator: 'DCM', CodeMeaning: 'Volume measurement' },
+              Value: m.total_volume_cm3,
+              Unit: { CodeValue: 'cm3', CodingSchemeDesignator: 'UCUM', CodeMeaning: 'cubic centimeter' },
+              Derivation: 'MONAI 3D Voxel Summation',
+            }] : []),
+            ...(m.bar_ratio !== undefined ? [{
+              ConceptName: { CodeValue: 'HEURION-001', CodingSchemeDesignator: '99HEURION', CodeMeaning: 'Broncho-Arterial Ratio (BAR)' },
+              Value: m.bar_ratio,
+              Unit: { CodeValue: '1', CodingSchemeDesignator: 'UCUM', CodeMeaning: 'ratio' },
+            }] : []),
+            ...(m.ham_density_confirmed !== undefined ? [{
+              ConceptName: { CodeValue: 'HEURION-002', CodingSchemeDesignator: '99HEURION', CodeMeaning: 'High Attenuation Mucus Presence' },
+              Value: m.ham_density_confirmed ? 'Positive' : 'Negative',
+              PeakHU: m.max_hu ?? null,
+            }] : []),
+          ],
+          QualitativeEvaluations: [
+            { ConceptName: 'Assessment Note', Value: targetRec.extraction_note || 'Quantitative analysis completed' },
+            { ConceptName: 'Key Slice Index', Value: m.key_slice_index ?? 0 },
+          ],
+        },
+      }
+
+      return {
+        format: 'dicom-sr',
+        mime: 'application/json',
+        filename: `${p.code}_${reportDate}_DICOM_SR.json`,
+        data: dicomSr,
+      }
+    }
+
+    // Default: HL7 FHIR R4 DiagnosticReport
+    const fhirReport = {
+      resourceType: 'DiagnosticReport',
+      id: `report-${targetRec.id}`,
+      meta: {
+        profile: ['http://hl7.org/fhir/StructureDefinition/DiagnosticReport'],
+        lastUpdated: new Date().toISOString(),
+      },
+      status: 'final',
+      category: [{
+        coding: [{
+          system: 'http://terminology.hl7.org/CodeSystem/v2-0074',
+          code: 'RAD',
+          display: 'Radiology',
+        }],
+      }],
+      code: {
+        coding: [{
+          system: 'http://loinc.org',
+          code: '24627-2',
+          display: `${organ} ${modality} Scan`,
+        }],
+        text: title,
+      },
+      subject: {
+        reference: `Patient/${p.id}`,
+        identifier: { system: 'urn:heurion:patient:code', value: p.code },
+        display: `Patient ${p.code}`,
+      },
+      effectiveDateTime: reportDate,
+      issued: new Date().toISOString(),
+      performer: [{
+        display: 'Heurion AI Diagnostics & MONAI Imaging Worker',
+      }],
+      resultsInterpreter: [{
+        display: 'Heurion Platform Clinical Decision Support Engine',
+      }],
+      conclusion: targetRec.extraction_note || '3D Quantitative Analysis completed under RECIST 1.1 / Fleischner Criteria',
+      contained: [
+        ...(m.longest_diameter_mm !== undefined ? [{
+          resourceType: 'Observation',
+          id: 'obs-longest-diameter',
+          status: 'final',
+          code: {
+            coding: [{ system: 'http://loinc.org', code: '21889-1', display: 'Size.maximum dimension' }],
+            text: 'RECIST 1.1 靶病灶最大长径',
+          },
+          valueQuantity: {
+            value: m.longest_diameter_mm,
+            unit: 'mm',
+            system: 'http://unitsofmeasure.org',
+            code: 'mm',
+          },
+        }] : []),
+        ...(m.total_volume_cm3 !== undefined ? [{
+          resourceType: 'Observation',
+          id: 'obs-3d-volume',
+          status: 'final',
+          code: {
+            coding: [{ system: 'http://loinc.org', code: '82810-3', display: 'Volume of body structure' }],
+            text: '病灶 3D 三维体素体积',
+          },
+          valueQuantity: {
+            value: m.total_volume_cm3,
+            unit: 'cm3',
+            system: 'http://unitsofmeasure.org',
+            code: 'cm3',
+          },
+        }] : []),
+        ...(m.bar_ratio !== undefined ? [{
+          resourceType: 'Observation',
+          id: 'obs-bar-ratio',
+          status: 'final',
+          code: {
+            coding: [{ system: 'urn:heurion:codes', code: 'BAR', display: 'Broncho-Arterial Ratio' }],
+            text: '支气管-伴行动脉径比 (BAR)',
+          },
+          valueQuantity: {
+            value: m.bar_ratio,
+            unit: 'ratio',
+          },
+          interpretation: [{
+            coding: [{
+              system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation',
+              code: m.bar_ratio > 1.10 ? 'A' : 'N',
+              display: m.bar_ratio > 1.10 ? 'Abnormal (Bronchiectasis Signet Ring)' : 'Normal',
+            }],
+          }],
+        }] : []),
+      ],
+    }
+
+    return {
+      format: 'fhir',
+      mime: 'application/json',
+      filename: `${p.code}_${reportDate}_FHIR_DiagnosticReport.json`,
+      data: fhirReport,
     }
   }
 

@@ -95,6 +95,7 @@ const ALL_PARITY: Record<string, string> = {
   'GET /api/kb-search': 'kb_search', 'GET /api/kb/:fid/text': 'kb_read', 'GET /api/kb/:fid/file': 'kb_read',
   // 数据集
   'GET /api/datasets': 'dataset_list', 'GET /api/datasets/:did': 'dataset_describe', 'GET /api/datasets/:did/preview': 'dataset_open',
+  'POST /api/datasets/:did/table1': 'dataset_table1',
   'POST /api/datasets': 'dataset_manage.upload', 'PATCH /api/datasets/:did': 'dataset_manage.rename', 'POST /api/datasets/:did/phi': 'dataset_manage.resolve_phi', 'DELETE /api/datasets/:did': 'dataset_manage.delete',
   // 记忆
   'GET /api/memory': 'memory_manage.list', 'GET /api/memory/:mid/events': 'memory_manage.events', 'PATCH /api/memory/:mid': 'memory_manage.edit',
@@ -140,6 +141,13 @@ const ALL_PARITY: Record<string, string> = {
   'GET /api/imaging/status': 'imaging_status',
   'GET /api/imaging/models': 'imaging_models',
   'POST /api/patients/:ptid/imaging/analyze': 'imaging_analyze',
+  'GET /api/imaging/mpr/info': 'imaging_volume_info',
+  'POST /api/imaging/mpr/info': 'imaging_volume_info',
+  'POST /api/imaging/mpr/slice': 'imaging_mpr_slice',
+  'POST /api/imaging/mpr/diff-slice': 'imaging_diff_slice',
+  'POST /api/patients/:ptid/imaging/compare': 'imaging_longitudinal_compare',
+  'GET /api/patients/:ptid/imaging/evidence-chain': 'imaging_evidence_chain',
+  'GET /api/patients/:ptid/imaging/export': 'imaging_export_standard',
 }
 
 /** AI 发起后要用户在确认卡上确认才执行的动作（不可恢复的删除、权限与安全、以机构身份对外的标识）。 */

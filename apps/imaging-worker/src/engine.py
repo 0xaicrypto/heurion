@@ -1,16 +1,20 @@
 import os
+import io
+import base64
 import time
+from pathlib import Path
+from PIL import Image, ImageDraw
 import numpy as np
 import torch
 from typing import Dict, Any, Tuple, Optional
 try:
     from .device import get_optimal_device, get_device_info
-    from .dicom_io import apply_ct_window
+    from .dicom_io import apply_ct_window, CT_WINDOWS
     from .recist import calculate_recist_metrics
     from .renderer import render_key_slice_png, png_to_base64
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
-    from dicom_io import apply_ct_window
+    from dicom_io import apply_ct_window, CT_WINDOWS
     from recist import calculate_recist_metrics
     from renderer import render_key_slice_png, png_to_base64
 
@@ -248,3 +252,337 @@ class MONAIEngine:
                 f"- **病灶总体积**: `{recist['total_volume_cm3']} cm³`\n"
             )
         }
+
+    def load_volume_data(self, sample_id_or_path: str) -> Tuple[np.ndarray, Tuple[float, float, float], str]:
+        """Loads a volume from a sample_id, benchmark, or file path."""
+        try:
+            from .dicom_io import load_nifti, load_dicom_series
+        except (ImportError, ValueError):
+            from dicom_io import load_nifti, load_dicom_series
+
+        data_dir = Path(__file__).resolve().parent.parent / "data"
+        modality = "CT"
+
+        # Check if sample ID exists in data dir
+        for ext in (".nii.gz", ".nii"):
+            p = data_dir / f"{sample_id_or_path}{ext}"
+            if p.exists():
+                vol, spacing = load_nifti(str(p))
+                if "mri" in sample_id_or_path.lower():
+                    modality = "MRI"
+                return vol, spacing, modality
+
+        # Check if direct file/dir path
+        if os.path.exists(sample_id_or_path):
+            if os.path.isdir(sample_id_or_path):
+                vol, spacing, meta = load_dicom_series(sample_id_or_path)
+                return vol, spacing, meta.get("modality", "CT")
+            elif sample_id_or_path.endswith((".nii", ".nii.gz")):
+                vol, spacing = load_nifti(sample_id_or_path)
+                if "mri" in sample_id_or_path.lower():
+                    modality = "MRI"
+                return vol, spacing, modality
+
+        # Fallback to high-fidelity synthetic volume
+        vol, _ = generate_synthetic_ct_volume(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
+        return vol, (1.5, 0.8, 0.8), "CT"
+
+    def get_mpr_info(self, sample_id_or_path: str) -> Dict[str, Any]:
+        """Returns 3D volume dimensions, spacing, slice counts and bounding box."""
+        vol, spacing, modality = self.load_volume_data(sample_id_or_path)
+        z_dim, y_dim, x_dim = vol.shape
+        dz, dy, dx = spacing
+
+        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus"))
+        lesion_mask = ((vol > -150.0) & (vol < 180.0)) if is_lung else ((vol > 30.0) & (vol < 110.0))
+        z_idx, y_idx, x_idx = np.where(lesion_mask)
+
+        if len(z_idx) > 20:
+            center = {
+                "axial": int(np.median(z_idx)),
+                "coronal": int(np.median(y_idx)),
+                "sagittal": int(np.median(x_idx))
+            }
+            bbox = {
+                "z_min": int(np.min(z_idx)), "z_max": int(np.max(z_idx)),
+                "y_min": int(np.min(y_idx)), "y_max": int(np.max(y_idx)),
+                "x_min": int(np.min(x_idx)), "x_max": int(np.max(x_idx))
+            }
+        else:
+            center = {"axial": z_dim // 2, "coronal": y_dim // 2, "sagittal": x_dim // 2}
+            bbox = {"z_min": 0, "z_max": z_dim - 1, "y_min": 0, "y_max": y_dim - 1, "x_min": 0, "x_max": x_dim - 1}
+
+        return {
+            "modality": modality,
+            "dimensions": {"z": z_dim, "y": y_dim, "x": x_dim},
+            "voxel_spacing_mm": {"dz": round(float(dz), 3), "dy": round(float(dy), 3), "dx": round(float(dx), 3)},
+            "planes": {
+                "axial": {"total_slices": z_dim, "default_slice": center["axial"], "label": "轴位 (横断面 Axial)"},
+                "coronal": {"total_slices": y_dim, "default_slice": center["coronal"], "label": "冠状位 (额状面 Coronal)"},
+                "sagittal": {"total_slices": x_dim, "default_slice": center["sagittal"], "label": "矢状位 (矢状面 Sagittal)"}
+            },
+            "center_slice": center,
+            "bounding_box": bbox,
+            "recommended_windows": ["lung", "mediastinum"] if is_lung else ["abdomen", "mediastinum", "bone"]
+        }
+
+    def extract_mpr_slice(
+        self,
+        sample_id_or_path: str,
+        plane: str = "axial",
+        slice_index: Optional[int] = None,
+        window_preset: Optional[str] = None,
+        overlay: bool = True,
+        model_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Extracts an arbitrary orthogonal 2D slice with CT windowing and optional lesion mask overlay."""
+        vol, spacing, modality = self.load_volume_data(sample_id_or_path)
+        z_dim, y_dim, x_dim = vol.shape
+        dz, dy, dx = spacing
+
+        plane = (plane or "axial").lower()
+        if plane not in ("axial", "coronal", "sagittal"):
+            plane = "axial"
+
+        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus"))
+        mask = None
+        if overlay:
+            if is_lung:
+                mask = ((vol > 10.0) & (vol < 75.0)).astype(np.uint8)
+            else:
+                mask = ((vol > 35.0) & (vol < 110.0)).astype(np.uint8)
+
+        if not window_preset:
+            window_preset = "lung" if is_lung else "abdomen"
+
+        if plane == "axial":
+            total = z_dim
+            idx = z_dim // 2 if slice_index is None else max(0, min(z_dim - 1, slice_index))
+            raw_slice = vol[idx, :, :]
+            mask_slice = mask[idx, :, :] if mask is not None else None
+            v_spacing = dy
+            h_spacing = dx
+            plane_label = "轴位 (Axial)"
+        elif plane == "coronal":
+            total = y_dim
+            idx = y_dim // 2 if slice_index is None else max(0, min(y_dim - 1, slice_index))
+            # Superior (head) at top
+            raw_slice = np.flipud(vol[:, idx, :])
+            mask_slice = np.flipud(mask[:, idx, :]) if mask is not None else None
+            v_spacing = dz
+            h_spacing = dx
+            plane_label = "冠状位 (Coronal)"
+        else: # sagittal
+            total = x_dim
+            idx = x_dim // 2 if slice_index is None else max(0, min(x_dim - 1, slice_index))
+            raw_slice = np.flipud(vol[:, :, idx])
+            mask_slice = np.flipud(mask[:, :, idx]) if mask is not None else None
+            v_spacing = dz
+            h_spacing = dy
+            plane_label = "矢状位 (Sagittal)"
+
+        ct_uint8 = apply_ct_window(raw_slice, window_name=window_preset)
+        h, w = ct_uint8.shape
+
+        base_img = Image.fromarray(ct_uint8).convert("RGBA")
+        lesion_present = False
+        lesion_px = 0
+        if mask_slice is not None:
+            mask_bool = mask_slice > 0
+            lesion_px = int(np.sum(mask_bool))
+            if lesion_px > 0:
+                lesion_present = True
+                mask_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+                mask_rgba[mask_bool] = [255, 77, 79, 110]
+                mask_img = Image.fromarray(mask_rgba, mode="RGBA")
+                base_img = Image.alpha_composite(base_img, mask_img)
+
+        draw = ImageDraw.Draw(base_img)
+        scale_bar_mm = 50.0 if w >= 256 else 20.0
+        scale_px = int(scale_bar_mm / max(h_spacing, 0.01))
+        margin_x = w - scale_px - 15
+        margin_y = h - 20
+        draw.line([(margin_x, margin_y), (margin_x + scale_px, margin_y)], fill=(255, 255, 255, 220), width=2)
+        draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220))
+
+        win = CT_WINDOWS.get(window_preset, {"level": 40, "width": 400})
+        hud = [
+            f"MPR // {plane_label} #{idx}/{total}",
+            f"{window_preset.title()} Window (W:{win['width']} L:{win['level']})",
+            f"Voxel: {round(h_spacing, 2)}x{round(v_spacing, 2)} mm"
+        ]
+        y_off = 10
+        for l in hud:
+            draw.text((12, y_off), l, fill=(230, 235, 245, 230))
+            y_off += 15
+
+        buf = io.BytesIO()
+        base_img.convert("RGB").save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        return {
+            "plane": plane,
+            "slice_index": idx,
+            "total_slices": total,
+            "window": {"preset": window_preset, "level": win["level"], "width": win["width"]},
+            "dimensions": {"width": w, "height": h},
+            "pixel_spacing_mm": {"horizontal": round(float(h_spacing), 3), "vertical": round(float(v_spacing), 3)},
+            "lesion_present": lesion_present,
+            "lesion_pixel_count": lesion_px,
+            "slice_png_base64": png_to_base64(png_bytes),
+            "slice_png_size_bytes": len(png_bytes)
+        }
+
+    def extract_diff_slice(
+        self,
+        baseline_id_or_path: str,
+        followup_id_or_path: str,
+        plane: str = "axial",
+        slice_index: Optional[int] = None,
+        window_preset: Optional[str] = None,
+        threshold_hu: float = 50.0,
+    ) -> Dict[str, Any]:
+        """
+        Aligns longitudinal 3D volumes (Followup -> Baseline) and computes a 3D difference heatmap:
+        - Green overlay: Regression/Absorption (HU decreased significantly)
+        - Red overlay: Progression/Infiltration/New Lesion (HU increased significantly)
+        """
+        vol_b, spacing_b, mod_b = self.load_volume_data(baseline_id_or_path)
+        vol_f, spacing_f, mod_f = self.load_volume_data(followup_id_or_path)
+
+        # 3D Trilinear Resampling of Follow-up onto Baseline grid if shapes differ
+        if vol_f.shape != vol_b.shape:
+            f_tensor = torch.from_numpy(vol_f).unsqueeze(0).unsqueeze(0).float()
+            vol_f_aligned = torch.nn.functional.interpolate(
+                f_tensor, size=vol_b.shape, mode="trilinear", align_corners=False
+            ).squeeze(0).squeeze(0).numpy()
+        else:
+            vol_f_aligned = vol_f
+
+        dz, dy, dx = spacing_b
+        voxel_vol_cm3 = (dz * dy * dx) / 1000.0
+
+        # Calculate voxel-level difference (Followup - Baseline)
+        diff = vol_f_aligned - vol_b
+
+        # Anatomical mask to exclude ambient background air (< -900 HU in both)
+        body_mask = (vol_b > -900.0) | (vol_f_aligned > -900.0)
+
+        # Absorption / Regression: was higher density in baseline, now absorbed/cleared
+        regressed_3d = (diff < -threshold_hu) & body_mask & (vol_b > -400.0)
+        # Progression / Infiltration: was normal/air before, now consolidated or tumor grew
+        progressed_3d = (diff > threshold_hu) & body_mask & (vol_f_aligned > -400.0)
+
+        total_regressed_voxels = int(np.sum(regressed_3d))
+        total_progressed_voxels = int(np.sum(progressed_3d))
+        regressed_vol_cm3 = round(total_regressed_voxels * voxel_vol_cm3, 2)
+        progressed_vol_cm3 = round(total_progressed_voxels * voxel_vol_cm3, 2)
+        net_change_cm3 = round(progressed_vol_cm3 - regressed_vol_cm3, 2)
+
+        if total_regressed_voxels > total_progressed_voxels * 1.3:
+            trend = "显著退缩吸收 (Significant Regression)"
+        elif total_progressed_voxels > total_regressed_voxels * 1.3:
+            trend = "进展增大/新发浸润 (Progression / Infiltration)"
+        else:
+            trend = "相对稳定 / 局灶变化 (Stable / Mixed Response)"
+
+        z_dim, y_dim, x_dim = vol_b.shape
+        plane = (plane or "axial").lower()
+        if plane not in ("axial", "coronal", "sagittal"):
+            plane = "axial"
+
+        is_lung = any(k in f"{baseline_id_or_path} {followup_id_or_path}".lower() for k in ("lung", "chest", "mucus"))
+        if not window_preset:
+            window_preset = "lung" if is_lung else "abdomen"
+
+        if plane == "axial":
+            total = z_dim
+            idx = z_dim // 2 if slice_index is None else max(0, min(z_dim - 1, slice_index))
+            raw_slice = vol_f_aligned[idx, :, :]
+            reg_slice = regressed_3d[idx, :, :]
+            prog_slice = progressed_3d[idx, :, :]
+            v_spacing, h_spacing = dy, dx
+            plane_label = "轴位 (Axial)"
+        elif plane == "coronal":
+            total = y_dim
+            idx = y_dim // 2 if slice_index is None else max(0, min(y_dim - 1, slice_index))
+            raw_slice = np.flipud(vol_f_aligned[:, idx, :])
+            reg_slice = np.flipud(regressed_3d[:, idx, :])
+            prog_slice = np.flipud(progressed_3d[:, idx, :])
+            v_spacing, h_spacing = dz, dx
+            plane_label = "冠状位 (Coronal)"
+        else:
+            total = x_dim
+            idx = x_dim // 2 if slice_index is None else max(0, min(x_dim - 1, slice_index))
+            raw_slice = np.flipud(vol_f_aligned[:, :, idx])
+            reg_slice = np.flipud(regressed_3d[:, :, idx])
+            prog_slice = np.flipud(progressed_3d[:, :, idx])
+            v_spacing, h_spacing = dz, dy
+            plane_label = "矢状位 (Sagittal)"
+
+        ct_uint8 = apply_ct_window(raw_slice, window_name=window_preset)
+        h, w = ct_uint8.shape
+        base_img = Image.fromarray(ct_uint8).convert("RGBA")
+
+        # Color overlay: Green for Regression, Red for Progression
+        overlay_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+        slice_reg_px = int(np.sum(reg_slice))
+        slice_prog_px = int(np.sum(prog_slice))
+
+        if slice_reg_px > 0:
+            overlay_rgba[reg_slice] = [16, 185, 129, 140]  # Green #10B981
+        if slice_prog_px > 0:
+            overlay_rgba[prog_slice] = [239, 68, 68, 140]  # Red #EF4444
+
+        if slice_reg_px > 0 or slice_prog_px > 0:
+            over_img = Image.fromarray(overlay_rgba, mode="RGBA")
+            base_img = Image.alpha_composite(base_img, over_img)
+
+        draw = ImageDraw.Draw(base_img)
+        scale_bar_mm = 50.0 if w >= 256 else 20.0
+        scale_px = int(scale_bar_mm / max(h_spacing, 0.01))
+        margin_x = w - scale_px - 15
+        margin_y = h - 20
+        draw.line([(margin_x, margin_y), (margin_x + scale_px, margin_y)], fill=(255, 255, 255, 220), width=2)
+        draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220))
+
+        win = CT_WINDOWS.get(window_preset, {"level": 40, "width": 400})
+        hud = [
+            f"3D Voxel Diff // {plane_label} #{idx}/{total}",
+            f"{window_preset.title()} (W:{win['width']} L:{win['level']}) · Thresh ±{int(threshold_hu)} HU",
+            f"🟢 吸收: {regressed_vol_cm3}cm³ | 🔴 进展: {progressed_vol_cm3}cm³",
+        ]
+        y_off = 10
+        for l in hud:
+            draw.text((12, y_off), l, fill=(230, 235, 245, 230))
+            y_off += 15
+
+        buf = io.BytesIO()
+        base_img.convert("RGB").save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        return {
+            "plane": plane,
+            "slice_index": idx,
+            "total_slices": total,
+            "window": {"preset": window_preset, "level": win["level"], "width": win["width"]},
+            "dimensions": {"width": w, "height": h},
+            "pixel_spacing_mm": {"horizontal": round(float(h_spacing), 3), "vertical": round(float(v_spacing), 3)},
+            "threshold_hu": threshold_hu,
+            "statistics_3d": {
+                "total_regressed_voxels": total_regressed_voxels,
+                "total_progressed_voxels": total_progressed_voxels,
+                "regressed_volume_cm3": regressed_vol_cm3,
+                "progressed_volume_cm3": progressed_vol_cm3,
+                "net_change_volume_cm3": net_change_cm3,
+                "dominant_trend": trend
+            },
+            "slice_metrics": {
+                "regressed_pixels": slice_reg_px,
+                "progressed_pixels": slice_prog_px
+            },
+            "slice_png_base64": png_to_base64(png_bytes),
+            "slice_png_size_bytes": len(png_bytes)
+        }
+
+

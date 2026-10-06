@@ -201,23 +201,53 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
   }
 
   function overview(d: Detail, canEdit: boolean): string {
-    const latestImg = d.records.find(r => r.kind === 'imaging')
-    const imgWidget = latestImg ? `
+    const imagingRecords = d.records.filter(r => r.kind === 'imaging')
+    const hasMultiImaging = imagingRecords.length >= 2
+    const latestImg = imagingRecords[0]
+    let imgWidget = ''
+    if (latestImg) {
+      const imgData = (latestImg.imaging_data || {}) as Record<string, any>
+      const aid = imgData.asset_id
+      const sliceFid = imgData.file_id
+      const rawFid = imgData.raw_file_id || (latestImg.file_id && latestImg.file_id !== sliceFid ? latestImg.file_id : null)
+      const imgUrl = sliceFid
+        ? `/api/patients/${d.id}/files/${sliceFid}?token=${encodeURIComponent(hooks.token())}`
+        : aid
+        ? `/api/assets/${aid}?token=${encodeURIComponent(hooks.token())}`
+        : (!rawFid && latestImg.file_id)
+        ? `/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}`
+        : ''
+
+      imgWidget = `
       <section class="pt-overview-imaging">
-        <div class="row" style="align-items: baseline; margin-bottom: 8px"><h3 class="mem-h" style="margin: 0">最新医学影像量化</h3><span class="grow"></span><button class="quiet small-btn" data-tab="records">查看全部影像档案 ➔</button></div>
+        <div class="row" style="align-items: baseline; margin-bottom: 8px">
+          <h3 class="mem-h" style="margin: 0">最新医学影像量化</h3>
+          <span class="grow"></span>
+          ${hasMultiImaging ? `<button class="primary small-btn" data-act="compare-imaging" style="margin-right: 8px" title="对比多期影像并计算 RECIST 1.1 疗效等级">📊 多期影像随访对比 (RECIST 1.1)</button>` : ''}
+          <button class="quiet small-btn" data-tab="records">查看全部影像档案 (${imagingRecords.length}) ➔</button>
+        </div>
         <div class="pt-overview-img-card" data-rec="${latestImg.id}">
-          ${latestImg.file_id ? `<img src="/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}" class="pt-overview-thumb" data-view-img="/api/patients/${d.id}/files/${latestImg.file_id}?token=${encodeURIComponent(hooks.token())}" title="点击查看大图">` : ''}
+          <div class="pt-overview-thumb-wrap" style="position: relative; width: 140px; height: 110px; flex-shrink: 0; background: #000; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center">
+            ${imgUrl ? `<img src="${imgUrl}" class="pt-overview-thumb" data-view-img="${imgUrl}" title="点击查看切片大图" style="width: 100%; height: 100%; object-fit: contain; cursor: pointer" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex'">` : ''}
+            <div class="pt-imaging-no-img" style="${imgUrl ? 'display: none;' : ''}width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 11px">暂无预览</div>
+            <span class="pt-imaging-badge-overlay" style="position: absolute; top: 4px; left: 4px; font-size: 10px; background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 4px">${esc(latestImg.imaging_data?.modality || 'CT')}</span>
+          </div>
           <div class="pt-overview-img-meta">
             <div class="row" style="align-items: center; justify-content: space-between"><b>${esc(latestImg.title)}</b><span class="muted small">${esc(latestImg.report_date || '')}</span></div>
             <div class="muted small" style="margin: 6px 0 10px; line-height: 1.5">${esc(latestImg.extraction_note || '已完成三维体素分割与定量测量')}</div>
-            <div class="row" style="gap: 8px">
+            <div class="row" style="gap: 8px; flex-wrap: wrap">
               <button class="primary small-btn" data-img-report="${latestImg.id}">📝 基于此影像写报告</button>
               <button class="small-btn" data-img-canvas="${latestImg.id}">🎨 会诊 Slide</button>
+              <button class="small-btn quiet" data-open-mpr="${latestImg.id}" title="进入 3D 多平面重建 (MPR) 互动切片浏览器">🖥️ 3D 切片</button>
+              <button class="small-btn quiet" data-open-evidence="${latestImg.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
+              <button class="small-btn quiet" data-export-standard="${latestImg.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">📥 导出标准数据</button>
+              ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${latestImg.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">📊 随访对比</button>` : ''}
               <button class="quiet small-btn" data-tab="records">详细指标</button>
             </div>
           </div>
         </div>
-      </section>` : ''
+      </section>`
+    }
 
     return `<section><h3 class="mem-h">摘要</h3>
         ${canEdit ? `<textarea id="ptSummary" rows="4" placeholder="病史要点、用药、随访计划（只用代号，不写姓名）">${esc(d.summary ?? '')}</textarea>` : `<div class="pt-summary">${esc(d.summary ?? '（无）')}</div>`}</section>
@@ -270,14 +300,36 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回' }
     const EXTRACT: Record<string, string> = { queued: '排队提取', running: '提取中…', done: '', failed: '提取失败', skipped: '' }
 
+    const hasMultiImaging = imagingRecords.length >= 2
     const imagingHtml = imagingRecords.length ? `
       <div class="pt-imaging-section">
         <div class="row pt-section-head">
           <h3 class="mem-h" style="margin: 0">🩺 医学影像量化档案 (MONAI 3D Quantitative Imaging)</h3>
           <span class="muted small">${imagingRecords.length} 份分析记录</span>
           <span class="grow"></span>
-          <button class="primary small-btn" data-act="imaging">＋ 新建影像量化分析</button>
+          <div style="display: flex; gap: 8px; align-items: center">
+            ${hasMultiImaging ? `<button class="quiet small-btn" data-act="compare-imaging" title="对比多期影像并计算 RECIST 1.1 靶病灶长径变化率与疗效评级">📈 随访疗效 (RECIST 1.1)</button>` : ''}
+            <button class="quiet small-btn" data-open-mpr="latest" title="打开 3D 多平面重建 (MPR) 互动切片浏览器：在轴位/冠状位/矢状位平滑滑动连续切片">🖥️ 3D MPR 互动切片</button>
+            <button class="quiet small-btn" data-open-evidence="latest" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
+            <button class="primary small-btn" data-act="imaging">＋ 新建影像量化分析</button>
+          </div>
         </div>
+        ${hasMultiImaging ? `
+          <div class="pt-imaging-recist-banner">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+              <span class="pt-imaging-badge" style="background: rgba(16,185,129,0.18); color: #34D399; font-weight: 700; padding: 4px 10px; border-radius: 4px">
+                📈 RECIST 1.1 纵向对比就绪
+              </span>
+              <span style="font-size: 13px; color: var(--text)">
+                检测到患者已有 <b>${imagingRecords.length}</b> 份纵向影像记录，支持基线与多期随访疗效自动对比评估。
+              </span>
+              <span class="grow"></span>
+              <button class="primary small-btn" data-act="compare-imaging" title="对比基线与最新随访影像，自动计算 RECIST 1.1 靶病灶长径变化率与疗效评级">
+                📊 多期影像随访对比 (RECIST 1.1)
+              </button>
+            </div>
+          </div>
+        ` : ''}
         <div class="pt-imaging-grid">
           ${imagingRecords.map(r => {
             const data = r.imaging_data || {}
@@ -328,6 +380,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                   </div>
                   ${r.extraction_note ? `<div class="pt-imaging-note muted small">${esc(r.extraction_note)}</div>` : ''}
                   <div class="pt-imaging-actions">
+                    <button class="small-btn quiet" data-open-mpr="${r.id}" title="打开 3D 多平面重建 (MPR) 互动浏览器：实时滑动轴位/冠状位/矢状位连续切片、切换窗宽窗位并定位病灶">🖥️ 3D 切片 (MPR)</button>
+                    <button class="small-btn quiet" data-open-evidence="${r.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
+                    <button class="small-btn quiet" data-export-standard="${r.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">📥 导出标准数据</button>
+                    ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${r.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">📊 随访对比</button>` : ''}
                     <button class="primary small-btn" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">📝 写影像病例报告</button>
                     <button class="small-btn" data-img-canvas="${r.id}" title="在 Heurion 原生幻灯片工作台制作包含此影像指标的多页会诊 Slide (PPTX)">🎨 制作会诊 Slide</button>
                     ${imgUrl ? `<button class="quiet small-btn" data-view-img="${imgUrl}">🔍 查看量化切片</button>` : ''}
@@ -864,6 +920,1486 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     })
   }
 
+  async function showMprViewerDialog(patientId: string, d: Detail | Patient, r?: RecordRow): Promise<void> {
+    const dlg = document.getElementById('dialog')!
+    dlg.innerHTML = `
+      <div class="dialog-card pt-mpr-dialog" role="dialog" aria-modal="true">
+        <div class="dialog-head">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <h2>🖥️ 3D 多平面重建 (MPR) 互动切片浏览器</h2>
+            <span class="muted small">${esc(d.code)}</span>
+          </div>
+          <button class="quiet" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="dialog-body" style="gap: 14px">
+          <div class="pt-img-dlg-loading" style="padding: 40px; text-align: center; color: var(--text-2);">
+            正在探测体素几何分布与加载 3D 体积元数据...
+          </div>
+        </div>
+      </div>`
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
+
+    let sampleId = (r?.imaging_data as any)?.sample_id || 'chest_lung_ct'
+    const rawName = (r?.imaging_data as any)?.raw_file_name || ''
+    if (rawName.includes('spleen')) sampleId = 'spleen_test'
+    else if (rawName.includes('prostate')) sampleId = 'prostate_mri'
+
+    let mprInfo: any = null
+    try {
+      mprInfo = await api<any>(`/api/imaging/mpr/info?sample_id=${encodeURIComponent(sampleId)}`)
+    } catch (err: any) {
+      const bodyEl = dlg.querySelector('.dialog-body')
+      if (bodyEl) {
+        bodyEl.innerHTML = `
+          <div style="padding: 24px; text-align: center; color: #FCA5A5">
+            <p>无法连接 3D 影像切片服务：${esc(err.message || '服务离线')}</p>
+            <p class="muted small" style="margin-top: 8px">请确保 MONAI 影像计算节点在 8004 端口正常运行。</p>
+            <button class="primary small-btn" style="margin-top: 14px" data-close>关闭</button>
+          </div>`
+      }
+      return
+    }
+
+    const dims = mprInfo.dimensions || { z: 269, y: 512, x: 512 }
+    const voxelSpacing = mprInfo.voxel_spacing_mm || { dz: 1.25, dy: 0.898, dx: 0.898 }
+    const planes: Record<string, { total_slices: number; default_slice: number; label: string }> = mprInfo.planes || {
+      axial: { total_slices: dims.z, default_slice: Math.floor(dims.z / 2), label: '轴位 (Axial)' },
+      coronal: { total_slices: dims.y, default_slice: Math.floor(dims.y / 2), label: '冠状位 (Coronal)' },
+      sagittal: { total_slices: dims.x, default_slice: Math.floor(dims.x / 2), label: '矢状位 (Sagittal)' },
+    }
+    const centerSlice: Record<string, number> = mprInfo.center_slice || {
+      axial: Math.floor(dims.z / 2),
+      coronal: Math.floor(dims.y / 2),
+      sagittal: Math.floor(dims.x / 2),
+    }
+
+    let currentPlane = 'axial'
+    let currentSlice = centerSlice.axial ?? Math.floor(dims.z / 2)
+    let currentWindow = mprInfo.recommended_windows?.[0] || 'lung'
+    let overlayMask = true
+    const sliceCache = new Map<string, any>()
+    let isFetching = false
+
+    const dlgBody = dlg.querySelector('.dialog-body')!
+    dlgBody.innerHTML = `
+      <div class="pt-mpr-layout">
+        <!-- 左侧参数与控制面板 -->
+        <div class="pt-mpr-sidebar">
+          <div class="pt-mpr-sidebar-section">
+            <div class="pt-mpr-sidebar-title">浏览引擎 (Renderer Engine)</div>
+            <div class="pt-mpr-btn-group" id="mprEngineBtns">
+              <button data-engine="slice" class="active" title="轻量 2D 正交多平面重建，带 5cm 标尺与精确解剖尺寸">⚡ 2D 正交切片</button>
+              <button data-engine="niivue" title="NiiVue WebGL2 引擎：体绘制 3D 自由旋转与多平面联动">🌐 NiiVue 3D WebGL</button>
+            </div>
+          </div>
+
+          <div class="pt-mpr-sidebar-section">
+            <div class="pt-mpr-sidebar-title">正交解剖平面 (Plane)</div>
+            <div class="pt-mpr-btn-group" id="mprPlaneBtns">
+              <button data-plane="axial" class="active">轴位 (Axial)</button>
+              <button data-plane="coronal">冠状位 (Coronal)</button>
+              <button data-plane="sagittal">矢状位 (Sagittal)</button>
+              <button data-plane="multi" style="display: none" id="nvMultiBtn" title="NiiVue 四视图联动">四视图</button>
+              <button data-plane="render" style="display: none" id="nvRenderBtn" title="NiiVue 3D 立体旋转体绘制">3D 体绘制</button>
+            </div>
+          </div>
+
+          <div class="pt-mpr-sidebar-section">
+            <div class="pt-mpr-sidebar-title">CT 窗宽窗位预设 (Window)</div>
+            <div class="pt-mpr-btn-group" id="mprWindowBtns">
+              <button data-win="lung" class="${currentWindow === 'lung' ? 'active' : ''}">肺窗 (Lung)</button>
+              <button data-win="mediastinum" class="${currentWindow === 'mediastinum' ? 'active' : ''}">纵隔 (Med)</button>
+              <button data-win="abdomen" class="${currentWindow === 'abdomen' ? 'active' : ''}">腹部 (Abd)</button>
+              <button data-win="bone" class="${currentWindow === 'bone' ? 'active' : ''}">骨窗 (Bone)</button>
+              <button data-win="brain" class="${currentWindow === 'brain' ? 'active' : ''}">脑窗 (Brain)</button>
+            </div>
+          </div>
+
+          <div class="pt-mpr-sidebar-section">
+            <div class="pt-mpr-sidebar-title">病灶与高亮 (Overlay)</div>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer">
+              <input type="checkbox" id="mprOverlayCheck" checked>
+              <span>MONAI 病灶半透明红色高亮</span>
+            </label>
+            <div id="mprLesionBadge" class="pt-mpr-status-badge no-lesion" style="margin-top: 4px">
+              病灶探测中...
+            </div>
+          </div>
+
+          <div class="pt-mpr-sidebar-section">
+            <div class="pt-mpr-sidebar-title">解剖导航与对齐</div>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap">
+              <button class="small-btn quiet" id="mprJumpCenter" title="根据 3D 卷积分割范围自动对齐至病灶中心切片">🎯 定位病灶中心</button>
+              <button class="small-btn quiet" id="mprJumpFirst">⏮️ 首层</button>
+              <button class="small-btn quiet" id="mprJumpLast">⏭️ 尾层</button>
+            </div>
+          </div>
+
+          <div class="pt-mpr-sidebar-section" style="margin-top: auto; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px">
+            <div class="pt-mpr-sidebar-title">报告插图与资产沉淀</div>
+            <button class="primary small-btn" id="mprSaveAssetBtn" style="width: 100%" title="保存当前 MPR 正交切片为平台资产并生成 Markdown 引用">💾 保存切片为文档资产</button>
+            <button class="small-btn quiet" id="mprGenReportBtn" style="margin-top: 6px; width: 100%; border: 1px solid rgba(45,212,191,0.35); color: var(--teal)" title="聚合当前病灶参数、窗宽窗位与切片截图，一键生成规范放射学诊断报告草案并可落库为正式病历">📋 一键生成放射诊断报告</button>
+            <div id="mprSaveNotice" class="muted small" style="display: none; margin-top: 6px; word-break: break-all"></div>
+          </div>
+        </div>
+
+        <!-- 右侧交互视口与切片滚动条 -->
+        <div class="pt-mpr-viewport-container">
+          <!-- 2D 切片视口 -->
+          <div class="pt-mpr-screen" id="mprScreen" title="在切片区域上下滚动鼠标滚轮即可连续浏览切片">
+            <img id="mprImg" alt="3D MPR 切片" style="display: none">
+            <div id="mprLoadingSpinner" style="color: var(--text-2); font-size: 13px">
+              正在提取当前切片...
+            </div>
+            <!-- HUD 信息层 -->
+            <div class="pt-mpr-hud-overlay" id="mprHudLeft">
+              MPR // AXIAL<br>
+              Slice #-- / --
+            </div>
+            <div class="pt-mpr-hud-right" id="mprHudRight">
+              ${esc(mprInfo.modality || 'CT')}<br>
+              Voxel: ${voxelSpacing.dx}×${voxelSpacing.dy}×${voxelSpacing.dz} mm
+            </div>
+            <div class="pt-mpr-hud-bottom">
+              💡 鼠标滚轮上下滚动或按键盘 ↑/↓ 即可连贯浏览连续切片
+            </div>
+          </div>
+
+          <!-- NiiVue WebGL2 视口 -->
+          <div id="nvContainer" style="display: none; position: relative; width: 100%; height: 460px; background: #000; border-radius: 6px; overflow: hidden">
+            <canvas id="nvCanvas" style="width: 100%; height: 100%; outline: none"></canvas>
+            <div id="nvLoading" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-2); font-size: 13px">
+              正在初始化 NiiVue WebGL2 引擎并加载 3D NIfTI 卷数据...
+            </div>
+          </div>
+
+          <!-- 底部切片 Scrubber 滑动条 -->
+          <div class="pt-mpr-scrubber-bar" id="mprScrubberBar">
+            <button class="quiet small-btn" id="mprPrevBtn" title="上一层 (↑ / ←)">◀</button>
+            <input type="range" id="mprSlider" min="0" max="${(planes[currentPlane]?.total_slices ?? 100) - 1}" value="${currentSlice}">
+            <button class="quiet small-btn" id="mprNextBtn" title="下一层 (↓ / →)">▶</button>
+            <span id="mprSliceNum" style="font-family: var(--mono); font-size: 12px; min-width: 90px; text-align: right">#${currentSlice} / ${planes[currentPlane]?.total_slices ?? '--'}</span>
+          </div>
+        </div>
+      </div>`
+
+    // DOM Elements
+    const imgEl = dlg.querySelector('#mprImg') as HTMLImageElement
+    const spinnerEl = dlg.querySelector('#mprLoadingSpinner') as HTMLElement
+    const hudLeft = dlg.querySelector('#mprHudLeft') as HTMLElement
+    const hudRight = dlg.querySelector('#mprHudRight') as HTMLElement
+    const slider = dlg.querySelector('#mprSlider') as HTMLInputElement
+    const sliceNum = dlg.querySelector('#mprSliceNum') as HTMLElement
+    const lesionBadge = dlg.querySelector('#mprLesionBadge') as HTMLElement
+    const overlayCheck = dlg.querySelector('#mprOverlayCheck') as HTMLInputElement
+    const mprScreen = dlg.querySelector('#mprScreen') as HTMLElement
+    const scrubberBar = dlg.querySelector('#mprScrubberBar') as HTMLElement
+    const nvContainer = dlg.querySelector('#nvContainer') as HTMLElement
+    const nvLoading = dlg.querySelector('#nvLoading') as HTMLElement
+    const nvMultiBtn = dlg.querySelector('#nvMultiBtn') as HTMLButtonElement
+    const nvRenderBtn = dlg.querySelector('#nvRenderBtn') as HTMLButtonElement
+    const saveAssetBtn = dlg.querySelector('#mprSaveAssetBtn') as HTMLButtonElement
+    const saveNotice = dlg.querySelector('#mprSaveNotice') as HTMLElement
+
+    let currentEngine = 'slice'
+    let nvInstance: any = null
+    const savedSlices: Array<{ label: string; assetId: string; mdText: string }> = []
+
+    async function initNiivue() {
+      if (nvInstance) return nvInstance
+      try {
+        const { Niivue } = await import('@niivue/niivue')
+        nvInstance = new Niivue({
+          backColor: [0.03, 0.04, 0.07, 1],
+          show3Dcrosshair: true,
+          isColorbar: true,
+        })
+        const canvas = dlg.querySelector('#nvCanvas') as HTMLCanvasElement
+        nvInstance.attachToCanvas(canvas)
+        const fileUrl = `/api/imaging/samples/${sampleId}/file?token=${encodeURIComponent(hooks.token())}`
+        await nvInstance.loadVolumes([{ url: fileUrl, name: `${sampleId}.nii.gz`, colormap: 'gray' }])
+        if (nvLoading) nvLoading.style.display = 'none'
+      } catch (err: any) {
+        if (nvLoading) nvLoading.textContent = `NiiVue 引擎启动失败: ${err.message || '环境未支持 WebGL2'}`
+      }
+      return nvInstance
+    }
+
+    async function loadSlice(targetSlice: number): Promise<void> {
+      const total = planes[currentPlane]?.total_slices || 100
+      targetSlice = Math.max(0, Math.min(total - 1, targetSlice))
+      currentSlice = targetSlice
+
+      slider.value = String(currentSlice)
+      sliceNum.textContent = `#${currentSlice} / ${total}`
+
+      if (saveAssetBtn.textContent?.includes('已保存') || saveAssetBtn.disabled) {
+        saveAssetBtn.disabled = false
+        saveAssetBtn.textContent = '💾 保存当前切片为资产'
+      }
+
+      const cacheKey = `${sampleId}:${currentPlane}:${currentSlice}:${currentWindow}:${overlayMask}`
+      if (sliceCache.has(cacheKey)) {
+        renderSliceData(sliceCache.get(cacheKey))
+        return
+      }
+
+      if (isFetching) return
+      isFetching = true
+
+      try {
+        const res = await api<any>('/api/imaging/mpr/slice', {
+          method: 'POST',
+          body: JSON.stringify({
+            sample_id: sampleId,
+            plane: currentPlane,
+            slice_index: currentSlice,
+            window_preset: currentWindow,
+            overlay_mask: overlayMask,
+          }),
+        })
+
+        sliceCache.set(cacheKey, res)
+        renderSliceData(res)
+      } catch (err: any) {
+        spinnerEl.textContent = `切片提取失败: ${err.message || '未知错误'}`
+      } finally {
+        isFetching = false
+      }
+    }
+
+    function renderSliceData(data: any): void {
+      if (data.slice_png_base64) {
+        imgEl.src = data.slice_png_base64
+        imgEl.style.display = 'block'
+        spinnerEl.style.display = 'none'
+      }
+
+      const planeMap: Record<string, string> = { axial: 'AXIAL (轴位)', coronal: 'CORONAL (冠状位)', sagittal: 'SAGITTAL (矢状位)' }
+      hudLeft.innerHTML = `MPR // ${planeMap[currentPlane] || currentPlane.toUpperCase()}<br>Slice #${data.slice_index} / ${data.total_slices}<br>${esc(data.window?.preset || currentWindow).toUpperCase()} WIN`
+
+      const hSp = data.pixel_spacing_mm?.horizontal || voxelSpacing.dx
+      const vSp = data.pixel_spacing_mm?.vertical || voxelSpacing.dz
+      const lesionArea = Math.round((data.lesion_pixel_count || 0) * hSp * vSp * 10) / 10
+
+      hudRight.innerHTML = `512×512<br>Voxel: ${hSp}×${vSp} mm${lesionArea > 0 ? `<br><span style="color:#FCA5A5">病灶面积: ${lesionArea} mm²</span>` : ''}`
+
+      if (data.lesion_present && data.lesion_pixel_count > 0) {
+        lesionBadge.className = 'pt-mpr-status-badge has-lesion'
+        lesionBadge.innerHTML = `⚠️ 病灶检出 (${lesionArea} mm²)`
+      } else {
+        lesionBadge.className = 'pt-mpr-status-badge no-lesion'
+        lesionBadge.innerHTML = `无明显高密度病灶`
+      }
+    }
+
+    // 渲染引擎切换 (2D 切片 vs NiiVue 3D WebGL)
+    dlg.querySelector('#mprEngineBtns')?.addEventListener('click', async e => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-engine]')
+      if (!btn) return
+      dlg.querySelectorAll('#mprEngineBtns button').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      currentEngine = btn.dataset.engine || 'slice'
+
+      if (currentEngine === 'niivue') {
+        mprScreen.style.display = 'none'
+        scrubberBar.style.display = 'none'
+        nvContainer.style.display = 'block'
+        nvMultiBtn.style.display = 'inline-block'
+        nvRenderBtn.style.display = 'inline-block'
+        const nv = await initNiivue()
+        if (nv) nv.setSliceType(nv.sliceTypeMultiplanar)
+      } else {
+        nvContainer.style.display = 'none'
+        nvMultiBtn.style.display = 'none'
+        nvRenderBtn.style.display = 'none'
+        mprScreen.style.display = 'flex'
+        scrubberBar.style.display = 'flex'
+        void loadSlice(currentSlice)
+      }
+    })
+
+    // 事件绑定: 平面与视图切换
+    dlg.querySelector('#mprPlaneBtns')?.addEventListener('click', e => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-plane]')
+      if (!btn) return
+      dlg.querySelectorAll('#mprPlaneBtns button').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      const targetPlane = btn.dataset.plane || 'axial'
+
+      if (currentEngine === 'niivue' && nvInstance) {
+        if (targetPlane === 'multi') nvInstance.setSliceType(nvInstance.sliceTypeMultiplanar)
+        else if (targetPlane === 'render') nvInstance.setSliceType(nvInstance.sliceTypeRender)
+        else if (targetPlane === 'axial') nvInstance.setSliceType(nvInstance.sliceTypeAxial)
+        else if (targetPlane === 'coronal') nvInstance.setSliceType(nvInstance.sliceTypeCoronal)
+        else if (targetPlane === 'sagittal') nvInstance.setSliceType(nvInstance.sliceTypeSagittal)
+        return
+      }
+
+      currentPlane = targetPlane
+      const total = planes[currentPlane]?.total_slices || 100
+      slider.max = String(total - 1)
+      currentSlice = centerSlice[currentPlane] ?? Math.floor(total / 2)
+      void loadSlice(currentSlice)
+    })
+
+    // 窗宽窗位切换
+    dlg.querySelector('#mprWindowBtns')?.addEventListener('click', e => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-win]')
+      if (!btn) return
+      dlg.querySelectorAll('#mprWindowBtns button').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      currentWindow = btn.dataset.win || 'lung'
+      void loadSlice(currentSlice)
+    })
+
+    // Overlay 切换
+    overlayCheck.addEventListener('change', () => {
+      overlayMask = overlayCheck.checked
+      void loadSlice(currentSlice)
+    })
+
+    // 滑动条拖动
+    slider.addEventListener('input', () => {
+      void loadSlice(Number(slider.value))
+    })
+
+    // 滚轮 Scrubbing
+    mprScreen.addEventListener('wheel', ev => {
+      ev.preventDefault()
+      const delta = ev.deltaY > 0 ? 1 : -1
+      void loadSlice(currentSlice + delta)
+    }, { passive: false })
+
+    // 键盘上下左右键
+    const keyHandler = (ev: KeyboardEvent) => {
+      if (dlg.hidden) return
+      if (ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
+        ev.preventDefault()
+        void loadSlice(currentSlice - 1)
+      } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight') {
+        ev.preventDefault()
+        void loadSlice(currentSlice + 1)
+      }
+    }
+    window.addEventListener('keydown', keyHandler)
+    const origClose = close
+    const wrappedClose = () => {
+      window.removeEventListener('keydown', keyHandler)
+      origClose()
+    }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) wrappedClose() }
+
+    // 按钮上下层
+    dlg.querySelector('#mprPrevBtn')?.addEventListener('click', () => void loadSlice(currentSlice - 1))
+    dlg.querySelector('#mprNextBtn')?.addEventListener('click', () => void loadSlice(currentSlice + 1))
+
+    // 快捷定位
+    dlg.querySelector('#mprJumpCenter')?.addEventListener('click', () => {
+      const target = centerSlice[currentPlane] ?? Math.floor((planes[currentPlane]?.total_slices || 100) / 2)
+      void loadSlice(target)
+    })
+    dlg.querySelector('#mprJumpFirst')?.addEventListener('click', () => void loadSlice(0))
+    dlg.querySelector('#mprJumpLast')?.addEventListener('click', () => void loadSlice((planes[currentPlane]?.total_slices || 100) - 1))
+
+    // 保存为资产
+    saveAssetBtn.addEventListener('click', async () => {
+      saveAssetBtn.disabled = true
+      saveAssetBtn.textContent = '正在保存资产...'
+      try {
+        const planeNameMap: Record<string, string> = { axial: '轴位', coronal: '冠状位', sagittal: '矢状位' }
+        const label = `${d.code} MPR ${planeNameMap[currentPlane] || currentPlane} 第 ${currentSlice} 层`
+        const res = await api<any>('/api/imaging/mpr/slice', {
+          method: 'POST',
+          body: JSON.stringify({
+            sample_id: sampleId,
+            plane: currentPlane,
+            slice_index: currentSlice,
+            window_preset: currentWindow,
+            overlay_mask: overlayMask,
+            save_asset: true,
+            label,
+          }),
+        })
+
+        if (res.asset_id) {
+          saveAssetBtn.textContent = '✓ 已保存当前切片'
+          const mdText = res.markdown_insert || `![${label}](asset:${res.asset_id})`
+          savedSlices.unshift({ label, assetId: res.asset_id, mdText })
+
+          saveNotice.style.display = 'block'
+          saveNotice.innerHTML = `
+            <div style="color: var(--teal); font-weight: 600; margin-bottom: 4px">✓ 本次已保存 ${savedSlices.length} 张切片至资产库：</div>
+            <div style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px">
+              ${savedSlices.map((s, idx) => `
+                <div style="background: rgba(255,255,255,0.06); padding: 4px 6px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; gap: 6px">
+                  <span style="font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${esc(s.label)}</span>
+                  <button class="quiet small-btn" data-copy-md="${idx}" style="padding: 2px 6px; font-size: 10.5px">复制</button>
+                </div>
+              `).join('')}
+            </div>
+            <div class="muted small">已复制最新 Markdown 引用到剪贴板，可继续滑动保存其他层。</div>
+          `
+          await navigator.clipboard.writeText(mdText).catch(() => {})
+          notice(`切片已存为资产 (${label})，Markdown 已复制！`)
+
+          // 1.5 秒后自动复位，允许再次点击或保存其他层
+          setTimeout(() => {
+            saveAssetBtn.disabled = false
+            saveAssetBtn.textContent = '💾 保存当前切片为资产'
+          }, 1500)
+        } else {
+          saveAssetBtn.disabled = false
+          saveAssetBtn.textContent = '💾 保存当前切片为资产'
+        }
+      } catch (err: any) {
+        saveAssetBtn.disabled = false
+        saveAssetBtn.textContent = '💾 保存切片为文档资产'
+        notice(`保存资产失败: ${err.message || String(err)}`, true)
+      }
+    })
+
+    saveNotice.addEventListener('click', async ev => {
+      const copyBtn = (ev.target as HTMLElement).closest<HTMLButtonElement>('[data-copy-md]')
+      if (!copyBtn) return
+      const idx = Number(copyBtn.dataset.copyMd)
+      const s = savedSlices[idx]
+      if (s) {
+        await navigator.clipboard.writeText(s.mdText).catch(() => {})
+        copyBtn.textContent = '已复制!'
+        setTimeout(() => { copyBtn.textContent = '复制' }, 1200)
+        notice(`已复制 ${s.label} 的 Markdown 引用！`)
+      }
+    })
+
+    // 一键生成结构化放射学诊断报告草案
+    const genReportBtn = dlg.querySelector('#mprGenReportBtn') as HTMLButtonElement
+    genReportBtn?.addEventListener('click', async () => {
+      // 1. 如果本次尚未手动保存任何切片，自动把当前层切片保存为资产，作为报告关键插图
+      if (savedSlices.length === 0) {
+        genReportBtn.disabled = true
+        genReportBtn.textContent = '正在提取当前关键截面...'
+        try {
+          const planeNameMap: Record<string, string> = { axial: '轴位', coronal: '冠状位', sagittal: '矢状位' }
+          const label = `${d.code} MPR ${planeNameMap[currentPlane] || currentPlane} 第 ${currentSlice} 层`
+          const res = await api<any>('/api/imaging/mpr/slice', {
+            method: 'POST',
+            body: JSON.stringify({
+              sample_id: sampleId,
+              plane: currentPlane,
+              slice_index: currentSlice,
+              window_preset: currentWindow,
+              overlay_mask: overlayMask,
+              save_asset: true,
+              label,
+            }),
+          })
+          if (res.asset_id) {
+            const mdText = res.markdown_insert || `![${label}](asset:${res.asset_id})`
+            savedSlices.push({ label, assetId: res.asset_id, mdText })
+          }
+        } catch (e) {
+          console.warn('Auto-save current slice for report failed', e)
+        } finally {
+          genReportBtn.disabled = false
+          genReportBtn.textContent = '📋 一键生成放射诊断报告'
+        }
+      }
+
+      // 2. 组装结构化放射报告草案
+      const planeNameMap: Record<string, string> = { axial: '轴位 (Axial)', coronal: '冠状位 (Coronal)', sagittal: '矢状位 (Sagittal)' }
+      const winNameMap: Record<string, string> = { lung: '肺窗 (Lung, W1500/L-600)', mediastinum: '纵隔窗 (W350/L40)', abdomen: '腹部软组织窗', bone: '骨窗', brain: '脑窗' }
+      const curData = sliceCache.get(`${sampleId}:${currentPlane}:${currentSlice}:${currentWindow}:${overlayMask}`)
+      const m = (r?.imaging_data as any)?.metrics || {}
+      const reportDate = r?.report_date || new Date().toISOString().slice(0, 10)
+      const modality = (r?.imaging_data as any)?.modality || mprInfo.modality || '胸部高分辨率 CT (HRCT)'
+      const isBronch = (r?.imaging_data as any)?.model_id === 'bronchiectasis_mucus_analyzer' || (r?.title || '').includes('支气管')
+
+      const findingsList: string[] = []
+      if (isBronch) {
+        if (m.bar_ratio) findingsList.push(`- **支气管-伴行动脉比 (BAR)**: ${m.bar_ratio} (${m.signet_ring_sign ? '印戒征阳性 ⚠，提示支气管显著扩张' : '正常'})`)
+        if (m.total_mucus_volume_cm3 !== undefined) findingsList.push(`- **支气管管腔粘液栓总体积**: ${m.total_mucus_volume_cm3} cm³`)
+        if (m.high_attenuation_mucus_cm3) findingsList.push(`- **高密度粘液栓 (HAM)**: ${m.high_attenuation_mucus_cm3} cm³ (CT 衰减值 > 70HU，提示曲霉定植或 ABPA)`)
+        if (m.airway_occlusion_rate_pct !== undefined) findingsList.push(`- **受累气道管腔平均阻塞率**: ${m.airway_occlusion_rate_pct}%`)
+        if (m.primary_location) findingsList.push(`- **病灶解剖定位**: ${m.primary_location}`)
+      } else {
+        if (m.longest_diameter_mm) findingsList.push(`- **RECIST 1.1 靶病灶最大横截面长径**: ${m.longest_diameter_mm} mm`)
+        if (m.short_axis_mm) findingsList.push(`- **最大横截面垂直短径**: ${m.short_axis_mm} mm`)
+        if (m.total_volume_cm3) findingsList.push(`- **3D 肿瘤总体积 (Volume)**: ${m.total_volume_cm3} cm³`)
+        if (m.key_slice_index !== undefined) findingsList.push(`- **靶病灶中心层号**: 第 #${m.key_slice_index} 层`)
+      }
+      if (curData && curData.lesion_present && curData.lesion_pixel_count > 0) {
+        findingsList.push(`- **当前浏览视口截面测量**: ${planeNameMap[currentPlane]} 第 #${currentSlice} 层，病灶检出截面积约为 ${Math.round((curData.lesion_pixel_count || 0) * (curData.pixel_spacing_mm?.horizontal || 1) * (curData.pixel_spacing_mm?.vertical || 1) * 10) / 10} mm²`)
+      }
+
+      let impression = ''
+      let recommendations = ''
+      if (isBronch) {
+        impression = `1. 符合双肺多发性支气管扩张影像改变，以${m.primary_location || '双下肺'}为著；\n2. 支气管管腔内多发粘液栓嵌顿${m.high_attenuation_mucus_cm3 ? '，伴高密度粘液栓 (HAM)，高度提示变应性支气管肺曲霉病 (ABPA)' : ''}。`
+        recommendations = `1. 建议临床结合血常规嗜酸性粒细胞计数、血清总 IgE 与曲霉特异性 IgE (sIgE) 检查排查 ABPA；\n2. 建议规范气道廓清治疗，并于治疗 3 个月后复查胸部 HRCT 评估粘液栓吸收转归。`
+      } else {
+        impression = `1. ${r?.title || '占位性病变'}，符合靶病灶 RECIST 1.1 测量标准（长径 ${m.longest_diameter_mm || '--'} mm，3D 体积 ${m.total_volume_cm3 || '--'} cm³）。`
+        recommendations = `1. 建议结合既往基线检查对比疗效评估；\n2. 建议按诊疗方案于 8–12 周后安排复查。`
+      }
+
+      const reportMarkdown = `# 放射学结构化影像诊断报告草案
+
+**患者代号**: \`${esc(d.code)}\`  
+**性别**: ${d.sex === 'M' ? '男' : d.sex === 'F' ? '女' : '未知'} | **出生年份**: ${d.birth_year || '--'}  
+**检查时间**: ${reportDate}  
+**检查序列与模态**: ${esc(modality)} (薄层连续扫描，矩阵 512×512，层厚间距 ${voxelSpacing.dx}×${voxelSpacing.dy}×${voxelSpacing.dz} mm)  
+**重建与视口技术**: 3D 多平面重建 (MPR)；主要观察窗: ${winNameMap[currentWindow] || currentWindow.toUpperCase()}  
+
+---
+
+### 一、 影像所见 (Findings)
+${findingsList.length > 0 ? findingsList.join('\n') : '- 肺实质未见明显活动性浸润影，各叶支气管通畅，未见明确占位征象。'}
+
+---
+
+### 二、 关键切片影像图谱 (Key Slice Atlas)
+${savedSlices.map(s => `- **${esc(s.label)}**:\n  ${s.mdText}`).join('\n\n')}
+
+---
+
+### 三、 诊断印象 (Impression)
+${impression}
+
+---
+
+### 四、 临床建议 (Recommendations)
+${recommendations}
+`
+
+      showRadiologyReportDraftDialog(patientId, d, `${d.code} 放射学影像诊断报告 (${reportDate})`, reportMarkdown)
+    })
+
+    // 初始加载第一张切片
+    void loadSlice(currentSlice)
+  }
+
+  function showRadiologyReportDraftDialog(patientId: string, d: Detail | Patient, title: string, initialMarkdown: string): void {
+    const reportDlg = document.createElement('div')
+    reportDlg.className = 'dialog-backdrop'
+    reportDlg.id = 'reportDraftDialog'
+    reportDlg.innerHTML = `
+      <div class="dialog-card pt-rad-report-dialog" role="dialog" aria-modal="true" style="max-width: 780px; width: 92vw; max-height: 88vh; display: flex; flex-direction: column">
+        <div class="dialog-head">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <h2>📋 放射学结构化诊断报告草案</h2>
+            <span class="muted small">${esc(d.code)}</span>
+          </div>
+          <button class="quiet" data-close-draft aria-label="关闭">✕</button>
+        </div>
+        <div class="dialog-body" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: hidden; padding-bottom: 0">
+          <div class="muted small">
+            已聚合当前检查序列、3D MPR 切片参数与量化指标。您可以在下方直接微调内容，并复制或落库为正式病历文档：
+          </div>
+          <div style="flex: 1; min-height: 280px; position: relative">
+            <textarea id="radReportDraftText" class="pt-rad-draft-textarea" style="width: 100%; height: 100%; min-height: 320px; resize: none; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: var(--text)">${esc(initialMarkdown)}</textarea>
+          </div>
+          <div id="radReportSaveStatus" class="muted small" style="min-height: 18px"></div>
+        </div>
+        <div class="dialog-foot" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-top: 1px solid rgba(255,255,255,0.08)">
+          <button class="quiet small-btn" data-close-draft>关闭</button>
+          <div style="display: flex; gap: 8px">
+            <button class="small-btn quiet" id="radCopyDraftBtn">📋 复制报告全文</button>
+            <button class="primary small-btn" id="radSaveDocBtn">💾 落库为患者正式病历文档</button>
+          </div>
+        </div>
+      </div>
+    `
+    document.body.appendChild(reportDlg)
+
+    const closeDraft = () => { reportDlg.remove() }
+    reportDlg.onclick = ev => {
+      if (ev.target === reportDlg || (ev.target as HTMLElement).closest('[data-close-draft]')) closeDraft()
+    }
+
+    const textarea = reportDlg.querySelector('#radReportDraftText') as HTMLTextAreaElement
+    const statusEl = reportDlg.querySelector('#radReportSaveStatus') as HTMLElement
+    const copyBtn = reportDlg.querySelector('#radCopyDraftBtn') as HTMLButtonElement
+    const saveBtn = reportDlg.querySelector('#radSaveDocBtn') as HTMLButtonElement
+
+    copyBtn.onclick = async () => {
+      await navigator.clipboard.writeText(textarea.value).catch(() => {})
+      copyBtn.textContent = '✓ 已复制全文'
+      setTimeout(() => { copyBtn.textContent = '📋 复制报告全文' }, 1500)
+      notice('报告全文已成功复制到剪贴板！')
+    }
+
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true
+      saveBtn.textContent = '正在保存正式文档...'
+      statusEl.textContent = '正在创建平台文档并关联到患者...'
+      try {
+        const textVal = textarea.value.trim()
+        const doc = await api<{ id: string }>('/api/docs', {
+          method: 'POST',
+          body: JSON.stringify({
+            title,
+            markdown: textVal,
+          }),
+        })
+        await api(`/api/patients/${patientId}/docs`, {
+          method: 'POST',
+          body: JSON.stringify({
+            doc_id: doc.id,
+            kind: 'case_report',
+          }),
+        })
+        statusEl.innerHTML = `<span style="color: var(--teal)">✓ 文档已成功落库归档！<a href="#/docs/${doc.id}" style="color: var(--blue); margin-left: 8px; text-decoration: underline" target="_blank">🔗 打开文档进行富文本编辑与排版</a></span>`
+        saveBtn.textContent = '✓ 已落库归档'
+        notice('放射诊断报告已落库并与患者关联！')
+        void openPatient(patientId, true)
+      } catch (err: any) {
+        saveBtn.disabled = false
+        saveBtn.textContent = '💾 落库为患者正式病历文档'
+        statusEl.innerHTML = `<span style="color: #F87171">保存失败: ${esc(err.message || String(err))}</span>`
+      }
+    }
+  }
+
+  async function showImagingCompareDialog(patientId: string, d: Detail | Patient, selectedRecordId?: string): Promise<void> {
+    const detail = 'records' in d ? (d as Detail) : await api<Detail>(`/api/patients/${patientId}`)
+    const imgRecords = detail.records.filter(r => r.kind === 'imaging' && r.imaging_data)
+    if (imgRecords.length < 2) {
+      notice('患者需要至少 2 份医学影像记录才能进行纵向对比评估', true)
+      return
+    }
+
+    // 按日期正序排列
+    const sorted = [...imgRecords].sort((a, b) => {
+      const da = a.report_date || a.created_at.slice(0, 10)
+      const db = b.report_date || b.created_at.slice(0, 10)
+      return new Date(da).getTime() - new Date(db).getTime()
+    })
+
+    let defaultBaseId = sorted[0]!.id
+    let defaultFollowId = sorted[sorted.length - 1]!.id
+    if (selectedRecordId) {
+      if (selectedRecordId === sorted[0]!.id) {
+        defaultBaseId = sorted[0]!.id
+        defaultFollowId = sorted[sorted.length - 1]!.id
+      } else {
+        defaultBaseId = sorted[0]!.id
+        defaultFollowId = selectedRecordId
+      }
+    }
+
+    const dlg = document.getElementById('dialog')!
+    dlg.innerHTML = `
+      <div class="dialog-card pt-recist-dialog" role="dialog" aria-modal="true" style="max-height: 92vh; width: 96vw; max-width: 1080px; display: flex; flex-direction: column">
+        <div class="dialog-head">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <h2>📈 多期影像随访对比与因果诊断工作台</h2>
+            <span class="muted small">${esc(detail.code)}</span>
+          </div>
+          <button class="quiet" data-close-compare aria-label="关闭">✕</button>
+        </div>
+        <div class="dialog-body" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 18px">
+          <!-- 选择对比基线与随访点 -->
+          <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px 14px">
+            <div style="flex: 1; min-width: 220px">
+              <label class="muted small" style="display: block; margin-bottom: 4px">📍 基线检查点 (Baseline):</label>
+              <select id="compareBaseSelect" style="width: 100%; padding: 6px 10px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: var(--text)">
+                ${sorted.map(r => `<option value="${r.id}" ${r.id === defaultBaseId ? 'selected' : ''}>${esc(r.report_date || r.created_at.slice(0, 10))} · ${esc(r.title)}</option>`).join('')}
+              </select>
+            </div>
+            <div style="font-size: 20px; color: var(--muted); align-self: flex-end; padding-bottom: 6px">➔</div>
+            <div style="flex: 1; min-width: 220px">
+              <label class="muted small" style="display: block; margin-bottom: 4px">🎯 随访对比点 (Follow-up):</label>
+              <select id="compareFollowSelect" style="width: 100%; padding: 6px 10px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: var(--text)">
+                ${sorted.map(r => `<option value="${r.id}" ${r.id === defaultFollowId ? 'selected' : ''}>${esc(r.report_date || r.created_at.slice(0, 10))} · ${esc(r.title)}</option>`).join('')}
+              </select>
+            </div>
+            <button class="primary small-btn" id="compareRunBtn" style="align-self: flex-end; padding: 7px 16px">重新评估</button>
+            <span class="grow"></span>
+            <div style="display: flex; gap: 8px; align-self: flex-end">
+              <button class="small-btn quiet" id="exportFhirBtn" title="导出 HL7 FHIR R4 标准 DiagnosticReport JSON">📥 导出 FHIR</button>
+              <button class="small-btn quiet" id="exportDicomSrBtn" title="导出 DICOM PS 3.3 TID 1500 结构化报告 JSON">💾 导出 DICOM SR</button>
+            </div>
+          </div>
+
+          <!-- 子导航 Tab 切换 -->
+          <div class="pt-compare-nav-tabs">
+            <button class="pt-compare-tab active" data-tab-name="overview">📊 随访疗效总览 (RECIST 1.1)</button>
+            <button class="pt-compare-tab" data-tab-name="dual-mpr">🖥️ 双联 MPR 联动切片 (Dual-Scrubber)</button>
+            <button class="pt-compare-tab" data-tab-name="evidence">🔬 多模态因果诊断链 (Evidence Chain)</button>
+          </div>
+
+          <!-- Tab 1: 随访疗效总览 -->
+          <div id="compareTabOverview">
+            <div id="compareResultContainer">
+              <div class="muted small" style="text-align: center; padding: 30px">正在计算 RECIST 1.1 疗效评估...</div>
+            </div>
+          </div>
+
+          <!-- Tab 2: 双联 MPR 联动切片 -->
+          <div id="compareTabDualMpr" style="display: none">
+            <div class="pt-dual-mpr-wrapper">
+              <div class="pt-dual-mpr-toolbar">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                  <span class="muted small" style="font-weight: 600">正交平面:</span>
+                  <div class="pt-mpr-btn-group" id="dualPlaneBtns">
+                    <button data-plane="axial" class="active">轴位 (Axial)</button>
+                    <button data-plane="coronal">冠状位 (Coronal)</button>
+                    <button data-plane="sagittal">矢状位 (Sagittal)</button>
+                  </div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                  <span class="muted small" style="font-weight: 600">窗宽窗位:</span>
+                  <div class="pt-mpr-btn-group" id="dualWindowBtns">
+                    <button data-win="lung" class="active">肺窗</button>
+                    <button data-win="mediastinum">纵隔</button>
+                    <button data-win="abdomen">腹窗</button>
+                    <button data-win="bone">骨窗</button>
+                    <button data-win="brain">脑窗</button>
+                  </div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--teal)">
+                    <input type="checkbox" id="dualSyncLock" checked> 🔗 锁定同步滚动
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px">
+                    <input type="checkbox" id="dualOverlayMask" checked> 半透明病灶高亮
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #10B981; font-weight: 600">
+                    <input type="checkbox" id="dualDiffHeatmap"> 🎨 叠加 3D 差分吸收热力图 (🟢吸收/🔴进展)
+                  </label>
+                </div>
+              </div>
+
+              <!-- 双联视窗 Grid -->
+              <div class="pt-dual-mpr-grid">
+                <!-- 左：基线 Viewport -->
+                <div class="pt-dual-viewport" id="baseViewport">
+                  <div class="pt-dual-viewport-head">
+                    <b>📍 基线 (Baseline) · <span id="baseTitleText">--</span></b>
+                    <span class="muted small" id="baseDateText">--</span>
+                  </div>
+                  <div class="pt-dual-viewport-view">
+                    <img id="baseMprImg" class="pt-dual-viewport-img" alt="基线切片" style="display: none">
+                    <div id="baseMprLoading" class="muted small">加载切片中...</div>
+                  </div>
+                  <div class="pt-dual-viewport-controls">
+                    <div style="display: flex; justify-content: space-between">
+                      <span>切片层厚: 第 <b id="baseSliceNum">0</b> / <span id="baseSliceTotal">0</span> 层</span>
+                      <span class="muted small" id="baseSliceSpacing">间距 -- mm</span>
+                    </div>
+                    <input type="range" id="baseSliceSlider" class="pt-dual-scrubber-slider" min="0" max="100" value="50">
+                  </div>
+                </div>
+
+                <!-- 右：随访 Viewport -->
+                <div class="pt-dual-viewport" id="followViewport">
+                  <div class="pt-dual-viewport-head">
+                    <b>🎯 本次随访 (Follow-up) · <span id="followTitleText">--</span></b>
+                    <span class="muted small" id="followDateText">--</span>
+                  </div>
+                  <div class="pt-dual-viewport-view">
+                    <img id="followMprImg" class="pt-dual-viewport-img" alt="随访切片" style="display: none">
+                    <div id="followMprLoading" class="muted small">加载切片中...</div>
+                  </div>
+                  <div class="pt-dual-viewport-controls">
+                    <div style="display: flex; justify-content: space-between">
+                      <span>切片层厚: 第 <b id="followSliceNum">0</b> / <span id="followSliceTotal">0</span> 层</span>
+                      <span class="muted small" id="followSliceSpacing">间距 -- mm</span>
+                    </div>
+                    <input type="range" id="followSliceSlider" class="pt-dual-scrubber-slider" min="0" max="100" value="50">
+                  </div>
+                </div>
+              </div>
+              <div id="diffHeatmapHud" style="display: none; padding: 10px 14px; background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); border-radius: 6px; font-size: 12px; margin: 10px 0; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
+                <span><b>🔬 3D 体素空间差分演变:</b> <span id="diffTrendText" style="color: #34D399; font-weight: 600">--</span></span>
+                <span class="muted small" id="diffStatsDetail">--</span>
+              </div>
+              <div class="muted small" style="text-align: center">💡 支持在任意一侧视窗使用鼠标滚轮上下滑动层厚。当「🔗 锁定同步滚动」开启时，两侧视窗按相对解剖比例同步平滑切片。</div>
+            </div>
+          </div>
+
+          <!-- Tab 3: 多模态因果诊断链 -->
+          <div id="compareTabEvidence" style="display: none">
+            <div id="compareEvidenceContainer">
+              <div class="muted small" style="text-align: center; padding: 30px">正在对齐影像与实验室因果证据链...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => {
+      if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close-compare]')) close()
+    }
+
+    const baseSelect = dlg.querySelector('#compareBaseSelect') as HTMLSelectElement
+    const followSelect = dlg.querySelector('#compareFollowSelect') as HTMLSelectElement
+    const runBtn = dlg.querySelector('#compareRunBtn') as HTMLButtonElement
+    const container = dlg.querySelector('#compareResultContainer') as HTMLElement
+
+    // Tab 切换控制
+    const tabs = dlg.querySelectorAll<HTMLButtonElement>('.pt-compare-tab')
+    const paneOverview = dlg.querySelector('#compareTabOverview') as HTMLElement
+    const paneDualMpr = dlg.querySelector('#compareTabDualMpr') as HTMLElement
+    const paneEvidence = dlg.querySelector('#compareTabEvidence') as HTMLElement
+
+    let activeTab = 'overview'
+    let currentCompareRes: any = null
+    let dualMprInitialized = false
+    let evidenceLoaded = false
+
+    tabs.forEach(tab => {
+      tab.onclick = () => {
+        const target = tab.dataset.tabName
+        if (!target || target === activeTab) return
+        activeTab = target
+        tabs.forEach(t => t.classList.toggle('active', t === tab))
+        paneOverview.style.display = target === 'overview' ? 'block' : 'none'
+        paneDualMpr.style.display = target === 'dual-mpr' ? 'block' : 'none'
+        paneEvidence.style.display = target === 'evidence' ? 'block' : 'none'
+
+        if (target === 'dual-mpr' && !dualMprInitialized) {
+          void setupDualMpr()
+        } else if (target === 'evidence' && !evidenceLoaded) {
+          void loadEvidenceChain()
+        }
+      }
+    })
+
+    // 双联 MPR 状态管理
+    let bSample = 'chest_lung_ct'
+    let fSample = 'chest_lung_ct'
+    let baseMax = 268
+    let followMax = 268
+    let baseSlice = 134
+    let followSlice = 134
+    let dualPlane = 'axial'
+    let dualWindow = 'lung'
+    let dualSyncLock = true
+    let dualOverlay = true
+    let dualDiffHeatmap = false
+    const baseCache = new Map<string, any>()
+    const followCache = new Map<string, any>()
+    const diffCache = new Map<string, any>()
+
+    function updateDiffHud(data: any) {
+      const hud = dlg.querySelector('#diffHeatmapHud') as HTMLElement
+      const trendEl = dlg.querySelector('#diffTrendText')
+      const detailEl = dlg.querySelector('#diffStatsDetail')
+      if (!hud) return
+      if (!dualDiffHeatmap || !data?.statistics_3d) {
+        hud.style.display = 'none'
+        return
+      }
+      hud.style.display = 'flex'
+      if (trendEl) trendEl.textContent = data.statistics_3d.dominant_trend || '计算完成'
+      if (detailEl) detailEl.textContent = `🟢 吸收退缩: ${data.statistics_3d.regressed_volume_cm3} cm³ · 🔴 浸润增大: ${data.statistics_3d.progressed_volume_cm3} cm³ (灵敏度 ±${data.threshold_hu || 50} HU)`
+    }
+
+    async function loadComparison() {
+      const bId = baseSelect.value
+      const fId = followSelect.value
+      if (bId === fId) {
+        container.innerHTML = `<div style="padding: 24px; text-align: center; color: #FCA5A5">请选择两个不同的检查时间点进行纵向对比。</div>`
+        return
+      }
+
+      container.innerHTML = `<div class="muted small" style="text-align: center; padding: 30px">正在计算 RECIST 1.1 疗效评估...</div>`
+      dualMprInitialized = false
+      evidenceLoaded = false
+
+      try {
+        const res = await api<any>(`/api/patients/${patientId}/imaging/compare`, {
+          method: 'POST',
+          body: JSON.stringify({
+            baseline_record_id: bId,
+            followup_record_id: fId,
+          }),
+        })
+        currentCompareRes = res
+        renderComparisonResult(res)
+        if (activeTab === 'dual-mpr') void setupDualMpr()
+        else if (activeTab === 'evidence') void loadEvidenceChain()
+      } catch (err: any) {
+        container.innerHTML = `<div style="padding: 24px; text-align: center; color: #FCA5A5">对比计算失败: ${esc(err.message || String(err))}</div>`
+      }
+    }
+
+    async function setupDualMpr() {
+      dualMprInitialized = true
+      const bId = baseSelect.value
+      const fId = followSelect.value
+      const bRec = detail.records.find(r => r.id === bId)
+      const fRec = detail.records.find(r => r.id === fId)
+
+      // 解析样本
+      const bData = (bRec?.imaging_data || {}) as Record<string, any>
+      const fData = (fRec?.imaging_data || {}) as Record<string, any>
+      bSample = bData.sample_id || (bData.raw_file_name?.includes('spleen') ? 'spleen_test' : bData.raw_file_name?.includes('prostate') ? 'prostate_mri' : 'chest_lung_ct')
+      fSample = fData.sample_id || (fData.raw_file_name?.includes('spleen') ? 'spleen_test' : fData.raw_file_name?.includes('prostate') ? 'prostate_mri' : 'chest_lung_ct')
+
+      // 设置标题
+      const bTitleEl = dlg.querySelector('#baseTitleText')
+      const bDateEl = dlg.querySelector('#baseDateText')
+      const fTitleEl = dlg.querySelector('#followTitleText')
+      const fDateEl = dlg.querySelector('#followDateText')
+      if (bTitleEl) bTitleEl.textContent = bRec?.title || '基线扫描'
+      if (bDateEl) bDateEl.textContent = bRec?.report_date || bRec?.created_at.slice(0, 10) || ''
+      if (fTitleEl) fTitleEl.textContent = fRec?.title || '随访扫描'
+      if (fDateEl) fDateEl.textContent = fRec?.report_date || fRec?.created_at.slice(0, 10) || ''
+
+      // 获取两份 3D 体积元数据
+      try {
+        const [bInfo, fInfo] = await Promise.all([
+          api<any>(`/api/imaging/mpr/info?sample_id=${encodeURIComponent(bSample)}`).catch(() => null),
+          api<any>(`/api/imaging/mpr/info?sample_id=${encodeURIComponent(fSample)}`).catch(() => null),
+        ])
+
+        if (bInfo?.planes?.[dualPlane]) {
+          baseMax = bInfo.planes[dualPlane].total_slices - 1
+          baseSlice = bInfo.center_slice?.[dualPlane] ?? Math.floor(baseMax / 2)
+        }
+        if (fInfo?.planes?.[dualPlane]) {
+          followMax = fInfo.planes[dualPlane].total_slices - 1
+          followSlice = fInfo.center_slice?.[dualPlane] ?? Math.floor(followMax / 2)
+        }
+
+        const bSlider = dlg.querySelector('#baseSliceSlider') as HTMLInputElement
+        const fSlider = dlg.querySelector('#followSliceSlider') as HTMLInputElement
+        const bTotalEl = dlg.querySelector('#baseSliceTotal')
+        const fTotalEl = dlg.querySelector('#followSliceTotal')
+        if (bSlider) { bSlider.max = String(baseMax); bSlider.value = String(baseSlice) }
+        if (fSlider) { fSlider.max = String(followMax); fSlider.value = String(followSlice) }
+        if (bTotalEl) bTotalEl.textContent = String(baseMax + 1)
+        if (fTotalEl) fTotalEl.textContent = String(followMax + 1)
+
+        await Promise.all([updateBaseSlice(baseSlice), updateFollowSlice(followSlice)])
+      } catch (err: any) {
+        console.error('Failed to load dual mpr info:', err)
+      }
+    }
+
+    async function updateBaseSlice(idx: number) {
+      baseSlice = Math.max(0, Math.min(baseMax, idx))
+      const slider = dlg.querySelector('#baseSliceSlider') as HTMLInputElement
+      const numEl = dlg.querySelector('#baseSliceNum')
+      const imgEl = dlg.querySelector('#baseMprImg') as HTMLImageElement
+      const loadEl = dlg.querySelector('#baseMprLoading') as HTMLElement
+      if (slider) slider.value = String(baseSlice)
+      if (numEl) numEl.textContent = String(baseSlice)
+
+      const key = `${bSample}_${dualPlane}_${baseSlice}_${dualWindow}_${dualOverlay ? 1 : 0}`
+      if (baseCache.has(key)) {
+        const data = baseCache.get(key)
+        if (imgEl) { imgEl.src = data.slice_png_base64; imgEl.style.display = 'block' }
+        if (loadEl) loadEl.style.display = 'none'
+        return
+      }
+
+      try {
+        const data = await api<any>('/api/imaging/mpr/slice', {
+          method: 'POST',
+          body: JSON.stringify({
+            sample_id: bSample,
+            plane: dualPlane,
+            slice_index: baseSlice,
+            window_preset: dualWindow,
+            overlay_mask: dualOverlay,
+          }),
+        })
+        baseCache.set(key, data)
+        if (imgEl && data.slice_png_base64) {
+          imgEl.src = data.slice_png_base64
+          imgEl.style.display = 'block'
+        }
+        if (loadEl) loadEl.style.display = 'none'
+      } catch {}
+    }
+
+    async function updateFollowSlice(idx: number) {
+      followSlice = Math.max(0, Math.min(followMax, idx))
+      const slider = dlg.querySelector('#followSliceSlider') as HTMLInputElement
+      const numEl = dlg.querySelector('#followSliceNum')
+      const imgEl = dlg.querySelector('#followMprImg') as HTMLImageElement
+      const loadEl = dlg.querySelector('#followMprLoading') as HTMLElement
+      if (slider) slider.value = String(followSlice)
+      if (numEl) numEl.textContent = String(followSlice)
+
+      if (dualDiffHeatmap) {
+        const diffKey = `diff_${bSample}_${fSample}_${dualPlane}_${followSlice}_${dualWindow}`
+        if (diffCache.has(diffKey)) {
+          const data = diffCache.get(diffKey)
+          if (imgEl && data.slice_png_base64) { imgEl.src = data.slice_png_base64; imgEl.style.display = 'block' }
+          if (loadEl) loadEl.style.display = 'none'
+          updateDiffHud(data)
+          return
+        }
+        try {
+          const data = await api<any>('/api/imaging/mpr/diff-slice', {
+            method: 'POST',
+            body: JSON.stringify({
+              baseline_id: bSample,
+              followup_id: fSample,
+              plane: dualPlane,
+              slice_index: followSlice,
+              window_preset: dualWindow,
+              threshold_hu: 50,
+            }),
+          })
+          diffCache.set(diffKey, data)
+          if (imgEl && data.slice_png_base64) {
+            imgEl.src = data.slice_png_base64
+            imgEl.style.display = 'block'
+          }
+          if (loadEl) loadEl.style.display = 'none'
+          updateDiffHud(data)
+        } catch {}
+        return
+      }
+
+      updateDiffHud(null)
+      const key = `${fSample}_${dualPlane}_${followSlice}_${dualWindow}_${dualOverlay ? 1 : 0}`
+      if (followCache.has(key)) {
+        const data = followCache.get(key)
+        if (imgEl) { imgEl.src = data.slice_png_base64; imgEl.style.display = 'block' }
+        if (loadEl) loadEl.style.display = 'none'
+        return
+      }
+
+      try {
+        const data = await api<any>('/api/imaging/mpr/slice', {
+          method: 'POST',
+          body: JSON.stringify({
+            sample_id: fSample,
+            plane: dualPlane,
+            slice_index: followSlice,
+            window_preset: dualWindow,
+            overlay_mask: dualOverlay,
+          }),
+        })
+        followCache.set(key, data)
+        if (imgEl && data.slice_png_base64) {
+          imgEl.src = data.slice_png_base64
+          imgEl.style.display = 'block'
+        }
+        if (loadEl) loadEl.style.display = 'none'
+      } catch {}
+    }
+
+    // 导出标准医学数据
+    const exportFhirBtn = dlg.querySelector('#exportFhirBtn') as HTMLButtonElement
+    const exportDicomSrBtn = dlg.querySelector('#exportDicomSrBtn') as HTMLButtonElement
+    if (exportFhirBtn) {
+      exportFhirBtn.onclick = () => {
+        const fId = followSelect.value
+        window.open(`/api/patients/${patientId}/imaging/export?format=fhir&record_id=${encodeURIComponent(fId)}&download=1`, '_blank')
+      }
+    }
+    if (exportDicomSrBtn) {
+      exportDicomSrBtn.onclick = () => {
+        const fId = followSelect.value
+        window.open(`/api/patients/${patientId}/imaging/export?format=dicom-sr&record_id=${encodeURIComponent(fId)}&download=1`, '_blank')
+      }
+    }
+
+    // 绑定双联滑动条事件
+    const bSlider = dlg.querySelector('#baseSliceSlider') as HTMLInputElement
+    const fSlider = dlg.querySelector('#followSliceSlider') as HTMLInputElement
+    const syncCheck = dlg.querySelector('#dualSyncLock') as HTMLInputElement
+    const overlayCheck = dlg.querySelector('#dualOverlayMask') as HTMLInputElement
+    const diffCheck = dlg.querySelector('#dualDiffHeatmap') as HTMLInputElement
+
+    if (syncCheck) {
+      syncCheck.onchange = () => { dualSyncLock = syncCheck.checked }
+    }
+    if (overlayCheck) {
+      overlayCheck.onchange = () => {
+        dualOverlay = overlayCheck.checked
+        void updateBaseSlice(baseSlice)
+        void updateFollowSlice(followSlice)
+      }
+    }
+    if (diffCheck) {
+      diffCheck.onchange = () => {
+        dualDiffHeatmap = diffCheck.checked
+        void updateFollowSlice(followSlice)
+      }
+    }
+
+    if (bSlider) {
+      bSlider.oninput = () => {
+        const val = Number(bSlider.value)
+        void updateBaseSlice(val)
+        if (dualSyncLock && baseMax > 0 && followMax > 0) {
+          const propF = Math.round((val / baseMax) * followMax)
+          void updateFollowSlice(propF)
+        }
+      }
+    }
+    if (fSlider) {
+      fSlider.oninput = () => {
+        const val = Number(fSlider.value)
+        void updateFollowSlice(val)
+        if (dualSyncLock && baseMax > 0 && followMax > 0) {
+          const propB = Math.round((val / followMax) * baseMax)
+          void updateBaseSlice(propB)
+        }
+      }
+    }
+
+    // 滚轮联动切片
+    const bView = dlg.querySelector('#baseViewport .pt-dual-viewport-view') as HTMLElement
+    const fView = dlg.querySelector('#followViewport .pt-dual-viewport-view') as HTMLElement
+    const handleWheel = (isBase: boolean, e: WheelEvent) => {
+      e.preventDefault()
+      const delta = e.deltaY > 0 ? -1 : 1
+      if (isBase) {
+        const newB = Math.max(0, Math.min(baseMax, baseSlice + delta))
+        void updateBaseSlice(newB)
+        if (dualSyncLock && baseMax > 0 && followMax > 0) {
+          const propF = Math.round((newB / baseMax) * followMax)
+          void updateFollowSlice(propF)
+        }
+      } else {
+        const newF = Math.max(0, Math.min(followMax, followSlice + delta))
+        void updateFollowSlice(newF)
+        if (dualSyncLock && baseMax > 0 && followMax > 0) {
+          const propB = Math.round((newF / followMax) * baseMax)
+          void updateBaseSlice(propB)
+        }
+      }
+    }
+    bView?.addEventListener('wheel', e => handleWheel(true, e), { passive: false })
+    fView?.addEventListener('wheel', e => handleWheel(false, e), { passive: false })
+
+    // 正交平面切换
+    const planeBtns = dlg.querySelectorAll<HTMLButtonElement>('#dualPlaneBtns button')
+    planeBtns.forEach(btn => {
+      btn.onclick = () => {
+        const p = btn.dataset.plane
+        if (!p || p === dualPlane) return
+        dualPlane = p
+        planeBtns.forEach(b => b.classList.toggle('active', b === btn))
+        void setupDualMpr()
+      }
+    })
+
+    // 窗宽窗位切换
+    const winBtns = dlg.querySelectorAll<HTMLButtonElement>('#dualWindowBtns button')
+    winBtns.forEach(btn => {
+      btn.onclick = () => {
+        const w = btn.dataset.win
+        if (!w || w === dualWindow) return
+        dualWindow = w
+        winBtns.forEach(b => b.classList.toggle('active', b === btn))
+        void updateBaseSlice(baseSlice)
+        void updateFollowSlice(followSlice)
+      }
+    })
+
+    // 加载多模态因果诊断链
+    async function loadEvidenceChain() {
+      evidenceLoaded = true
+      const bId = baseSelect.value
+      const fId = followSelect.value
+      const evBox = dlg.querySelector('#compareEvidenceContainer') as HTMLElement
+      evBox.innerHTML = `<div class="muted small" style="text-align: center; padding: 30px">正在对齐影像量化指标与实验室化验检验项目...</div>`
+      try {
+        const evData = await api<any>(`/api/patients/${patientId}/imaging/evidence-chain?baseline_record_id=${encodeURIComponent(bId)}&followup_record_id=${encodeURIComponent(fId)}`)
+        renderEvidenceChainContent(evBox, evData, patientId, detail)
+      } catch (err: any) {
+        evBox.innerHTML = `<div style="padding: 24px; text-align: center; color: #FCA5A5">获取证据链失败: ${esc(err.message || String(err))}</div>`
+      }
+    }
+
+    function renderComparisonResult(res: any) {
+      const rec = res.recist || {}
+      const cat = (rec.category || 'SD').toLowerCase()
+      const bImgUrl = res.baseline?.file_id ? `/api/patients/${patientId}/files/${res.baseline.file_id}?token=${encodeURIComponent(hooks.token())}` : res.baseline?.asset_id ? `/api/assets/${res.baseline.asset_id}?token=${encodeURIComponent(hooks.token())}` : ''
+      const fImgUrl = res.followup?.file_id ? `/api/patients/${patientId}/files/${res.followup.file_id}?token=${encodeURIComponent(hooks.token())}` : res.followup?.asset_id ? `/api/assets/${res.followup.asset_id}?token=${encodeURIComponent(hooks.token())}` : ''
+
+      const signLd = rec.percent_change_ld > 0 ? `+${rec.percent_change_ld}%` : `${rec.percent_change_ld}%`
+      const signVol = rec.percent_change_volume > 0 ? `+${rec.percent_change_volume}%` : `${rec.percent_change_volume}%`
+
+      container.innerHTML = `
+        <!-- 评定总览 Header -->
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="pt-recist-badge ${cat}">${esc(rec.category)} · ${esc(rec.category_name)}</span>
+              <span class="muted small">随访间隔 <b>${res.interval_days}</b> 天</span>
+            </div>
+            <div style="font-size: 13px; color: var(--text-1); margin-top: 6px">
+              ${esc(rec.interpretation)}
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px">
+            <button class="small-btn quiet" id="compareCopyMdBtn">📋 复制 Markdown 报告</button>
+            <button class="primary small-btn" id="compareSaveRecBtn">💾 保存为随访记录</button>
+          </div>
+        </div>
+
+        <!-- 双期图像与指标对照 -->
+        <div class="pt-recist-dual-grid">
+          <div class="pt-recist-card">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <b>基线 (Baseline)</b>
+              <span class="muted small">${esc(res.baseline?.date)}</span>
+            </div>
+            <div class="muted small">${esc(res.baseline?.title)}</div>
+            ${bImgUrl ? `<img src="${bImgUrl}" alt="基线切片" class="pt-recist-card-thumb">` : '<div class="pt-imaging-no-img" style="height: 220px">暂无截面图</div>'}
+            <div style="font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; margin-top: 4px">
+              <div>最大截面长径 (LD): <b>${rec.baseline_ld_mm ?? '--'} mm</b></div>
+              <div>3D 总体积 (Volume): <b>${rec.baseline_volume_cm3 ?? '--'} cm³</b></div>
+            </div>
+          </div>
+
+          <div class="pt-recist-card">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <b>本次随访 (Follow-up)</b>
+              <span class="muted small">${esc(res.followup?.date)}</span>
+            </div>
+            <div class="muted small">${esc(res.followup?.title)}</div>
+            ${fImgUrl ? `<img src="${fImgUrl}" alt="随访切片" class="pt-recist-card-thumb">` : '<div class="pt-imaging-no-img" style="height: 220px">暂无截面图</div>'}
+            <div style="font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; margin-top: 4px">
+              <div>最大截面长径 (LD): <b>${rec.followup_ld_mm ?? '--'} mm</b> <span class="pt-recist-badge ${cat}" style="padding: 2px 6px; font-size: 11px">${signLd}</span></div>
+              <div>3D 总体积 (Volume): <b>${rec.followup_volume_cm3 ?? '--'} cm³</b> <span class="pt-recist-badge ${cat}" style="padding: 2px 6px; font-size: 11px">${signVol}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 详细演变对比表格 -->
+        <table class="pt-recist-table">
+          <thead>
+            <tr>
+              <th>测量指标</th>
+              <th>基线值 (${esc(res.baseline?.date)})</th>
+              <th>随访值 (${esc(res.followup?.date)})</th>
+              <th>绝对差值 (Δ)</th>
+              <th>变化率 (Δ%)</th>
+              <th>临床标准</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>最大截面长径 (LD)</b></td>
+              <td>${rec.baseline_ld_mm ?? '--'} mm</td>
+              <td>${rec.followup_ld_mm ?? '--'} mm</td>
+              <td>${rec.diff_ld_mm !== undefined ? `${rec.diff_ld_mm > 0 ? '+' : ''}${rec.diff_ld_mm} mm` : '--'}</td>
+              <td><b style="color: ${cat === 'pr' || cat === 'cr' ? '#34D399' : cat === 'pd' ? '#F87171' : 'var(--text)'}">${signLd}</b></td>
+              <td>RECIST 1.1 靶病灶</td>
+            </tr>
+            <tr>
+              <td><b>3D 肿瘤总体积 (Volume)</b></td>
+              <td>${rec.baseline_volume_cm3 ?? '--'} cm³</td>
+              <td>${rec.followup_volume_cm3 ?? '--'} cm³</td>
+              <td>${rec.diff_volume_cm3 !== undefined ? `${rec.diff_volume_cm3 > 0 ? '+' : ''}${rec.diff_volume_cm3} cm³` : '--'}</td>
+              <td><b style="color: ${cat === 'pr' || cat === 'cr' ? '#34D399' : cat === 'pd' ? '#F87171' : 'var(--text)'}">${signVol}</b></td>
+              <td>MONAI 深度学习测量</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- 结构化报告全文折叠 -->
+        <details style="margin-top: 8px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.06)">
+          <summary style="cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--text-2)">查看学术对比评估报告 Markdown</summary>
+          <pre style="margin-top: 10px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--text); max-height: 220px; overflow-y: auto">${esc(res.summary_markdown || '')}</pre>
+        </details>
+      `
+
+      // 绑定复制按钮
+      container.querySelector('#compareCopyMdBtn')?.addEventListener('click', async () => {
+        if (res.summary_markdown) {
+          await navigator.clipboard.writeText(res.summary_markdown).catch(() => {})
+          notice('RECIST 1.1 对比报告已成功复制到剪贴板！')
+        }
+      })
+
+      // 绑定保存为记录按钮
+      const saveRecBtn = container.querySelector('#compareSaveRecBtn') as HTMLButtonElement
+      saveRecBtn?.addEventListener('click', async () => {
+        saveRecBtn.disabled = true
+        saveRecBtn.textContent = '正在保存记录...'
+        try {
+          const saveRes = await api<any>(`/api/patients/${patientId}/imaging/compare`, {
+            method: 'POST',
+            body: JSON.stringify({
+              baseline_record_id: baseSelect.value,
+              followup_record_id: followSelect.value,
+              save_as_record: true,
+            }),
+          })
+          if (saveRes.record_id) {
+            saveRecBtn.textContent = '✓ 已保存记录'
+            notice('RECIST 1.1 随访对比评估已存入患者病历记录！')
+            void openPatient(patientId, true)
+          } else {
+            saveRecBtn.disabled = false
+            saveRecBtn.textContent = '💾 保存为随访记录'
+          }
+        } catch (e: any) {
+          saveRecBtn.disabled = false
+          saveRecBtn.textContent = '💾 保存为随访记录'
+          notice(`保存失败: ${e.message || String(e)}`, true)
+        }
+      })
+    }
+
+    runBtn.onclick = () => void loadComparison()
+    void loadComparison()
+  }
+
+  function renderEvidenceChainContent(container: HTMLElement, data: any, patientId: string, d: Detail | Patient, onInjectReport?: (md: string) => void) {
+    const urg = data.clinical_urgency || 'routine'
+    const urgMap: Record<string, { label: string; cls: string }> = {
+      high: { label: '⚠️ 高紧迫度 · 强烈提示临床干预', cls: 'high' },
+      medium: { label: '💡 中度 · 建议密切随访与补充检验', cls: 'medium' },
+      routine: { label: '✓ 常规 · 稳定随访状态', cls: 'routine' },
+    }
+    const urgencyBadge = urgMap[urg] || urgMap.routine!
+    const criteria = data.criteria_table || []
+    const labs = data.matched_labs || []
+    const workup = data.suggested_workup || []
+
+    container.innerHTML = `
+      <div class="pt-evidence-wrapper">
+        <div class="pt-evidence-header-card">
+          <div style="flex: 1; min-width: 260px">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+              <span class="pt-evidence-urgency-badge ${urgencyBadge.cls}">${esc(urgencyBadge.label)}</span>
+              <span class="muted small">${esc(data.record_title || '医学影像')}</span>
+            </div>
+            <h3 style="margin: 8px 0 6px; font-size: 16px; color: var(--text)">🔬 ${esc(data.syndrome || '多模态因果诊断链')}</h3>
+            <div style="font-size: 13px; line-height: 1.5; color: var(--text-1)">${esc(data.diagnostic_impression || '')}</div>
+            <div class="muted small" style="margin-top: 6px">${esc(data.match_summary || '')}</div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap">
+            <button class="small-btn quiet" id="evCopyMdBtn">📋 复制 Markdown</button>
+            <button class="primary small-btn" id="evInjectReportBtn">📝 注入病例报告草案</button>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-2)">📋 临床确诊依据对照表 (Clinical Criteria Matrix)</div>
+          <table class="pt-evidence-table">
+            <thead>
+              <tr>
+                <th>诊断准则要点</th>
+                <th>证据类别</th>
+                <th>判定状态</th>
+                <th>患者客观实测值</th>
+                <th>参考临床指南</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${criteria.map((c: any) => `
+                <tr>
+                  <td><b>${esc(c.criterion)}</b></td>
+                  <td class="muted small">${c.category === 'imaging' ? '医学影像' : c.category === 'lab' ? '实验室化验' : '既往病史'}</td>
+                  <td>
+                    <span class="pt-evidence-tag-status ${esc(c.status)}">
+                      ${c.status === 'positive' ? '✅ 阳性' : c.status === 'negative' ? '⚪ 阴性' : '⚠️ 缺漏待查'}
+                    </span>
+                  </td>
+                  <td>${esc(c.evidence_value)}</td>
+                  <td class="muted small">${esc(c.reference_guideline)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        ${labs.length > 0 ? `
+          <div>
+            <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-2)">🧪 协同关键实验室指标 (Correlated Laboratory Markers)</div>
+            <table class="pt-evidence-table">
+              <thead>
+                <tr>
+                  <th>化验项目</th>
+                  <th>检测数值</th>
+                  <th>异常标识</th>
+                  <th>采样日期</th>
+                  <th>临床因果关联解读</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${labs.map((l: any) => `
+                  <tr>
+                    <td><b>${esc(l.test_name)}</b></td>
+                    <td>${esc(l.value)} ${esc(l.unit || '')}</td>
+                    <td><span class="${l.flag === 'H' ? 'flag-H' : l.flag === 'L' ? 'flag-L' : 'muted'}">${l.flag === 'H' ? '↑ 升高' : l.flag === 'L' ? '↓ 降低' : '正常'}</span></td>
+                    <td class="muted small">${esc(l.date)}</td>
+                    <td style="font-size: 12px">${esc(l.clinical_significance)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+
+        ${workup.length > 0 ? `
+          <div style="background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 6px; padding: 12px">
+            <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: #FBBF24">💡 临床指南推荐完善检查 / 诊疗路径</div>
+            <ol style="margin: 0; padding-left: 20px; font-size: 12.5px; line-height: 1.6; color: var(--text-1)">
+              ${workup.map((w: string) => `<li>${esc(w)}</li>`).join('')}
+            </ol>
+          </div>
+        ` : ''}
+      </div>
+    `
+
+    container.querySelector('#evCopyMdBtn')?.addEventListener('click', async () => {
+      if (data.summary_markdown) {
+        await navigator.clipboard.writeText(data.summary_markdown).catch(() => {})
+        notice('多模态因果诊断链 Markdown 已复制到剪贴板！')
+      }
+    })
+
+    container.querySelector('#evInjectReportBtn')?.addEventListener('click', () => {
+      if (onInjectReport) {
+        onInjectReport(data.summary_markdown)
+      } else {
+        const prompt = `请依据患者 ${d.code} 的多模态因果诊断证据链分析结果撰写专业临床病例报告：\n\n${data.summary_markdown}\n\n请按病史摘要、多模态证据链三角比对、诊断与鉴别诊断、下一步治疗方案展开撰写。`
+        hooks.prefillChat(prompt)
+        notice('已将多模态诊断证据链指令填入 AI 对话框，可直接确认发送！')
+      }
+    })
+  }
+
+  async function showEvidenceChainDialog(patientId: string, d: Detail | Patient, recordId?: string): Promise<void> {
+    const dlg = document.getElementById('dialog')!
+    dlg.innerHTML = `
+      <div class="dialog-card pt-rad-report-dialog" role="dialog" aria-modal="true" style="max-height: 92vh; width: 95vw; max-width: 900px; display: flex; flex-direction: column">
+        <div class="dialog-head">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <h2>🔬 多模态因果诊断证据链 (Multimodal Evidence Chain)</h2>
+            <span class="muted small">${esc(d.code)}</span>
+          </div>
+          <button class="quiet" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="dialog-body" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 16px 20px">
+          <div class="muted small" style="text-align: center; padding: 30px">正在对齐影像量化指标与实验室化验检验项目...</div>
+        </div>
+      </div>`
+    dlg.hidden = false
+    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
+
+    try {
+      const url = `/api/patients/${patientId}/imaging/evidence-chain${recordId ? `?record_id=${encodeURIComponent(recordId)}` : ''}`
+      const evData = await api<any>(url)
+      renderEvidenceChainContent(dlg.querySelector('.dialog-body')!, evData, patientId, d)
+    } catch (err: any) {
+      const b = dlg.querySelector('.dialog-body')
+      if (b) b.innerHTML = `<div style="padding: 24px; text-align: center; color: #FCA5A5">获取证据链失败: ${esc(err.message || String(err))}</div>`
+    }
+  }
+
   async function showClaimDialog(patientId: string, d: Detail | Patient): Promise<void> {
     const data = await api<{
       claims: Array<{ id: string; code: string; status: string; expires_at: string; created_at: string; requested_at: string | null; confirmed_at: string | null; claimant_info?: { birth_year?: number | null } }>;
@@ -1037,11 +2573,56 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       return
     }
 
+    const openMpr = t.closest<HTMLElement>('[data-open-mpr]')
+    if (openMpr) {
+      const recId = openMpr.dataset.openMpr
+      const detail = await api<Detail>(`/api/patients/${id}`)
+      const r = recId === 'latest' ? detail.records.find(x => x.kind === 'imaging') : detail.records.find(x => x.id === recId)
+      await showMprViewerDialog(id, detail, r)
+      return
+    }
+
+    const openEvidence = t.closest<HTMLElement>('[data-open-evidence]')
+    if (openEvidence) {
+      const recId = openEvidence.dataset.openEvidence
+      const detail = await api<Detail>(`/api/patients/${id}`)
+      const r = recId === 'latest' ? detail.records.find(x => x.kind === 'imaging') : detail.records.find(x => x.id === recId)
+      await showEvidenceChainDialog(id, detail, r?.id)
+      return
+    }
+
+    const compareWith = t.closest<HTMLElement>('[data-compare-with]')
+    if (compareWith) {
+      const recId = compareWith.dataset.compareWith
+      const detail = await api<Detail>(`/api/patients/${id}`)
+      await showImagingCompareDialog(id, detail, recId)
+      return
+    }
+
+    const exportStandard = t.closest<HTMLElement>('[data-export-standard]')
+    if (exportStandard) {
+      const recId = exportStandard.dataset.exportStandard
+      const choice = await askText({
+        title: '导出国际医学行业标准交换格式',
+        label: '请选择格式：\n1. HL7 FHIR R4 DiagnosticReport (JSON)\n2. DICOM SR (TID 1500 Structured Reporting JSON)',
+        value: '1',
+        confirm: '下载',
+        hint: '输入 1 下载 FHIR 资源，输入 2 下载 DICOM SR 报告',
+      })
+      if (!choice) return
+      const fmt = choice.trim() === '2' ? 'dicom-sr' : 'fhir'
+      window.open(`/api/patients/${id}/imaging/export?format=${fmt}&record_id=${encodeURIComponent(recId || '')}&download=1`, '_blank')
+      return
+    }
+
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
     if (act === 'ptmore') { const m = document.getElementById('ptMore'); if (m) m.hidden = !m.hidden; return }
     document.getElementById('ptMore')?.setAttribute('hidden', '')
     try {
-      if (act === 'alias') {
+      if (act === 'compare-imaging') {
+        const detail = await api<Detail>(`/api/patients/${id}`)
+        await showImagingCompareDialog(id, detail)
+      } else if (act === 'alias') {
         const n = await askText({ title: '本机备注姓名', label: `${d.code} 的姓名（只存在这台电脑的浏览器里，平台不保存、不发给 AI）`, value: names()[id] ?? '', confirm: '保存' })
         if (n !== null) { setName(id, n); void openPatient(id, true) }
       } else if (act === 'tags') {

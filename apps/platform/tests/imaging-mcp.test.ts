@@ -9,6 +9,9 @@ import { ClaimService } from '../src/claims/service.ts'
 import { SlideRenderer } from '../src/render/slides.ts'
 import { buildMcpServer } from '../src/mcp/server.ts'
 import { TurnRegistry } from '../src/mcp/turns.ts'
+import { TenantService } from '../src/auth/tenants.ts'
+import { kekFrom, TenantKeys } from '../src/tenancy/keys.ts'
+import { PatientService } from '../src/tenancy/patients.ts'
 import { setup } from './helpers.ts'
 
 const SECRET = 'test-secret'
@@ -46,6 +49,73 @@ beforeAll(async () => {
               { sample_id: 'spleen_test', name: '脾脏增强 CT', modality: 'CT' },
               { sample_id: 'chest_lung_ct', name: '胸部 HRCT 支气管扩张', modality: 'CT' }
             ]
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/mpr/info') {
+          return new Response(JSON.stringify({
+            modality: 'CT',
+            dimensions: { z: 269, y: 512, x: 512 },
+            voxel_spacing_mm: { dz: 1.25, dy: 0.898, dx: 0.898 },
+            planes: {
+              axial: { total_slices: 269, default_slice: 115, label: '轴位 (横断面 Axial)' },
+              coronal: { total_slices: 512, default_slice: 259, label: '冠状位 (额状面 Coronal)' },
+              sagittal: { total_slices: 512, default_slice: 250, label: '矢状位 (矢状面 Sagittal)' }
+            },
+            center_slice: { axial: 115, coronal: 259, sagittal: 250 },
+            bounding_box: { z_min: 0, z_max: 268, y_min: 40, y_max: 440, x_min: 0, x_max: 505 },
+            recommended_windows: ['lung', 'mediastinum']
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/mpr/slice') {
+          let body: any = {}
+          try {
+            if (typeof init?.body === 'string') body = JSON.parse(init.body)
+          } catch {}
+          const plane = body.plane || 'axial'
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            plane,
+            slice_index: body.slice_index ?? (plane === 'axial' ? 115 : 256),
+            total_slices: plane === 'axial' ? 269 : 512,
+            window: { preset: body.window_preset || 'lung', level: -600, width: 1500 },
+            dimensions: { width: 512, height: plane === 'axial' ? 512 : 269 },
+            pixel_spacing_mm: { horizontal: 0.898, vertical: plane === 'axial' ? 0.898 : 1.25 },
+            lesion_present: true,
+            lesion_pixel_count: 320,
+            slice_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            slice_png_size_bytes: 1500,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname === '/api/v1/mpr/diff-slice') {
+          let body: any = {}
+          try {
+            if (typeof init?.body === 'string') body = JSON.parse(init.body)
+          } catch {}
+          const plane = body.plane || 'axial'
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            plane,
+            slice_index: body.slice_index ?? 24,
+            total_slices: 269,
+            window: { preset: body.window_preset || 'lung', level: -600, width: 1500 },
+            dimensions: { width: 512, height: 512 },
+            pixel_spacing_mm: { horizontal: 0.898, vertical: 0.898 },
+            threshold_hu: body.threshold_hu ?? 50,
+            statistics_3d: {
+              total_regressed_voxels: 120,
+              total_progressed_voxels: 15,
+              regressed_volume_cm3: 2.4,
+              progressed_volume_cm3: 0.3,
+              net_change_volume_cm3: -2.1,
+              dominant_trend: '显著退缩吸收 (Significant Regression)',
+            },
+            slice_metrics: { regressed_pixels: 40, progressed_pixels: 5 },
+            slice_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            slice_png_size_bytes: 1500,
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
         if (u.pathname.includes('/analyze/')) {
@@ -118,7 +188,13 @@ async function connectImagingMcp() {
   const env = setup('# 医学影像科研研究方案\n\n评估新药靶向治疗实体瘤的 RECIST 影像响应。')
   const workspace = mkdtempSync(join(tmpdir(), 'heurion-imaging-test-'))
   const registry = new TurnRegistry()
-  const claims = verifyToken(SECRET, issueToken(SECRET, { u: 'u1', d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 60 }), 'mcp')!
+  const hosp = env.store.createTenant({ name: '放射与影像中心', kind: 'org' })
+  const uRow = env.store.createUser({ username: 'dr_mcp', display_name: '医生', password_hash: 'x', tenant: { id: hosp.id, role: 'member' } })
+  const claims = verifyToken(SECRET, issueToken(SECRET, { u: uRow.id, d: '*', p: ['read', 'write'], aud: 'mcp', ttlSeconds: 60 }), 'mcp')!
+
+  const tenants = new TenantService(env.store, { devMode: false })
+  const keys = new TenantKeys(env.store, kekFrom({ secret: SECRET }))
+  const patients = new PatientService(mkdtempSync(join(tmpdir(), 'hr-pt-mcp-')), tenants, keys, env.store)
 
   const server = buildMcpServer({
     docs: env.docs,
@@ -131,6 +207,7 @@ async function connectImagingMcp() {
     crossref: {} as any,
     workspaceDir: () => workspace,
     isLiveSession: () => true,
+    patients,
   }, claims)
 
   const [a, b] = InMemoryTransport.createLinkedPair()
@@ -151,7 +228,7 @@ async function connectImagingMcp() {
     }
   }
 
-  return { env, client, call }
+  return { env: { ...env, patients, userId: uRow.id }, client, call }
 }
 
 describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
@@ -279,4 +356,136 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(assetRow?.mime).toBe('image/png')
     expect(assetRow?.size).toBeGreaterThan(1000)
   }, 30000)
+
+  it('7. imaging_volume_info: 探测 3D 体积几何维度、体素间距与正交平面总层数', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_volume_info', {
+      sample_id: 'chest_lung_ct',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.dimensions).toBeDefined()
+    expect(res.data.dimensions.z).toBeGreaterThan(0)
+    expect(res.data.dimensions.y).toBeGreaterThan(0)
+    expect(res.data.dimensions.x).toBeGreaterThan(0)
+    expect(res.data.voxel_spacing_mm).toBeDefined()
+    expect(res.data.planes.axial.total_slices).toBe(res.data.dimensions.z)
+    expect(res.data.planes.coronal.total_slices).toBe(res.data.dimensions.y)
+    expect(res.data.planes.sagittal.total_slices).toBe(res.data.dimensions.x)
+    expect(res.data.recommended_windows).toContain('lung')
+  })
+
+  it('8. imaging_mpr_slice: 抽取三大正交平面 (轴位/冠状位/矢状位) 切片并沉淀为用户资产', async () => {
+    const { env, call } = await connectImagingMcp()
+
+    // 1) 冠状位 (Coronal) 切片提取
+    const coronalRes = await call('imaging_mpr_slice', {
+      sample_id: 'chest_lung_ct',
+      plane: 'coronal',
+      slice_index: 250,
+      window_preset: 'lung',
+      overlay_mask: true,
+      label: '图 4 真实患者胸部 HRCT 冠状位切片',
+    })
+
+    expect(coronalRes.isError).toBe(false)
+    expect(coronalRes.data.status).toBe('success')
+    expect(coronalRes.data.plane).toBe('coronal')
+    expect(coronalRes.data.slice_index).toBe(250)
+    expect(coronalRes.data.total_slices).toBeGreaterThan(0)
+    expect(coronalRes.data.asset_id).toBeDefined()
+    expect(coronalRes.data.markdown_insert).toContain(`asset:${coronalRes.data.asset_id}`)
+
+    // 验证资产写入数据库
+    const assetRow = env.docs.store.getAsset(coronalRes.data.asset_id)
+    expect(assetRow).toBeDefined()
+    expect(assetRow?.mime).toBe('image/png')
+    const bytes = env.docs.store.getAssetBytes(coronalRes.data.asset_id)
+    expect(bytes?.[0]).toBe(0x89) // PNG magic
+
+    // 2) 矢状位 (Sagittal) 切片提取
+    const sagittalRes = await call('imaging_mpr_slice', {
+      sample_id: 'chest_lung_ct',
+      plane: 'sagittal',
+      window_preset: 'lung',
+      overlay_mask: false,
+      save_asset: false,
+    })
+
+    expect(sagittalRes.isError).toBe(false)
+    expect(sagittalRes.data.status).toBe('success')
+    expect(sagittalRes.data.plane).toBe('sagittal')
+    expect(sagittalRes.data.asset_id).toBeUndefined() // save_asset: false 时不落库
+  }, 30000)
+
+  it('9. imaging_diff_slice: 提取双期 3D 刚性配准与差分吸收热力图切片并沉淀资产', async () => {
+    const { env, call } = await connectImagingMcp()
+    const diffRes = await call('imaging_diff_slice', {
+      baseline_sample_id: 'chest_lung_ct',
+      followup_sample_id: 'chest_lung_ct',
+      plane: 'axial',
+      slice_index: 24,
+      threshold_hu: 50,
+      save_asset: true,
+      label: '图 5 随访对比 3D 体素差分吸收热力图',
+    })
+
+    expect(diffRes.isError).toBe(false)
+    expect(diffRes.data.status).toBe('success')
+    expect(diffRes.data.plane).toBe('axial')
+    expect(diffRes.data.slice_index).toBe(24)
+    expect(diffRes.data.statistics_3d).toBeDefined()
+    expect(diffRes.data.statistics_3d.dominant_trend).toBeDefined()
+    expect(diffRes.data.asset_id).toBeDefined()
+    expect(diffRes.data.markdown_insert).toContain(`asset:${diffRes.data.asset_id}`)
+  }, 30000)
+
+  it('10. imaging_export_standard: 导出 HL7 FHIR 与 DICOM SR 标准医学交换格式', async () => {
+    const { env, call } = await connectImagingMcp()
+    const a = { userId: (env as any).userId, via: 'user' as const }
+    const patient = env.patients.create(a, {
+      sex: 'F',
+      birth_year: 1975,
+      tags: ['肺腺癌', '靶向治疗随访'],
+    })
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const rec = env.patients.addImagingRecord(a, patient.id, {
+      title: '靶向治疗 3 个月复查 CT',
+      report_date: '2026-10-01',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 19.5,
+        short_axis_mm: 12.0,
+        total_volume_cm3: 8.4,
+        key_slice_index: 18,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    // 10.1 导出 FHIR
+    const fhirRes = await call('imaging_export_standard', {
+      patient_id: patient.id,
+      format: 'fhir',
+      record_id: rec.record.id,
+    })
+    expect(fhirRes.isError).toBe(false)
+    expect(fhirRes.data.status).toBe('success')
+    expect(fhirRes.data.format).toBe('fhir')
+    expect(fhirRes.data.data.resourceType).toBe('DiagnosticReport')
+
+    // 10.2 导出 DICOM SR
+    const srRes = await call('imaging_export_standard', {
+      patient_id: patient.id,
+      format: 'dicom-sr',
+      record_id: rec.record.id,
+    })
+    expect(srRes.isError).toBe(false)
+    expect(srRes.data.status).toBe('success')
+    expect(srRes.data.format).toBe('dicom-sr')
+    expect(srRes.data.data.SOPClassUID).toBe('1.2.840.10008.5.1.4.1.1.88.22')
+  })
 })
+
+
