@@ -255,6 +255,8 @@ describe('越权：MCP 工具，别的机构的 AI 带着 A 的 id 都碰不到'
     sample_id: () => 'spleen_test',
     baseline_sample_id: () => 'spleen_test',
     followup_sample_id: () => 'spleen_test',
+    fixed_sample_id: () => 'spleen_test',
+    moving_sample_id: () => 'spleen_test',
     baseline_record_id: s => s.record,
     followup_record_id: s => s.record,
   }
