@@ -17,6 +17,7 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(ids).toContain('research')
     expect(ids).toContain('collaboration')
     expect(ids).toContain('faq')
+    expect(ids).toContain('releasenotes')
 
     for (const sec of HELP_SECTIONS) {
       expect(sec.id).toBeTruthy()
@@ -141,5 +142,44 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(html).toContain('Rosenberg-Patterson')
     expect(html).toContain('DICOM SR')
     expect(html).toContain('HL7 FHIR')
+  })
+
+  it('5. 版本更新日志 (Release Notes) 与九步影像完整业务流程闭环验证', () => {
+    const relSec = HELP_SECTIONS.find(s => s.id === 'releasenotes')
+    expect(relSec).toBeDefined()
+    expect(relSec?.title).toContain('版本发布更新日志')
+    
+    const html = relSec!.contentHtml
+    expect(html).toContain('v2.4 Pro')
+    expect(html).toContain('v2.3.0')
+    expect(html).toContain('v2.2.0')
+    expect(html).toContain('v2.1.0')
+    expect(html).toContain('v2.0.0')
+    expect(html).toContain('TotalSegmentator L3 椎体机体成分分析')
+    expect(html).toContain('IBSI 107 项标准影像组学')
+    expect(html).toContain('3D 非刚性弹性形变配准')
+    expect(html).toContain('PET-CT 跨模态代谢与解剖融合成像')
+    expect(html).toContain('DICOM RT-STRUCT')
+    expect(html).toContain('发丝级矢量图标系统')
+
+    // 验证九步全流程影像闭环在手册中完整陈述
+    const imgSec = HELP_SECTIONS.find(s => s.id === 'imaging')
+    expect(imgSec?.contentHtml).toContain('影像智能分析全流程业务闭环')
+    expect(imgSec?.contentHtml).toContain('① 影像摄入与合规脱敏')
+    expect(imgSec?.contentHtml).toContain('② 空间几何与重采样')
+    expect(imgSec?.contentHtml).toContain('③ MONAI 3D 深度模型矩阵')
+    expect(imgSec?.contentHtml).toContain('④ IBSI 影像组学高维提取')
+    expect(imgSec?.contentHtml).toContain('⑤ MPR 三正交交互式切片')
+    expect(imgSec?.contentHtml).toContain('⑥ 纵向随访与差分热力图')
+    expect(imgSec?.contentHtml).toContain('⑦ PET-CT 代谢融合')
+    expect(imgSec?.contentHtml).toContain('⑧ 放疗靶区 RT-STRUCT')
+    expect(imgSec?.contentHtml).toContain('⑨ 因果链与结构化导出')
+
+    // 验证 Markdown 手册中同样包含 Release Notes 与 9 步闭环
+    const md = buildHelpMarkdown()
+    expect(md).toContain('## 十一、 版本更新日志 (Release Notes)')
+    expect(md).toContain('### v2.4 Pro')
+    expect(md).toContain('### v2.3.0')
+    expect(md).toContain('The Complete 9-Step Imaging Pipeline')
   })
 })

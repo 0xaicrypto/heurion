@@ -3004,3 +3004,55 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 .help-case-metric-item .val.ok {
   color: var(--mint-text);
 }
+
+/* 版本更新日志 (Release Notes) */
+.help-release-card {
+  margin-bottom: 24px;
+  padding: 18px 20px;
+  background: var(--card-glass);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+.help-release-card:hover {
+  border-color: var(--green-line);
+}
+.help-release-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-soft);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+.help-release-badge.current {
+  background: rgba(0, 229, 153, 0.14);
+  color: #00E599;
+  border-color: rgba(0, 229, 153, 0.35);
+}
+.help-release-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.help-release-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.help-release-list li {
+  margin-bottom: 8px;
+}
+.help-release-list li:last-child {
+  margin-bottom: 0;
+}
+.help-release-list b {
+  color: var(--text);
+}
+

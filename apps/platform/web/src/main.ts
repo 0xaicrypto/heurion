@@ -1006,6 +1006,7 @@ const TOOL_LABELS: Record<string, (a: any) => string> = {
   layout_check: () => '检查版面（溢出、重叠）',
   slide_render: () => '渲染幻灯片预览',
   asset_upload: () => '上传图片',
+  read_image: () => '查看图片附件',
   bash: () => '运行计算',
 }
 
@@ -1201,7 +1202,7 @@ function renderChatImages(): void {
     const src = i.previewUrl || `/api/assets/${i.id}?token=${encodeURIComponent(TOKEN)}`
     return `<span class="chat-img" data-id="${i.id}"><img src="${src}" alt="${esc(i.name)}"><button class="chip-x" aria-label="移除">✕</button></span>`
   }).join('')
-    + (chatImages.length ? '<span class="muted small chat-img-hint">图片会发给 AI 模型，不要贴含患者姓名、证件号等身份信息的图</span>' : '')
+    + (chatImages.length ? '<span class="muted small chat-img-hint">已附图 · AI 将结合临床影像/图表视角解读（请勿上传含真实姓名/身份证号等个人敏感标识的图片；3D 容积量化与 RECIST 评估请在「患者 -> 影像」上传）</span>' : '')
 }
 
 function removeChatImage(id: string): void {
@@ -1318,6 +1319,17 @@ $('chatImages').onclick = e => {
   const id = ((e.target as HTMLElement).closest('.chip-x')?.parentElement as HTMLElement | undefined)?.dataset.id
   if (id) removeChatImage(id)
 }
+
+$('imgUploadBtn')?.addEventListener('click', () => {
+  $<HTMLInputElement>('chatImageInput')?.click()
+})
+$<HTMLInputElement>('chatImageInput')?.addEventListener('change', e => {
+  const input = e.target as HTMLInputElement
+  if (input.files && input.files.length) {
+    void attachImages([...input.files])
+    input.value = ''
+  }
+})
 
 async function send(): Promise<void> {
   const typed = $<HTMLTextAreaElement>('chatInput').value.trim()

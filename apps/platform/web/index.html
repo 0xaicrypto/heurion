@@ -228,6 +228,8 @@
             <button class="quiet small-btn" id="kbPickBtn" title="选资料库里的资料，让 AI 依据它们写">＋ 引用资料</button>
             <button class="quiet small-btn" id="ptPickBtn" title="选患者，让 AI 读这位患者的资料与化验（按诊疗组权限，记入访问记录）" hidden>＋ 引用患者</button>
             <button class="quiet small-btn" id="dsPickBtn" title="选上传的数据，让 AI 做统计分析（Table 1、生存曲线、组间比较……）">＋ 引用数据</button>
+            <button class="quiet small-btn" id="imgUploadBtn" title="上传或粘贴图片，支持医学影像、超声/CT截图、图表等">＋ 上传图片</button>
+            <input type="file" id="chatImageInput" accept="image/*" multiple hidden>
           </div>
           <button id="cancelBtn" disabled>停止</button>
           <button id="sendBtn" class="ai" disabled>发送</button>

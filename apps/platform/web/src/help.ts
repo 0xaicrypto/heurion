@@ -211,6 +211,47 @@ export const HELP_SECTIONS: HelpSection[] = [
       </div>
       <p class="help-lead">深度打通「临床患者全景档案」与「3D 体素级影像量化分析」，既保障医疗隐私绝对安全，又赋予医生亚毫米级的定量诊断与智能读片能力。</p>
 
+      <h4>4.0 影像智能分析全流程业务闭环 (The Complete 9-Step Imaging Pipeline)</h4>
+      <p>Heurion 影像系统严格遵循现代循证放射学与多学科临床诊疗路径，打通从原始图像摄入到治疗评估与科研输出的九大完整业务阶段：</p>
+      <div class="help-grid-3">
+        <div class="help-feature-card">
+          <div class="hfc-title">① 影像摄入与合规脱敏</div>
+          <div class="hfc-desc">支持 DICOM 序列/NIfTI 体数据上传，自动剥离 18 项 HIPAA 敏感标识；支持对话直接粘贴/上传单张超声、CT、胸片截图进行 AI 视觉解读。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">② 空间几何与重采样</div>
+          <div class="hfc-desc">统一重采样至 1×1×1 mm³ 各向同性空间体素；自适应匹配肺窗、纵隔窗、腹部窗、骨窗及脑窗。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">③ MONAI 3D 深度模型矩阵</div>
+          <div class="hfc-desc">内置 18+ 款分科预训练 3D 深度神经网络，涵盖支扩 BAR/HAM、肺结节、腹部 13 器官、前列腺 mpMRI 与脑胶质瘤。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">④ IBSI 影像组学高维提取</div>
+          <div class="hfc-desc">遵循 IBSI 国际标准，从病灶 ROI 提取 107 项高维生物特征（形态学、一阶统计、GLCM、GLRLM、GLSZM、NGTDM）。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">⑤ MPR 三正交交互式切片</div>
+          <div class="hfc-desc">Axial/Coronal/Sagittal 自由十字丝联动；5cm 物理标尺，病灶质心准星一键定位与关键切片资产存证。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">⑥ 纵向随访与差分热力图</div>
+          <div class="hfc-desc">3D 刚性/非刚性弹性形变配准 (DIR)，生成差分吸收热力图（绿色吸收好转、红色进展恶化），双联屏联动滑动比对。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">⑦ PET-CT 代谢融合</div>
+          <div class="hfc-desc">自动换算 SUV 标准摄取值，标定病灶 SUVmax、SUVmean、代谢肿瘤体积 (MTV) 与总糖酵解量 (TLG)。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">⑧ 放疗靶区 RT-STRUCT</div>
+          <div class="hfc-desc">一键将 3D 分割轮廓转化为符合国际放疗物理标准的 DICOM RT-STRUCT 靶区轮廓（GTV/CTV/OAR）。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">⑨ 因果链与结构化导出</div>
+          <div class="hfc-desc">整合影像+化验+基因证据链；支持一键导出 DICOM SR、HL7 FHIR 资源包及多学科会诊 (MDT) 幻灯片。</div>
+        </div>
+      </div>
+
       <h4>4.1 患者全流程档案建立与零 PHI 隐私规范 (Zero-PHI Patient Registry)</h4>
       <p>为满足 HIPAA、GDPR 及医疗机构核心数据合规要求，平台推行严格的<b>零真实个人标识 (Zero-PHI)</b> 体系：</p>
       <ul class="help-list-steps">
@@ -292,6 +333,16 @@ export const HELP_SECTIONS: HelpSection[] = [
           <tr>
             <td><b>空间几何提取</b></td>
             <td>自动解析体素空间物理间距 (Voxel Spacing 如 0.75×0.75×1.25 mm)、体素空间矩阵维度 (Dimensions 如 512×512×280) 与解剖方位坐标系 (LPS / RAS)。</td>
+          </tr>
+          <tr>
+            <td><b>影像模态覆盖</b></td>
+            <td>
+              1. <b>CT / HRCT</b>：高分辨率薄层 CT 平扫与增强扫描，支持肺小结节、支扩气道树、冠脉钙化积分及全腹器官分割；<br>
+              2. <b>MRI / mpMRI</b>：头颅 T1/T2/FLAIR/DWI 神经序列、前列腺多参数磁共振 (T2+ADC+DWI)；<br>
+              3. <b>超声与便携声像 (Ultrasound)</b>：支持通过对话上传或报告归档导入腹部、心脏、甲状腺与浅表超声切片，AI 结合临床既往史进行声像学特征判读；<br>
+              4. <b>X 线胸片 (DR/CR)</b>：正侧位胸片病灶筛查；<br>
+              5. <b>PET-CT</b>：跨模态解剖与代谢融合成像，病灶 SUV 测定。
+            </td>
           </tr>
           <tr>
             <td><b>敏感 Tag 脱敏</b></td>
@@ -800,6 +851,77 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
     `
+  },
+  {
+    id: 'releasenotes',
+    title: '版本发布更新日志 (Release Notes)',
+    badge: '更新里程碑',
+    icon: icon('sparkles', { size: 16 }),
+    summary: '记录 Heurion 从 v2.0 到 v2.4 核心版本演进、临床影像量化、生物统计、零 PHI 隐私与交互设计里程碑。',
+    contentHtml: `
+      <div class="help-section-head">
+        <h3>11. 版本发布更新日志 (Release Notes & Milestones)</h3>
+        <span class="help-tag ok">持续演进 · 循证创新</span>
+      </div>
+      <p class="help-lead">Heurion 始终秉承「临床医生与科研人员的专业辅助伙伴」定位，每个版本均历经三甲临床专家严苛验证与医学数据安全审查。</p>
+
+      <div class="help-release-card">
+        <div class="help-release-badge current">v2.4 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-title">3D 影像全栈量化、肌少症体素分析、IBSI 影像组学与 1.5px 发丝级矢量设计</div>
+        <ul class="help-release-list">
+          <li><b>TotalSegmentator L3 椎体机体成分分析</b>：自动定位 L3 椎体层面，分割腰大肌、竖脊肌及腹壁肌群，测算骨骼肌指数 (SMI = SMA / 身高² cm²/m²)，基于 Prado 国际共识提供肌少症衰弱风险预警；自动计算内脏脂肪 (VAT) 与皮下脂肪 (SAT) 面积及 VAT/SAT 肥胖比。</li>
+          <li><b>IBSI 107 项标准影像组学高维特征提取</b>：完全遵循国际影像生物标志物标准化倡议 (IBSI) 规范，支持提取形态学、一阶强度统计、灰度共生矩阵 (GLCM)、游程矩阵 (GLRLM)、区域大小矩阵 (GLSZM)、相关度矩阵 (GLDM) 及邻域差矩阵 (NGTDM) 等 107 项组学特征，可一键导入研究数据集。</li>
+          <li><b>纵向多期 3D 非刚性弹性形变配准 (DIR) 与差分吸收热力图</b>：在刚性旋转平移对齐基础上引入高阶弹性形变场，消除呼吸运动伪影；差分吸收热力图（绿色吸收好转 PR/CR、红色进展恶化 PD、黄色稳定 SD）精准直观展现抗炎或抗肿瘤治疗疗效。</li>
+          <li><b>PET-CT 跨模态代谢与解剖融合成像</b>：支持自动校正衰变时间与患者体重/瘦体重 (LBM)，将活度 (Bq/mL) 换算为 SUV，自动计算并标定病灶 SUVmax、SUVmean、代谢肿瘤体积 (MTV) 与总糖酵解量 (TLG)。</li>
+          <li><b>放射治疗靶区标准 DICOM RT-STRUCT 导出</b>：一键将 MONAI 3D 卷积模型分割轮廓及临床靶区转化为符合国际放射物理规范的 RT-STRUCT 轮廓集 (GTV/CTV/OAR)。</li>
+          <li><b>发丝级矢量图标系统 (1.5px Hairline SVG)</b>：全面移除杂乱 Emoji，全平台统一换装 1.5px 极简医学科技矢量图标系统；三核心空间顺序调整为「患者 -> 研究 -> 写作」，顺应真实临床医生日常工位逻辑。</li>
+          <li><b>多模态影像附件沙箱隔离与上传流程健壮化</b>：支持在对话中直接点击「＋ 上传图片」或拖拽/粘贴超声、CT、胸片、病历截图，后台自动继承沙箱只读权限（0o666/0o777），杜绝 EACCES 权限冲突；智能引导多模态临床解读并可一键指引至患者影像中心。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.3.0 (2026年8月)</div>
+        <div class="help-release-title">MONAI 3D 深度模型集群矩阵、MPR 三正交浏览器与因果证据链</div>
+        <ul class="help-release-list">
+          <li><b>MONAI 3D 临床深度学习模型矩阵 (18+ 模型)</b>：胸部支气管扩张 (BAR 伴行动脉比、HAM 高密度粘液栓容积、气道树)、肺结节 3D 检出与倍增时间 (VDT)、前列腺 mpMRI (T2+ADC+DWI) 分割与 PI-RADS v2.1 辅助评级、腹部 13 脏器多任务分割 (SwinUNETR)、脑胶质瘤 BraTS 三模态分割与急诊颅内出血检出。</li>
+          <li><b>诊断级交互式 MPR 三正交切片浏览器</b>：横断面 (Axial)、冠状面 (Coronal)、矢状面 (Sagittal) 自由十字联动，集成 NiiVue 3D WebGL2 体绘制；支持 5 种标准窗宽窗位一键调窗、病灶质心准星一键定位与切片资产存证。</li>
+          <li><b>实体瘤 RECIST 1.1 自动比对引擎</b>：支持靶病灶长短径自动测量、基线期比对与变化率判定 (CR / PR / SD / PD)。</li>
+          <li><b>多模态因果诊断链图解推演</b>：打通「3D 影像表征 + 临床生化免疫化验 + 基因分子型」三元证据链，实现难治性变应性支气管肺曲霉病 (ABPA) 等复杂疑难罕见疾病的精准推演。</li>
+          <li><b>国际医学标准互通格式导出</b>：全面支持导出 DICOM SR (Structured Report) 结构化报告与 HL7 FHIR DiagnosticReport / Observation 资源包，支持医院 PACS/HIS 系统无缝互联。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.2.0 (2026年6月)</div>
+        <div class="help-release-title">自动化临床科研统计、零 PHI 隐私架构与严苛权限隔离</div>
+        <ul class="help-release-list">
+          <li><b>一站式自动化生物统计引擎</b>：支持上传 SAS/SPSS/Excel 多中心原始数据，自动执行缺失值插补、数据清洗；一键生成符合医学顶级期刊标准的 Table 1 基线特征表、Kaplan-Meier 生存分析曲线（附带 Log-rank p 值与 95% 置信区间）及 Cox 比例风险回归森林图。</li>
+          <li><b>零 PHI (Zero-PHI) 临床隐私架构</b>：全流程推行去标识化虚拟研究代号；患者真实姓名仅保存在本机浏览器 <code>localStorage</code> 物理隔离层，绝不上云；全链路敏感 DICOM Tag 自动清洗。</li>
+          <li><b>多租户安全沙箱与 AES-256-GCM 隔离</b>：租户级独立密钥加密隔离；敏感操作（删除、高风险编辑）强制弹出红白确认卡拦截并审计留痕。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.1.0 (2026年4月)</div>
+        <div class="help-release-title">文档与学术汇报幻灯片双模态无损写作、PubMed 检索与伴随审查</div>
+        <ul class="help-release-list">
+          <li><b>文档与幻灯片 (Deck) 双模态排版器</b>：原生支持 Word (DOCX)、PPTX、Markdown 双向高保真导入导出，告别格式排版错乱。</li>
+          <li><b>伴随式 AI 协作与红绿 Diff 修订机制</b>：AI 输出以高亮修订形式呈现，支持临床医生逐条采纳、修改或驳回，真正落实 Human-in-the-Loop 医疗责任闭环。</li>
+          <li><b>PubMed 全球医学文献检索与自动引用溯源</b>：智能匹配并检索 PubMed 权威医学文献，一键生成规范格式参考文献，并在正文中插入关联溯源标记。</li>
+          <li><b>Python + Resvg 矢量科研图表生成</b>：工作区内安全执行高精度统计作图脚本，生成 Publication-Ready 矢量级配图。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.0.0 (2026年2月)</div>
+        <div class="help-release-title">Heurion 平台 2.0 全新架构里程碑发布</div>
+        <ul class="help-release-list">
+          <li><b>全新三栏墨绿极客工作台</b>：现代极简 UI 设计，专为高强度临床与科研工作设计。</li>
+          <li><b>知家 (PHR) 个人专属家庭健康空间</b>：与医院科研工作台物理隔离，为医生及家人提供终身健康档案与随访管理。</li>
+          <li><b>科室多级诊疗组 (Care Team) 与受控安全分享</b>：支持主管医生与协助医生精细化权限矩阵，兼顾高效协作与数据安全。</li>
+        </ul>
+      </div>
+    `
   }
 ]
 
@@ -871,6 +993,16 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ## 四、 患者管理与 3D 影像量化分析
 
+0. **影像智能分析全流程业务闭环 (The Complete 9-Step Imaging Pipeline)**：
+   - ① **影像摄入与合规脱敏**：DICOM 序列/NIfTI 体数据上传，自动剥离 18 项 HIPAA 敏感标识；支持对话直接粘贴/上传单张超声、CT、胸片截图进行 AI 视觉解读；
+   - ② **空间几何与重采样**：统一重采样至 1×1×1 mm³ 各向同性空间体素；自适应匹配肺窗、纵隔窗、腹部窗、骨窗及脑窗；
+   - ③ **MONAI 3D 深度模型矩阵**：内置 18+ 款分科预训练 3D 深度神经网络，涵盖支扩 BAR/HAM、肺结节、腹部 13 器官、前列腺 mpMRI 与脑胶质瘤；
+   - ④ **IBSI 影像组学高维提取**：遵循 IBSI 国际标准，从病灶 ROI 提取 107 项高维生物特征（形态学、一阶统计、GLCM、GLRLM、GLSZM、NGTDM）；
+   - ⑤ **MPR 三正交交互式切片**：Axial/Coronal/Sagittal 自由十字丝联动；5cm 物理标尺，病灶质心准星一键定位与关键切片资产存证；
+   - ⑥ **纵向随访与差分热力图**：3D 刚性/非刚性弹性形变配准 (DIR)，生成差分吸收热力图（绿色吸收好转、红色进展恶化），双联屏联动滑动比对；
+   - ⑦ **PET-CT 代谢融合**：自动换算 SUV 标准摄取值，标定病灶 SUVmax、SUVmean、代谢肿瘤体积 (MTV) 与总糖酵解量 (TLG)；
+   - ⑧ **放疗靶区 RT-STRUCT**：一键将 3D 分割轮廓转化为符合国际放疗物理标准的 DICOM RT-STRUCT 靶区轮廓（GTV/CTV/OAR）；
+   - ⑨ **因果链与结构化导出**：整合影像+化验+基因证据链；支持一键导出 DICOM SR、HL7 FHIR 资源包及多学科会诊 (MDT) 幻灯片。
 1. **患者全流程档案与零 PHI 准则**：
    - **纯虚拟代号建档**：采用 \`PT-BRONCHO-001\` 等去标识化代号建档；
    - **本机浏览器备注名物理隔离**：患者真实姓名仅保存在医生本地浏览器的 \`localStorage\` 中，绝不上云、绝不入库，彻底免除云端 PHI 泄露风险；
@@ -878,8 +1010,9 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 2. **多模态实验室检验指标追踪**：
    - 追踪嗜酸性粒细胞 (Eos)、血清总 IgE、烟曲霉特异性 sIgE、肿瘤标志物 (CEA/CYFRA21-1/NSE/PSA) 及感染生化指标；
    - **国际标准单位自动换算**：跨机构单位自动归一化，支持纵向演变趋势图与检验单原件一键定位溯源。
-3. **3D 原始影像支持与空间几何解析**：
+3. **3D 原始影像支持与全模态覆盖**：
    - 支持 DICOM 序列压缩包 (\`.zip\` / \`.tar.gz\`)、单张 DICOM (\`.dcm\`) 及 NIfTI 卷 (\`.nii\` / \`.nii.gz\`)；
+   - 全模态覆盖：高分辨率薄层 CT (HRCT)、磁共振 MRI (T1/T2/FLAIR/DWI/mpMRI)、超声声像图 (Ultrasound)、胸部 X 线平片 (DR/CR) 及 PET-CT 跨模态代谢显像；
    - 自动解析体素空间几何间距 (Voxel Spacing) 与矩阵维度，入库前自动彻底清洗私有敏感 Tag。
 4. **MONAI 3D 临床深度学习模型全矩阵 (18+ 款分科模型)**：
    - **胸部与呼吸科**：
@@ -1018,6 +1151,40 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
   A: 系统严密绑定底层结构化量化字段，彻底杜绝模板默认值与实测值冲突。
 - **Q: AI 输出能直接当作法律效力的病历吗？**  
   A: 不能。所有 AI 辅助结论必须经执业医师审阅核对并签署确认后方可作为正式病历。
+
+---
+
+## 十一、 版本更新日志 (Release Notes)
+
+### v2.4 Pro (当前最新版本 · 2026年10月)
+- **TotalSegmentator L3 椎体机体成分分析**：自动定位 L3 椎体层面，分割腰大肌、竖脊肌及腹壁肌群，测算骨骼肌指数 (SMI = SMA / 身高² cm²/m²)，基于 Prado 国际共识提供肌少症衰弱风险预警；自动计算内脏脂肪 (VAT) 与皮下脂肪 (SAT) 面积及 VAT/SAT 肥胖比。
+- **IBSI 107 项标准影像组学高维特征提取**：完全遵循国际影像生物标志物标准化倡议 (IBSI) 规范，支持提取形态学、一阶强度统计、灰度共生矩阵 (GLCM)、游程矩阵 (GLRLM)、区域大小矩阵 (GLSZM)、相关度矩阵 (GLDM) 及邻域差矩阵 (NGTDM) 等 107 项组学特征，可一键导入研究数据集。
+- **纵向多期 3D 非刚性弹性形变配准 (DIR) 与差分吸收热力图**：在刚性旋转平移对齐基础上引入高阶弹性形变场，消除呼吸运动伪影；差分吸收热力图（绿色吸收好转 PR/CR、红色进展恶化 PD、黄色稳定 SD）精准直观展现抗炎或抗肿瘤治疗疗效。
+- **PET-CT 跨模态代谢与解剖融合成像**：支持自动校正衰变时间与患者体重/瘦体重 (LBM)，将活度 (Bq/mL) 换算为 SUV，自动计算并标定病灶 SUVmax、SUVmean、代谢肿瘤体积 (MTV) 与总糖酵解量 (TLG)。
+- **放射治疗靶区标准 DICOM RT-STRUCT 导出**：一键将 MONAI 3D 卷积模型分割轮廓及临床靶区转化为符合国际放射物理规范的 RT-STRUCT 轮廓集 (GTV/CTV/OAR)。
+- **发丝级矢量图标系统 (1.5px Hairline SVG)**：全面移除杂乱 Emoji，全平台统一换装 1.5px 极简医学科技矢量图标系统；三核心空间顺序调整为「患者 -> 研究 -> 写作」，顺应真实临床医生日常工位逻辑。
+- **多模态影像附件沙箱隔离与上传流程健壮化**：支持在对话中直接点击「＋ 上传图片」或拖拽/粘贴超声、CT、胸片、病历截图，后台自动继承沙箱只读权限（0o666/0o777），杜绝 EACCES 权限冲突；智能引导多模态临床解读并可一键指引至患者影像中心。
+
+### v2.3.0 (2026年8月)
+- **MONAI 3D 临床深度学习模型矩阵 (18+ 模型)**：胸部支气管扩张 (BAR 伴行动脉比、HAM 高密度粘液栓容积、气道树)、肺结节 3D 检出与倍增时间 (VDT)、前列腺 mpMRI (T2+ADC+DWI) 分割与 PI-RADS v2.1 辅助评级、腹部 13 脏器多任务分割 (SwinUNETR)、脑胶质瘤 BraTS 三模态分割与急诊颅内出血检出。
+- **诊断级交互式 MPR 三正交切片浏览器**：横断面 (Axial)、冠状面 (Coronal)、矢状面 (Sagittal) 自由十字联动，集成 NiiVue 3D WebGL2 体绘制；支持 5 种标准窗宽窗位一键调窗、病灶质心准星一键定位与切片资产存证。
+- **实体瘤 RECIST 1.1 自动比对引擎**：支持靶病灶长短径自动测量、基线期比对与变化率判定 (CR / PR / SD / PD)。
+- **多模态因果诊断链图解推演**：打通「3D 影像表征 + 临床生化免疫化验 + 基因分子型」三元证据链，实现难治性变应性支气管肺曲霉病 (ABPA) 等复杂疑难罕见疾病的精准推演。
+- **国际医学标准互通格式导出**：全面支持导出 DICOM SR (Structured Report) 结构化报告与 HL7 FHIR DiagnosticReport / Observation 资源包，支持医院 PACS/HIS 系统无缝互联。
+
+### v2.2.0 (2026年6月)
+- **一站式自动化生物统计引擎**：支持上传 SAS/SPSS/Excel 多中心原始数据，自动执行缺失值插补、数据清洗；一键生成符合医学顶级期刊标准的 Table 1 基线特征表、Kaplan-Meier 生存分析曲线（附带 Log-rank p 值与 95% 置信区间）及 Cox 比例风险回归森林图。
+- **零 PHI (Zero-PHI) 临床隐私架构**：全流程推行去标识化虚拟研究代号；患者真实姓名仅保存在本机浏览器 localStorage 物理隔离层，绝不上云；全链路敏感 DICOM Tag 自动清洗。
+- **多租户安全沙箱与 AES-256-GCM 隔离**：租户级独立密钥加密隔离；敏感操作（删除、高风险编辑）强制弹出红白确认卡拦截并审计留痕。
+
+### v2.1.0 (2026年4月)
+- **文档与学术汇报幻灯片双模态无损写作**：原生支持 Word (DOCX)、PPTX、Markdown 双向高保真导入导出，告别格式排版错乱。
+- **伴随式 AI 协作与红绿 Diff 修订机制**：AI 输出以高亮修订形式呈现，支持临床医生逐条采纳、修改或驳回，真正落实 Human-in-the-Loop 医疗责任闭环。
+- **PubMed 全球医学文献检索与自动引用溯源**：智能匹配并检索 PubMed 权威医学文献，一键生成规范格式参考文献，并在正文中插入关联溯源标记。
+- **Python + Resvg 矢量科研图表生成**：工作区内安全执行高精度统计作图脚本，生成 Publication-Ready 矢量级配图。
+
+### v2.0.0 (2026年2月)
+- **Heurion 平台 2.0 全新架构里程碑发布**：全新三栏墨绿极客工作台；知家 (PHR) 个人专属家庭健康空间；科室多级诊疗组 (Care Team) 与受控安全分享。
 `
 }
 

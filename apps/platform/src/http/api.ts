@@ -2066,8 +2066,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     let inote = ''
     const pics = (images ?? []).slice(0, 8).map(id => store.getAsset(id)).filter(a => a && a.size > 0 && a.owner === c.get('user') && a.mime.startsWith('image/'))
     if (pics.length && deps.workspaceDir) {
-      const dir = join(deps.workspaceDir(c.get('user')), 'attachments')
-      if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o2777) }
+      const ws = deps.workspaceDir(c.get('user'))
+      const dir = join(ws, 'attachments')
+      try {
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+        chmodSync(dir, 0o2777)
+      } catch { /* 权限容错 */ }
       const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' }
       const files: string[] = []
       for (const a of pics) {
@@ -2075,11 +2079,18 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         const bytes = store.getAssetBytes(a.id)
         if (!bytes || bytes.length === 0) continue
         const rel = `attachments/${a.id}.${EXT[a.mime] ?? 'png'}`
-        writeFileSync(join(deps.workspaceDir!(c.get('user')), rel), bytes, { mode: 0o644 })
+        const filePath = join(ws, rel)
+        try {
+          writeFileSync(filePath, bytes)
+          chmodSync(filePath, 0o666)
+        } catch { /* 容错 */ }
         files.push(`${rel}(asset_id=${a.id})`)
       }
       if (files.length) {
-        inote = `\n\n［图片］用户在对话里附了 ${files.length} 张图片，用 read_image 查看：${files.join('、')}。要放进文稿时直接用 ![说明](asset:<asset_id> "图注")。`
+        inote = `\n\n［图片附件］用户在对话中附带了 ${files.length} 张图片：${files.join('、')}。
+- 请直接调用 read_image 工具查看图片内容。切勿尝试运行计算或命令行访问底层文件路径。
+- 若图片属于医学影像（如超声波声像图、CT 扫描、MRI、X 线胸片、心电图、病理切片等）或临床化验单：请从专业医学/影像学视角进行深度解读（包括影像模态、解剖结构、可疑病灶、声像/密度特征、初步临床鉴别与处置建议）；若需精准 3D 容积量化与 RECIST 疗效比对，可建议用户导入「患者 -> 影像中心」进行 MONAI 3D 深度学习分析。
+- 若图片需要插入文稿，直接使用 ![说明](asset:<asset_id> "图注") 并在正文中给出专业图解说明。`
       }
     }
     return streamTurn(c, deps, row.id, message.trim() + note + dnote + snote + pnote + inote, { suggest: suggest !== false, ...(memory === false ? { memory: false } : {}) })
