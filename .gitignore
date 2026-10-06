@@ -38,6 +38,10 @@ Thumbs.db
 # IDE & Editor
 .idea/
 .vscode/
+
+# Local test data
+test_imaging_data
+
 *.swp
 *.swo
 
