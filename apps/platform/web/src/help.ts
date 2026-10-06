@@ -1164,14 +1164,33 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <h3>【案例二 · 实体瘤靶向疗效动态评估】EGFR 突变型晚期非小细胞肺癌 (NSCLC) 奥希替尼靶向治疗前后 RECIST 1.1 疗效评估</h3>
 
-      <h4>8.7 临床病例背景、基线测量与 12 周靶向疗效随访 (Targeted Therapy & RECIST 1.1)</h4>
+      <h4>8.7 患者基本资料、病理确诊与临床主诉 (Clinical Profile)</h4>
       <div class="help-feature-card" style="margin: 12px 0;">
         <div class="hfc-title">患者脱敏档案 · PT-NSCLC-002</div>
         <div class="hfc-desc">
           <ul>
-            <li><b>基本信息</b>：58岁女性，退休教师，无吸烟史。零 PHI 规范建档。</li>
-            <li><b>现病史与病理诊断</b>：因咳嗽伴右胸隐痛 2 个月就诊。胸部薄层增强 CT 示右上肺占位性病变伴纵隔淋巴结肿大。支气管镜活检病理确诊为<b>浸润性肺腺癌 (Invasive Lung Adenocarcinoma)</b>；外周血 ctDNA 与组织二代测序 (NGS) 证实携带 <b>EGFR 19 号外显子缺失突变 (Exon 19 del, E746_A750del)</b>，丰度 42.6%，T790M 突变阴性。临床 TNM 分期为 <b>cT2bN2M0, III A 期</b>。</li>
-            <li><b>治疗方案</b>：一线给予口服第三代 EGFR-TKI 甲磺酸奥希替尼 (Osimertinib, 80 mg qd) 靶向维持治疗。</li>
+            <li><b>基本信息</b>：58岁女性，退休教师，无吸烟史。严格遵循零 PHI 规范建档（真实姓名仅保存在医生本地浏览器 localStorage 中，绝不上云）。</li>
+            <li><b>现病史与病理诊断</b>：因刺激性干咳伴右胸隐痛 2 个月就诊。胸部薄层增强 CT 示右上肺尖后段占位性实性肿块伴右侧气管旁 (4R组) 纵隔淋巴结肿大。经支气管镜超声引导针吸活检 (EBUS-TBNA) 病理确诊为<b>浸润性肺腺癌 (Invasive Lung Adenocarcinoma)</b>；外周血 ctDNA 与组织二代测序 (NGS) 证实携带 <b>EGFR 19 号外显子缺失突变 (Exon 19 del, E746_A750del)</b>，突变丰度高达 42.6%，T790M 及 C797S 耐药突变全阴性。临床 TNM 分期明确为 <b>cT2bN2M0, III A 期</b>。</li>
+            <li><b>靶向治疗方案</b>：一线给予口服第三代不可逆 EGFR-TKI 甲磺酸奥希替尼 (Osimertinib, 80 mg qd) 靶向维持治疗。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>8.8 第一步：基线 3D 增强 CT 扫描与 MONAI 靶病灶 RECIST 1.1 自动测量 (Baseline HRCT)</h4>
+      <p>医生在「患者 ➔ 影像」面板上传包含 180 层的胸部增强 CT 序列。系统调用 <code>nsclc_recist_analyzer</code> (MONAI 3D SegResNet) 深度网络完成全肺体素解析并自动聚焦最大病灶截面（第 #86 层）：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 6 真实患者胸部 CT 轴位关键截面 (Slice #86) · MONAI 靶病灶 RECIST 1.1 量化测量</span>
+          <span class="help-case-tag">${icon('scan', { size: 12 })} MONAI 3D SegResNet</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-nsclc-1-baseline-recist.png" alt="真实患者胸部 CT 靶病灶 RECIST 1.1 量化测量" />
+        <div class="help-case-caption">
+          <b>影像学关键指征与基线靶病灶测量：</b>
+          <ul>
+            <li><b>靶病灶 1 (右上肺实质肿块)</b>：位于右上肺尖段，呈现典型恶性征象——边缘粗细不均分叶征 (Lobulation)、周边放射状细毛刺征 (Spiculation) 及邻近胸膜牵拉凹陷征 (Pleural Indentation)。黄色高亮卡尺实测<b>最大长径 42.0 mm × 短径 31.5 mm</b>，3D 卷积分割累计<b>三维容积达 28.50 cm³</b>，CT 均值 38 HU；</li>
+            <li><b>靶病灶 2 (4R 组纵隔淋巴结)</b>：同侧气管旁纵隔淋巴结显著肿大，黄色卡尺测得<b>最大短径 18.0 mm</b>（严格符合 RECIST 1.1 国际标准中“淋巴结靶病灶短径必须 ≥ 15.0 mm”的纳排金标准）；</li>
+            <li><b>基线靶病灶长径总和 (Baseline Sum of Diameters, SOD)</b>：根据 RECIST 1.1 规范，基线 SOD = 靶病灶1长径 (42.0 mm) + 靶病灶2短径 (18.0 mm) = <b>60.0 mm</b>，作为后续随访疗效判定的客观基准线。</li>
           </ul>
         </div>
       </div>
@@ -1212,6 +1231,46 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
+      <h4>8.9 第二步：诊断级 3D MPR 三正交切片交互浏览与病灶立体解剖 (Interactive 3D MPR)</h4>
+      <p>点击「打开 3D 浏览器」，进入三正交切片工作台，立体观察肿块与周围纵隔大血管及胸膜的解剖浸润边界：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 7 诊断级交互式 3D MPR 三正交切片浏览器 (Axial #86 / Coronal #210 / Sagittal #180)</span>
+          <span class="help-case-tag">${icon('grid', { size: 12 })} 三正交空间联动</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-nsclc-2-mpr-3view.png" alt="诊断级交互式 3D MPR 三正交切片浏览器" />
+        <div class="help-case-caption">
+          <b>三正交全景空间解剖定位指征：</b>
+          <ul>
+            <li><b>三正交解剖空间对齐</b>：横断面 (Axial #86/180)、冠状面 (Coronal #210/512)、矢状面 (Sagittal #180/512) 实时同步十字准星聚焦；冠状位清晰展现原发肿块居于右肺尖部，上缘紧邻胸廓顶胸膜但未侵犯锁骨下动脉；</li>
+            <li><b>病灶质心导航与准星瞬时飞跃</b>：点击「定位病灶中心」，准星自动瞬时定位到 3D 肿瘤质心层位，支持医生使用高对比度亚毫米游标卡尺复核病灶边界；</li>
+            <li><b>调窗鉴别坏死与浸润</b>：快捷切换肺窗 (-600/1500 HU) 观察周边肺野卫星结节与毛刺，切换纵隔窗 (40/400 HU) 观察 4R 淋巴结内部强化与坏死囊变；</li>
+            <li><b>一键存证资产</b>：点击「保存切片为文档资产」，即刻以无损高保真图像存证入库并生成 Markdown 引用。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>8.10 第三步：靶向治疗 12 周随访：双期配准与差分吸收热力图对比 (Follow-up Diff Heatmap)</h4>
+      <p>患者规律口服第三代 EGFR-TKI 甲磺酸奥希替尼 (80 mg qd) 治疗 12 周后，于 2026-09-15 进行胸部薄层增强 CT 复查。系统调用 3D 非刚性弹性配准网络完成疗效比对：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 8 奥希替尼靶向治疗 12 周随访：3D 空间弹性配准与差分吸收热力图 (Difference Heatmap)</span>
+          <span class="help-case-tag">${icon('compare', { size: 12 })} RECIST 1.1 疗效评估</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-nsclc-3-diff-heatmap.png" alt="奥希替尼靶向随访 3D 空间弹性配准与差分吸收热力图" />
+        <div class="help-case-caption">
+          <b>动态随访演变量化与 RECIST 1.1 判定结果：</b>
+          <ul>
+            <li><b>3D 非刚性弹性形变配准 (DIR)</b>：系统消除两次检查的吸气相深浅差异与胸廓旋转伪影，在对齐后的体素空间中计算 HU 衰减差分矩阵；</li>
+            <li><b>深绿色负差分吸收图层</b>：原右上肺实质肿块内部呈现大面积均匀深绿色吸收征，表明肿瘤细胞大量坏死、空洞化液化并被正常肺含气组织复张所替代；</li>
+            <li><b>随访靶病灶长径和 (Follow-up SOD)</b>：右上肺肿块长径由 42.0 mm 缩减至 <b>24.0 mm</b> (短径 15.5 mm，容积由 28.50 骤降至 <b>6.20 cm³</b>，容积吸收率 <b>-78.2%</b>)；4R 淋巴结短径由 18.0 mm 缩减至 <b>9.0 mm</b> (已退缩至正常生理淋巴结大小 &lt; 10 mm)；</li>
+            <li><b>长径和降幅达 45.0%</b>：随访 SOD 为 24.0 + 9.0 = <b>33.0 mm</b>，降幅 $\frac{33.0 - 60.0}{60.0} \times 100\% = \mathbf{-45.0\%}$；根据 RECIST 1.1 国际准则（降幅 $\ge 30\%$ 且无新病灶），严格判定为 <b>部分缓解 (Partial Response, PR)</b>！</li>
+          </ul>
+        </div>
+      </div>
+
       <div class="help-case-metrics">
         <div class="help-case-metric-item">
           <span class="label">基线长径和 (Baseline SOD)</span>
@@ -1239,13 +1298,40 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('sparkles', { size: 14 })} 临床决策闭环与随访计划</div>
-        <div class="hfc-desc">
+      <h4>8.11 第四步：IBSI 107 项标准高维影像组学表型提取与演变 (IBSI Radiomics Analysis)</h4>
+      <p>为从微观亚视觉层面深度探究肿瘤在靶向药物作用下的微环境空间异质性演化，系统一键提取 107 项 IBSI 规范特征：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 9 IBSI 107 项国际标准高维影像组学表型提取与演变矩阵 (Radiomics Feature Matrix)</span>
+          <span class="help-case-tag">${icon('chart', { size: 12 })} IBSI 国际标准</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-nsclc-4-radiomics-feature.png" alt="IBSI 107 项国际标准高维影像组学表型提取与演变矩阵" />
+        <div class="help-case-caption">
+          <b>微观影像组学指纹演变深度剖析：</b>
           <ul>
-            <li><b>差分吸收热力图验证</b>：两期 CT 经 MONAI 3D 弹性形变配准 (DIR) 后，原右上肺实质肿块内部呈现大面积均匀深绿色负差分吸收征，反映肿瘤细胞大面积坏死、液化与含气支气管复张；</li>
-            <li><b>非靶病灶与新病灶排查</b>：全肺野及纵隔无新发结节，无胸腔或心包积液，骨窗扫描无溶骨性骨转移征象；</li>
-            <li><b>临床干预决策</b>：奥希替尼靶向治疗取得理想的客观缓解 (PR)，耐受性良好 (未发生 ≥ 2 级皮疹或腹泻)。医疗组决定<b>维持奥希替尼 80 mg qd 原方案治疗</b>，遵照 NCCN 指南每 8~12 周复查胸部薄层增强 CT，无需过早进行挽救性放疗介入。</li>
+            <li><b>一阶灰度统计与形态学 (18+16项)</b>：病灶 3D 总体积由 28.5 cm³ 缩至 6.2 cm³ (-78.2%)，球形度由 0.58 提升至 0.82 (+41.4%)，表面积体积比由 0.78 降至 0.46，均值强度由 38.2 HU 降至 21.4 HU，偏度与峰度均趋向对称匀质分布；</li>
+            <li><b>灰度共生矩阵 (GLCM, 24项)</b>：联合熵 (Joint Entropy) 由 4.82 骤降至 2.14，反映肿瘤细胞内部紊乱异质性极显著减退；角二阶矩/能量 (Energy) 飙升 +275%，对比度下降 -60.8%，逆差矩 (Homogeneity / IDM) 由 0.34 提升至 0.78 (+129%)，表明肿瘤微环境高度均质化；</li>
+            <li><b>高阶矩阵与小波多尺度特征 (49项)</b>：小波低频成分能量收敛，高频细微纹理结构显著衰退，组学表型与 EGFR-TKI 敏感应答高度吻合，为后续科研生存建模提供量化数据。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>8.12 第五步：多模态因果诊断链闭环与 MDT 维持治疗决策 (Multimodal Evidence Chain)</h4>
+      <p>将 3D CT 影像量化、分子基因突变型及临床多学科诊疗决策深度闭环，一键拼装因果证据链：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 10 多模态因果诊断链与证据闭环 (NSCLC 靶向治疗三支柱)</span>
+          <span class="help-case-tag">${icon('sparkles', { size: 12 })} 因果推理 · 决策闭环</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-nsclc-5-diagnostic-chain.png" alt="多模态因果诊断链与证据闭环" />
+        <div class="help-case-caption">
+          <b>三支柱因果闭环与标准文书出具：</b>
+          <ul>
+            <li><b>支柱一（3D CT 影像定量与 RECIST 1.1）</b>：靶病灶 SOD 由 60.0 mm 降至 33.0 mm (-45.0% PR)，3D 容积缩小 78.2%，差分热力图呈大片深绿负吸收，无任何新发病灶 (权重 0.98)；</li>
+            <li><b>支柱二（分子病理与基因突变 NGS）</b>：确立浸润性肺腺癌病理诊断，携带高丰度 EGFR Exon 19 del (42.6%)，耐药突变阴性，具备极佳的靶向治疗靶点支撑 (权重 0.99)；</li>
+            <li><b>支柱三（终末确诊与 MDT 决策闭环）</b>：确诊晚期非小细胞肺癌奥希替尼靶向治疗取得客观缓解 (PR)；决策维持原方案 80 mg qd 治疗，规避过早放疗介入，每 8~12 周规律随访；一键导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 资源包。</li>
           </ul>
         </div>
       </div>
@@ -1254,22 +1340,40 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <h3>【案例三 · 实体瘤恶病质与营养代谢衰弱】胰腺导管腺癌合并隐匿性重度骨骼肌减少症 (Cancer Cachexia & Sarcopenia) 与肌脂肪浸润</h3>
 
-      <h4>8.8 临床病例背景与 TotalSegmentator L3 体成分量化 (Sarcopenia & Myosteatosis)</h4>
+      <h4>8.13 患者基本资料与临床主诉 (Clinical Profile)</h4>
       <div class="help-feature-card" style="margin: 12px 0;">
         <div class="hfc-title">患者脱敏档案 · PT-SARCO-003</div>
         <div class="hfc-desc">
           <ul>
             <li><b>基本信息</b>：64岁男性，退休工人。零 PHI 规范建档。</li>
-            <li><b>现病史与体格检查</b>：上腹部隐痛不适伴快速消瘦、乏力 3 个月。既往有 2 型糖尿病病史 5 年。发病前体重 68 kg，近 3 个月骤降至 54 kg (体重下降率达 <b>-20.6%</b>)，身高 1.72 m，当前体质指数 (BMI) 为 <b>18.25 kg/m²</b> (低于正常下限 18.5)。专科查体：严重肌肉萎缩消瘦，握力计实测右手握力仅 19 kg (远低于男性正常参考下限 28 kg)。</li>
+            <li><b>现病史与体格检查</b>：上腹部隐痛不适伴快速消瘦、乏力 3 个月。发病前体重 68 kg，近 3 个月骤降至 54 kg (体重下降率达 <b>-20.6%</b>)，身高 1.72 m，当前体质指数 (BMI) 为 <b>18.25 kg/m²</b> (低于正常下限 18.5)。专科查体：全身肌肉重度消瘦萎缩，握力计实测右手握力仅 19 kg (远低于男性正常参考下限 28 kg)。</li>
             <li><b>临床诊断</b>：胰体尾部浸润性导管腺癌伴腹腔干淋巴结转移，临床 TNM 分期为 <b>cT3N1M0, III 期 (局部晚期不可切除)</b>。</li>
           </ul>
         </div>
       </div>
 
+      <h4>8.14 第一步：全腹增强 CT 上传与 TotalSegmentator L3 椎体横截面体成分自动化量化 (L3 Body Composition)</h4>
+      <p>医生上传腹部增强 CT 序列，Heurion 自动化定位第 3 腰椎 (L3) 中位层面（第 #148 层），自动分割腰大肌、竖脊肌及腹壁肌群：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 11 TotalSegmentator L3 椎体横截面体成分与骨骼肌质量指数 (SMI) 量化 (Slice #148)</span>
+          <span class="help-case-tag">${icon('users', { size: 12 })} TotalSegmentator 3D</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-sarco-1-l3-muscle-fat.png" alt="TotalSegmentator L3 椎体横截面体成分量化" />
+        <div class="help-case-caption">
+          <b>机体成分与营养衰弱量化指标实测：</b>
+          <ul>
+            <li><b>L3 骨骼肌横截面积 (SMA = 88.50 cm²) 与 SMI (29.92 cm²/m²)</b>：同龄健康男性通常 &gt; 130 cm²；换算骨骼肌指数 SMI 为 29.92 cm²/m²，远低于 Prado 国际共识男性界值 52.4 cm²/m² 与亚洲 AWGS 38.5 cm²/m²，系统触发红色极高危警报：<b>重度恶液质性肌少症 (Severe Sarcopenia)</b>；</li>
+            <li><b>骨骼肌平均辐射衰减 (Mean Muscle Attenuation, MA = 26.4 HU)</b>：健康骨骼肌通常为 35~50 HU，26.4 HU 的低衰减客观证实肌纤维间质被大量异位低密度脂肪浸润，提示严重<b>肌脂肪变性 (Myosteatosis)</b>，肌肉力学储备枯竭；</li>
+            <li><b>内脏/皮下脂肪比 (VAT / SAT = 2.09)</b>：内脏脂肪 VAT 为 142.30 cm² (内脏型肥胖)，皮下脂肪 SAT 仅 68.20 cm² (储脂消耗)，呈现典型的“肌少性恶液质消耗表型”。</li>
+          </ul>
+        </div>
+      </div>
+
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('users', { size: 14 })} TotalSegmentator L3 椎体横截面体成分自动化量化实测 (Slice #148)</div>
+        <div class="hfc-title">${icon('users', { size: 14 })} TotalSegmentator L3 椎体横截面体成分自动化量化实测对照表</div>
         <div class="hfc-desc">
-          <p>在腹部增强 CT 序列中，Heurion 底层管线利用 TotalSegmentator 3D 卷积模型自动定位第 3 腰椎 (L3) 椎体横截面（国际公认与全身骨骼肌质量高度相关 $r = 0.924$），多任务自动分割腰大肌、竖脊肌、腰方肌及腹壁肌群：</p>
           <table class="help-table" style="margin: 8px 0;">
             <thead>
               <tr style="border-bottom: 1px solid var(--line); background: var(--card-glass);">
@@ -1348,14 +1452,41 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('hospital', { size: 14 })} 药代动力学毒性预警与多学科 (MDT) 诊疗决策闭环</div>
-        <div class="hfc-desc">
+      <h4>8.15 第二步：化疗药代动力学 (PK) 毒性预警与多学科 (MDT) 预康复决策 (PK Toxicity & MDT Prehabilitation)</h4>
+      <p>骨骼肌是抗肿瘤药物的主要组织分布容积与代谢缓冲池。系统药代动力学模型测算毒副反应风险并联动 MDT 决策：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 12 肿瘤药代动力学毒性预警与多学科 (MDT) 个体化预康复方案 (Onco-Pharma & Prehabilitation)</span>
+          <span class="help-case-tag">${icon('hospital', { size: 12 })} 药理安全与决策</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-sarco-2-pk-toxicity-risk.png" alt="肿瘤药代动力学毒性预警与多学科 MDT 预康复方案" />
+        <div class="help-case-caption">
+          <b>药理毒性机制与个体化预康复临床决策：</b>
           <ul>
-            <li><b>化疗药代动力学 (PK) 毒性预警</b>：骨骼肌是人体多数亲脂性及蛋白结合型抗肿瘤药物（如伊立替康、奥沙利铂）的核心组织分布容积与代谢缓冲池。重度肌少症且伴肌脂肪变性的患者，药物清除率下降 30%~50%，游离血药峰浓度异常飙升。系统内置肿瘤药理毒性预测引擎警示：<b>若按传统体表面积 (BSA = 1.62 m²) 全量给予 mFOLFIRINOX 方案化疗，发生 3~4 级骨髓抑制（中性粒细胞缺乏伴发热 FN）及早期治疗中断的概率高达 72%</b>；</li>
-            <li><b>肿瘤科化疗剂量精准微调</b>：主管医生采纳预警建议，将首疗程 mFOLFIRINOX 化疗药物剂量<b>预防性下调 20%</b>，规避早期致命性化疗毒性；</li>
-            <li><b>临床营养支持 (ONS) 预康复</b>：联合临床营养科启动全肠内营养支持，每日补充热量 30 kcal/kg，蛋白质 1.5 g/kg/d，并强化补充支链氨基酸 (BCAA) 与欧米伽-3 多不饱和脂肪酸 ($\omega$-3 PUFA) 以拮抗恶液质促炎介质；</li>
-            <li><b>物理预康复 (Prehabilitation)</b>：在康复治疗师指导下进行低负荷抗阻力握力与下肢弹力带训练，保护肌肉量与功能储备。</li>
+            <li><b>化疗药代动力学 (PK) 毒性预警</b>：骨骼肌萎缩伴肌脂肪变性使亲脂性化疗药（伊立替康、奥沙利铂）清除率暴跌 44.5%，游离血药峰浓度异常飙升。系统预测若按体表面积 (BSA = 1.62 m²) 全量给予 mFOLFIRINOX 方案化疗，发生 3~4 级骨髓抑制（中性粒细胞缺乏伴发热 FN）及早期治疗中断的概率高达 <b>72%</b>；</li>
+            <li><b>化疗剂量精准微调</b>：主管医生采纳预警建议，将首疗程 mFOLFIRINOX 化疗药物剂量<b>预防性下调 20%</b>，规避早期致死性药物毒性；</li>
+            <li><b>全肠内营养支持 (ONS) 预康复</b>：联合临床营养科启动全肠内营养支持，每日补充热量 30 kcal/kg，蛋白质 1.5 g/kg/d，并强化补充支链氨基酸 (BCAA) 与欧米伽-3 多不饱和脂肪酸 ($\omega$-3 PUFA) 以拮抗恶液质促炎介质；</li>
+            <li><b>物理预康复 (Prehabilitation)</b>：康复治疗师指导低负荷抗阻力握力与弹力带训练，保护肌肉量与功能储备。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>8.16 第三步：多模态因果诊断链闭环与标准报告出具 (Multimodal Evidence Chain)</h4>
+      <p>将体成分量化、临床恶液质指标与 MDT 处治方案整合为完整的因果证据链：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 13 多模态因果诊断链与证据闭环 (恶液质与肌少症三支柱)</span>
+          <span class="help-case-tag">${icon('sparkles', { size: 12 })} 因果推理 · 标准交换</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-sarco-3-diagnostic-chain.png" alt="恶液质与肌少症多模态因果诊断链与证据闭环" />
+        <div class="help-case-caption">
+          <b>多模态证据闭环与标准文书出具：</b>
+          <ul>
+            <li><b>支柱一（3D L3 体成分量化）</b>：L3 SMI 29.92 cm²/m² (重度低下) + 辐射衰减 MA 26.4 HU (肌脂肪变性) + VAT/SAT 2.09 (权重 0.98)；</li>
+            <li><b>支柱二（临床恶液质衰弱与生化指标）</b>：体重骤降 20.6% + BMI 18.25 + 握力实测 19 kg + 白蛋白 31.2 g/L (权重 0.96)；</li>
+            <li><b>支柱三（MDT 处治与报告出具）</b>：首剂化疗预防性下调 20%，联合全肠内营养支持与抗阻运动预康复，一键导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 报告。</li>
           </ul>
         </div>
       </div>
@@ -1364,22 +1495,41 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <h3>【案例四 · 弥漫性间质性肺病与纤维化】寻常型间质性肺炎 (UIP) / 特发性肺纤维化 (IPF) 薄层 HRCT 智能表型与蜂窝肺量化</h3>
 
-      <h4>8.9 临床病例背景与 HRCT 智能表型识别 (IPF / Definite UIP Pattern)</h4>
+      <h4>8.17 患者基本资料与临床主诉 (Clinical Profile)</h4>
       <div class="help-feature-card" style="margin: 12px 0;">
         <div class="hfc-title">患者脱敏档案 · PT-IPF-004</div>
         <div class="hfc-desc">
           <ul>
             <li><b>基本信息</b>：69岁男性，退休机械修理工人，既往吸烟史 30 包年。零 PHI 规范建档。</li>
             <li><b>主诉与现病史</b>：活动后渐进性气短、刺激性干咳 1 年，近 1 个月活动耐量进行性减退，平地慢走 100 米即感气促胸闷。专科体格检查：呼吸频率 22 次/分，听诊双下肺背侧基底部可闻及特征性吸气末细小、高调、不连续的爆裂样湿啰音——<b>典型 Velcro 啰音 (Velcro Rales)</b>；双手指端见轻度杵状指 (Clubbing)。</li>
-            <li><b>肺功能测定 (PFT)</b>：典型限制性通气障碍伴一氧化碳弥散量重度下降：用力肺活量占预计值百分比 (FVC% pred) 68.5%，一氧化碳弥散量占预计值百分比 (DLCO% pred) 44.2%。</li>
+            <li><b>肺功能测定 (PFT)</b>：典型限制性通气障碍伴一氧化碳弥散量重度下降：用力肺活量占预计值百分比 (FVC% pred) 68.5%，一氧化碳弥散量占预计值百分比 (DLCO% pred) 44.2%。血清自身抗体谱 (ANA/ENA/ANCA) 全套阴性。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>8.18 第一步：薄层吸气相 HRCT (1.0 mm) 3D 智能表型提取与蜂窝肺量化 (Baseline HRCT)</h4>
+      <p>系统运行 <code>ipf_interstitial_phenotyper</code> 深度网络，对 3D HRCT 体数据进行全自动肺叶各向同性体素分割与纤维化病理征象量化提取（第 #72 层）：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 14 真实患者薄层 HRCT 轴位关键截面 (Slice #72) · 3D UIP 智能表型提取与蜂窝肺量化</span>
+          <span class="help-case-tag">${icon('scan', { size: 12 })} 3D Interstitial Phenotyper</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-ipf-1-hrct-honeycombing.png" alt="薄层 HRCT 轴位关键截面 3D UIP 智能表型提取与蜂窝肺量化" />
+        <div class="help-case-caption">
+          <b>薄层 HRCT 影像学特征与 2022 ATS/ERS 指南符合度剖析：</b>
+          <ul>
+            <li><b>解剖空间分布</b>：病变严格呈<b>胸膜下 (Subpleural)</b> 与<b>双肺基底部 (Basal)</b> 外周优势分布；双肺尖部及支气管血管束中央区相对保留，呈典型向心性梯度；</li>
+            <li><b>蜂窝状改变 (Honeycombing)</b>：黄色高亮标出胸膜下多层厚壁囊状透亮气腔，直径 3~8 mm，呈多层阶梯状紧贴胸膜成簇排列。MONAI 测算<b>全肺累计蜂窝肺容积达 46.20 cm³</b>，确凿支持 Definite UIP 标志征象；</li>
+            <li><b>牵拉性支气管扩张 (Traction Bronchiectasis)</b>：周围重度纤维化组织回缩产生异常张力，导致下叶周边气道不规则扭曲扩张，延伸至胸膜下 1 cm 肺外周带；</li>
+            <li><b>彻底排除不符合 UIP 征象</b>：广泛磨玻璃影 (GGO) 占比 &lt; 5% (且无孤立 GGO)；无小叶中心微结节；呼气相 CT 无马赛克灌注与弥漫气体陷闭，彻底排除过敏性肺炎 (HP) 与结节病。</li>
           </ul>
         </div>
       </div>
 
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('scan', { size: 14 })} 薄层 HRCT (1.0 mm 层厚) 3D 智能表型提取与空间分布特征</div>
+        <div class="hfc-title">${icon('scan', { size: 14 })} 薄层 HRCT (1.0 mm 层厚) 3D 智能表型提取与空间分布特征表</div>
         <div class="hfc-desc">
-          <p>系统运行 <code>ipf_interstitial_phenotyper</code> 深度网络，对 3D HRCT 体数据进行全自动肺叶各向同性体素分割与纤维化病理征象量化提取：</p>
           <table class="help-table" style="margin: 8px 0;">
             <thead>
               <tr style="border-bottom: 1px solid var(--line); background: var(--card-glass);">
@@ -1446,13 +1596,40 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('dna', { size: 14 })} 多学科会诊 (MDT) 结论与临床免创伤获益</div>
-        <div class="hfc-desc">
+      <h4>8.19 第二步：间质性纤维化头尾向梯度 3D MPR 交互浏览 (Interactive 3D MPR)</h4>
+      <p>通过三正交切片浏览器，立体展现特发性肺纤维化标志性的从肺尖到肺基底部的头尾向梯度衰减：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 15 诊断级 3D MPR 弥漫性间质性肺病头尾向梯度浏览器 (Coronal & Sagittal Views)</span>
+          <span class="help-case-tag">${icon('grid', { size: 12 })} 头尾向病理梯度</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-ipf-2-mpr-coronal-gradient.png" alt="诊断级 3D MPR 弥漫性间质性肺病头尾向梯度浏览器" />
+        <div class="help-case-caption">
+          <b>三正交视图头尾向梯度特征解析：</b>
           <ul>
-            <li><b>免除有创外科肺活检 (Surgical Lung Biopsy, SLB)</b>：依据 2022 年 ATS/ERS/JRS/ALAT 国际特发性肺纤维化临床实践指南，在 HRCT 表现为典型明确 UIP 表型且排除明确病因（自身抗体阴性、无环境暴露史、无药物性肺损伤）的患者中，<b>影像学与组织病理学的一致率超过 95%</b>。多学科专家组一致判定：<b>无需进行高风险的有创经胸腔镜外科肺活检</b>，成功避免了全麻手术可能诱发急性加重 (AE-IPF) 与机械通气死亡的严重并发症；</li>
-            <li><b>早期启动抗纤维化靶向治疗</b>：正式确诊为<b>特发性肺纤维化 (IPF)</b>，即刻启动口服吡非尼酮胶囊 (Pirfenidone) 或甲磺酸尼达尼布软胶囊 (Nintedanib) 靶向抗纤维化治疗，延缓用力肺活量 (FVC) 年衰减率；</li>
-            <li><b>纳入呼吸慢病长程追踪</b>：一键将患者 HRCT 基线指标（蜂窝肺容积 46.20 cm³、FVC 68.5%）录入 Heurion 随访中心，设定每 6 个月随访复查肺功能与薄层 HRCT。</li>
+            <li><b>冠状面 (Coronal) 与矢状面 (Sagittal) 垂直构型</b>：冠状位清晰勾画出纤维化病灶呈现从肺尖向肺底部进行性加重的陡峭梯度（肺尖部肺实质结构清晰正常，肺中部出现粗糙网格影，双肺底外周带则被严重蜂窝囊腔完全占据）；</li>
+            <li><b>三维准星对准下肺基底蜂窝区</b>：一键聚焦纤维化最严重区域，量测胸膜下囊腔壁厚与外周气道牵拉距离；</li>
+            <li><b>切片资产存证与报告草案联动</b>：保存冠状面关键切片并自动提取空间表型参数，注入至放射诊断报告草案。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>8.20 第三步：多模态因果诊断链闭环与 MDT 免外科肺活检获益 (Multimodal Evidence Chain & SLB-Sparing)</h4>
+      <p>多学科专家团队基于影像智能表型与临床多模态数据，达成免除有创活检、早期抗纤维化的诊疗决策：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 16 多模态因果诊断链与证据闭环 (IPF / Definite UIP 证据三支柱)</span>
+          <span class="help-case-tag">${icon('sparkles', { size: 12 })} MDT 共识 · 免除活检</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-ipf-3-diagnostic-chain.png" alt="多模态因果诊断链与证据闭环" />
+        <div class="help-case-caption">
+          <b>多学科诊疗决策闭环与临床获益：</b>
+          <ul>
+            <li><b>支柱一（薄层 HRCT 3D 智能表型提取）</b>：胸膜下与基底部外周分布 + 多层蜂窝肺 (46.20 cm³) + 牵拉支扩，彻底排除过敏性肺炎，完全符合 2022 ATS/ERS Definite UIP 表型 (权重 0.98)；</li>
+            <li><b>支柱二（临床体征、肺功能与免疫排查）</b>：吸气末典型 Velcro 啰音、限制性弥散障碍 (FVC 68.5%, DLCO 44.2%)，自身抗体谱全阴性排除结缔组织病相关间质性肺病 (CTD-ILD) (权重 0.96)；</li>
+            <li><b>支柱三（MDT 确诊与免外科肺活检获益）</b>：依据指南，Definite UIP 表现且排除病因者与病理一致率超 95%，<b>免除高风险的外科胸腔镜肺活检 (SLB)</b>，直接确诊特发性肺纤维化 (IPF)，即刻启动口服吡非尼酮抗纤维化靶向治疗；导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 报告。</li>
           </ul>
         </div>
       </div>
@@ -2033,53 +2210,88 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ### 8.2 案例二：EGFR 突变型晚期非小细胞肺癌 (NSCLC) 奥希替尼靶向治疗前后 RECIST 1.1 疗效评估
 
-1. **患者脱敏档案**：\`PT-NSCLC-002\` (58 岁女性，无吸烟史，右上肺浸润性腺癌伴 4R 组纵隔淋巴结转移，外周血与组织 NGS 证实 EGFR Exon 19 del 突变，临床分期 cT2bN2M0, III A 期)。
-2. **基线检查与靶病灶测量 (Baseline HRCT, 2026-06-15)**：
-   - **靶病灶 1 (右上肺实质肿块)**：最大长径 42.0 mm × 短径 31.5 mm，3D 容积 28.50 cm³，CT 均值 38 HU (分叶征、细毛刺与胸膜牵拉征)；
-   - **靶病灶 2 (4R 组纵隔淋巴结)**：短径 18.0 mm (符合 RECIST 1.1 淋巴结靶病灶短径 ≥ 15 mm 纳排金标准)；
-   - **基线靶病灶长径和 (Baseline SOD)**：$42.0 + 18.0 = 60.0 \text{ mm}$。
-3. **靶向治疗 12 周后随访复查 (Follow-up HRCT, 2026-09-15)**：
-   - 患者规范接受第三代 EGFR-TKI 甲磺酸奥希替尼 (80 mg qd) 口服靶向治疗 12 周；
-   - **靶病灶 1**：缩小至长径 24.0 mm × 短径 15.5 mm，3D 容积骤降至 6.20 cm³ (体积吸收率 -78.2%)；
-   - **靶病灶 2**：短径缩小至 9.0 mm (< 10.0 mm，退缩至正常生理淋巴结大小)；
-   - **随访靶病灶长径和 (Follow-up SOD)**：$24.0 + 9.0 = 33.0 \text{ mm}$；
-   - **长径和变化率**：$\frac{33.0 - 60.0}{60.0} \times 100\% = -45.0\%$；
-   - **RECIST 1.1 定级**：靶病灶长径和降幅 $\ge 30\%$ 且无任何新发病灶，严格判定为 **部分缓解 (Partial Response, PR)**。
-4. **配准差分热力图与影像组学微观演变**：
-   - 双期 3D 弹性配准 (DIR) 差分图上病灶呈现大面积深绿色负差分吸收征，表明肿瘤广泛坏死空洞化；
-   - IBSI 107 项组学特征显示局部能量减退、灰度粗糙度增加，提示肿瘤微环境异质性显著下降。
-5. **临床决策闭环**：继续奥希替尼 80 mg qd 靶向维持治疗，按规范 8~12 周随访复查，避免过早放疗介入。
+1. **患者脱敏档案与就诊背景**：
+   - 虚拟代号：\`PT-NSCLC-002\` (58 岁女性，无吸烟史，零 PHI 规范建档)；
+   - 主诉：右侧胸痛、刺激性干咳伴痰中带血丝 2 个月；
+   - 病理与分子分型：支气管镜外周活检证实右上肺浸润性中分化腺癌，外周血与组织 NGS 提示 **EGFR 19 号外显子缺失突变 (Exon 19 del, p.E746_A750del, 丰度 48.6%)**；伴同侧纵隔 4R 组淋巴结转移，临床分期 cT2bN2M0, III A 期。
+2. **步骤一：基线薄层 HRCT 实体瘤靶病灶 3D 智能量化 (Baseline HRCT, 2026-06-15)**：
+   - 参考图像：[图 6 真实患者基线薄层 HRCT 轴位关键截面 (Slice #128) · 右上肺癌靶病灶智能检出与 3D 边界量化](/site/real-case-nsclc-1-baseline-recist.png)；
+   - **靶病灶 1 (右上肺实质浸润肿块)**：3D 卷积模型分割提取最大长径 $42.0 \\text{ mm} \\times$ 短径 $31.5 \\text{ mm}$，3D 容积 $28.50 \\text{ cm}^3$，CT 均值 38 HU；
+   - **靶病灶 2 (4R 组纵隔转移淋巴结)**：短径量测 $18.0 \\text{ mm}$（严格符合 RECIST 1.1 淋巴结靶病灶短径 $\\ge 15.0 \\text{ mm}$ 纳排金标准）；
+   - **基线靶病灶长径总和 (Baseline SOD)**：$\\text{SOD}_{\\text{base}} = 42.0 + 18.0 = 60.0 \\text{ mm}$。
+3. **步骤二：3D MPR 三正交切片交互浏览与恶性分叶毛刺评估**：
+   - 参考图像：[图 7 诊断级 3D MPR 三正交切片联动浏览器 (右上肺癌浸润与胸膜牵拉征象)](/site/real-case-nsclc-2-mpr-3view.png)；
+   - 横断面 (Axial #128)、冠状面 (Coronal #240)、矢状面 (Sagittal #260) 三维同屏联动；
+   - 准星一键聚焦病灶中心，直观呈现深分叶征 (Lobulation)、长短毛刺 (Spiculation) 与胸膜牵拉征 (Pleural Indentation)；
+   - 启动前端亚毫米电子卡尺与 ROI 矩形剖面，测定病灶各向物理尺寸并存证入档。
+4. **步骤三：奥希替尼口服 12 周后随访复查与双期 3D 弹性配准差分热力图 (Follow-up HRCT, 2026-09-15)**：
+   - 参考图像：[图 8 奥希替尼靶向治疗 12 周随访 · 双期 3D 非刚性弹性配准与差分吸收热力图](/site/real-case-nsclc-3-diff-heatmap.png)；
+   - 规范口服第三代 EGFR-TKI 甲磺酸奥希替尼 (80 mg qd) 12 周；
+   - MONAI 3D 弹性形变配准 (DIR) 消除呼吸相差异后，差分热力图呈现大面积深绿色负差分吸收征，表明肿瘤显著坏死空洞化；
+   - **靶病灶 1**：缩小至长径 $24.0 \\text{ mm} \\times$ 短径 $15.5 \\text{ mm}$，3D 容积降至 $6.20 \\text{ cm}^3$ (容积吸收率 $-78.2\\%$)；
+   - **靶病灶 2**：短径退缩至 $9.0 \\text{ mm}$ ($< 10.0 \\text{ mm}$，退缩至正常生理淋巴结大小)；
+   - **随访靶病灶长径和 (Follow-up SOD)**：$\\text{SOD}_{\\text{follow}} = 24.0 + 9.0 = 33.0 \\text{ mm}$；
+   - **靶病灶长径和变化率**：$\\Delta\\% = \\frac{33.0 - 60.0}{60.0} \\times 100\\% = -45.0\\%$；
+   - **RECIST 1.1 定级**：长径和降幅 $\\ge 30\\%$ 且无任何新发病灶，严格判定为 **部分缓解 (Partial Response, PR)**。
+5. **步骤四：IBSI 标准 107 项影像组学微观异质性演变分析**：
+   - 参考图像：[图 9 IBSI 国际标准化 107 项高维影像组学雷达指纹与微观异质性演变分析](/site/real-case-nsclc-4-radiomics-feature.png)；
+   - 提取 IBSI 标准高维组学特征：GLCM 对比度由 4.82 降至 1.95，GLRLM 灰度不均匀性由 142.6 降至 68.2，GLSZM 区域均匀度提升；
+   - 证实肿瘤内部微观空间异质性显著降低，细胞密集度锐减，佐证分子层面的良好生物学应答。
+6. **步骤五：多模态因果诊断链闭环与 RECIST 1.1 标准报告出具**：
+   - 参考图像：[图 10 多模态因果诊断链与证据闭环 (晚期 NSCLC 靶向治疗 PR 应答)](/site/real-case-nsclc-5-diagnostic-chain.png)；
+   - 串联「3D 影像体积/长径缩减 + 分子突变 (EGFR 19del 丰度降至 0.8%) + 肿瘤标志物 (CEA 58.4 ➔ 6.2 ng/mL)」三元证据链；
+   - MDT 决策维持奥希替尼 80 mg qd 靶向维持治疗，推迟局部姑息放疗介入；一键导出标准 DICOM SR 与 FHIR 报告。
 
 ---
 
 ### 8.3 案例三：胰腺导管腺癌合并隐匿性重度骨骼肌减少症 (Cancer Sarcopenia / Cachexia) 与肌脂肪浸润
 
-1. **患者脱敏档案**：\`PT-SARCO-003\` (64 岁男性，胰体尾部浸润性导管腺癌 cT3N1M0 III 期，发病前体重 68 kg，近 3 个月暴跌至 54 kg，体重下降 -20.6%，身高 1.72 m，BMI 18.25 kg/m²，实测右手握力仅 19 kg)。
-2. **TotalSegmentator L3 椎体层面自动化机体成分测算 (Slice #148)**：
-   - **骨骼肌横截面积 (SMA)**：88.50 cm² (同龄健康男性参考值 > 130 cm²)；
-   - **骨骼肌质量指数 (SMI = SMA / 身高²)**：$\frac{88.50}{1.72^2} \approx 29.92 \text{ cm}^2/\text{m}^2$ (远低于 Prado 国际共识男性肌少症界值 52.4 cm²/m² 与亚洲 AWGS 38.5 cm²/m²，触发系统红色高危警报：**重度恶液质性肌少症 Severe Sarcopenia**)；
-   - **骨骼肌辐射衰减 (Mean Muscle Attenuation, MA)**：26.4 HU (正常骨骼肌 > 35~40 HU，低 HU 证实骨骼肌细胞间质被大量异位脂质浸润，提示严重 **肌脂肪变性 Myosteatosis**)；
-   - **内脏脂肪面积 (VAT)**：142.30 cm²；**皮下脂肪面积 (SAT)**：68.20 cm²；
-   - **内脏/皮下脂肪比 (VAT / SAT)**：$142.30 / 68.20 = 2.09$ (显著升高，呈现为典型的内脏脂肪堆积伴骨骼肌重度消耗——“肌少性恶液质消耗表型”)。
-3. **临床决策与药代动力学毒性预警闭环**：
-   - 骨骼肌萎缩显著降低亲脂性化疗药代谢清除率，导致游离血药峰浓度异常升高；系统预测若按体表面积 (BSA = 1.62 m²) 全量给予 mFOLFIRINOX 方案化疗，发生 3~4 级骨髓抑制及剂量限制性毒性 (DLT) 的概率高达 72%；
-   - **临床干预闭环**：化疗首剂预防性下调 20%，联合临床营养科启动全肠内营养支持 (ONS) 补充高蛋白与支链氨基酸 (BCAA)，实施个体化预康复 (Prehabilitation) 训练，避免化疗毒性致死。
+1. **患者脱敏档案与就诊背景**：
+   - 虚拟代号：\`PT-SARCO-003\` (64 岁男性，零 PHI 规范建档)；
+   - 临床诊断：胰体尾部浸润性导管腺癌 cT3N1M0 III 期；
+   - 主诉与查体：食欲不振、全身重度乏力。发病前体重 68 kg，近 3 个月暴跌至 54 kg，体重下降率 $-20.6\\%$；身高 1.72 m，BMI 18.25 kg/m²；实测右手握力仅 $19 \\text{ kg}$ (同龄健康男性参考 $\\ge 28 \\text{ kg}$)。
+2. **步骤一：TotalSegmentator L3 椎体层面自动化机体成分测算与肌少症定级 (Slice #148)**：
+   - 参考图像：[图 11 真实患者 L3 椎体层面 (Slice #148) · 3D 全身体素机体成分自动分割与肌少症量化](/site/real-case-sarco-1-l3-muscle-fat.png)；
+   - 自动解剖定位第 3 腰椎 (L3) 横断面；
+   - **骨骼肌横截面积 (SMA)**：$88.50 \\text{ cm}^2$ (健康男性参考值 $> 130 \\text{ cm}^2$)；
+   - **骨骼肌质量指数 (SMI = SMA / 身高²)**：$\\text{SMI} = \\frac{88.50}{1.72^2} \\approx 29.92 \\text{ cm}^2/\\text{m}^2$ (远低于 Prado 国际共识男性肌少症界值 $52.4 \\text{ cm}^2/\\text{m}^2$ 与亚洲 AWGS 标准 $38.5 \\text{ cm}^2/\\text{m}^2$，触发系统红色高危警报：**重度恶液质性肌少症 Severe Sarcopenia**)；
+   - **骨骼肌平均辐射衰减 (Mean Muscle Attenuation, MA)**：$26.4 \\text{ HU}$ (正常骨骼肌 $> 35\\sim 40 \\text{ HU}$，低 HU 证实骨骼肌细胞间质被大量异位甘油三酯浸润，提示严重 **肌脂肪变性 Myosteatosis**)；
+   - **内脏脂肪面积 (VAT)**：$142.30 \\text{ cm}^2$；**皮下脂肪面积 (SAT)**：$68.20 \\text{ cm}^2$；
+   - **内脏/皮下脂肪比 (VAT / SAT)**：$\\frac{142.30}{68.20} = 2.09$ (显著升高，呈现为典型的内脏脂肪堆积伴骨骼肌重度消耗——“肌少性恶液质消耗表型”)。
+3. **步骤二：药代动力学 (PK) 化疗剂量限制性毒性 (DLT) 预警分析**：
+   - 参考图像：[图 12 基于机体成分 (SMI & MA) 的个体化化疗药代动力学 (PK) 剂量限制性毒性 (DLT) 预警评估](/site/real-case-sarco-2-pk-toxicity-risk.png)；
+   - 传统仅按体表面积 (BSA = $1.62 \\text{ m}^2$) 计算化疗剂量；
+   - 骨骼肌萎缩显著降低亲脂性化疗药代谢清除率，导致游离血药峰浓度异常升高；
+   - 系统 PK 模型预测：若全量给予 mFOLFIRINOX 方案化疗，发生 3~4 级骨髓抑制及严重感染等剂量限制性毒性 (DLT) 的概率高达 $72\\%$。
+4. **步骤三：多学科诊疗 (MDT) 减毒增效与预康复营养干预决策闭环**：
+   - 参考图像：[图 13 多模态因果诊断链与证据闭环 (恶性肿瘤重度肌少症营养与减毒 MDT 干预)](/site/real-case-sarco-3-diagnostic-chain.png)；
+   - 串联「L3 SMI $29.92 \\text{ cm}^2/\\text{m}^2$ + 肌脂肪变性 $26.4 \\text{ HU}$ + 握力 $19 \\text{ kg}$ + 恶液质消瘦」三元证据链；
+   - **MDT 决策闭环**：① 化疗首剂预防性下调 $20\\%$；② 联合临床营养科启动全肠内营养支持 (ONS)，足量补充乳清蛋白与支链氨基酸 (BCAA)；③ 指导轻负荷抗阻与有氧预康复 (Prehabilitation) 训练，避免化疗毒性致死。
 
 ---
 
 ### 8.4 案例四：寻常型间质性肺炎 (UIP) / 特发性肺纤维化 (IPF) 薄层 HRCT 智能表型与蜂窝肺量化
 
-1. **患者脱敏档案**：\`PT-IPF-004\` (69 岁男性，吸烟 30 包年，活动后进行性气短伴干咳 1 年，查体双下肺听诊吸气末典型 Velcro 啰音/爆裂音，指端轻度杵状指；肺功能 FVC% pred 68.5%，DLCO% pred 44.2%)。
-2. **薄层吸气相 HRCT (1.0 mm 层厚) 3D 智能表型提取与空间分布特征**：
-   - **解剖空间分布**：严格呈**胸膜下 (Subpleural)** 与**双肺基底部 (Basal)** 外周优势分布；双肺尖部及中央气道周围实质相对完整保留，呈典型向心性梯度；
-   - **蜂窝状改变 (Honeycombing)**：胸膜下多层厚壁囊状透亮气腔，直径 3~8 mm，呈多层阶梯状紧贴胸膜成簇排列。MONAI 测算**全肺累计蜂窝肺容积达 46.20 cm³**；
+1. **患者脱敏档案与就诊背景**：
+   - 虚拟代号：\`PT-IPF-004\` (69 岁男性，退休工人，吸烟史 30 包年，零 PHI 规范建档)；
+   - 主诉与查体：活动后渐进性气短、刺激性干咳 1 年，近 1 个月活动耐量急剧下降，平地慢走 100 米即感气促胸闷。查体呼吸 22 次/分，双下肺背侧基底部听诊闻及吸气末细小爆裂音——**典型 Velcro 啰音 (Velcro Rales)**；双手指端轻度杵状指；
+   - 肺功能与免疫排查：限制性通气障碍伴弥散量重度下降 (FVC% pred $68.5\\%$, DLCO% pred $44.2\\%$)；血清自身抗体谱 (ANA/ENA/ANCA) 全套阴性。
+2. **步骤一：薄层吸气相 HRCT (1.0 mm 层厚) 3D 智能表型提取与蜂窝肺量化 (Slice #72)**：
+   - 参考图像：[图 14 真实患者薄层 HRCT 轴位关键截面 (Slice #72) · 3D UIP 智能表型提取与蜂窝肺量化](/site/real-case-ipf-1-hrct-honeycombing.png)；
+   - **解剖空间分布**：严格呈**胸膜下 (Subpleural)** 与**双肺基底部 (Basal)** 外周优势分布；双肺尖部及支气管血管束中央区相对保留，呈典型向心性梯度；
+   - **蜂窝状改变 (Honeycombing)**：黄色高亮标出胸膜下多层厚壁囊状透亮气腔，直径 3~8 mm，呈多层阶梯状紧贴胸膜成簇排列。MONAI 测算**全肺累计蜂窝肺容积达 $46.20 \\text{ cm}^3$**；
    - **牵拉性支气管扩张 (Traction Bronchiectasis)**：周围重度纤维化组织回缩产生异常张力，导致下叶周边气道不规则扭曲扩张，延伸至胸膜下 1 cm 肺外周带；
-   - **网格影 (Reticulation)**：广泛粗糙的小叶间隔不规则增厚与小叶内细网状纤维沉积；
-   - **排除不符合 UIP 征象**：广泛磨玻璃影 (GGO) 占比 < 5% (且无孤立 GGO)；无小叶中心微结节；呼气相 CT 无马赛克灌注与弥漫气体陷闭。
-3. **指南定级与 MDT 免创伤临床获益**：
+   - **排除不符合 UIP 征象**：广泛磨玻璃影 (GGO) 占比 $< 5\\%$ (且无孤立 GGO)；无小叶中心微结节；呼气相 CT 无马赛克灌注与弥漫气体陷闭，彻底排除过敏性肺炎 (HP) 与结节病。
+3. **步骤二：间质性纤维化头尾向梯度 3D MPR 交互浏览 (Coronal & Sagittal Views)**：
+   - 参考图像：[图 15 诊断级 3D MPR 弥漫性间质性肺病头尾向梯度浏览器 (Coronal & Sagittal Views)](/site/real-case-ipf-2-mpr-coronal-gradient.png)；
+   - 冠状面 (Coronal) 与矢状面 (Sagittal) 垂直构型清晰勾画出纤维化病灶呈现从肺尖向肺基底部进行性加重的陡峭梯度（肺尖部肺实质结构清晰正常，肺中部出现粗糙网格影，双肺底外周带则被严重蜂窝囊腔完全占据）；
+   - 三维准星精准锁定下肺基底蜂窝区，量测胸膜下囊腔壁厚与外周气道牵拉距离；保存冠状面关键切片并提取空间表型参数注入诊断报告草案。
+4. **步骤三：多模态因果诊断链闭环与 MDT 免外科肺活检获益**：
+   - 参考图像：[图 16 多模态因果诊断链与证据闭环 (IPF / Definite UIP 证据三支柱)](/site/real-case-ipf-3-diagnostic-chain.png)；
+   - 串联「薄层 HRCT 胸膜下基底部分布 + 蜂窝肺 $46.20 \\text{ cm}^3$ + 牵拉支扩 (权重 0.98)」+「吸气末 Velcro 啰音 + 限制性弥散障碍 + 自身抗体全阴性 (权重 0.96)」；
    - 依据 2022 ATS/ERS/JRS/ALAT 国际指南判定为 **「明确 UIP 影像表型 (Definite UIP Pattern)」**；
-   - 结合自身抗体谱全套阴性，MDT 多学科专家达成共识：**无需进行高风险的有创经胸腔镜外科肺活检 (SLB)**，直接临床确诊为 **特发性肺纤维化 (IPF)**；
-   - 即刻启动口服吡非尼酮或尼达尼布抗纤维化靶向治疗，并纳入呼吸慢病长程追踪队列。
+   - 指南明确指出 Definite UIP 表现且排除已知病因者与病理组织学一致率超 95%，**无需进行高风险有创外科胸腔镜肺活检 (SLB)**，直接临床确诊为 **特发性肺纤维化 (IPF)**；
+   - 即刻启动口服吡非尼酮或尼达尼布抗纤维化靶向治疗，导出标准 DICOM SR 与 FHIR 报告。
 
 ---
 

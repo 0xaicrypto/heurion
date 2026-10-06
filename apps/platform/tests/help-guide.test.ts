@@ -131,14 +131,29 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     const caseSec = HELP_SECTIONS.find(s => s.id === 'casestudy')
     expect(caseSec).toBeDefined()
     expect(caseSec?.title).toContain('真实患者 3D 影像全流程诊疗范例')
-    
     const html = caseSec!.contentHtml
-    // 5 张关键临床真实截图落地
+
+    // 16 张关键临床真实截图落地 (4 大案例完整覆盖)
+    // 案例一：ABPA
     expect(html).toContain('/site/real-case-1-baseline-hrct.png')
     expect(html).toContain('/site/real-case-2-mpr-3view.png')
     expect(html).toContain('/site/real-case-3-diff-heatmap.png')
     expect(html).toContain('/site/real-case-4-l3-smi.png')
     expect(html).toContain('/site/real-case-5-diagnostic-chain.png')
+    // 案例二：NSCLC
+    expect(html).toContain('/site/real-case-nsclc-1-baseline-recist.png')
+    expect(html).toContain('/site/real-case-nsclc-2-mpr-3view.png')
+    expect(html).toContain('/site/real-case-nsclc-3-diff-heatmap.png')
+    expect(html).toContain('/site/real-case-nsclc-4-radiomics-feature.png')
+    expect(html).toContain('/site/real-case-nsclc-5-diagnostic-chain.png')
+    // 案例三：Sarcopenia
+    expect(html).toContain('/site/real-case-sarco-1-l3-muscle-fat.png')
+    expect(html).toContain('/site/real-case-sarco-2-pk-toxicity-risk.png')
+    expect(html).toContain('/site/real-case-sarco-3-diagnostic-chain.png')
+    // 案例四：IPF
+    expect(html).toContain('/site/real-case-ipf-1-hrct-honeycombing.png')
+    expect(html).toContain('/site/real-case-ipf-2-mpr-coronal-gradient.png')
+    expect(html).toContain('/site/real-case-ipf-3-diagnostic-chain.png')
 
     // 临床病理生理机制与量化指标深度自洽
     expect(html).toContain('PT-BRONCHO-001')
@@ -278,16 +293,27 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(html).toContain('46.20 cm³')
     expect(html).toContain('牵拉性支气管扩张')
     expect(html).toContain('Definite UIP')
-    expect(html).toContain('无需进行高风险的有创经胸腔镜外科肺活检')
+    expect(html).toContain('免除高风险的外科胸腔镜肺活检 (SLB)')
     expect(html).toContain('吡非尼酮')
 
     // Markdown 版本验证
     const md = buildHelpMarkdown()
     expect(md).toContain('PT-NSCLC-002')
+    expect(md).toContain('/site/real-case-nsclc-1-baseline-recist.png')
+    expect(md).toContain('/site/real-case-nsclc-2-mpr-3view.png')
+    expect(md).toContain('/site/real-case-nsclc-3-diff-heatmap.png')
+    expect(md).toContain('/site/real-case-nsclc-4-radiomics-feature.png')
+    expect(md).toContain('/site/real-case-nsclc-5-diagnostic-chain.png')
     expect(md).toContain('-45.0%')
     expect(md).toContain('PT-SARCO-003')
+    expect(md).toContain('/site/real-case-sarco-1-l3-muscle-fat.png')
+    expect(md).toContain('/site/real-case-sarco-2-pk-toxicity-risk.png')
+    expect(md).toContain('/site/real-case-sarco-3-diagnostic-chain.png')
     expect(md).toContain('29.92 cm²/m²')
     expect(md).toContain('PT-IPF-004')
+    expect(md).toContain('/site/real-case-ipf-1-hrct-honeycombing.png')
+    expect(md).toContain('/site/real-case-ipf-2-mpr-coronal-gradient.png')
+    expect(md).toContain('/site/real-case-ipf-3-diagnostic-chain.png')
     expect(md).toContain('46.20 cm³')
     expect(md).toContain('4 大典型临床案例多模态指标与决策对照矩阵表')
   })
