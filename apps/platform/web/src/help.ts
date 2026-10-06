@@ -60,24 +60,27 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>1.2 三大核心业务空间</h4>
       <ul class="help-list-steps">
         <li>
-          <span class="step-num">${icon('write', { size: 14 })}</span>
-          <div>
-            <b>写作空间 (Writing Space)</b>：支持起草临床指南、基金标书、SCI 论文、学术汇报幻灯片及病历讨论。深度整合 PubMed 全球医学文献检索与 Python 矢量医学图表生成。
-          </div>
-        </li>
-        <li>
           <span class="step-num">${icon('scan', { size: 14 })}</span>
           <div>
-            <b>患者空间 (Patients Space)</b>：严格遵循「零 PHI」安全建档。上传 DICOM / NIfTI 3D 影像，调用 MONAI 深度学习网络量化病灶，利用三正交 MPR 浏览器与双期差分热力图展开精准诊疗。
+            <b>患者空间 (Patients Space · 临床第一线 · 默认落地)</b>：严格遵循「零 PHI」安全准则与纯虚拟代号建档。上传 DICOM / NIfTI 3D 影像，调用 MONAI 深度学习网络量化病灶，利用三正交 MPR 浏览器、双期非刚性弹性配准与差分吸收热力图展开精准诊疗。
           </div>
         </li>
         <li>
           <span class="step-num">${icon('chart', { size: 14 })}</span>
           <div>
-            <b>临床研究空间 (Research Space)</b>：从临床试验方案立项、纳入排除标准筛选，到上传 SAS/SPSS/Excel 多中心数据表，一键自动生成 Table 1 基线表、Kaplan-Meier 生存曲线及 Cox 多因素森林图。
+            <b>临床研究空间 (Research Space)</b>：从临床试验方案立项、纳入排除标准筛选，到上传 SAS/SPSS/Excel 多中心数据表，一键自动生成 Table 1 基线表、Kaplan-Meier 生存曲线、Cox 风险比森林图及 IBSI 影像组学预后分析。
+          </div>
+        </li>
+        <li>
+          <span class="step-num">${icon('write', { size: 14 })}</span>
+          <div>
+            <b>写作空间 (Writing Space)</b>：支持起草临床指南、基金标书、SCI 论文、学术汇报幻灯片 (Deck) 及病历讨论。深度整合 PubMed 全球医学文献检索与 Python 矢量医学图表生成。
           </div>
         </li>
       </ul>
+
+      <h4>1.3 极简医学发丝图标系统 (1.5px Hairline SVG)</h4>
+      <p>全平台抛弃杂乱花哨的表情符号 (Emoji)，采用统一 1.5px 极简发丝级医学科技矢量 SVG 图标，与墨绿临床界面深度契合，带来专业沉浸的医生工作台体验。</p>
 
       <div class="help-callout tip">
         <span class="callout-icon">${icon('info', { size: 16 })}</span>
@@ -399,6 +402,24 @@ export const HELP_SECTIONS: HelpSection[] = [
           </div>
         </li>
       </ul>
+
+      <h4>4.6 全身体素机体成分与肌少症量化 (Body Composition & Sarcopenia)</h4>
+      <p>基于 TotalSegmentator 3D 全身体素网络，系统提供肿瘤恶液质与衰弱综合征的量化筛查方案：</p>
+      <ul>
+        <li><b>L3 骨骼肌指数 (SMI, cm²/m²)</b>：自动定位 L3 椎体中位截面，分割腰大肌、竖脊肌及腹壁肌群面积，结合患者身高计算 SMI；依据 Prado 国际共识（男性 &lt; 52.4 cm²/m²，女性 &lt; 38.5 cm²/m²）自动进行肌少症红黄预警。</li>
+        <li><b>内脏脂肪与皮下脂肪比 (VAT / SAT)</b>：精准测算腹腔内脏脂肪面积与皮下脂肪面积，评估代谢综合征及放化疗毒副反应风险。</li>
+      </ul>
+
+      <h4>4.7 IBSI 国际标准影像组学高阶特征矩阵 (Radiomics Extraction)</h4>
+      <p>遵循 IBSI (Image Biomarker Standardisation Initiative) 国际影像组学标准规范，一键提取 107 项高维生物特征：</p>
+      <ul>
+        <li>一阶灰度统计 (First Order Statistics)、形状球形度与表面积体积比 (Shape & Compactness)；</li>
+        <li>灰度共生矩阵 (GLCM)、灰度游程矩阵 (GLRLM)、灰度区域大小矩阵 (GLSZM) 及邻域灰度差矩阵 (NGTDM)；</li>
+        <li>支持小波滤波变换 (Wavelet Decomposition)，所有高维组学数据均可一键载入科研数据集开展机器学习建模。</li>
+      </ul>
+
+      <h4>4.8 三甲标准四段式全景影像诊断报告</h4>
+      <p>在影像卡片上点击<b>「${icon('report', { size: 13 })} 全景诊断报告」</b>，自动汇聚检查方法与序列信息、3D MONAI 定量测量参数、多模态化验因果链、鉴别诊断与随访处置建议，支持一键保存为正式病历或打印导出。</p>
     `
   },
   {
@@ -406,21 +427,22 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: '双期 3D 刚性配准、差分热力图与随访评估',
     badge: '临床演进',
     icon: icon('compare', { size: 16 }),
-    summary: '基线与随访 CT 空间自动刚性配准、差分吸收热力图图层、双联屏联动滑动及严谨的 RECIST 1.1 疗效评估规则。',
+    summary: '基线与随访 CT 空间自动刚性/非刚性弹性形变配准、差分吸收热力图、双联屏联动滑动、PET-CT 融合及放疗靶区勾画 (RT-STRUCT)。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>5. 双期 3D 刚性配准与差分吸收热力图 (Registration & RECIST Evaluation)</h3>
-        <span class="help-tag">随访对比 · 空间对齐</span>
+        <h3>5. 双期 3D 刚性配准与差分吸收热力图 (Registration, Fusion & RT-STRUCT)</h3>
+        <span class="help-tag">随访对比 · 空间对齐 · 放疗规划</span>
       </div>
-      <p class="help-lead">针对多期随访患者，彻底告别“单张切片肉眼目测对比”，实现真正基于 3D 体素空间刚性配准的动态演变量化。</p>
+      <p class="help-lead">针对多期随访患者，彻底告别“单张切片肉眼目测对比”，实现基于 3D 体素空间刚性与非刚性弹性配准的动态演变量化，并支持 PET-CT 多模态融合与放疗靶区勾画。</p>
 
-      <h4>5.1 双期 3D 体素刚性配准与差分吸收热力图 (Difference Heatmap Overlay)</h4>
+      <h4>5.1 双期 3D 体素刚性与非刚性弹性配准及差分吸收热力图 (Difference Heatmap Overlay)</h4>
       <p>当同一患者拥有基线期 (Baseline) 与随访期 (Follow-up) 两套 CT 扫描时：</p>
       <ul>
-        <li><b>自动空间校准</b>：调用 MONAI 刚性/仿射配准网络，将随访 CT 空间自动校准平移旋转对齐至基线坐标系。</li>
-        <li><b>差分吸收热力图 (Difference Heatmap)</b>：计算两期三维体素的 HU 密度变化矩阵并在切片器上叠加显示：
+        <li><b>刚性与仿射对齐</b>：调用 MONAI 刚性/仿射配准网络，将随访 CT 空间平移旋转对齐至基线坐标系。</li>
+        <li><b>3D 非刚性弹性形变配准 (Deformable B-spline / Diffeomorphic Registration)</b>：自动拟合呼吸运动引起的肺野扩张不均与胸腔体位形变，输出高精度形变向量场 (DVF)。</li>
+        <li><b>差分吸收热力图 (Difference Heatmap)</b>：在配准后的 3D 体素空间中计算 HU 衰减差分矩阵并在切片器上叠加渲染：
           <ul>
-            <li><span style="color:#00ff93; font-weight:600;">● 绿色区域</span>：表示炎性浸润吸收、粘液栓缩小退缩区域（好转缓解）。</li>
+            <li><span style="color:#00ff93; font-weight:600;">● 绿色区域</span>：表示炎性浸润吸收、粘液栓缩小退缩或肿瘤缩小区域（好转缓解）。</li>
             <li><span style="color:#ff6b6b; font-weight:600;">● 红色区域</span>：表示新发浸润、病灶体积扩大或密度增高区域（进展恶化）。</li>
           </ul>
         </li>
@@ -432,7 +454,22 @@ export const HELP_SECTIONS: HelpSection[] = [
         <li>开启<b>「联动滚动 (Cursor Lock)」</b>后，滚轮在左侧基线切片滑动到相应解剖层面时，右侧随访根据对齐比例自动同步滚到对应层面，方便医生一目了然对比同解剖位点变化。</li>
       </ul>
 
-      <h4>5.3 严格解耦的疗效评估准则 (RECIST 1.1 vs 良性炎性病灶)</h4>
+      <h4>5.3 PET-CT 与多模态融合成像 (PET-CT & Multimodal Fusion)</h4>
+      <p>支持将解剖结构与代谢功能多模态影像融合同屏显示：</p>
+      <ul>
+        <li><b>解剖与代谢空间重采样</b>：将 128×128 代谢 PET (SUV) 空间网格重采样至 512×512 结构 CT (HU) 网格；</li>
+        <li><b>交互式融合透明度</b>：提供 Alpha 透明度调节滑块 (0.0~1.0)，支持彩虹/热铁伪彩代谢图层无缝叠加于灰阶解剖 CT 之上；</li>
+        <li><b>SUV 恶性高摄取预警</b>：设定 SUVmax 阈值（默认 ≥ 2.5 提示高代谢恶性病灶），协助精准识别肿瘤活性边界。</li>
+      </ul>
+
+      <h4>5.4 放疗靶区勾画与导出 (Radiation Target Delineation & DICOM RT-STRUCT)</h4>
+      <p>基于 MONAI 3D 卷积网络的肿瘤靶区与解剖危及器官分割结果：</p>
+      <ul>
+        <li><b>三维多边形网格提取</b>：采用 Marching Cubes 算法自动提取肿瘤大体靶区 (GTV)、临床靶区 (CTV)、计划靶区 (PTV) 及危及器官 (OAR: 脊髓、双肺、心脏、食管) 的闭合边界多边形；</li>
+        <li><b>标准 DICOM RT-STRUCT (PS 3.3) 导出</b>：导出符合国际放疗标准的结构文件，可直接一键导入瓦里安 Eclipse、医科达 Monaco 等主流放疗计划系统 (TPS) 或三维手术规划系统。</li>
+      </ul>
+
+      <h4>5.5 严格解耦的疗效评估准则 (RECIST 1.1 vs 良性炎性病灶)</h4>
       <div class="help-callout important">
         <span class="callout-icon">${icon('shield', { size: 16 })}</span>
         <div class="callout-body">
@@ -554,6 +591,13 @@ export const HELP_SECTIONS: HelpSection[] = [
           </div>
         </li>
       </ul>
+      <h4>7.4 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
+      <p>将深度学习量化指标与长期临床随访结局深度融合：</p>
+      <ul>
+        <li><b>肌少症 (SMI) 与脂肪分布预后分层</b>：依据 L3 骨骼肌指数 (SMI) 与内脏/皮下脂肪比 (VAT/SAT) 自动进行低 SMI 肌少症组 vs 对照组分组，一键绘制 Kaplan-Meier 生存曲线并计算 Log-Rank p 值；</li>
+        <li><b>多因素 Cox 回归协变量校正</b>：将影像标志物与年龄、TNM 临床分期、ECOG 评分及化疗周期联动构建多因素 Cox 回归模型，自动输出 Adjusted HR 及森林图；</li>
+        <li><b>IBSI 影像组学多中心特征建模</b>：提取的 107 项国际规范组学特征一键存入研究队列数据集，支撑肿瘤免疫治疗应答与复发风险预测科研。</li>
+      </ul>
 
       <p>所有分析结果与生成图表均可一键归入「写作」文档，实现从临床数据分析到论文撰写的一键闭环。</p>
     `
@@ -649,12 +693,12 @@ export function buildHelpMarkdown(): string {
 
 Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
-1. **左侧导航 Rail & 资源栏**：
-   - **写作 (Write)**：文档与学术汇报幻灯片；
-   - **患者 (Patients)**：以纯虚拟代号建档，3D 影像量化分析与多期随访；
-   - **研究 (Research)**：临床课题立项、数据集质控与自动化统计制表；
-   - **资料库 (Library)**：上传医学指南与论文，自动向量化供 AI 检索溯源；
-   - **回收站与账户中心**：支持个人设置与医院机构管理。
+1. **左侧导航 Rail & 资源栏**（自上而下顺畅工作流，统一采用 1.5px 极简发丝级医学矢量图标系统）：
+   - **患者 (Patients · 临床一线)**：以纯虚拟代号建档，3D 影像深度量化、三正交 MPR 浏览器、双期配准与随访对比；
+   - **研究 (Research · 科研转化)**：临床课题立项、多中心数据集质控、Table 1 与生存分析、IBSI 影像组学预后建模；
+   - **写作 (Write · 成果输出)**：文档与学术汇报幻灯片、PubMed 引用、红绿 Diff 修订模式与 Word/PPTX 双模态无损导出；
+   - **资料库 (Library)**：上传医学指南与学术论文，自动向量化供 AI 检索溯源；
+   - **回收站与账户中心**：个人设置、机构管理及知家 (PHR) 个人专属家庭健康空间。
 2. **中间主工作画布 (Center)**：
    - 富文本编辑器（支持分级标题、公式、表格、PubMed 引用）；
    - 学术汇报幻灯片排版器；
@@ -738,20 +782,36 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - **全模态临床窗宽窗位快捷预设**：肺窗 (-600/1500)、纵隔窗 (40/400)、腹部窗 (50/350)、骨窗 (300/1500)、脑窗 (40/80) 及鼠标拖拽无级微调；
    - **三维准星与智能病灶导航**：点击「定位病灶中心」瞬时跳转到病灶最大截面层，实时展示病灶受累标签；
    - **关键截面存证截图 (Capture Snapshot)**：一键转存为平台永久图像资产并生成 Markdown 引用代码，支持一键出具规范影像报告草案。
+6. **全身体素机体成分与肌少症量化 (Body Composition & Sarcopenia)**：
+   - **L3 骨骼肌指数 (SMI, cm²/m²)**：自动定位 L3 椎体中位截面，精准测算骨骼肌横截面积并换算 SMI，依据 Prado 国际共识（男性 < 52.4 cm²/m²，女性 < 38.5 cm²/m²）自动进行肌少症分层；
+   - **内脏与皮下脂肪比 (VAT / SAT)**：量化腹腔内脏脂肪面积与皮下脂肪分布，评估代谢综合征及放化疗毒副反应预后。
+7. **IBSI 国际标准影像组学高阶特征提取 (Radiomics Extraction)**：
+   - 遵循 IBSI (Image Biomarker Standardisation Initiative) 国际规范，全量提取 107 项高维生物特征（形态学、一阶灰度统计、GLCM、GLRLM、GLSZM、NGTDM 等）；
+   - 支持高斯拉普拉斯及小波变换滤波，组学特征一键归档至科研数据集，支撑肿瘤分子分型与免疫应答预测。
+8. **三甲标准四段式全景影像诊断报告**：
+   - 自动整合：① 临床指征与扫查序列；② 3D MONAI 定量测量与解剖所见；③ 印象与 RECIST/PI-RADS 分级诊断；④ 推荐随访周期与临床处置建议，一键生成规范草案并支持一键归入病历。
 
 ---
 
 ## 五、 双期 3D 刚性配准与差分吸收热力图
 
-1. **自动 3D 空间配准**：
-   - 利用 MONAI 轻量 3D 刚性/仿射配准网络，将随访 CT 空间自动平移旋转对齐至基线 CT。
+1. **自动 3D 空间刚性与非刚性弹性形变配准**：
+   - **刚性/仿射对齐**：利用 MONAI 轻量 3D 刚性/仿射配准网络，将随访 CT 空间自动平移旋转对齐至基线 CT；
+   - **3D 非刚性弹性形变配准 (Deformable B-spline / Diffeomorphic)**：精准拟合呼吸运动引起的肺野扩张不均与胸腔体位形变，输出高精度形变位移场 (DVF)。
 2. **差分吸收热力图 (Difference Heatmap Overlay)**：
    - 计算两期体素差分矩阵并在切片器上叠加显示：
      - **绿色**：表示病灶缩小退缩或炎性吸收好转；
      - **红色**：表示新发浸润或病灶体积扩大进展。
 3. **双联屏联动切片滑动 (Synchronized Dual-Scrubber)**：
-   - 基线与随访切片器左右并排联动滚动，解剖结构精准对齐。
-4. **严格区分疗效评估标准**：
+   - 基线与随访切片器左右并排联动滚动，开启「联动滚动 (Cursor Lock)」即可实现同解剖层位瞬时对齐。
+4. **PET-CT 跨模态代谢与解剖融合成像 (PET-CT & Multimodal Fusion)**：
+   - 将 128×128 代谢 PET (SUV) 空间网格重采样至 512×512 结构 CT (HU) 网格；
+   - 交互式 Alpha 透明度滑块 (0.0~1.0)，支持彩虹/热铁伪彩代谢图层无缝叠加于灰阶解剖 CT 之上；
+   - 恶性高摄取阈值预警（默认 SUVmax ≥ 2.5 提示高代谢恶性病灶），协助精准识别肿瘤活性边界与代谢肿瘤体积 (MTV)。
+5. **放疗靶区勾画与 DICOM RT-STRUCT 导出 (Radiation Target Delineation)**：
+   - 采用 Marching Cubes 算法自动提取肿瘤大体靶区 (GTV)、临床靶区 (CTV)、计划靶区 (PTV) 及危及器官 (OAR: 脊髓、双肺、心脏、食管) 的闭合边界多边形网格；
+   - 导出国际标准 DICOM RT-STRUCT (PS 3.3)，直通瓦里安 Eclipse、医科达 Monaco 等主流放疗计划系统 (TPS)。
+6. **严格区分疗效评估标准**：
    - **实体瘤**：严格遵循 **RECIST 1.1** 标准（靶病灶最大长径和变化率：PR ≥ -30%，PD ≥ +20%，SD -30%~+20%）；
    - **支气管扩张粘液栓**：遵循 **3D 容积吸收评估**（体积吸收率 ≥ 50% 显著改善），避免标准混淆与逻辑冲突。
 
@@ -775,7 +835,11 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - **Table 1 基线表**：正态分布 (Mean±SD, t检验) / 偏态分布 (Median(IQR), Wilcoxon) / 分类变量 (N(%), 卡方/Fisher) 自动选用；
    - **Kaplan-Meier 生存曲线**：绘制生存曲线、Log-Rank 检验、中位生存期与 Number at Risk 表；
    - **Cox 比例风险回归**：单因素与多因素分析，绘制风险比 (HR) 森林图。
-4. **成果归档**：分析图表与结果一键导入写作论文。
+4. **影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)**：
+   - **肌少症 (SMI) 与脂肪分布预后分层**：依据 L3 骨骼肌指数 (SMI) 与内脏/皮下脂肪比 (VAT/SAT) 自动进行肌少症分组，一键绘制 Kaplan-Meier 生存曲线并计算 Log-Rank p 值；
+   - **多因素 Cox 回归协变量校正**：将影像标志物与年龄、TNM 分期、ECOG 评分及治疗方案联动构建多因素 Cox 回归模型，自动输出 Adjusted HR 及森林图；
+   - **IBSI 影像组学多中心特征建模**：提取的 107 项国际规范组学特征一键存入研究队列数据集，支撑肿瘤免疫治疗应答与复发风险预测科研。
+5. **成果归档**：分析图表与结果一键导入写作论文，形成从临床数据到论文发表的完整闭环。
 
 ---
 

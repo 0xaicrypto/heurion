@@ -49,16 +49,24 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(allHtml).toContain('PI-RADS')
     expect(allHtml).toContain('Agatston')
     expect(allHtml).toContain('TotalSegmentator')
+    expect(allHtml).toContain('骨骼肌指数 (SMI')
+    expect(allHtml).toContain('肌少症')
+    expect(allHtml).toContain('IBSI')
+    expect(allHtml).toContain('全景诊断报告')
     expect(allHtml).toContain('MPR')
     expect(allHtml).toContain('横断面 (Axial)')
     expect(allHtml).toContain('NiiVue 3D WebGL2')
     expect(allHtml).toContain('定位病灶中心')
     expect(allHtml).toContain('保存切片为文档资产')
     
-    // 双期 3D 刚性配准与差分热力图
+    // 双期 3D 刚性/非刚性配准、差分热力图、PET-CT 融合与 RT-STRUCT
     expect(allHtml).toContain('刚性/仿射配准')
+    expect(allHtml).toContain('3D 非刚性弹性形变配准')
     expect(allHtml).toContain('差分吸收热力图')
     expect(allHtml).toContain('双联屏联动切片滑动')
+    expect(allHtml).toContain('PET-CT')
+    expect(allHtml).toContain('SUVmax')
+    expect(allHtml).toContain('DICOM RT-STRUCT')
     expect(allHtml).toContain('RECIST 1.1')
     
     // 多模态因果诊断链与国际标准导出
@@ -66,10 +74,12 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(allHtml).toContain('DICOM SR')
     expect(allHtml).toContain('HL7 FHIR')
     
-    // 临床科研与知家
+    // 临床科研、影像组学生存分析与知家
     expect(allHtml).toContain('Table 1')
     expect(allHtml).toContain('Kaplan-Meier')
+    expect(allHtml).toContain('影像生物标志物生存分析')
     expect(allHtml).toContain('知家')
+    expect(allHtml).toContain('1.5px 极简发丝级医学科技矢量 SVG 图标')
   })
 
   it('3. Markdown 手册生成与文档块结构解析验证', () => {
@@ -81,6 +91,11 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(md).toContain('纯虚拟代号建档')
     expect(md).toContain('支气管-伴行动脉比 (BAR)')
     expect(md).toContain('NiiVue 3D WebGL2')
+    expect(md).toContain('L3 骨骼肌指数 (SMI')
+    expect(md).toContain('IBSI (Image Biomarker Standardisation Initiative)')
+    expect(md).toContain('PET-CT 跨模态代谢与解剖融合成像')
+    expect(md).toContain('DICOM RT-STRUCT')
+    expect(md).toContain('影像生物标志物生存分析与预后建模')
     
     // 验证 parseBlocks 能够顺利将生成的 markdown 转换成 ProseMirror 节点
     const blocks = parseBlocks(md)
