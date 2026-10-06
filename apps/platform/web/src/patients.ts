@@ -814,6 +814,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               </option>
             `).join('') : `
               <option value="chest_lung_ct" selected>真实临床全胸部 HRCT 扫描 (269层 512x512，83.6MB)</option>
+              <option value="nsclc_lung_ct">真实临床晚期非小细胞肺癌 (NSCLC) 靶向随访增强 CT (180层 512x512，62.4MB)</option>
               <option value="spleen_test">真实临床腹部增强 CT 扫描 (96层 512x512，29.6MB)</option>
               <option value="prostate_mri">真实临床前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
             `}
@@ -844,6 +845,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           `).join('') : `
             <optgroup label="胸部与呼吸科">
               <option value="bronchiectasis_mucus_analyzer" data-window="lung" data-target="支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征" selected>支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM) [Chest HRCT]</option>
+              <option value="nsclc_recist_analyzer" data-window="lung" data-target="原发实质肿块分叶毛刺、纵隔增大淋巴结与 RECIST 1.1 靶病灶长短径和 (SOD) 变化率">非小细胞肺癌 (NSCLC) 靶向/免疫 RECIST 1.1 疗效评估 (MONAI 3D SegResNet) [Chest CT]</option>
               <option value="lung_nodule_segmenter" data-window="lung" data-target="肺实质实性/磨玻璃结节 (RECIST 1.1 最大径与三维体积)">肺结节与肺实变自动分割 (MONAI 3D SegResNet) [Chest CT]</option>
               <option value="lung_airway_segmenter" data-window="lung" data-target="全气道树管腔三维拓扑骨架与管壁厚度测量">全气道树三维拓扑重建 (MONAI AirwayUNet) [Chest HRCT]</option>
               <option value="lung_lobe_segmenter" data-window="lung" data-target="双肺 5 大肺叶 (RUL, RML, RLL, LUL, LLL) 体积及占比">5 大解剖肺叶分割与肺容积积分 (MONAI V-Net) [Chest CT]</option>
@@ -3594,14 +3596,95 @@ ${recommendations}
         <li><b>写病例报告</b><span>依据已确认的数据起草，报告保存在患者的「病例报告」里。</span></li>
       </ol>
       <div class="row"><button class="primary" data-pw="new">＋ 新建患者</button>${list[0] ? `<button data-pw="open">打开 ${esc(label(list[0]))}</button>` : ''}</div>
+
+      <div class="pt-benchmark-cases" style="margin-top: 24px; border-top: 1px dashed var(--line); padding-top: 18px;">
+        <div style="font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+          <span style="display: flex; align-items: center; gap: 6px;">${icon('nsclc', { size: 16 })} 典型临床案例快速体验 (Clinical Benchmark Cases)</span>
+          <span class="help-tag ok" style="font-size: 10px;">点击卡片即刻体验</span>
+        </div>
+        <div class="help-grid-2" style="margin: 0; gap: 12px;">
+          <div class="help-feature-card" style="cursor: pointer; padding: 12px 14px;" data-pt-preset="nsclc" title="点击快速进入或新建晚期非小细胞肺癌 (NSCLC) 靶向随访患者档案">
+            <div class="hfc-title" style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="display: flex; align-items: center; gap: 6px; color: var(--mint-text);">
+                ${icon('nsclc', { size: 15 })} <b>NSCLC · 晚期非小细胞肺癌</b>
+              </span>
+              <span class="help-tag ok" style="font-size: 10.5px;">RECIST 1.1 PR</span>
+            </div>
+            <div class="hfc-desc" style="font-size: 11.5px; margin-top: 5px; line-height: 1.5;">
+              <b>PT-NSCLC-002</b> · 58岁女 · EGFR 19del 奥希替尼 12 周随访<br>
+              长径和 60.0 ➔ 33.0 mm (-45.0% PR) · 3D 容积 -78.2%
+            </div>
+          </div>
+          <div class="help-feature-card" style="cursor: pointer; padding: 12px 14px;" data-pt-preset="abpa" title="点击快速进入或新建变应性支气管肺曲霉病 (ABPA) 患者档案">
+            <div class="hfc-title" style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="display: flex; align-items: center; gap: 6px; color: var(--mint-text);">
+                ${icon('scan', { size: 15 })} <b>ABPA · 变应性支气管肺曲霉病</b>
+              </span>
+              <span class="help-tag ok" style="font-size: 10.5px;">HAM 吸收 74.9%</span>
+            </div>
+            <div class="hfc-desc" style="font-size: 11.5px; margin-top: 5px; line-height: 1.5;">
+              <b>PT-BRONCHO-001</b> · 52岁男 · BAR 1.45 印戒征 · HAM 粘液栓 12.44 cm³<br>
+              激素联合伏立康唑 3 个月随访 · 3D 容积吸收评估 (PR)
+            </div>
+          </div>
+        </div>
+      </div>
     </div>${photoFigure('patients')}`
   }
 
-  document.getElementById('page')!.addEventListener('click', e => {
-    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-pw]')
+  document.getElementById('page')!.addEventListener('click', async e => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-pw], [data-pt-preset]')
     if (!b || !document.getElementById('page')!.classList.contains('pt-welcome')) return
-    if (b.dataset.pw === 'new') void createPatient()
-    else if (list[0]) void openPatient(list[0].id)
+    if (b.dataset.pw === 'new') { void createPatient(); return }
+    if (b.dataset.pw === 'open') { if (list[0]) void openPatient(list[0].id); return }
+    if (b.dataset.ptPreset === 'nsclc') {
+      const existing = list.find(p => p.tags.some(t => /nsclc|肺癌|egfr/i.test(t)) || p.code === 'PT-NSCLC-002')
+      if (existing) {
+        await openPatient(existing.id)
+      } else {
+        try {
+          const created = await api<Patient>('/api/patients', {
+            method: 'POST',
+            body: JSON.stringify({
+              code: 'PT-NSCLC-002',
+              sex: '女',
+              birth_year: '1968',
+              tags: ['NSCLC', 'EGFR-19del', '奥希替尼靶向治疗', 'cT2bN2M0']
+            })
+          })
+          notice('已创建典型案例患者档案：PT-NSCLC-002')
+          await loadList()
+          await openPatient(created.id)
+        } catch (err) {
+          notice((err as Error).message, true)
+        }
+      }
+      return
+    }
+    if (b.dataset.ptPreset === 'abpa') {
+      const existing = list.find(p => p.tags.some(t => /abpa|曲霉|支气管/i.test(t)) || p.code === 'PT-BRONCHO-001')
+      if (existing) {
+        await openPatient(existing.id)
+      } else {
+        try {
+          const created = await api<Patient>('/api/patients', {
+            method: 'POST',
+            body: JSON.stringify({
+              code: 'PT-BRONCHO-001',
+              sex: '男',
+              birth_year: '1974',
+              tags: ['支气管扩张', 'ABPA', '变态反应', '哮喘']
+            })
+          })
+          notice('已创建典型案例患者档案：PT-BRONCHO-001')
+          await loadList()
+          await openPatient(created.id)
+        } catch (err) {
+          notice((err as Error).message, true)
+        }
+      }
+      return
+    }
   })
 
   // —— 左栏页签 ——

@@ -52,6 +52,7 @@ export type IconName =
   | 'book'
   | 'caliper'
   | 'ruler'
+  | 'nsclc'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -185,6 +186,9 @@ const ICONS: Record<IconName, string> = {
 
   // 标尺、几何测量
   ruler: '<path d="M2.5 17.5L17.5 2.5l2 2-15 15zM6 7l2 2M9 10l2 2M12 13l2 2"/>',
+
+  // 非小细胞肺癌 (NSCLC) / 胸部肿瘤靶向评估标志
+  nsclc: '<path d="M10 2.5v15M10 7c-2.5-3-7-3-7 3.5 0 4.5 3 6.5 6 7M10 7c2.5-3 7-3 7 3.5 0 4.5-3 6.5-6 7"/><circle cx="13.5" cy="8" r="2.2" stroke-dasharray="1.5 1"/><path d="M13.5 5v1.5M13.5 9.5v1.5M10.5 8h1.5M15 8h1.5"/>',
 }
 
 export interface IconOptions {

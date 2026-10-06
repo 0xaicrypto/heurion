@@ -291,6 +291,48 @@
 <div class="dialog" id="dialog" hidden></div>
 <template id="welcomeTpl">
   <div class="welcome">
+    <div class="welcome-guide-banner">
+      <div class="welcome-guide-main">
+        <div class="welcome-guide-badge">Heurion 临床智能工作站 · 全流程操作指南</div>
+        <div class="welcome-guide-title">临床科研四段闭环与多场景标杆案例库</div>
+        <p class="welcome-guide-desc">打通“3D 体素量化 ➔ 纵向弹性配准 ➔ 影像组学建模 ➔ 无损双模写作”全链路，严守零 PHI 医学隐私法律底线。</p>
+        <div class="welcome-guide-actions">
+          <button class="primary welcome-guide-btn" data-guide-action="open">查看产品使用手册</button>
+          <button class="welcome-guide-btn-ghost" data-guide-action="import">导入手册为常驻参考</button>
+        </div>
+      </div>
+      <div class="welcome-guide-topics">
+        <button class="wgt-card" data-guide-topic="casestudy" title="查看晚期非小细胞肺癌 (NSCLC) 奥希替尼靶向疗效 RECIST 1.1 实战案例">
+          <div class="wgt-icon">
+            <svg class="ui-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5v15M10 7c-2.5-3-7-3-7 3.5 0 4.5 3 6.5 6 7M10 7c2.5-3 7-3 7 3.5 0 4.5-3 6.5-6 7"/><circle cx="13.5" cy="8" r="2.2" stroke-dasharray="1.5 1"/><path d="M13.5 5v1.5M13.5 9.5v1.5M10.5 8h1.5M15 8h1.5"/></svg>
+          </div>
+          <b>NSCLC 靶向评估</b>
+          <span>RECIST 1.1 PR (-45%) · 差分吸收图</span>
+        </button>
+        <button class="wgt-card" data-guide-topic="casestudy" title="查看变应性支气管肺曲霉病 (ABPA) 实战案例">
+          <div class="wgt-icon">
+            <svg class="ui-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="3"/><circle cx="10" cy="10" r="4"/><path d="M10 2.5v3M10 14.5v3M2.5 10h3M14.5 10h3"/></svg>
+          </div>
+          <b>ABPA 支扩与粘液栓</b>
+          <span>BAR 1.45 · HAM 12.44 cm³ 容积吸收</span>
+        </button>
+        <button class="wgt-card" data-guide-topic="casestudy" title="查看恶液质与骨骼肌减少症 TotalSegmentator L3 案例">
+          <div class="wgt-icon">
+            <svg class="ui-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="6" r="3"/><path d="M2.5 17c.5-3 2.5-4.5 4.5-4.5s4 1.5 4.5 4.5"/><circle cx="14" cy="7.5" r="2.2"/><path d="M11.5 17c.3-2 1.5-3 3-3s2.7 1 3 3"/></svg>
+          </div>
+          <b>恶液质与肌少症</b>
+          <span>L3 SMI 29.9 cm²/m² · 化疗剂量预警</span>
+        </button>
+        <button class="wgt-card" data-guide-topic="casestudy" title="查看特发性肺纤维化 (IPF/UIP) 薄层 HRCT 案例">
+          <div class="wgt-icon">
+            <svg class="ui-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4c3 3 11 3 14 0M3 16c3-3 11-3 14 0M6 6.5v7M14 6.5v7M10 8.5v3"/></svg>
+          </div>
+          <b>IPF / UIP 纤维化</b>
+          <span>胸膜下蜂窝肺 (46.2 cm³) · 免活检</span>
+        </button>
+      </div>
+    </div>
+
     <svg class="mark" viewBox="-2 6 96 88" aria-hidden="true"><rect class="mark-ink" x="0" y="10" width="18" height="80" rx="9"/><rect class="mark-ink" x="62" y="30" width="18" height="60" rx="9"/><rect class="mark-sky" x="14" y="42" width="52" height="18" rx="9"/><circle class="mark-sky" cx="80" cy="20" r="11"/></svg>
     <h1>开始一份医学写作</h1>
     <p class="welcome-sub">文档和幻灯片都能直接编辑；也可以让 Heurion 起草、改写、检索文献、核对论断，引用自动规范。</p>
@@ -301,6 +343,12 @@
     </div>
     <h2>试试这样让 Heurion 帮你</h2>
     <div class="welcome-examples">
+      <button data-example="doc" data-prompt="起草一份 EGFR 突变型晚期非小细胞肺癌 (NSCLC) 奥希替尼靶向治疗前后 RECIST 1.1 疗效评估病例报告：包含基线右上肺实质肿块 (42mm) 与纵隔淋巴结 (18mm) 基线 SOD 60.0mm；随访肿块缩小至 24mm，淋巴结缩小至 9mm，随访 SOD 33.0mm，变化率 -45.0% 判定为部分缓解 (PR) 及 3D 容积吸收 (-78.2%)。">
+        <span style="display:flex;align-items:center;gap:8px;">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5v15M10 7c-2.5-3-7-3-7 3.5 0 4.5 3 6.5 6 7M10 7c2.5-3 7-3 7 3.5 0 4.5-3 6.5-6 7"/><circle cx="13.5" cy="8" r="2.2" stroke-dasharray="1.5 1"/><path d="M13.5 5v1.5M13.5 9.5v1.5M10.5 8h1.5M15 8h1.5"/></svg>
+          <b>[NSCLC 靶向评估]</b> 起草晚期非小细胞肺癌奥希替尼靶向疗效 RECIST 1.1 评估报告
+        </span>
+      </button>
       <button data-example="doc" data-prompt="起草一段 SELECT 试验（司美格鲁肽对超重或肥胖、无糖尿病的心血管病患者）的证据综述：写出主要终点的 HR 与 95% CI，并引用原始文献。">起草 SELECT 试验的证据综述，带原始文献引用</button>
       <button data-example="doc" data-prompt="写一份 2 型糖尿病合并心血管病患者使用 GLP-1 受体激动剂的病例讨论提纲，分为病史要点、用药依据（引用指南或关键试验）、风险与随访三部分。">写一份 GLP-1 受体激动剂的病例讨论提纲</button>
       <button data-example="deck" data-prompt="做一份 4 页的 SELECT 试验解读汇报：标题页、研究设计、主要结果（主要终点 HR 与 95% CI，引用原始文献）、安全性与局限。做完检查版面。">做一份 4 页的 SELECT 试验解读幻灯片</button>

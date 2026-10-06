@@ -231,4 +231,118 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(html).toContain('因果推演图谱')
     expect(html).toContain('localStorage')
   })
+
+  it('7. 4 大典型临床标杆案例库与量化决策闭环完整覆盖', () => {
+    const caseSec = HELP_SECTIONS.find(s => s.id === 'casestudy')
+    expect(caseSec).toBeDefined()
+    const html = caseSec!.contentHtml
+
+    // 案例一：ABPA 变态反应性支气管肺曲霉病
+    expect(html).toContain('PT-BRONCHO-001')
+    expect(html).toContain('BAR = 1.45')
+    expect(html).toContain('12.44 cm³')
+    expect(html).toContain('HAM')
+    expect(html).toContain('3D 容积吸收评估')
+    expect(html).toContain('74.9%')
+    expect(html).toContain('Rosenberg-Patterson')
+
+    // 案例二：NSCLC 晚期肺腺癌 EGFR 突变奥希替尼靶向 RECIST 1.1 评估
+    expect(html).toContain('PT-NSCLC-002')
+    expect(html).toContain('EGFR 19 号外显子缺失突变')
+    expect(html).toContain('奥希替尼')
+    expect(html).toContain('60.0 mm')
+    expect(html).toContain('33.0 mm')
+    expect(html).toContain('-45.0%')
+    expect(html).toContain('部分缓解 (PR)')
+    expect(html).toContain('RECIST 1.1')
+    expect(html).toContain('-78.2%')
+
+    // 案例三：胰腺癌恶液质隐匿性重度骨骼肌减少症与肌脂肪浸润
+    expect(html).toContain('PT-SARCO-003')
+    expect(html).toContain('TotalSegmentator L3')
+    expect(html).toContain('29.92 cm²/m²')
+    expect(html).toContain('52.4 cm²/m²')
+    expect(html).toContain('26.4 HU')
+    expect(html).toContain('肌脂肪变性 (Myosteatosis)')
+    expect(html).toContain('2.09')
+    expect(html).toContain('72%')
+    expect(html).toContain('下调 20%')
+    expect(html).toContain('预康复')
+
+    // 案例四：特发性肺纤维化 (IPF) / 寻常型间质性肺炎 (UIP)
+    expect(html).toContain('PT-IPF-004')
+    expect(html).toContain('Velcro 啰音')
+    expect(html).toContain('胸膜下')
+    expect(html).toContain('双肺基底部')
+    expect(html).toContain('蜂窝状改变 (Honeycombing)')
+    expect(html).toContain('46.20 cm³')
+    expect(html).toContain('牵拉性支气管扩张')
+    expect(html).toContain('Definite UIP')
+    expect(html).toContain('无需进行高风险的有创经胸腔镜外科肺活检')
+    expect(html).toContain('吡非尼酮')
+
+    // Markdown 版本验证
+    const md = buildHelpMarkdown()
+    expect(md).toContain('PT-NSCLC-002')
+    expect(md).toContain('-45.0%')
+    expect(md).toContain('PT-SARCO-003')
+    expect(md).toContain('29.92 cm²/m²')
+    expect(md).toContain('PT-IPF-004')
+    expect(md).toContain('46.20 cm³')
+    expect(md).toContain('4 大典型临床案例多模态指标与决策对照矩阵表')
+  })
+
+  it('8. 诊断级 3D MPR 前端轻量标注交互与物理量化算法章节验证', () => {
+    const conceptSec = HELP_SECTIONS.find(s => s.id === 'concepts')
+    expect(conceptSec).toBeDefined()
+    expect(conceptSec!.contentHtml).toContain('2.15 为什么不能直接拿屏幕像素量病灶？物理体素标定与亚毫米级电子卡尺')
+    expect(conceptSec!.contentHtml).toContain('微型发光灯泡')
+    expect(conceptSec!.contentHtml).toContain('物理体素标定 (Voxel Spacing)')
+    expect(conceptSec!.contentHtml).toContain('双层 Canvas 交互系统')
+
+    const imgSec = HELP_SECTIONS.find(s => s.id === 'imaging')
+    expect(imgSec).toBeDefined()
+    const html = imgSec!.contentHtml
+
+    // 5.6 完整功能设计
+    expect(html).toContain('5.6 诊断级 3D MPR 前端轻量标注与卡尺交互量化系统')
+    expect(html).toContain('5.6.1 完整功能设计 (Full Functional Design)')
+    expect(html).toContain('浏览模式 (Browse Mode)')
+    expect(html).toContain('游标卡尺测距模式 (Caliper Mode)')
+    expect(html).toContain('矩形剖面 ROI 面积模式 (ROI Area Mode)')
+    expect(html).toContain('清除标注 (Clear)')
+    expect(html).toContain('双图层复合无损存证 (Composite Snapshot Export)')
+    expect(html).toContain('自动化诊断报告草案动态注入 (Diagnostic Report Draft Injection)')
+
+    // 5.6.2 交互实现架构
+    expect(html).toContain('5.6.2 交互实现架构 (Interactive Implementation Architecture)')
+    expect(html).toContain('双层 Canvas DOM 覆盖架构')
+    expect(html).toContain('mprImg')
+    expect(html).toContain('mprAnnotCanvas')
+    expect(html).toContain('pointer-events')
+    expect(html).toContain('pointerdown')
+    expect(html).toContain('pointermove')
+    expect(html).toContain('pointerup')
+    expect(html).toContain('requestAnimationFrame')
+    expect(html).toContain('devicePixelRatio')
+
+    // 5.6.3 算法量化原理与物理标定
+    expect(html).toContain('5.6.3 算法量化原理与物理标定 (Algorithm & Physics Calibration)')
+    expect(html).toContain('PixelSpacing')
+    expect(html).toContain('D_{\\text{mm}}')
+    expect(html).toContain('A_{\\text{mm}^2}')
+    expect(html).toContain('CompositeCanvas')
+
+    // Markdown 导出一致性验证
+    const md = buildHelpMarkdown()
+    expect(md).toContain('2.15 为什么不能直接拿屏幕像素量病灶？物理体素标定与亚毫米级电子卡尺')
+    expect(md).toContain('6. **诊断级 3D MPR 前端轻量标注与卡尺交互量化系统 (Frontend Lightweight Annotation & Caliper Engine)**')
+    expect(md).toContain('游标卡尺测距 (Caliper mm)')
+    expect(md).toContain('矩形剖面 ROI 面积 (ROI Area)')
+    expect(md).toContain('双层 Canvas DOM 覆盖')
+    expect(md).toContain('mprAnnotCanvas')
+    expect(md).toContain('D_{\\text{mm}}')
+    expect(md).toContain('CompositeCanvas')
+  })
 })
+
