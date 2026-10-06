@@ -1,9 +1,13 @@
 import { allows, type Access, type Level } from '../research/access.ts'
 import { createHash } from 'node:crypto'
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type { DatasetRow, Store } from '../store/db.ts'
 import type { ColumnProfile, Ingest, Profile } from './ingest.ts'
+import { generateTable1FromData, type Table1Options, type Table1Result } from './table1.ts'
+
+export type { Table1Options, Table1Result }
+
 
 /**
  * 数据集（实验室数据分析 · 第一期）：医生上传大样本表格，AI 在隔离环境里用 Python 分析，结果（Table 1、图、方法与结果段落）写进文稿。
@@ -191,6 +195,40 @@ export class DatasetService {
     if (d.status !== 'ready') throw new DatasetError('not_ready', d.status === 'failed' ? `数据集导入失败：${d.error ?? ''}` : '数据集还在处理')
     return { dataset: this.view(d), path: this.csvPath(d) }
   }
+
+  /** 生成临床研究 Table 1 基线特征表 */
+  table1(owner: string, id: string, opts: Table1Options = {}): Table1Result {
+    const { dataset, path } = this.readyCsv(owner, id)
+    if (!existsSync(path)) throw new DatasetError('file_missing', '数据集数据文件丢失')
+    const content = readFileSync(path, 'utf8')
+    const matrix = parseCsv(content)
+    if (matrix.length < 2) throw new DatasetError('insufficient_data', '数据集没有足够的数据生成 Table 1')
+    const header = matrix[0]!
+    const records: Record<string, string>[] = []
+    for (let i = 1; i < matrix.length; i++) {
+      const row = matrix[i]!
+      if (!row || row.length === 0 || (row.length === 1 && !row[0])) continue
+      const rec: Record<string, string> = {}
+      for (let j = 0; j < header.length; j++) {
+        const col = header[j]!
+        rec[col] = row[j] ?? ''
+      }
+      records.push(rec)
+    }
+
+    const numCols = dataset.columns.filter(c => c.type === 'numeric').map(c => c.name)
+    const catCols = dataset.columns.filter(c => c.type === 'categorical').map(c => c.name)
+
+    const mergedOpts: Table1Options = {
+      ...opts,
+      labels: { ...dataset.labels, ...opts.labels },
+      continuous_vars: opts.continuous_vars ?? (numCols.length ? numCols : undefined),
+      categorical_vars: opts.categorical_vars ?? (catCols.length ? catCols : undefined),
+    }
+
+    return generateTable1FromData(records, mergedOpts)
+  }
+
 
   private roleOf(user: string, d: DatasetRow) {
     return this.access ? this.access.datasetRole(user, d) : d.owner === user ? 'owner' as const : null
