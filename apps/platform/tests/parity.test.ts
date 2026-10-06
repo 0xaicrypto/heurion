@@ -95,7 +95,7 @@ const ALL_PARITY: Record<string, string> = {
   'GET /api/kb-search': 'kb_search', 'GET /api/kb/:fid/text': 'kb_read', 'GET /api/kb/:fid/file': 'kb_read',
   // 数据集
   'GET /api/datasets': 'dataset_list', 'GET /api/datasets/:did': 'dataset_describe', 'GET /api/datasets/:did/preview': 'dataset_open',
-  'POST /api/datasets/:did/table1': 'dataset_table1', 'POST /api/datasets/:did/survival': 'dataset_survival',
+  'POST /api/datasets/:did/table1': 'dataset_table1', 'POST /api/datasets/:did/survival': 'dataset_survival', 'POST /api/datasets/:did/imaging-survival': 'dataset_imaging_survival',
   'POST /api/datasets': 'dataset_manage.upload', 'PATCH /api/datasets/:did': 'dataset_manage.rename', 'POST /api/datasets/:did/phi': 'dataset_manage.resolve_phi', 'DELETE /api/datasets/:did': 'dataset_manage.delete',
   // 记忆
   'GET /api/memory': 'memory_manage.list', 'GET /api/memory/:mid/events': 'memory_manage.events', 'PATCH /api/memory/:mid': 'memory_manage.edit',
@@ -148,6 +148,9 @@ const ALL_PARITY: Record<string, string> = {
   'POST /api/imaging/radiomics': 'imaging_radiomics',
   'POST /api/imaging/interactive-segment': 'imaging_interactive_segment',
   'POST /api/imaging/whole-body': 'imaging_whole_body_segment',
+  'POST /api/imaging/registration/deformable': 'imaging_deformable_register',
+  'POST /api/imaging/registration/pet-ct-fusion': 'imaging_pet_ct_fuse',
+  'POST /api/imaging/rtstruct/delineate': 'imaging_rtstruct_delineate',
   'POST /api/patients/:ptid/imaging/compare': 'imaging_longitudinal_compare',
   'GET /api/patients/:ptid/imaging/evidence-chain': 'imaging_evidence_chain',
   'GET /api/patients/:ptid/imaging/export': 'imaging_export_standard',

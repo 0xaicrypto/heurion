@@ -5,6 +5,7 @@
  * - 独立于主应用（/app）的页面：手机浏览器优先，桌面浏览器同套。
  */
 import './phr.css'
+import { icon } from './icons.ts'
 import { powDelay, solvePow, type PowSolution } from './pow.ts'
 
 // —— 类型（与 patients.ts 的行结构对应；本页只用到这些字段） ——
@@ -302,7 +303,7 @@ async function submitAuth(): Promise<void> {
     const data = await res.json().catch(() => ({})) as { token?: string; error?: string }
     if (!res.ok || !data.token) throw new Error(data.error ?? '没有成功，请重试')
     try { localStorage.setItem('heurion.token', data.token) } catch { /* 无痕模式 */ }
-    toast(authMode === 'login' ? '欢迎回来' : '欢迎来到知家 🎉')
+    toast(authMode === 'login' ? '欢迎回来' : '欢迎来到知家')
     render()
   } catch (err) {
     $('#aErr').textContent = (err as Error).message
@@ -323,7 +324,7 @@ async function submitReset(): Promise<void> {  const email = ($('#rEmail') as HT
     const data = await res.json().catch(() => ({})) as { token?: string; error?: string }
     if (!res.ok || !data.token) throw new Error(data.error ?? '重置没有成功，请重试')
     try { localStorage.setItem('heurion.token', data.token) } catch { /* 无痕模式 */ }
-    toast('密码已重置，直接进入了 🎉')
+    toast('密码已重置，直接进入')
     render()
   } catch (err) {
     $('#aErr').textContent = (err as Error).message
@@ -351,7 +352,7 @@ async function homeView(): Promise<void> {
     </button>`).join('')
   $('#main').innerHTML = list.length
     ? `<div class="member-grid">${cards}</div>`
-    : `<div class="empty"><div class="big">🏠</div>还没有家人的档案<br><span style="font-size:12px">把报告、化验单管起来，先给每位家人建一份档案</span></div>`
+    : `<div class="empty"><div class="big">${icon('home', { size: 36 })}</div>还没有家人的档案<br><span style="font-size:12px">把报告、化验单管起来，先给每位家人建一份档案</span></div>`
   document.querySelectorAll('.member').forEach(b => b.addEventListener('click', () => { location.hash = `#/m/${b.getAttribute('data-id')}` }))
 }
 
@@ -393,10 +394,10 @@ function memberDialog(p: Patient | null, done: () => void): void {
 async function memberView(id: string, tab: 'labs' | 'records' | 'pending' = 'labs'): Promise<void> {
   app.innerHTML = `<div class="topbar"><div class="topbar-in">
       <button class="back" id="back">‹</button><div style="flex:1;min-width:0"><h1 id="mName">…</h1><div class="sub" id="mMeta"></div></div>
-      <button class="edit" id="mChat" title="问知家">💬 问知家</button>
+      <button class="edit" id="mChat" title="问知家">${icon('chat')} 问知家</button>
       <div class="more-wrap"><button class="edit" id="mMore" aria-haspopup="menu" aria-label="更多">⋯</button>
         <div class="more-menu" id="mMenu" role="menu" hidden>
-          <button id="mBrief" role="menuitem">📝 生成就诊简报</button><button id="mShare" role="menuitem">🏥 分享给医生</button><button id="mClaim" role="menuitem">🔗 绑定就诊认领码</button><button id="mEdit" role="menuitem">✏️ 编辑资料</button>
+          <button id="mBrief" role="menuitem">${icon('report')} 生成就诊简报</button><button id="mShare" role="menuitem">${icon('hospital')} 分享给医生</button><button id="mClaim" role="menuitem">${icon('link')} 绑定就诊认领码</button><button id="mEdit" role="menuitem">${icon('edit')} 编辑资料</button>
         </div></div></div></div>
     <div class="max"><div class="tabs" id="tabs">
       <button class="tab on" data-tab="labs">化验</button><button class="tab" data-tab="records">记录</button><button class="tab" data-tab="pending">待确认</button><button class="tab" data-tab="share">分享</button>
@@ -519,12 +520,12 @@ async function shareTab(main: HTMLElement, id: string, name: string, refresh: ()
   main.className = ''
   const visits = log.filter(l => l.action.startsWith('share_') && l.action !== 'share_create' && l.action !== 'share_revoke')
   main.innerHTML = `<div style="display:flex;justify-content:flex-end;gap:8px">
-      <button class="btn sec" id="btnClaim" style="min-height:38px;padding:0 14px">🔗 绑定认领码</button>
+      <button class="btn sec" id="btnClaim" style="min-height:38px;padding:0 14px">${icon('link')} 绑定认领码</button>
       <button class="btn" id="newShare" style="min-height:38px;padding:0 14px">＋ 分享给医生</button>
     </div>
     ${links.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">已绑定的医院病历</div>
       ${links.map(l => `<div class="rec"><div class="info">
-        <div class="t">🏥 ${esc(l.hospital_name)}</div>
+        <div class="t">${icon('hospital')} ${esc(l.hospital_name)}</div>
         <div class="m">已完成正式病历绑定 · ${esc(l.verified_at ? l.verified_at.slice(0, 10) : '生效中')}</div>
       </div><span class="chip on">已互通</span></div>`).join('')}</div>` : ''}
     <div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">分享</div>
@@ -607,11 +608,11 @@ function labDialog(id: string, done: () => void): void {
 /** 记录页签：上传报告 + 记录列表（含关联文档）。 */
 async function recordsTab(main: HTMLElement, id: string, detail: Detail): Promise<void> {
   main.innerHTML = `<input type="file" id="upFile" accept="image/*,application/pdf,.docx,.txt" hidden multiple>
-    <button class="btn block" id="upBtn" style="margin-top:12px">📷 上传报告 / 化验单（拍照或相册）</button>
+    <button class="btn block" id="upBtn" style="margin-top:12px">${icon('camera')} 上传报告 / 化验单（拍照或相册）</button>
     <div class="card" id="recs">${detail.records.length ? '' : '<div class="empty">还没有记录</div>'}</div>
     ${detail.documents.length ? `<div class="card"><div class="sub" style="color:var(--sub);font-size:13px;margin-bottom:6px">关联文档</div>
       ${detail.documents.map(doc => `<button class="rec rec-open" data-doc="${esc(doc.doc_id)}" data-kind="${esc(doc.kind)}"><div class="info"><div class="t">${esc(DOC_KIND[doc.kind] ? `${display(detail)}的${DOC_KIND[doc.kind]}` : doc.title)}</div><div class="m">更新于 ${esc(doc.updated_at.slice(0, 10))}</div></div><span class="go">›</span></button>`).join('')}</div>` : ''}`
-  // 关联文档可以打开：简报 / 档案等用同一个阅读页（健康档案也能从 💬 进入对话）
+  // 关联文档可以打开：简报 / 档案等用同一个阅读页（健康档案也能进入对话）
   document.querySelectorAll<HTMLElement>('.rec-open').forEach(el => el.addEventListener('click', () => {
     docViewTitle = DOC_KIND[el.dataset.kind ?? ''] ?? '文档'
     location.hash = `#/b/${el.dataset.doc}`
@@ -677,7 +678,7 @@ async function pendingTab(main: HTMLElement, id: string, detail: Detail): Promis
 
   const labLine = (l: Lab, removable = true): string => `<div class="pitem"><span class="t">${esc(l.test_name)}</span>
       <span class="v">${esc(valText(l))}${l.flag ? ` <span class="flag ${l.flag}">${l.flag === 'H' ? '↑' : '↓'}</span>` : ''}</span>
-      ${l.locator?.verified === false ? '<span class="warn" title="这个值没能回原文核对上，请对照原件">⚠️</span>' : ''}
+      ${l.locator?.verified === false ? `<span class="warn" title="这个值没能回原文核对上，请对照原件">${icon('warning', { size: 12 })}</span>` : ''}
       ${l.same_day?.length ? `<span class="warn" title="同日同项已有：${esc(l.same_day.map(x => valText(x)).join('、'))}；确认后旧值标记「已替换」">↺</span>` : ''}
       ${removable ? `<button class="x" data-x="${esc(l.id)}" title="这一项不对，去掉">✕</button>` : ''}</div>`
 
@@ -689,7 +690,7 @@ async function pendingTab(main: HTMLElement, id: string, detail: Detail): Promis
     b.className = 'card pcard'
     b.innerHTML = `<div class="hd"><span class="t">${esc(r.title)}</span><span class="chip">${KIND[r.kind] ?? r.kind}</span><span class="d">${esc(r.report_date ?? '缺日期')}</span></div>
       ${waiting ? `<div class="same">${EXTRACT[r.extraction!] ?? r.extraction}${r.extraction_note ? `：${esc(r.extraction_note)}` : ''}（先等识别完成，或直接驳回）</div>` : ''}
-      ${unverified ? `<div class="same">⚠️ 有 ${unverified} 项没能回原文核对上，确认前请对照原件；不对的点 ✕ 去掉</div>` : ''}
+      ${unverified ? `<div class="same">${icon('warning', { size: 13 })} 有 ${unverified} 项没能回原文核对上，确认前请对照原件；不对的点 ✕ 去掉</div>` : ''}
       ${items.length ? `<div class="plist">${items.map(l => labLine(l)).join('')}</div>` : ''}
       <div class="act"><button class="btn ok" data-a="confirm" style="flex:2" ${waiting ? 'disabled' : ''}>✓ 全部确认${items.length ? `（${items.length} 项）` : ''}</button><button class="btn no" data-a="reject" style="flex:1">驳回整份</button></div>`
     box.append(b)
@@ -738,7 +739,7 @@ async function pendingTab(main: HTMLElement, id: string, detail: Detail): Promis
     const dates = new Map<string, string>()
     if (undated.length || unverified) {
       const d = dlg(`<h3>确认 ${ready.length} 份报告</h3><div class="form">
-          ${unverified ? `<div class="same">⚠️ 有 ${unverified} 项没能回原文核对上（卡片里标了 ⚠️）。不确定的先取消，点 ✕ 去掉。</div>` : ''}
+          ${unverified ? `<div class="same">${icon('warning', { size: 13 })} 有 ${unverified} 项没能回原文核对上。不确定的先取消，点 ✕ 去掉。</div>` : ''}
           ${undated.map(r => `<label>「${esc(r.title)}」的日期<input type="date" data-rd="${esc(r.id)}"></label>`).join('')}
           <div class="dlg-act"><button class="btn ghost" data-x="0">取消</button><button class="btn" data-x="1">全部确认</button></div></div>`)
       const ok = await new Promise<boolean>(res => {

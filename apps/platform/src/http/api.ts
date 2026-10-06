@@ -720,6 +720,91 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
   })
 
+  app.post('/api/imaging/registration/deformable', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/registration/deformable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) return c.json({ error: 'deformable_registration_failed' }, resp.status as any)
+      const data = await resp.json()
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/registration/pet-ct-fusion', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/registration/pet-ct-fusion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) return c.json({ error: 'pet_ct_fusion_failed' }, resp.status as any)
+      const data = await resp.json()
+
+      if (body.save_asset && data.fusion_png_base64) {
+        const u = c.get('user' as any) || 'u1'
+        const b64Data = String(data.fusion_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+        const pngBuf = Buffer.from(b64Data, 'base64')
+        const sliceIdx = data.key_slice_index ?? 0
+        const assetName = `${body.label || `pet-ct-fusion-slice-${sliceIdx}`}.png`
+        const asset = store.putAsset({
+          owner: u,
+          mime: 'image/png',
+          name: assetName,
+          bytes: pngBuf,
+        })
+        data.asset_id = asset.id
+        data.markdown_insert = `![${body.label || `PET-CT 代谢融合切片 #${sliceIdx}`}](asset:${asset.id})`
+      }
+
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
+  app.post('/api/imaging/rtstruct/delineate', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/rtstruct/delineate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) return c.json({ error: 'rtstruct_delineate_failed' }, resp.status as any)
+      const data = await resp.json()
+
+      if (body.save_asset && data.rtstruct_png_base64) {
+        const u = c.get('user' as any) || 'u1'
+        const b64Data = String(data.rtstruct_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+        const pngBuf = Buffer.from(b64Data, 'base64')
+        const sliceIdx = data.key_slice_index ?? 0
+        const assetName = `${body.label || `rtstruct-slice-${sliceIdx}`}.png`
+        const asset = store.putAsset({
+          owner: u,
+          mime: 'image/png',
+          name: assetName,
+          bytes: pngBuf,
+        })
+        data.asset_id = asset.id
+        data.markdown_insert = `![${body.label || `放疗靶区 (GTV/CTV/PTV) 勾画切片 #${sliceIdx}`}](asset:${asset.id})`
+      }
+
+      return c.json(data)
+    } catch (err: any) {
+      return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
+    }
+  })
+
   app.post('/api/patients/:ptid/imaging/analyze', async c => {
     try {
       const contentType = c.req.header('content-type') || ''
@@ -1943,6 +2028,14 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.json({ error: '必须指定随访时间列 (time_col) 与事件结局列 (event_col)' }, 400)
     }
     try { return c.json(deps.datasets.survival(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
+  })
+  app.post('/api/datasets/:did/imaging-survival', async c => {
+    if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
+    const body = await c.req.json<any>().catch(() => ({}))
+    if (!body.time_col || !body.event_col || !body.biomarker) {
+      return c.json({ error: '必须指定时间列 (time_col)、结局列 (event_col) 与影像标志物列 (biomarker)' }, 400)
+    }
+    try { return c.json(deps.datasets.imagingSurvival(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
   })
 
 

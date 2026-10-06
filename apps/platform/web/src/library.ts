@@ -3,6 +3,7 @@
  * 这里是工作区里的资料库页（上传、处理状态、归入项目、试检索、删除）和对话框下方的「引用资料」选择。
  */
 import { askConfirm } from './dialogs.ts'
+import { icon } from './icons.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 
@@ -160,7 +161,7 @@ export function initLibrary(api: Api, token: () => string, notice: (msg: string,
   function renderPicked(): void {
     const box = document.getElementById('kbPicked')!
     box.hidden = picked.length === 0
-    box.innerHTML = picked.map(f => `<span class="chip" data-id="${f.id}" title="AI 会依据这份资料">📄 ${esc(f.name)}<button class="chip-x" aria-label="移除">✕</button></span>`).join('')
+    box.innerHTML = picked.map(f => `<span class="chip" data-id="${f.id}" title="AI 会依据这份资料">${icon('file', { size: 12 })} ${esc(f.name)}<button class="chip-x" aria-label="移除">${icon('close', { size: 10 })}</button></span>`).join('')
   }
 
   async function openPicker(anchor: HTMLElement): Promise<void> {

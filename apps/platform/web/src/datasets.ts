@@ -3,6 +3,7 @@
  * 对话框下方的「引用数据」选择，以及文档里分析图的「来自分析」（代码与数据来源）。
  */
 import { askConfirm } from './dialogs.ts'
+import { icon } from './icons.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 
@@ -234,7 +235,7 @@ export function initDatasets(api: Api, notice: (msg: string, error?: boolean) =>
   function renderPicked(): void {
     const box = document.getElementById('dsPicked')!
     box.hidden = picked.length === 0
-    box.innerHTML = picked.map(x => `<span class="chip" data-id="${x.id}" title="AI 会分析这份数据">▦ ${esc(x.name)}<button class="chip-x" aria-label="移除">✕</button></span>`).join('')
+    box.innerHTML = picked.map(x => `<span class="chip" data-id="${x.id}" title="AI 会分析这份数据">${icon('grid', { size: 12 })} ${esc(x.name)}<button class="chip-x" aria-label="移除">✕</button></span>`).join('')
   }
 
   async function openPicker(anchor: HTMLElement): Promise<void> {

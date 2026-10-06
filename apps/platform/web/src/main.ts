@@ -21,6 +21,7 @@ import { applyTheme, mountThemeSwitch } from './theme.ts'
 import { photoFigure } from './photos.ts'
 import { openPhotoSearch, photoSearchEnabled } from './unsplash.ts'
 import { openHelpGuide, importHelpAsDoc } from './help.ts'
+import { icon } from './icons.ts'
 
 const TOKEN = storedToken()
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
@@ -1348,7 +1349,7 @@ const savedSuggest = localStorage.getItem('heurion.suggestMode')
 const isSuggestDefault = savedSuggest === null ? true : savedSuggest === '1'
 function updateSuggestModeUI(active: boolean): void {
   if (suggestPill) suggestPill.classList.toggle('active', active)
-  if (suggestText) suggestText.textContent = active ? '✨ 修订模式 · 生成 Diff 待采纳' : '直接修改模式（覆盖正文）'
+  if (suggestText) suggestText.innerHTML = active ? `${icon('sparkles', { size: 13 })} 修订模式 · 生成 Diff 待采纳` : '直接修改模式（覆盖正文）'
 }
 if (suggestCheckbox) {
   suggestCheckbox.checked = isSuggestDefault

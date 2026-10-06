@@ -886,6 +886,77 @@ export function registerHealthcareTools(server: McpServer, ctx: Ctx): void {
     } catch (err) { return datasetFail(err) }
   })
 
+  server.registerTool('dataset_imaging_survival', {
+    description: '影像标志物与生存分析端到端贯通工具：将体成分骨骼肌指标 (L3 SMI / VAT / SAT) 或 3D 影像组学特征 (Sphericity 球形度 / 熵) 自动进行医学共识切点（如 Prado 肌少症切点）或中位数分层，拟合 Kaplan-Meier 生存曲线并运行多变量 Cox 比例风险回归模型。' +
+      '返回结构化生存数据、Log-rank 显著性检验、多变量 Cox HR (95% CI)、出版级 KM 曲线 SVG、Forest Plot 森林图 SVG 及面向放射科与肿瘤专科医师的学术论著叙述。支持一键插入文档。',
+    inputSchema: {
+      dataset_id: z.string().describe('数据集 ID'),
+      time_col: z.string().describe('随访生存时间列名（天或月，数值型，如 os_months, pfs_days）'),
+      event_col: z.string().describe('事件结局状态列名（1=发生事件, 0=删失）'),
+      biomarker: z.string().describe('影像生物标志物列名（如 smi, vat_to_sat, sphericity, entropy, volume_cm3）'),
+      cutoff_strategy: z.union([z.enum(['consensus', 'median']), z.number()]).optional().describe('切点策略：consensus（临床共识切点）、median（中位数）或具体数值'),
+      sex_col: z.string().optional().describe('患者性别列名（配合 consensus 识别男女不同阈值）'),
+      covariates: z.array(z.string()).optional().describe('多变量 Cox 回归临床协变量（如 [age, stage]）'),
+      time_unit: z.string().optional().default('Months').describe('随访时间单位，如 Months, Days'),
+      milestones: z.array(z.number()).optional().describe('评估累积生存率的时间节点（如 [12, 24, 36]）'),
+      title: z.string().optional().describe('分析与图表自定义标题'),
+      doc_id: z.string().optional().describe('可选：需要将分析结果插入的文档 ID'),
+      anchor_id: z.string().optional().describe('可选：插入到该块 ID 之后（配合 doc_id）'),
+    },
+  }, async ({ dataset_id, time_col, event_col, biomarker, cutoff_strategy, sex_col, covariates, time_unit, milestones, title, doc_id, anchor_id }) => {
+    if (!deps.datasets) return fail('datasets_unavailable', '数据集未启用')
+    try {
+      const d = deps.datasets.get(claims.u, dataset_id)
+      const blocked = cohortGuard(d.origin)
+      if (blocked) return blocked
+
+      const res = deps.datasets.imagingSurvival(claims.u, dataset_id, {
+        time_col,
+        event_col,
+        biomarker,
+        cutoff_strategy,
+        sex_col,
+        covariates,
+        time_unit,
+        milestones,
+        title,
+      })
+
+      let insertResult: { doc_id: string; rev: number; inserted: boolean } | undefined
+      if (doc_id) {
+        const docRow = store.getDoc(doc_id)
+        if (docRow && (!access || access.canDoc(claims.u, docRow, 'write'))) {
+          const docNode = deps.docs.get(doc_id)
+          const targetAnchor = anchor_id || (docNode && docNode.childCount > 0 ? (docNode.lastChild?.attrs.id as string) : undefined)
+          if (targetAnchor) {
+            const insertText = res.publication_report_markdown
+            const edit = deps.ops.edit({
+              doc_id,
+              base_rev: docRow.rev,
+              mode: 'apply',
+              ops: [{ op: 'insert_after', anchor_id: targetAnchor, markdown: insertText }],
+            }, { actor: 'ai', turnId: ctx.turnId })
+            insertResult = { doc_id, rev: edit.rev, inserted: true }
+          }
+        }
+      }
+
+      return json({
+        status: 'success',
+        biomarker: res.biomarker,
+        stratification_groups: res.stratification_groups,
+        survival_data: res.survival_analysis,
+        imaging_survival: res,
+        narrative: res.publication_report_markdown,
+        publication_report_markdown: res.publication_report_markdown,
+        km_svg: res.km_svg,
+        svg_chart: res.km_svg,
+        forest_svg: res.forest_plot_svg,
+        ...(insertResult ? { doc_edit: insertResult, inserted_doc: insertResult } : {}),
+      })
+    } catch (err) { return datasetFail(err) }
+  })
+
 
   const patientFail = (err: unknown) => {
     if (err instanceof PatientError || err instanceof TenantError) return fail(err.code, err.message, err.code === 'external_model_off' ? { hint: '告诉用户本机构设置为患者数据不交给外部模型分析，需要机构管理员调整。' } : {})

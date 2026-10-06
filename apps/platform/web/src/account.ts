@@ -1,5 +1,6 @@
 import { mountOrgTemplates } from './org-templates.ts'
 import { powDelay, solvePow } from './pow.ts'
+import { icon } from './icons.ts'
 
 /**
  * 账户界面（MIGRATION_PLAN.md §2.5 R1）：登录 / 注册页（含邀请链接）、左栏底部的用户菜单、个人设置、
@@ -425,10 +426,10 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
 async function openAdmin(me: Me, api: <T = any>(path: string, opts?: RequestInit) => Promise<T>, notify: (msg: string, error?: boolean) => void): Promise<void> {
   const dlg = openDialog('平台运营', `
     <div class="org-tabs" id="adminTabs">
-      <button class="org-tab active" data-tab="tenants">🏢 机构大盘</button>
-      <button class="org-tab" data-tab="users">👥 全局用户</button>
-      <button class="org-tab" data-tab="settings">⚙️ 实例设置</button>
-      <button class="org-tab" data-tab="audit">🛡️ 全局审计</button>
+      <button class="org-tab active" data-tab="tenants">${icon('building')} 机构大盘</button>
+      <button class="org-tab" data-tab="users">${icon('users')} 全局用户</button>
+      <button class="org-tab" data-tab="settings">${icon('template')} 实例设置</button>
+      <button class="org-tab" data-tab="audit">${icon('shield')} 全局审计</button>
     </div>
     <div class="org-panel" id="tabAdminTenants">
       <div id="platformTenants" class="muted">加载中…</div>
@@ -733,11 +734,11 @@ async function openTenant(me: Me, api: ApiFn, notify: Notify): Promise<void> {
   const title = t.kind === 'org' ? (t.name ? `机构管理 · ${t.name}` : '机构管理') : (t.name ? `机构与邀请 · ${t.name}` : '机构与邀请')
   const dlg = openDialog(title, `
     <div class="org-tabs" id="tenantTabs">
-      <button class="org-tab active" data-tab="overview">⚙️ 概览与设置</button>
-      ${t.kind === 'org' ? '<button class="org-tab" data-tab="depts">🏥 科室管理</button>' : ''}
-      <button class="org-tab" data-tab="members">👥 成员与邀请</button>
-      <button class="org-tab" data-tab="templates">📑 机构模板</button>
-      <button class="org-tab" data-tab="audit">🛡️ 安全审计</button>
+      <button class="org-tab active" data-tab="overview">${icon('template')} 概览与设置</button>
+      ${t.kind === 'org' ? `<button class="org-tab" data-tab="depts">${icon('hospital')} 科室管理</button>` : ''}
+      <button class="org-tab" data-tab="members">${icon('users')} 成员与邀请</button>
+      <button class="org-tab" data-tab="templates">${icon('template')} 机构模板</button>
+      <button class="org-tab" data-tab="audit">${icon('shield')} 安全审计</button>
     </div>
 
     <!-- Tab 1: Overview & Settings -->

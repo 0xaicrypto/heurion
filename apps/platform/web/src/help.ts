@@ -11,6 +11,8 @@
  * 8. 快捷键与常见问题解答 (FAQ)
  */
 
+import { icon } from './icons.ts'
+
 type ApiFn = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 
 export interface HelpSection {
@@ -27,7 +29,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'overview',
     title: '快速上手与界面导览',
     badge: '入门基础',
-    icon: '🚀',
+    icon: icon('globe', { size: 16 }),
     summary: '了解 Heurion 工作站的三栏交互架构、三大核心工作空间切换及基础业务闭环。',
     contentHtml: `
       <div class="help-section-head">
@@ -39,17 +41,17 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>1.1 经典三栏自适应界面</h4>
       <div class="help-grid-3">
         <div class="help-feature-card">
-          <div class="hfc-icon">📂</div>
+          <div class="hfc-icon">${icon('folder', { size: 20 })}</div>
           <div class="hfc-title">左侧导航 Rail & 资源栏</div>
           <div class="hfc-desc">管理三大核心空间切换、文档树、资料库（PDF/指南上传向量化）、回收站及用户中心配置。</div>
         </div>
         <div class="help-feature-card">
-          <div class="hfc-icon">📄</div>
+          <div class="hfc-icon">${icon('file', { size: 20 })}</div>
           <div class="hfc-title">中间主工作画布 (Center)</div>
           <div class="hfc-desc">富文本无损编辑器、医学学术幻灯片排版器、患者 3D MPR 影像切片浏览器及科研数据集透视表。</div>
         </div>
         <div class="help-feature-card">
-          <div class="hfc-icon">✨</div>
+          <div class="hfc-icon">${icon('sparkles', { size: 20 })}</div>
           <div class="hfc-title">右侧伴随智能栏 (Side AI)</div>
           <div class="hfc-desc">伴随式 AI 对话、红绿 Diff 修订逐条采纳、学术论文审查建议、PubMed 文献溯源与历史版本回滚。</div>
         </div>
@@ -58,19 +60,19 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>1.2 三大核心业务空间</h4>
       <ul class="help-list-steps">
         <li>
-          <span class="step-num">✍️</span>
+          <span class="step-num">${icon('write', { size: 14 })}</span>
           <div>
             <b>写作空间 (Writing Space)</b>：支持起草临床指南、基金标书、SCI 论文、学术汇报幻灯片及病历讨论。深度整合 PubMed 全球医学文献检索与 Python 矢量医学图表生成。
           </div>
         </li>
         <li>
-          <span class="step-num">🩻</span>
+          <span class="step-num">${icon('scan', { size: 14 })}</span>
           <div>
             <b>患者空间 (Patients Space)</b>：严格遵循「零 PHI」安全建档。上传 DICOM / NIfTI 3D 影像，调用 MONAI 深度学习网络量化病灶，利用三正交 MPR 浏览器与双期差分热力图展开精准诊疗。
           </div>
         </li>
         <li>
-          <span class="step-num">📊</span>
+          <span class="step-num">${icon('chart', { size: 14 })}</span>
           <div>
             <b>临床研究空间 (Research Space)</b>：从临床试验方案立项、纳入排除标准筛选，到上传 SAS/SPSS/Excel 多中心数据表，一键自动生成 Table 1 基线表、Kaplan-Meier 生存曲线及 Cox 多因素森林图。
           </div>
@@ -78,7 +80,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       </ul>
 
       <div class="help-callout tip">
-        <span class="callout-icon">💡</span>
+        <span class="callout-icon">${icon('info', { size: 16 })}</span>
         <div class="callout-body">
           <b>快捷键小贴士：</b>
           随时使用 <code>⌘B</code> (粗体)、<code>⌘I</code> (斜体)、<code>⌘U</code> (下划线)、<code>⌘Z</code> (撤销)、<code>⌘⇧Z</code> (重做)。在 AI 对话框中，按 <code>⌘↩</code> 可快速提交推理指令。
@@ -90,7 +92,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'privacy',
     title: '医学隐私与安全架构 (零 PHI)',
     badge: '安全合规',
-    icon: '🛡️',
+    icon: icon('shield', { size: 16 }),
     summary: '了解零 PHI 准则、AES-256-GCM 租户数据密钥隔离、高风险操作二次确认卡与敏感操作审计机制。',
     contentHtml: `
       <div class="help-section-head">
@@ -102,7 +104,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>2.1 强制零 PHI (Zero Protected Health Information) 准则</h4>
       <p>为了从根本上规避患者真实隐私外泄风险，Heurion 采用<b>「全流程纯代号化」</b>建档与分析机制：</p>
       <div class="help-alert-box alert-important">
-        <b>⚠️ 严格禁止输入任何真实患者个人敏感信息：</b>
+        <b>${icon('shield', { size: 14 })} 严格禁止输入任何真实患者个人敏感信息：</b>
         <ul>
           <li>禁止在患者档案、主诉、病史文本或对话框中输入真实患者姓名、身份证号、医保卡号、门诊住院号或电话号码。</li>
           <li>请统一使用虚拟研究代号建档，例如：<code>PT-BRONCHO-001</code>、<code>SUBJ-PROSTATE-2026-A</code>。</li>
@@ -124,7 +126,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'writing',
     title: '医学写作与文献溯源',
     badge: '创作引擎',
-    icon: '✍️',
+    icon: icon('write', { size: 16 }),
     summary: '文档与学术汇报幻灯片双模态编辑、Word/PPTX/Markdown 无损双向导入导出、PubMed 智能引用及 Resvg 矢量图表。',
     contentHtml: `
       <div class="help-section-head">
@@ -197,7 +199,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'imaging',
     title: '患者管理与 3D 影像量化分析',
     badge: '临床核心',
-    icon: '🩻',
+    icon: icon('scan', { size: 16 }),
     summary: '零 PHI 虚拟代号建档、多期化验时间序列追踪、DICOM/NIfTI 空间解析、MONAI 3D 深度模型矩阵（胸部支扩/粘液栓/肺结节、前列腺 mpMRI、腹部 13 器官、脑部 MRI）及交互式 MPR 三正交切片浏览器。',
     contentHtml: `
       <div class="help-section-head">
@@ -246,7 +248,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       <p>化验单不仅是静态记录，更是临床评估病情演进的重要证据链：</p>
       <div class="help-grid-2">
         <div class="help-feature-card">
-          <div class="hfc-title">📈 核心检验指标全覆盖</div>
+          <div class="hfc-title">${icon('chart', { size: 14 })} 核心检验指标全覆盖</div>
           <div class="hfc-desc">
             <ul>
               <li><b>变态反应与呼吸</b>：外周血嗜酸性粒细胞绝对值 (Eos #) 与百分比 (Eos %)、血清总 IgE、烟曲霉特异性 sIgE；</li>
@@ -256,7 +258,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           </div>
         </div>
         <div class="help-feature-card">
-          <div class="hfc-title">🔄 跨机构单位自动换算与原件追溯</div>
+          <div class="hfc-title">${icon('refresh', { size: 14 })} 跨机构单位自动换算与原件追溯</div>
           <div class="hfc-desc">
             <ul>
               <li><b>国际标准单位归一化</b>：不同仪器与机构的化验单位（如 10⁹/L 与 /μL、IU/mL 与 kU/L）自动换算为统一标准单位，悬停可追溯原测值，确保数年随访趋势严密可比；</li>
@@ -299,19 +301,19 @@ export const HELP_SECTIONS: HelpSection[] = [
       <p>系统内置基于 MONAI 的 <b>18+ 款分科预训练临床 3D 深度模型</b>，覆盖人体 5 大核心系统，满足多学科综合读片与专科科研需要：</p>
       <div class="help-grid-2">
         <div class="help-feature-card">
-          <div class="hfc-title">🫁 1. 胸部与呼吸科 · 支气管扩张、粘液栓与气道树</div>
+          <div class="hfc-title">1. 胸部与呼吸科 · 支气管扩张、粘液栓与气道树</div>
           <div class="hfc-desc">
             <ul>
               <li><b>支气管-伴行动脉比 (BAR)</b>：亚毫米级精确测量支气管内径与伴行动脉直径（正常 &lt; 1.0；≥ 1.0 提示典型印戒征支扩）；</li>
               <li><b>高密度粘液栓 (HAM / 指套征)</b>：基于 3D 连通域自动分割全部粘液栓簇，输出平均 CT 测值 (HU)、最大极值 HU 及 3D 总体积 (cm³)，自动与胸壁肌肉 (40~50 HU) 对比判定 HAM 标准；</li>
               <li><b>气道壁增厚率 (T/D Ratio)</b> 与全气道树三维拓扑骨架 (AirwayUNet)；</li>
-              <li><b>肺结节与解剖肺叶 (SegResNet / V-Net)</b>：实性/磨玻璃结节 3D 体积与长短径，5 大解剖肺叶容积与占比。</li>
+              <li><b>肺结节与解剖肺叶 (SegResNet / V-Net)</b>：实性/磨玻璃结节 3D 体结与长短径，5 大解剖肺叶容积与占比。</li>
             </ul>
           </div>
         </div>
 
         <div class="help-feature-card">
-          <div class="hfc-title">🫄 2. 腹部、消化与泌尿 · 脏器与肿瘤占位</div>
+          <div class="hfc-title">2. 腹部、消化与泌尿 · 脏器与肿瘤占位</div>
           <div class="hfc-desc">
             <ul>
               <li><b>前列腺 mpMRI (Pelvic MRI)</b>：T2WI + ADC + DWI 序列对齐，外周带 (PZ) 与移行带 (TZ) 体积分割，可疑占位 3D 径线、ADC 极小值与 PI-RADS v2.1 分级；</li>
@@ -323,7 +325,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
 
         <div class="help-feature-card">
-          <div class="hfc-title">🧠 3. 颅脑与神经系统 · 脑病变与急诊出血</div>
+          <div class="hfc-title">3. 颅脑与神经系统 · 脑病变与急诊出血</div>
           <div class="hfc-desc">
             <ul>
               <li><b>脑胶质瘤多模态分割 (MONAI BraTS DynUNet)</b>：强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR) 三维体积测量；</li>
@@ -335,7 +337,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
 
         <div class="help-feature-card">
-          <div class="hfc-title">🫀 4. 心血管系统 · 冠脉钙化与心功能评估</div>
+          <div class="hfc-title">4. 心血管系统 · 冠脉钙化与心功能评估</div>
           <div class="hfc-desc">
             <ul>
               <li><b>冠状动脉钙化积分 (CAC / Agatston 评分) [Cardiac CT]</b>：自动检出左前降支 (LAD)、回旋支 (LCX) 与右冠状动脉 (RCA) 钙化斑块，计算总 Agatston 评分评估冠心病风险分层；</li>
@@ -345,7 +347,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
 
         <div class="help-feature-card">
-          <div class="hfc-title">🦴 5. 骨科与全身体素 · 大规模解剖分割与脊柱</div>
+          <div class="hfc-title">5. 骨科与全身体素 · 大规模解剖分割与脊柱</div>
           <div class="hfc-desc">
             <ul>
               <li><b>全身体素 104 类解剖结构分割 (TotalSegmentator) [Whole-Body CT]</b>：全身体素骨骼、主要内脏系统与大肌群一键全自动语义分割，适用于大样本流行病学与机体成分分析；</li>
@@ -363,8 +365,8 @@ export const HELP_SECTIONS: HelpSection[] = [
           <div>
             <b>双引擎极速渲染</b>：
             <ul>
-              <li><b>⚡ 2D 正交切片引擎</b>：轻量极速，内置 5cm 毫米级解剖标尺与 HUD 参数抬头显示；</li>
-              <li><b>🌐 NiiVue 3D WebGL2 引擎</b>：GPU 硬件加速，支持 3D 空间立体旋转体绘制 (Volume Rendering) 与横断面+冠状面+矢状面+3D模型四视图联动。</li>
+              <li><b>2D 正交切片引擎</b>：轻量极速，内置 5cm 毫米级解剖标尺与 HUD 参数抬头显示；</li>
+              <li><b>NiiVue 3D WebGL2 引擎</b>：GPU 硬件加速，支持 3D 空间立体旋转体绘制 (Volume Rendering) 与横断面+冠状面+矢状面+3D模型四视图联动。</li>
             </ul>
           </div>
         </li>
@@ -386,14 +388,14 @@ export const HELP_SECTIONS: HelpSection[] = [
           <span class="step-num">4</span>
           <div>
             <b>三维准星与智能病灶导航</b>：
-            点击<b>「🎯 定位病灶中心」</b>按钮，系统自动依据 3D 卷积分割范围质心瞬时跳转到病灶最大截面层；抬头显示<b>「病灶探测标签 (Lesion Badge)」</b>，实时提示当前切片是否有病灶受累。
+            点击<b>「${icon('target', { size: 13 })} 定位病灶中心」</b>按钮，系统自动依据 3D 卷积分割范围质心瞬时跳转到病灶最大截面层；抬头显示<b>「病灶探测标签 (Lesion Badge)」</b>，实时提示当前切片是否有病灶受累。
           </div>
         </li>
         <li>
           <span class="step-num">5</span>
           <div>
             <b>关键截面存证截图与文档资产沉淀 (Key Slice Snapshot)</b>：
-            点击<b>「💾 保存切片为文档资产」</b>，当前层位影像及窗宽窗位、物理标尺等参数自动转存为平台永久图像资产，并生成 Markdown 引用代码，可直接插入医学论文或汇报幻灯片；点击<b>「📋 一键生成放射诊断报告」</b>更可自动汇总参数出具规范影像报告草案。
+            点击<b>「${icon('save', { size: 13 })} 保存切片为文档资产」</b>，当前层位影像及窗宽窗位、物理标尺等参数自动转存为平台永久图像资产，并生成 Markdown 引用代码，可直接插入医学论文或汇报幻灯片；点击<b>「${icon('report', { size: 13 })} 一键生成放射诊断报告」</b>更可自动汇总参数出具规范影像报告草案。
           </div>
         </li>
       </ul>
@@ -403,7 +405,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'registration',
     title: '双期 3D 刚性配准、差分热力图与随访评估',
     badge: '临床演进',
-    icon: '🔄',
+    icon: icon('compare', { size: 16 }),
     summary: '基线与随访 CT 空间自动刚性配准、差分吸收热力图图层、双联屏联动滑动及严谨的 RECIST 1.1 疗效评估规则。',
     contentHtml: `
       <div class="help-section-head">
@@ -418,8 +420,8 @@ export const HELP_SECTIONS: HelpSection[] = [
         <li><b>自动空间校准</b>：调用 MONAI 刚性/仿射配准网络，将随访 CT 空间自动校准平移旋转对齐至基线坐标系。</li>
         <li><b>差分吸收热力图 (Difference Heatmap)</b>：计算两期三维体素的 HU 密度变化矩阵并在切片器上叠加显示：
           <ul>
-            <li><span style="color:#00ff93; font-weight:600;">🟢 绿色区域</span>：表示炎性浸润吸收、粘液栓缩小退缩区域（好转缓解）。</li>
-            <li><span style="color:#ff6b6b; font-weight:600;">🔴 红色区域</span>：表示新发浸润、病灶体积扩大或密度增高区域（进展恶化）。</li>
+            <li><span style="color:#00ff93; font-weight:600;">● 绿色区域</span>：表示炎性浸润吸收、粘液栓缩小退缩区域（好转缓解）。</li>
+            <li><span style="color:#ff6b6b; font-weight:600;">● 红色区域</span>：表示新发浸润、病灶体积扩大或密度增高区域（进展恶化）。</li>
           </ul>
         </li>
       </ul>
@@ -432,7 +434,7 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <h4>5.3 严格解耦的疗效评估准则 (RECIST 1.1 vs 良性炎性病灶)</h4>
       <div class="help-callout important">
-        <span class="callout-icon">⚖️</span>
+        <span class="callout-icon">${icon('shield', { size: 16 })}</span>
         <div class="callout-body">
           <b>严守医学评估标准边界：</b>
           <ul>
@@ -447,7 +449,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'diagnostics',
     title: '多模态因果诊断链与标准报告导出',
     badge: '临床决策',
-    icon: '🧬',
+    icon: icon('evidence', { size: 16 }),
     summary: '影像+化验+基因证据链自动拼装、全景病例报告生成、标准 DICOM SR 及 HL7 FHIR 格式导出对接院内 PACS。',
     contentHtml: `
       <div class="help-section-head">
@@ -459,7 +461,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>6.1 多模态因果诊断链条 (Multimodal Clinical Evidence Chain)</h4>
       <p>当系统检测到患者的影像学阳性体征时，自动触发跨模态规则引擎，聚合多维度证据：</p>
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">💡 典型范式：变应性支气管肺曲霉病 (ABPA) 证据链拼装</div>
+        <div class="hfc-title">典型范式：变应性支气管肺曲霉病 (ABPA) 证据链拼装</div>
         <div class="hfc-desc">
           <table class="help-table">
             <tr>
@@ -488,13 +490,13 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>6.3 医疗行业标准格式导出</h4>
       <ul class="help-list-steps">
         <li>
-          <span class="step-num">🏥</span>
+          <span class="step-num">${icon('hospital', { size: 14 })}</span>
           <div>
             <b>DICOM SR (Structured Reporting)</b>：遵循 DICOM SOP Class <code>1.2.840.10008.5.1.4.1.1.88.22</code>，测量数值与病灶坐标以结构化编码存入 DICOM 文件，可直接上传导入医院 PACS。
           </div>
         </li>
         <li>
-          <span class="step-num">🌐</span>
+          <span class="step-num">${icon('globe', { size: 14 })}</span>
           <div>
             <b>HL7 FHIR (DiagnosticReport & ImagingStudy)</b>：导出符合 HL7 FHIR R4 标准的 JSON 资源包，支持直接对接区域卫生信息平台与电子病历系统 (EMR)。
           </div>
@@ -506,7 +508,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'research',
     title: '临床科研工作流 (Research)',
     badge: '统计分析',
-    icon: '📊',
+    icon: icon('chart', { size: 16 }),
     summary: '方案设计、多中心数据集质控清洗、Table 1 基线表一键制表、Kaplan-Meier 生存曲线与 Cox 比例风险回归。',
     contentHtml: `
       <div class="help-section-head">
@@ -534,19 +536,19 @@ export const HELP_SECTIONS: HelpSection[] = [
       <h4>7.3 自动化高保真医学统计分析</h4>
       <ul class="help-list-steps">
         <li>
-          <span class="step-num">📋</span>
+          <span class="step-num">${icon('template', { size: 14 })}</span>
           <div>
             <b>Table 1 基线特征表一键生成</b>：系统自动检验连续变量正态性，正态数据输出 <code>Mean ± SD</code> 并应用独立样本 t 检验；偏态数据输出 <code>Median (IQR)</code> 并应用 Wilcoxon/Mann-Whitney U 检验；分类变量输出 <code>N (%)</code> 并自动采用 Pearson 卡方检验或 Fisher 确切概率法，自动生成三线表。
           </div>
         </li>
         <li>
-          <span class="step-num">📈</span>
+          <span class="step-num">${icon('chart', { size: 14 })}</span>
           <div>
             <b>Kaplan-Meier 生存分析与 Log-Rank 检验</b>：绘制高精度生存概率曲线，计算中位生存时间 (Median OS / PFS) 及 95% CI，底部自动对齐展示各时间节点风险人数表 (Number at Risk)。
           </div>
         </li>
         <li>
-          <span class="step-num">🌲</span>
+          <span class="step-num">${icon('dna', { size: 14 })}</span>
           <div>
             <b>Cox 比例风险模型与森林图 (Forest Plot)</b>：支持单因素与多因素回归分析，计算风险比 (HR) 或比值比 (OR)，自动绘制矢量级森林图。
           </div>
@@ -560,7 +562,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'collaboration',
     title: '科室协作与知家家庭健康空间 (PHR)',
     badge: '协作共享',
-    icon: '👥',
+    icon: icon('users', { size: 16 }),
     summary: '科室诊疗组 RBAC 权限矩阵、个人专属知家家庭健康档案、患者安全扫码分享令牌及防泄密管控。',
     contentHtml: `
       <div class="help-section-head">
@@ -594,7 +596,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: 'faq',
     title: '常见问题与临床操作贴士 (FAQ)',
     badge: '疑难解答',
-    icon: '❓',
+    icon: icon('info', { size: 16 }),
     summary: '影像上传失败排查、切片对齐精度、导出排版微调与临床法律安全边界说明。',
     contentHtml: `
       <div class="help-section-head">
@@ -734,7 +736,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - **双引擎随心切换**：轻量极速 2D 正交切片引擎（内置 5cm 毫米标尺与 HUD 抬头显示）与 NiiVue 3D WebGL2 引擎（3D 体绘制与四视图联动）；
    - **三正交解剖平面自由切换**：横断面 (Axial)、冠状面 (Coronal)、矢状面 (Sagittal) 自由切换，切片滑动条、鼠标滚轮上下滑动或键盘方向键平滑逐层浏览；
    - **全模态临床窗宽窗位快捷预设**：肺窗 (-600/1500)、纵隔窗 (40/400)、腹部窗 (50/350)、骨窗 (300/1500)、脑窗 (40/80) 及鼠标拖拽无级微调；
-   - **三维准星与智能病灶导航**：点击「🎯 定位病灶中心」瞬时跳转到病灶最大截面层，实时展示病灶受累标签；
+   - **三维准星与智能病灶导航**：点击「定位病灶中心」瞬时跳转到病灶最大截面层，实时展示病灶受累标签；
    - **关键截面存证截图 (Capture Snapshot)**：一键转存为平台永久图像资产并生成 Markdown 引用代码，支持一键出具规范影像报告草案。
 
 ---
@@ -805,14 +807,14 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
     <div class="dialog-card wide help-dialog" role="dialog" aria-modal="true" aria-label="Heurion 产品使用手册与操作指南">
       <div class="dialog-head help-head">
         <div class="help-head-title">
-          <h2>📖 Heurion 临床智能工作站 · 全流程使用手册</h2>
+          <h2>${icon('file', { size: 18 })} Heurion 临床智能工作站 · 全流程使用手册</h2>
           <span class="help-version-pill">v2.4 Pro</span>
         </div>
         <div class="help-head-actions">
           <div class="help-search-wrap">
             <input type="search" id="helpFilterInput" placeholder="搜索手册章节或关键词..." autocomplete="off">
           </div>
-          <button id="helpImportDocBtn" class="primary small-btn" title="在您的工作区新建一份完整手册文档，方便随时查阅与边写边看">📥 导入为参考文档</button>
+          <button id="helpImportDocBtn" class="primary small-btn" title="在您的工作区新建一份完整手册文档，方便随时查阅与边写边看">${icon('download')} 导入为参考文档</button>
           <button class="quiet" data-close aria-label="关闭">✕</button>
         </div>
       </div>
@@ -829,7 +831,7 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
             `).join('')}
           </nav>
           <div class="help-sidebar-footer">
-            <div class="hsf-tip">💡 提示：按 <code>Esc</code> 键可快速关闭手册。</div>
+            <div class="hsf-tip">${icon('info', { size: 13 })} 提示：按 <code>Esc</code> 键可快速关闭手册。</div>
           </div>
         </aside>
         <main class="help-content-area" id="helpContentArea">

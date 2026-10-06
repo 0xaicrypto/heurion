@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -119,6 +120,26 @@ class WholeBodyAnalysisRequest(BaseModel):
     z_slices: Optional[int] = 64
     y_dim: Optional[int] = 128
     x_dim: Optional[int] = 128
+
+class DeformableRegistrationRequest(BaseModel):
+    fixed_sample_id: Optional[str] = "chest_lung_ct"
+    moving_sample_id: Optional[str] = "chest_lung_ct"
+    iterations: Optional[int] = 10
+    smoothing_sigma: Optional[float] = 1.0
+
+class PetCtFusionRequest(BaseModel):
+    ct_sample_id: Optional[str] = "chest_lung_ct"
+    pet_sample_id: Optional[str] = None
+    suv_threshold: Optional[float] = 2.5
+    key_slice_index: Optional[int] = None
+    alpha: Optional[float] = 0.55
+
+class RtStructRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    ctv_margin_mm: Optional[float] = 6.0
+    ptv_margin_mm: Optional[float] = 4.0
+    key_slice_index: Optional[int] = None
 
 
 @app.get("/health")
@@ -592,6 +613,86 @@ def run_whole_body_analysis_endpoint(req: WholeBodyAnalysisRequest = Body(...)):
         patient_height_m=req.patient_height_m or 1.72,
         patient_weight_kg=req.patient_weight_kg or 68.0,
         l3_slice_index=req.l3_slice_index
+    )
+
+@app.post("/api/v1/registration/deformable")
+def run_deformable_registration_endpoint(req: DeformableRegistrationRequest = Body(...)):
+    """Executes 3D Deformable B-Spline / Demons Dense Vector Displacement Field registration."""
+    try:
+        from .registration import run_3d_deformable_registration
+        from .totalsegmentator import generate_synthetic_whole_body_ct
+    except (ImportError, ValueError):
+        from registration import run_3d_deformable_registration
+        from totalsegmentator import generate_synthetic_whole_body_ct
+
+    fixed_vol, _ = generate_synthetic_whole_body_ct(shape=(32, 64, 64), spacing=(2.0, 1.0, 1.0))
+    moving_vol = np.roll(fixed_vol, shift=(1, 2, -1), axis=(0, 1, 2))
+
+    res = run_3d_deformable_registration(
+        fixed_vol=fixed_vol,
+        moving_vol=moving_vol,
+        spacing=(2.0, 1.0, 1.0),
+        iterations=req.iterations or 10,
+        smoothing_sigma=req.smoothing_sigma or 1.0
+    )
+    return {
+        "status": res["status"],
+        "iterations_completed": res["iterations_completed"],
+        "elapsed_sec": res["elapsed_sec"],
+        "initial_ncc": res["initial_ncc"],
+        "final_ncc": res["final_ncc"],
+        "ncc_improvement": res["ncc_improvement"],
+        "initial_mse": res["initial_mse"],
+        "final_mse": res["final_mse"],
+        "mse_reduction_percent": res["mse_reduction_percent"],
+        "max_displacement_mm": res["max_displacement_mm"],
+        "mean_displacement_mm": res["mean_displacement_mm"],
+        "key_slice_index": res.get("key_slice_index", 0),
+        "registered_slice_png_base64": res.get("registered_slice_png_base64"),
+        "registered_slice_png_size_bytes": res.get("registered_slice_png_size_bytes", 0),
+        "summary_markdown": (
+            f"### 3D 可形变配准 (Deformable B-Spline / DDF) 报告\n"
+            f"- **初始归一化互相关 (NCC)**: `{res['initial_ncc']}` → **配准后 NCC**: `{res['final_ncc']}` (提升 `{res['ncc_improvement']}`)\n"
+            f"- **均方误差 (MSE) 降幅**: `{res['mse_reduction_percent']}%` (耗时 `{res['elapsed_sec']}s`)\n"
+            f"- **最大位移形变量**: `{res['max_displacement_mm']} mm` (平均位移: `{res['mean_displacement_mm']} mm`)\n"
+        )
+    }
+
+@app.post("/api/v1/registration/pet-ct-fusion")
+def run_pet_ct_fusion_endpoint(req: PetCtFusionRequest = Body(...)):
+    """Computes PET SUV metabolic quantification and alpha-blended PET-CT color fusion."""
+    try:
+        from .registration import generate_synthetic_pet_ct_pair, compute_pet_metrics_and_fusion
+    except (ImportError, ValueError):
+        from registration import generate_synthetic_pet_ct_pair, compute_pet_metrics_and_fusion
+
+    ct_vol, pet_vol, _ = generate_synthetic_pet_ct_pair(shape=(36, 96, 96), spacing=(2.0, 1.0, 1.0))
+    return compute_pet_metrics_and_fusion(
+        ct_volume=ct_vol,
+        pet_volume=pet_vol,
+        spacing=(2.0, 1.0, 1.0),
+        suv_threshold=req.suv_threshold or 2.5,
+        key_slice_index=req.key_slice_index,
+        alpha=req.alpha or 0.55
+    )
+
+@app.post("/api/v1/rtstruct/delineate")
+def run_rtstruct_delineation_endpoint(req: RtStructRequest = Body(...)):
+    """Delineates GTV, CTV, PTV radiotherapy targets with anatomical barrier clipping."""
+    try:
+        from .registration import generate_synthetic_pet_ct_pair, delineate_radiotherapy_targets
+    except (ImportError, ValueError):
+        from registration import generate_synthetic_pet_ct_pair, delineate_radiotherapy_targets
+
+    ct_vol, pet_vol, _ = generate_synthetic_pet_ct_pair(shape=(36, 96, 96), spacing=(2.0, 1.0, 1.0))
+    metabolic_mask = pet_vol >= 2.5
+    return delineate_radiotherapy_targets(
+        ct_volume=ct_vol,
+        metabolic_or_lesion_mask=metabolic_mask,
+        spacing=(2.0, 1.0, 1.0),
+        ctv_margin_mm=req.ctv_margin_mm or 6.0,
+        ptv_margin_mm=req.ptv_margin_mm or 4.0,
+        key_slice_index=req.key_slice_index
     )
 
 @app.post("/api/v1/analyze/upload")

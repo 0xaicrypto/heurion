@@ -722,6 +722,187 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
 
     return json(resultData)
   })
+
+  // 15. 3D 可变形多模态影像弹性配准 (imaging_deformable_register)
+  server.registerTool('imaging_deformable_register', {
+    description:
+      '运行 3D 可变形多模态影像弹性配准（B-样条 / 自由形变 FFD / Demons 密集位移场矢量）：' +
+      '输入固定影像 (fixed volume) 与浮动影像 (moving volume)，计算密集三维形变位移场 (DVF)、' +
+      '归一化互相关 (NCC) 与均方误差 (MSE) 优化改善指标，并输出形变对齐切片与流体矢量场叠加渲染图。',
+    inputSchema: {
+      fixed_sample_id: z.string().optional().describe('固定图像预置样本 ID，例如 pet_ct_pair 或 chest_lung_ct'),
+      moving_sample_id: z.string().optional().describe('浮动图像预置样本 ID'),
+      fixed_file_path: z.string().optional().describe('固定图像 NIfTI 文件路径'),
+      moving_file_path: z.string().optional().describe('浮动图像 NIfTI 文件路径'),
+      grid_spacing_voxels: z.number().int().positive().optional().describe('B-样条控制网格间距（体素），默认 8'),
+      iterations: z.number().int().positive().optional().describe('优化迭代次数，默认 15'),
+      regularization_weight: z.number().positive().optional().describe('平滑正则化系数，默认 0.1'),
+      save_asset: z.boolean().optional().describe('是否保存形变位移场及配准后切片为用户资产，缺省 true'),
+      label: z.string().max(80).optional().describe('图注标签，例如「图 1 3D 可变形配准位移场与对齐图」'),
+    },
+  }, async ({ fixed_sample_id, moving_sample_id, fixed_file_path, moving_file_path, grid_spacing_voxels, iterations, regularization_weight, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/registration/deformable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fixed_sample_id: fixed_sample_id || (!fixed_file_path ? 'pet_ct_pair' : undefined),
+          moving_sample_id: moving_sample_id || (!moving_file_path ? 'pet_ct_pair' : undefined),
+          fixed_file_path,
+          moving_file_path,
+          grid_spacing_voxels: grid_spacing_voxels || 8,
+          iterations: iterations || 15,
+          regularization_weight: regularization_weight || 0.1,
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('registration_failed', `可变形配准失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (save_asset !== false && resultData.registered_slice_png_base64 && claims.p.includes('write')) {
+      const b64Data = resultData.registered_slice_png_base64.replace(/^data:image\/png;base64,/, '')
+      const pngBuf = Buffer.from(b64Data, 'base64')
+      const sliceIdx = resultData.key_slice_index ?? 0
+      const assetName = `${label || `deformable-reg-slice-${sliceIdx}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuf,
+      })
+      resultData.asset_id = asset.id
+      resultData.markdown_insert = `![${label || `3D 可变形配准对齐切片 #${sliceIdx}`}](asset:${asset.id})`
+    }
+
+    return json(resultData)
+  })
+
+  // 16. PET-CT 代谢-解剖融合与定量摄取 (imaging_pet_ct_fuse)
+  server.registerTool('imaging_pet_ct_fuse', {
+    description:
+      '运行 PET-CT 代谢-解剖多模态影像融合与病灶摄取定量分析：' +
+      '提取肿瘤区域最大标准摄取值 (SUVmax)、平均摄取值 (SUVmean)、代谢肿瘤体积 (MTV cm³)、' +
+      '总病灶糖酵解量 (TLG = SUVmean × MTV) 及肝脏背景本底值，' +
+      '生成高对比度 Turbo/Hot 彩色代谢热力图与解剖 CT 的透明度融合切片 (Alpha Blended Overlay) 与放射科结构化融合报告。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置样本 ID，例如 pet_ct_pair'),
+      ct_file_path: z.string().optional().describe('CT 解剖序列绝对路径'),
+      pet_file_path: z.string().optional().describe('PET 代谢序列绝对路径'),
+      suv_threshold_ratio: z.number().min(0.05).max(0.95).optional().describe('代谢肿瘤体积 (MTV) 划分阈值（相对于 SUVmax 比例，默认 0.41 即 41% 临界线）'),
+      alpha: z.number().min(0.1).max(0.95).optional().describe('PET 代谢热力图叠加透明度 (0.0~1.0)，默认 0.55'),
+      colormap: z.string().optional().describe('PET 假彩色映射表，默认 turbo'),
+      save_asset: z.boolean().optional().describe('是否保存融合切片为用户资产，缺省 true'),
+      label: z.string().max(80).optional().describe('图注标签，例如「图 2 肿瘤原发灶 PET-CT 代谢融合切片」'),
+    },
+  }, async ({ sample_id, ct_file_path, pet_file_path, suv_threshold_ratio, alpha, colormap, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/registration/pet-ct-fusion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: sample_id || (!ct_file_path ? 'pet_ct_pair' : undefined),
+          ct_file_path,
+          pet_file_path,
+          suv_threshold_ratio: suv_threshold_ratio || 0.41,
+          alpha: alpha || 0.55,
+          colormap: colormap || 'turbo',
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('pet_ct_fusion_failed', `PET-CT 融合失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (save_asset !== false && resultData.fusion_png_base64 && claims.p.includes('write')) {
+      const b64Data = resultData.fusion_png_base64.replace(/^data:image\/png;base64,/, '')
+      const pngBuf = Buffer.from(b64Data, 'base64')
+      const sliceIdx = resultData.key_slice_index ?? 0
+      const assetName = `${label || `pet-ct-fusion-slice-${sliceIdx}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuf,
+      })
+      resultData.asset_id = asset.id
+      resultData.markdown_insert = `![${label || `PET-CT 代谢解剖融合切片 #${sliceIdx}`}](asset:${asset.id})`
+    }
+
+    return json(resultData)
+  })
+
+  // 17. 放疗靶区智能勾画与 DICOM RT-STRUCT 导出 (imaging_rtstruct_delineate)
+  server.registerTool('imaging_rtstruct_delineate', {
+    description:
+      '放疗靶区三维智能勾画与 DICOM RT-STRUCT 导出：' +
+      '基于肿瘤病灶自动生成大体肿瘤区 (GTV)、依据临床浸润边界并严格受皮质骨 (Cortical Bone) 和胸膜外空气解剖物理屏障约束剪裁的临床靶区 (CTV，默认膨胀 6mm 并骨屏障扣除)、' +
+      '以及考虑摆位与器官运动误差的计划靶区 (PTV，默认外扩 5mm)。' +
+      '计算各类靶区三维体积 (cm³)，输出多靶区彩色轮廓叠加渲染切片与放疗物理师/放疗医师审核报告。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置样本 ID，例如 pet_ct_pair 或 chest_lung_ct'),
+      file_path: z.string().optional().describe('CT 序列路径'),
+      ctv_margin_mm: z.number().min(0).max(30).optional().describe('GTV 到 CTV 临床浸润外扩距离（毫米），默认 6.0'),
+      ptv_margin_mm: z.number().min(0).max(30).optional().describe('CTV 到 PTV 摆位误差外扩距离（毫米），默认 5.0'),
+      clip_bone_barrier: z.boolean().optional().describe('是否开启皮质骨 (HU > 250) 解剖屏障阻断剪裁（防止肿瘤靶区不符合解剖规律侵入正常致密骨），默认 true'),
+      slice_index: z.number().int().optional().describe('指定切片层号（默认位于肿瘤中心层）'),
+      save_asset: z.boolean().optional().describe('是否保存勾画渲染切片为用户资产，缺省 true'),
+      label: z.string().max(80).optional().describe('图注标签，例如「图 3 放疗靶区 (GTV/CTV/PTV) 勾画轮廓」'),
+    },
+  }, async ({ sample_id, file_path, ctv_margin_mm, ptv_margin_mm, clip_bone_barrier, slice_index, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/rtstruct/delineate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: sample_id || (!file_path ? 'pet_ct_pair' : undefined),
+          file_path,
+          ctv_margin_mm: ctv_margin_mm !== undefined ? ctv_margin_mm : 6.0,
+          ptv_margin_mm: ptv_margin_mm !== undefined ? ptv_margin_mm : 5.0,
+          clip_bone_barrier: clip_bone_barrier !== false,
+          slice_index,
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('rtstruct_delineate_failed', `靶区勾画失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (save_asset !== false && resultData.rtstruct_png_base64 && claims.p.includes('write')) {
+      const b64Data = resultData.rtstruct_png_base64.replace(/^data:image\/png;base64,/, '')
+      const pngBuf = Buffer.from(b64Data, 'base64')
+      const sliceIdx = resultData.key_slice_index ?? 0
+      const assetName = `${label || `rtstruct-slice-${sliceIdx}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuf,
+      })
+      resultData.asset_id = asset.id
+      resultData.markdown_insert = `![${label || `放疗靶区 (GTV/CTV/PTV) 勾画切片 #${sliceIdx}`}](asset:${asset.id})`
+    }
+
+    return json(resultData)
+  })
 }
 
 function round(n: number, d = 1): number {

@@ -83,6 +83,9 @@ textarea:focus, input[type=text]:focus, input[type=password]:focus, input[type=e
 input[type=checkbox] { accent-color: var(--mint-text); }
 .icon-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; border-color: var(--line-strong); flex: none; }
 .icon-btn svg { width: 18px; height: 18px; fill: none; }
+.ui-icon { display: inline-block; width: 14px; height: 14px; vertical-align: -0.15em; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+button .ui-icon, a.small-btn .ui-icon, .org-tab .ui-icon, .pt-compare-tab .ui-icon { margin-right: 5px; }
+h2 .ui-icon, h3 .ui-icon { margin-right: 6px; vertical-align: -0.12em; opacity: 0.9; }
 .narrow-only { display: none !important; }
 
 /* —— 三栏布局（各自滚动，长文档不撑高整页） —— */

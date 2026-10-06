@@ -4,6 +4,7 @@
  */
 import { photoFigure } from './photos.ts'
 import { askConfirm, askText } from './dialogs.ts'
+import { icon } from './icons.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 type Notice = (msg: string, error?: boolean) => void
@@ -186,7 +187,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           ${d.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('')}${canEdit ? '<button class="quiet small-btn" data-act="tags">编辑</button>' : ''}</div>
         ${d.access === 'break_glass' ? '<div class="notice">紧急访问（只读，24 小时内有效，已记入访问日志）</div>' : d.access === 'tenant' ? '<div class="muted small">机构设置为全员可见：你可以查看，修改需要加入诊疗组</div>' : ''}
         <div class="row pt-actions">
-          ${canEdit ? `<button class="primary" data-act="imaging" title="使用 MONAI 深度学习模型对胸部/腹部 CT 或 MRI 进行定量分析（支气管扩张、粘液栓、RECIST 1.1 靶病灶等）并沉淀至患者档案">🩺 影像分析</button>` : ''}
+          ${canEdit ? `<button class="primary" data-act="imaging" title="使用 MONAI 深度学习模型对胸部/腹部 CT 或 MRI 进行定量分析（支气管扩张、粘液栓、RECIST 1.1 靶病灶等）并沉淀至患者档案">${icon('scan')} 影像分析</button>` : ''}
           ${canEdit ? `<button data-act="upload" title="化验单、出院小结、病理报告（PDF、扫描件、手机照片）：自动提取，审核后进入化验表">上传化验单 / 报告</button><input type="file" id="ptUpload" accept="${ACCEPT}" multiple hidden>` : ''}
           <button data-act="report" title="新建一份病例报告并关联到这位患者；对话框里会填好建议的指令，由你确认后发送">写病例报告</button>
           ${d.access === 'owner' ? `<span class="grow"></span><div class="menu-wrap"><button data-act="ptmore" aria-haspopup="menu">更多 ▾</button>
@@ -229,7 +230,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <div class="pt-proactive-banner alert-ham">
             <div class="pt-proactive-main">
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-                <span class="pt-proactive-pill high">⚠️ 临床高危主动预警 (Clinical Decision Support)</span>
+                <span class="pt-proactive-pill high">临床高危主动预警 (Clinical Decision Support)</span>
                 <span class="muted small">高密度粘液栓 (HAM) · CT &gt; 70 HU</span>
               </div>
               <div style="font-weight: 600; font-size: 13.5px; color: #FCA5A5; margin-bottom: 4px">
@@ -240,8 +241,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               </div>
             </div>
             <div class="pt-proactive-actions">
-              <button class="primary small-btn" data-generate-full-report="${latestImg.id}">📄 一键生成全景诊断报告</button>
-              <button class="small-btn quiet" data-open-evidence="${latestImg.id}">🔬 查看多模态因果链</button>
+              <button class="primary small-btn" data-generate-full-report="${latestImg.id}">${icon('report')} 一键生成全景诊断报告</button>
+              <button class="small-btn quiet" data-open-evidence="${latestImg.id}">${icon('evidence')} 查看多模态因果链</button>
             </div>
           </div>
         `
@@ -250,7 +251,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <div class="pt-proactive-banner alert-nodule">
             <div class="pt-proactive-main">
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-                <span class="pt-proactive-pill medium">💡 靶病灶干预预警 (Fleischner Criteria)</span>
+                <span class="pt-proactive-pill medium">靶病灶干预预警 (Fleischner Criteria)</span>
                 <span class="muted small">实性靶病灶长径超标 (${m.longest_diameter_mm} mm &gt; 8 mm)</span>
               </div>
               <div style="font-weight: 600; font-size: 13.5px; color: #FDE68A; margin-bottom: 4px">
@@ -261,8 +262,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               </div>
             </div>
             <div class="pt-proactive-actions">
-              <button class="primary small-btn" data-generate-full-report="${latestImg.id}">📄 一键生成全景诊断报告</button>
-              <button class="small-btn quiet" data-open-evidence="${latestImg.id}">🔬 查看多模态因果链</button>
+              <button class="primary small-btn" data-generate-full-report="${latestImg.id}">${icon('report')} 一键生成全景诊断报告</button>
+              <button class="small-btn quiet" data-open-evidence="${latestImg.id}">${icon('evidence')} 查看多模态因果链</button>
             </div>
           </div>
         `
@@ -273,8 +274,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <div class="row" style="align-items: baseline; margin-bottom: 8px">
           <h3 class="mem-h" style="margin: 0">最新医学影像量化</h3>
           <span class="grow"></span>
-          ${hasMultiImaging ? `<button class="primary small-btn" data-act="compare-imaging" style="margin-right: 8px" title="对比多期影像并计算 RECIST 1.1 疗效等级">📊 多期影像随访对比 (RECIST 1.1)</button>` : ''}
-          <button class="quiet small-btn" data-tab="records">查看全部影像档案 (${imagingRecords.length}) ➔</button>
+          ${hasMultiImaging ? `<button class="primary small-btn" data-act="compare-imaging" style="margin-right: 8px" title="对比多期影像并计算 RECIST 1.1 疗效等级">${icon('compare')} 多期影像随访对比 (RECIST 1.1)</button>` : ''}
+          <button class="quiet small-btn" data-tab="records">查看全部影像档案 (${imagingRecords.length}) ${icon('arrowRight', { size: 12 })}</button>
         </div>
         ${proactiveBanner}
         <div class="pt-overview-img-card" data-rec="${latestImg.id}">
@@ -287,13 +288,13 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             <div class="row" style="align-items: center; justify-content: space-between"><b>${esc(latestImg.title)}</b><span class="muted small">${esc(latestImg.report_date || '')}</span></div>
             <div class="muted small" style="margin: 6px 0 10px; line-height: 1.5">${esc(latestImg.extraction_note || '已完成三维体素分割与定量测量')}</div>
             <div class="row" style="gap: 8px; flex-wrap: wrap">
-              <button class="primary small-btn" data-generate-full-report="${latestImg.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">📄 全景诊断报告</button>
-              <button class="small-btn quiet" data-img-report="${latestImg.id}">📝 基于此影像写报告</button>
-              <button class="small-btn" data-img-canvas="${latestImg.id}">🎨 会诊 Slide</button>
-              <button class="small-btn quiet" data-open-mpr="${latestImg.id}" title="进入 3D 多平面重建 (MPR) 互动切片浏览器">🖥️ 3D 切片</button>
-              <button class="small-btn quiet" data-open-evidence="${latestImg.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
-              <button class="small-btn quiet" data-export-standard="${latestImg.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">📥 导出标准数据</button>
-              ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${latestImg.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">📊 随访对比</button>` : ''}
+              <button class="primary small-btn" data-generate-full-report="${latestImg.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">${icon('report')} 全景诊断报告</button>
+              <button class="small-btn quiet" data-img-report="${latestImg.id}">${icon('write')} 基于此影像写报告</button>
+              <button class="small-btn" data-img-canvas="${latestImg.id}">${icon('deck')} 会诊 Slide</button>
+              <button class="small-btn quiet" data-open-mpr="${latestImg.id}" title="进入 3D 多平面重建 (MPR) 互动切片浏览器">${icon('mpr')} 3D 切片</button>
+              <button class="small-btn quiet" data-open-evidence="${latestImg.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">${icon('evidence')} 因果诊断链</button>
+              <button class="small-btn quiet" data-export-standard="${latestImg.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">${icon('download')} 导出标准数据</button>
+              ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${latestImg.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">${icon('compare')} 随访对比</button>` : ''}
               <button class="quiet small-btn" data-tab="records">详细指标</button>
             </div>
           </div>
@@ -326,7 +327,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     }
     const unitOf = (key: string) => {
       const units = [...new Set(labs.filter(l => l.test_key === key).map(l => l.std_unit ?? ''))]
-      return units.length > 1 ? `<span class="flag-L" title="有无法换算的单位，不同次不能直接比较">${esc(units.join(' / '))} ⚠</span>` : esc(units[0] ?? '')
+      return units.length > 1 ? `<span class="flag-L" title="有无法换算的单位，不同次不能直接比较">${esc(units.join(' / '))} ${icon('warning', { size: 11 })}</span>` : esc(units[0] ?? '')
     }
     const anyConverted = labs.some(l => l.converted)
     return `<div class="ds-scroll"><table class="chart-grid pt-pivot"><thead><tr><th>项目</th><th>单位</th>${dates.map(d => `<th>${esc(d)}</th>`).join('')}</tr></thead>
@@ -348,7 +349,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const imagingRecords = d.records.filter(r => r.kind === 'imaging')
     const otherRecords = d.records.filter(r => r.kind !== 'imaging')
 
-    if (d.records.length === 0) return '<div class="muted">还没有影像或报告。点击上方「🩺 影像分析」量化 CT/MRI，或「上传化验单 / 报告」。</div>'
+    if (d.records.length === 0) return `<div class="muted">还没有影像或报告。点击上方「${icon('scan')} 影像分析」量化 CT/MRI，或「上传化验单 / 报告」。</div>`
     const STATUS: Record<string, string> = { pending: '待确认', confirmed: '已确认', rejected: '已驳回' }
     const EXTRACT: Record<string, string> = { queued: '排队提取', running: '提取中…', done: '', failed: '提取失败', skipped: '' }
 
@@ -362,8 +363,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     })
     const anyNoduleRec = imagingRecords.find(r => {
       const imgD = (r.imaging_data || {}) as Record<string, any>
-      const m = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
-      return Boolean(m.longest_diameter_mm && m.longest_diameter_mm > 8)
+      const nm = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
+      return Boolean(nm.longest_diameter_mm && nm.longest_diameter_mm > 8)
     })
     const igeLab = d.latest_labs.find(l => l.test_key === 'ige' || l.test_name.includes('IgE'))
 
@@ -373,7 +374,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <div class="pt-proactive-banner alert-ham" style="margin-top: 10px">
           <div class="pt-proactive-main">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-              <span class="pt-proactive-pill high">⚠️ 临床高危主动预警 (Clinical Decision Support)</span>
+              <span class="pt-proactive-pill high">${icon('shield')} 临床高危主动预警 (Clinical Decision Support)</span>
               <span class="muted small">高密度粘液栓 (HAM) · CT &gt; 70 HU</span>
             </div>
             <div style="font-weight: 600; font-size: 13.5px; color: #FCA5A5; margin-bottom: 4px">
@@ -384,8 +385,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             </div>
           </div>
           <div class="pt-proactive-actions">
-            <button class="primary small-btn" data-generate-full-report="${anyHamRec.id}">📄 一键生成全景诊断报告</button>
-            <button class="small-btn quiet" data-open-evidence="${anyHamRec.id}">🔬 查看多模态因果链</button>
+            <button class="primary small-btn" data-generate-full-report="${anyHamRec.id}">${icon('report')} 一键生成全景诊断报告</button>
+            <button class="small-btn quiet" data-open-evidence="${anyHamRec.id}">${icon('evidence')} 查看多模态因果链</button>
           </div>
         </div>
       `
@@ -396,7 +397,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <div class="pt-proactive-banner alert-nodule" style="margin-top: 10px">
           <div class="pt-proactive-main">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-              <span class="pt-proactive-pill medium">💡 靶病灶干预预警 (Fleischner Criteria)</span>
+              <span class="pt-proactive-pill medium">${icon('info')} 靶病灶干预预警 (Fleischner Criteria)</span>
               <span class="muted small">实性靶病灶长径超标 (${nm.longest_diameter_mm} mm &gt; 8 mm)</span>
             </div>
             <div style="font-weight: 600; font-size: 13.5px; color: #FDE68A; margin-bottom: 4px">
@@ -407,8 +408,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             </div>
           </div>
           <div class="pt-proactive-actions">
-            <button class="primary small-btn" data-generate-full-report="${anyNoduleRec.id}">📄 一键生成全景诊断报告</button>
-            <button class="small-btn quiet" data-open-evidence="${anyNoduleRec.id}">🔬 查看多模态因果链</button>
+            <button class="primary small-btn" data-generate-full-report="${anyNoduleRec.id}">${icon('report')} 一键生成全景诊断报告</button>
+            <button class="small-btn quiet" data-open-evidence="${anyNoduleRec.id}">${icon('evidence')} 查看多模态因果链</button>
           </div>
         </div>
       `
@@ -417,13 +418,13 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const imagingHtml = imagingRecords.length ? `
       <div class="pt-imaging-section">
         <div class="row pt-section-head">
-          <h3 class="mem-h" style="margin: 0">🩺 医学影像量化档案 (MONAI 3D Quantitative Imaging)</h3>
+          <h3 class="mem-h" style="margin: 0">${icon('scan')} 医学影像量化档案 (MONAI 3D Quantitative Imaging)</h3>
           <span class="muted small">${imagingRecords.length} 份分析记录</span>
           <span class="grow"></span>
           <div style="display: flex; gap: 8px; align-items: center">
-            ${hasMultiImaging ? `<button class="quiet small-btn" data-act="compare-imaging" title="对比多期影像并计算 RECIST 1.1 靶病灶长径变化率与疗效评级">📈 随访疗效 (RECIST 1.1)</button>` : ''}
-            <button class="quiet small-btn" data-open-mpr="latest" title="打开 3D 多平面重建 (MPR) 互动切片浏览器：在轴位/冠状位/矢状位平滑滑动连续切片">🖥️ 3D MPR 互动切片</button>
-            <button class="quiet small-btn" data-open-evidence="latest" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
+            ${hasMultiImaging ? `<button class="quiet small-btn" data-act="compare-imaging" title="对比多期影像并计算 RECIST 1.1 靶病灶长径变化率与疗效评级">${icon('compare')} 随访疗效 (RECIST 1.1)</button>` : ''}
+            <button class="quiet small-btn" data-open-mpr="latest" title="打开 3D 多平面重建 (MPR) 互动切片浏览器：在轴位/冠状位/矢状位平滑滑动连续切片">${icon('mpr')} 3D MPR 互动切片</button>
+            <button class="quiet small-btn" data-open-evidence="latest" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">${icon('evidence')} 因果诊断链</button>
             <button class="primary small-btn" data-act="imaging">＋ 新建影像量化分析</button>
           </div>
         </div>
@@ -432,14 +433,14 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <div class="pt-imaging-recist-banner">
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
               <span class="pt-imaging-badge" style="background: rgba(16,185,129,0.18); color: #34D399; font-weight: 700; padding: 4px 10px; border-radius: 4px">
-                📈 RECIST 1.1 纵向对比就绪
+                ${icon('compare')} RECIST 1.1 纵向对比就绪
               </span>
               <span style="font-size: 13px; color: var(--text)">
                 检测到患者已有 <b>${imagingRecords.length}</b> 份纵向影像记录，支持基线与多期随访疗效自动对比评估。
               </span>
               <span class="grow"></span>
               <button class="primary small-btn" data-act="compare-imaging" title="对比基线与最新随访影像，自动计算 RECIST 1.1 靶病灶长径变化率与疗效评级">
-                📊 多期影像随访对比 (RECIST 1.1)
+                ${icon('chart')} 多期影像随访对比 (RECIST 1.1)
               </button>
             </div>
           </div>
@@ -465,20 +466,20 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                   <div class="pt-imaging-head">
                     <div class="pt-imaging-title">
                       <b>${esc(r.title)}</b>
-                      ${rawFileName ? `<span class="pt-imaging-badge" title="原始 3D 扫描文件已加密保存在该患者档案中">📦 ${esc(rawFileName)}</span>` : ''}
+                      ${rawFileName ? `<span class="pt-imaging-badge" title="原始 3D 扫描文件已加密保存在该患者档案中">${icon('lock')} ${esc(rawFileName)}</span>` : ''}
                     </div>
                     <span class="muted small">${esc(r.report_date || r.created_at.slice(0, 10))}</span>
                   </div>
                   <div class="pt-imaging-metrics">
                     ${isBronchiectasis ? `
-                      ${m.bar_ratio ? `<span class="pt-imaging-pill ${m.signet_ring_sign ? 'alert' : 'ok'}">BAR 印戒征: ${m.bar_ratio}${m.signet_ring_sign ? ' (阳性 ⚠)' : ''}</span>` : ''}
+                      ${m.bar_ratio ? `<span class="pt-imaging-pill ${m.signet_ring_sign ? 'alert' : 'ok'}">BAR 印戒征: ${m.bar_ratio}${m.signet_ring_sign ? ' (阳性)' : ''}</span>` : ''}
                       ${m.total_mucus_volume_cm3 !== undefined ? `<span class="pt-imaging-pill">粘液栓体积: ${m.total_mucus_volume_cm3} cm³</span>` : ''}
                       ${m.high_attenuation_mucus_cm3 ? `<span class="pt-imaging-pill alert">高密度粘液栓 HAM: ${m.high_attenuation_mucus_cm3} cm³ (ABPA疑诊)</span>` : ''}
                       ${m.airway_occlusion_rate_pct !== undefined ? `<span class="pt-imaging-pill">管腔阻塞率: ${m.airway_occlusion_rate_pct}%</span>` : ''}
                       ${m.wall_to_lumen_ratio ? `<span class="pt-imaging-pill">管壁/管腔比: ${m.wall_to_lumen_ratio}</span>` : ''}
                       ${m.primary_location || m.distribution_summary ? `
                         <div class="pt-imaging-location-row" style="margin-top: 6px; font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap">
-                          <span style="font-weight: 600; color: var(--text)">📍 解剖定位:</span>
+                          <span style="font-weight: 600; color: var(--text)">${icon('target')} 解剖定位:</span>
                           <span class="pt-imaging-badge" style="background: rgba(56,189,248,0.12); color: var(--blue); border-color: rgba(56,189,248,0.3)">${esc(m.primary_location || m.distribution_summary)}</span>
                           ${m.mucus_nodule_locations && m.mucus_nodule_locations.length > 0 ? `
                             <span class="muted small">(${m.mucus_nodule_locations.length} 个主要嵌顿团簇 · 范围 ${esc(m.mucus_nodule_locations[0].slice_range)})</span>
@@ -494,15 +495,15 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                   </div>
                   ${r.extraction_note ? `<div class="pt-imaging-note muted small">${esc(r.extraction_note)}</div>` : ''}
                   <div class="pt-imaging-actions">
-                    <button class="primary small-btn" data-generate-full-report="${r.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">📄 全景诊断报告</button>
-                    <button class="small-btn quiet" data-open-mpr="${r.id}" title="打开 3D 多平面重建 (MPR) 互动浏览器：实时滑动轴位/冠状位/矢状位连续切片、切换窗宽窗位并定位病灶">🖥️ 3D 切片 (MPR)</button>
-                    <button class="small-btn quiet" data-open-evidence="${r.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">🔬 因果诊断链</button>
-                    <button class="small-btn quiet" data-export-standard="${r.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">📥 导出标准数据</button>
-                    ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${r.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">📊 随访对比</button>` : ''}
-                    <button class="small-btn quiet" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">📝 写影像病例报告</button>
-                    <button class="small-btn" data-img-canvas="${r.id}" title="在 Heurion 原生幻灯片工作台制作包含此影像指标的多页会诊 Slide (PPTX)">🎨 制作会诊 Slide</button>
-                    ${imgUrl ? `<button class="quiet small-btn" data-view-img="${imgUrl}">🔍 查看量化切片</button>` : ''}
-                    ${rawFid ? `<a class="quiet small-btn" href="/api/patients/${d.id}/files/${rawFid}?token=${encodeURIComponent(hooks.token())}" target="_blank" download="${esc(rawFileName)}" title="下载该患者已归档的原始 3D 序列扫描文件">💾 下载 3D 原卷${rawSizeText ? ` (${esc(rawSizeText)})` : ''}</a>` : ''}
+                    <button class="primary small-btn" data-generate-full-report="${r.id}" title="一键生成三甲医院标准四段式全景影像多模态诊断报告（含 3D 定量、RECIST 1.1、化验因果链，并支持存入病历与打印导出）">${icon('report')} 全景诊断报告</button>
+                    <button class="small-btn quiet" data-open-mpr="${r.id}" title="打开 3D 多平面重建 (MPR) 互动浏览器：实时滑动轴位/冠状位/矢状位连续切片、切换窗宽窗位并定位病灶">${icon('mpr')} 3D 切片 (MPR)</button>
+                    <button class="small-btn quiet" data-open-evidence="${r.id}" title="查看多模态因果诊断链 (影像 + 化验 + 病史)">${icon('evidence')} 因果诊断链</button>
+                    <button class="small-btn quiet" data-export-standard="${r.id}" title="导出 HL7 FHIR 或 DICOM SR 标准医学交换格式">${icon('download')} 导出标准数据</button>
+                    ${hasMultiImaging ? `<button class="small-btn quiet" data-compare-with="${r.id}" title="以该影像为基准进行 RECIST 1.1 多期随访对比">${icon('compare')} 随访对比</button>` : ''}
+                    <button class="small-btn quiet" data-img-report="${r.id}" title="自动创建文档并由 AI 撰写 CARE 准则病例报告，插入该影像量化指标与关键截面图">${icon('write')} 写影像病例报告</button>
+                    <button class="small-btn" data-img-canvas="${r.id}" title="在 Heurion 原生幻灯片工作台制作包含此影像指标的多页会诊 Slide (PPTX)">${icon('deck')} 制作会诊 Slide</button>
+                    ${imgUrl ? `<button class="quiet small-btn" data-view-img="${imgUrl}">${icon('eye')} 查看量化切片</button>` : ''}
+                    ${rawFid ? `<a class="quiet small-btn" href="/api/patients/${d.id}/files/${rawFid}?token=${encodeURIComponent(hooks.token())}" target="_blank" download="${esc(rawFileName)}" title="下载该患者已归档的原始 3D 序列扫描文件">${icon('download')} 下载 3D 原卷${rawSizeText ? ` (${esc(rawSizeText)})` : ''}</a>` : ''}
                   </div>
                 </div>
               </div>`
@@ -513,7 +514,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
     const otherHtml = otherRecords.length ? `
       <div class="pt-other-records-section">
-        <h3 class="mem-h" style="margin-top: ${imagingRecords.length ? '24px' : '0'}">📄 检验报告与病历文书</h3>
+        <h3 class="mem-h" style="margin-top: ${imagingRecords.length ? '24px' : '0'}">${icon('report')} 检验报告与病历文书</h3>
         <table class="users"><thead><tr><th>报告日期</th><th>类型</th><th>标题</th><th>状态</th><th></th></tr></thead><tbody>
           ${otherRecords.map(r => `<tr data-rec="${r.id}"><td>${esc(r.report_date ?? '—')}</td><td>${esc(KIND[r.kind] ?? r.kind)}</td>
             <td>${esc(r.title)}${r.extraction_note ? `<div class="muted small">${esc(r.extraction_note)}</div>` : ''}</td>
@@ -543,7 +544,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             ${rows.map(l => `<tr data-lab="${l.id}" class="${l.locator?.verified === false ? 'pt-unverified' : ''}">
               <td><input data-f="test_name" value="${esc(l.test_name)}" ${canEdit ? '' : 'disabled'}></td><td><input data-f="value" value="${esc(value(l))}" ${canEdit ? '' : 'disabled'}></td>
               <td><input data-f="unit" value="${esc(l.unit ?? '')}" ${canEdit ? '' : 'disabled'}></td><td><input data-f="ref_low" value="${esc(l.ref_low ?? '')}" ${canEdit ? '' : 'disabled'}></td>
-              <td><input data-f="ref_high" value="${esc(l.ref_high ?? '')}" ${canEdit ? '' : 'disabled'}></td><td class="muted">${l.locator?.page ?? ''}${l.locator?.verified === false ? ' <span title="原文里没找到这个数，请对照原件">⚠</span>' : ''}</td>
+              <td><input data-f="ref_high" value="${esc(l.ref_high ?? '')}" ${canEdit ? '' : 'disabled'}></td><td class="muted">${l.locator?.page ?? ''}${l.locator?.verified === false ? ` <span title="原文里没找到这个数，请对照原件">${icon('warning', { size: 11 })}</span>` : ''}</td>
               <td>${canEdit ? '<button class="quiet small-btn" data-labx="reject" title="删除这一项">✕</button>' : ''}</td></tr>
               ${l.same_day?.length ? `<tr class="pt-sameday" data-lab="${l.id}"><td colspan="7">同一天已确认：${l.same_day.map(o => `${esc(stdValue(o))} ${esc(o.std_unit ?? '')}${o.collected_at ? `（${esc(o.collected_at.slice(11))}）` : ''}`).join('、')}
                 ${canEdit ? `<select data-replaces><option value="">两个都保留</option>${l.same_day.map(o => `<option value="${o.id}"${l.replaces === o.id ? ' selected' : ''}>这是更正：替换 ${esc(stdValue(o))}</option>`).join('')}</select>` : ''}</td></tr>` : ''}`).join('')}</tbody></table>` : busy ? '' : '<div class="muted small">没有提取到化验项。</div>'}
@@ -731,7 +732,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     dlg.innerHTML = `
       <div class="dialog-card pt-imaging-dialog" role="dialog" aria-modal="true" style="max-width: 680px">
         <div class="dialog-head">
-          <h2>🩺 ${esc(d.code)} 医学影像量化分析 (MONAI 3D)</h2>
+          <h2>${icon('scan', { size: 18 })} ${esc(d.code)} 医学影像量化分析 (MONAI 3D)</h2>
           <button class="quiet" data-close aria-label="关闭">✕</button>
         </div>
         <div class="dialog-body" style="gap: 14px">
@@ -807,7 +808,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               <option value="prostate_mri">真实临床前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
             `}
           </select>
-          <div class="muted small" style="margin-top: 4px">💡 预置真实临床三维体素扫描数据。系统会将完整 3D 原始体素序列加密归档至该患者档案，作为永久保存的医学影像资料。</div>
+          <div class="muted small" style="margin-top: 4px">预置真实临床三维体素扫描数据。系统会将完整 3D 原始体素序列加密归档至该患者档案，作为永久保存的医学影像资料。</div>
         </div>
 
         <div id="imgUploadBox" hidden>
@@ -831,14 +832,14 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               `).join('')}
             </optgroup>
           `).join('') : `
-            <optgroup label="🫁 胸部与呼吸科">
+            <optgroup label="胸部与呼吸科">
               <option value="bronchiectasis_mucus_analyzer" data-window="lung" data-target="支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征" selected>支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM) [Chest HRCT]</option>
               <option value="lung_nodule_segmenter" data-window="lung" data-target="肺实质实性/磨玻璃结节 (RECIST 1.1 最大径与三维体积)">肺结节与肺实变自动分割 (MONAI 3D SegResNet) [Chest CT]</option>
               <option value="lung_airway_segmenter" data-window="lung" data-target="全气道树管腔三维拓扑骨架与管壁厚度测量">全气道树三维拓扑重建 (MONAI AirwayUNet) [Chest HRCT]</option>
               <option value="lung_lobe_segmenter" data-window="lung" data-target="双肺 5 大肺叶 (RUL, RML, RLL, LUL, LLL) 体积及占比">5 大解剖肺叶分割与肺容积积分 (MONAI V-Net) [Chest CT]</option>
               <option value="covid19_lung_infection" data-window="lung" data-target="磨玻璃影 (GGO)、网格影与实变受累百分比">病毒性肺炎磨玻璃实变影定量 (MONAI COVID-Net) [Chest CT]</option>
             </optgroup>
-            <optgroup label="🫄 腹部、消化与泌尿">
+            <optgroup label="腹部、消化与泌尿">
               <option value="spleen_segmenter" data-window="abdomen" data-target="脾脏三维体积、脾肿大定量与创伤破裂评估">腹部实质脏器与脾脏分割 (MONAI 3D SegResNet) [Abdominal CT]</option>
               <option value="multi_organ_ct" data-window="abdomen" data-target="肝、脾、双肾、胰腺、胆囊、胃、主动脉、下腔静脉等">全腹部 13 器官多任务分割 (MONAI SwinUNETR) [Abdominal CT]</option>
               <option value="liver_lesion_segmenter" data-window="abdomen" data-target="肝实质体积、原发性肝癌 (HCC) 与转移瘤靶病灶">肝脏实质与局灶病灶/转移瘤分割 (MONAI UNet) [Abdominal CT]</option>
@@ -846,23 +847,23 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               <option value="kidney_tumor_segmenter" data-window="abdomen" data-target="肾实质、肾肿瘤皮质实性占位与肾囊肿">肾脏与肾肿瘤/囊肿分割 (MONAI KiTS) [Abdominal CT]</option>
               <option value="prostate_mri_segmenter" data-window="abdomen" data-target="前列腺腺体分带与可疑癌灶 (PI-RADS 3-5分区)">前列腺外周带/移行带与 PI-RADS 病灶 (MONAI UNet) [Pelvic MRI]</option>
             </optgroup>
-            <optgroup label="🧠 颅脑与神经系统">
+            <optgroup label="颅脑与神经系统">
               <option value="brain_tumor_brats" data-window="brain" data-target="强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR)">脑胶质瘤多序列分割 (MONAI BraTS DynUNet) [Brain MRI]</option>
               <option value="brain_subcortical_segmenter" data-window="brain" data-target="双侧海马体、杏仁核、丘脑体积与阿尔茨海默病量化">皮质下深部核团与海马体萎缩量化 (FastSurfer-like) [Brain T1 MRI]</option>
               <option value="stroke_ischemic_lesion" data-window="brain" data-target="急性脑梗死缺血半暗带与核心梗死容积">急性脑卒中缺血梗死灶测定 (MONAI UNet) [Brain MRI (DWI/FLAIR)]</option>
               <option value="intracranial_hemorrhage_ct" data-window="brain" data-target="硬膜下、硬膜外、脑实质内及蛛网膜下腔出血">急诊颅内出血与血肿检出 (MONAI DenseNet) [Brain Head CT]</option>
             </optgroup>
-            <optgroup label="🫀 心血管系统">
+            <optgroup label="心血管系统">
               <option value="coronary_artery_calcification" data-window="mediastinum" data-target="左前降支、回旋支、右冠状动脉钙化积分与冠心病风险分层">冠状动脉钙化积分 (CAC / Agatston 评分) [Cardiac CT]</option>
               <option value="cardiac_mri_segmentation" data-window="mediastinum" data-target="左心室舒张/收缩末容积、心肌质量与射血分数 (LVEF)">心脏多时相 CINE MRI 心室分割与射血分数 [Cardiac MRI]</option>
             </optgroup>
-            <optgroup label="🦴 骨科与全身体素">
+            <optgroup label="骨科与全身体素">
               <option value="whole_body_ct_segmenter" data-window="bone" data-target="全身体素骨骼、主要内脏系统与主要肌群">全身体素 104 类解剖结构分割 (TotalSegmentator) [Whole-Body CT]</option>
               <option value="vertebra_segmenter" data-window="bone" data-target="颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙测量">全脊柱 24 节椎骨与椎间盘分割 (Spine-Segmenter) [Spine CT]</option>
             </optgroup>
           `}
         </select>
-        <div id="imgModelDesc" class="muted small" style="margin-top: 5px; color: var(--blue)">💡 临床靶目标：${esc(defaultDesc)}</div>
+        <div id="imgModelDesc" class="muted small" style="margin-top: 5px; color: var(--blue)">临床靶目标：${esc(defaultDesc)}</div>
       </div>
 
       <details class="pt-dlg-params" open>
@@ -919,7 +920,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       <div class="row end" style="margin-top: 14px; gap: 10px">
         <button type="button" data-close>取消</button>
         <button type="button" class="primary" id="btnRunImaging" ${isHealthy ? '' : 'disabled'}>
-          🚀 开始 MONAI 3D 量化推理并存入档案
+          ${icon('sparkles')} 开始 MONAI 3D 量化推理并存入档案
         </button>
       </div>`
 
@@ -947,7 +948,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         const win = opt.dataset.window
         const target = opt.dataset.target
         if (win && windowSelect) windowSelect.value = win
-        if (target && modelDesc) modelDesc.textContent = `💡 临床靶目标：${target}`
+        if (target && modelDesc) modelDesc.textContent = `临床靶目标：${target}`
       }
     })
 
@@ -1041,7 +1042,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       <div class="dialog-card pt-mpr-dialog" role="dialog" aria-modal="true">
         <div class="dialog-head">
           <div style="display: flex; align-items: center; gap: 10px">
-            <h2>🖥️ 3D 多平面重建 (MPR) 互动切片浏览器</h2>
+            <h2>${icon('mpr', { size: 18 })} 3D 多平面重建 (MPR) 互动切片浏览器</h2>
             <span class="muted small">${esc(d.code)}</span>
           </div>
           <button class="quiet" data-close aria-label="关闭">✕</button>
@@ -1105,8 +1106,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <div class="pt-mpr-sidebar-section">
             <div class="pt-mpr-sidebar-title">浏览引擎 (Renderer Engine)</div>
             <div class="pt-mpr-btn-group" id="mprEngineBtns">
-              <button data-engine="slice" class="active" title="轻量 2D 正交多平面重建，带 5cm 标尺与精确解剖尺寸">⚡ 2D 正交切片</button>
-              <button data-engine="niivue" title="NiiVue WebGL2 引擎：体绘制 3D 自由旋转与多平面联动">🌐 NiiVue 3D WebGL</button>
+              <button data-engine="slice" class="active" title="轻量 2D 正交多平面重建，带 5cm 标尺与精确解剖尺寸">${icon('scan')} 2D 正交切片</button>
+              <button data-engine="niivue" title="NiiVue WebGL2 引擎：体绘制 3D 自由旋转与多平面联动">${icon('globe')} NiiVue 3D WebGL</button>
             </div>
           </div>
 
@@ -1146,16 +1147,16 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <div class="pt-mpr-sidebar-section">
             <div class="pt-mpr-sidebar-title">解剖导航与对齐</div>
             <div style="display: flex; gap: 6px; flex-wrap: wrap">
-              <button class="small-btn quiet" id="mprJumpCenter" title="根据 3D 卷积分割范围自动对齐至病灶中心切片">🎯 定位病灶中心</button>
-              <button class="small-btn quiet" id="mprJumpFirst">⏮️ 首层</button>
-              <button class="small-btn quiet" id="mprJumpLast">⏭️ 尾层</button>
+              <button class="small-btn quiet" id="mprJumpCenter" title="根据 3D 卷积分割范围自动对齐至病灶中心切片">${icon('target')} 定位病灶中心</button>
+              <button class="small-btn quiet" id="mprJumpFirst">首层</button>
+              <button class="small-btn quiet" id="mprJumpLast">尾层</button>
             </div>
           </div>
 
           <div class="pt-mpr-sidebar-section" style="margin-top: auto; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px">
             <div class="pt-mpr-sidebar-title">报告插图与资产沉淀</div>
-            <button class="primary small-btn" id="mprSaveAssetBtn" style="width: 100%" title="保存当前 MPR 正交切片为平台资产并生成 Markdown 引用">💾 保存切片为文档资产</button>
-            <button class="small-btn quiet" id="mprGenReportBtn" style="margin-top: 6px; width: 100%; border: 1px solid rgba(45,212,191,0.35); color: var(--teal)" title="聚合当前病灶参数、窗宽窗位与切片截图，一键生成规范放射学诊断报告草案并可落库为正式病历">📋 一键生成放射诊断报告</button>
+            <button class="primary small-btn" id="mprSaveAssetBtn" style="width: 100%" title="保存当前 MPR 正交切片为平台资产并生成 Markdown 引用">${icon('save')} 保存切片为文档资产</button>
+            <button class="small-btn quiet" id="mprGenReportBtn" style="margin-top: 6px; width: 100%; border: 1px solid rgba(45,212,191,0.35); color: var(--teal)" title="聚合当前病灶参数、窗宽窗位与切片截图，一键生成规范放射学诊断报告草案并可落库为正式病历">${icon('report')} 一键生成放射诊断报告</button>
             <div id="mprSaveNotice" class="muted small" style="display: none; margin-top: 6px; word-break: break-all"></div>
           </div>
         </div>
@@ -1178,7 +1179,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               Voxel: ${voxelSpacing.dx}×${voxelSpacing.dy}×${voxelSpacing.dz} mm
             </div>
             <div class="pt-mpr-hud-bottom">
-              💡 鼠标滚轮上下滚动或按键盘 ↑/↓ 即可连贯浏览连续切片
+              鼠标滚轮上下滚动或按键盘 ↑/↓ 即可连贯浏览连续切片
             </div>
           </div>
 
@@ -1252,7 +1253,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       if (saveAssetBtn.textContent?.includes('已保存') || saveAssetBtn.disabled) {
         saveAssetBtn.disabled = false
-        saveAssetBtn.textContent = '💾 保存当前切片为资产'
+        saveAssetBtn.innerHTML = `${icon('save')} 保存当前切片为资产`
       }
 
       const cacheKey = `${sampleId}:${currentPlane}:${currentSlice}:${currentWindow}:${overlayMask}`
@@ -1303,7 +1304,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       if (data.lesion_present && data.lesion_pixel_count > 0) {
         lesionBadge.className = 'pt-mpr-status-badge has-lesion'
-        lesionBadge.innerHTML = `⚠️ 病灶检出 (${lesionArea} mm²)`
+        lesionBadge.innerHTML = `${icon('target', { size: 12 })} 病灶检出 (${lesionArea} mm²)`
       } else {
         lesionBadge.className = 'pt-mpr-status-badge no-lesion'
         lesionBadge.innerHTML = `无明显高密度病灶`
@@ -1440,13 +1441,13 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         })
 
         if (res.asset_id) {
-          saveAssetBtn.textContent = '✓ 已保存当前切片'
+          saveAssetBtn.innerHTML = `${icon('check')} 已保存当前切片`
           const mdText = res.markdown_insert || `![${label}](asset:${res.asset_id})`
           savedSlices.unshift({ label, assetId: res.asset_id, mdText })
 
           saveNotice.style.display = 'block'
           saveNotice.innerHTML = `
-            <div style="color: var(--teal); font-weight: 600; margin-bottom: 4px">✓ 本次已保存 ${savedSlices.length} 张切片至资产库：</div>
+            <div style="color: var(--teal); font-weight: 600; margin-bottom: 4px">${icon('check')} 本次已保存 ${savedSlices.length} 张切片至资产库：</div>
             <div style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px">
               ${savedSlices.map((s, idx) => `
                 <div style="background: rgba(255,255,255,0.06); padding: 4px 6px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; gap: 6px">
@@ -1463,15 +1464,15 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           // 1.5 秒后自动复位，允许再次点击或保存其他层
           setTimeout(() => {
             saveAssetBtn.disabled = false
-            saveAssetBtn.textContent = '💾 保存当前切片为资产'
+            saveAssetBtn.innerHTML = `${icon('save')} 保存当前切片为资产`
           }, 1500)
         } else {
           saveAssetBtn.disabled = false
-          saveAssetBtn.textContent = '💾 保存当前切片为资产'
+          saveAssetBtn.innerHTML = `${icon('save')} 保存当前切片为资产`
         }
       } catch (err: any) {
         saveAssetBtn.disabled = false
-        saveAssetBtn.textContent = '💾 保存切片为文档资产'
+        saveAssetBtn.innerHTML = `${icon('save')} 保存切片为文档资产`
         notice(`保存资产失败: ${err.message || String(err)}`, true)
       }
     })
@@ -1519,7 +1520,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           console.warn('Auto-save current slice for report failed', e)
         } finally {
           genReportBtn.disabled = false
-          genReportBtn.textContent = '📋 一键生成放射诊断报告'
+          genReportBtn.innerHTML = `${icon('report')} 一键生成放射诊断报告`
         }
       }
 
@@ -1534,7 +1535,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       const findingsList: string[] = []
       if (isBronch) {
-        if (m.bar_ratio) findingsList.push(`- **支气管-伴行动脉比 (BAR)**: ${m.bar_ratio} (${m.signet_ring_sign ? '印戒征阳性 ⚠，提示支气管显著扩张' : '正常'})`)
+        if (m.bar_ratio) findingsList.push(`- **支气管-伴行动脉比 (BAR)**: ${m.bar_ratio} (${m.signet_ring_sign ? '印戒征阳性，提示支气管显著扩张' : '正常'})`)
         if (m.total_mucus_volume_cm3 !== undefined) findingsList.push(`- **支气管管腔粘液栓总体积**: ${m.total_mucus_volume_cm3} cm³`)
         if (m.high_attenuation_mucus_cm3) findingsList.push(`- **高密度粘液栓 (HAM)**: ${m.high_attenuation_mucus_cm3} cm³ (CT 衰减值 > 70HU，提示曲霉定植或 ABPA)`)
         if (m.airway_occlusion_rate_pct !== undefined) findingsList.push(`- **受累气道管腔平均阻塞率**: ${m.airway_occlusion_rate_pct}%`)
@@ -1603,7 +1604,7 @@ ${recommendations}
       <div class="dialog-card pt-rad-report-dialog" role="dialog" aria-modal="true" style="max-width: 780px; width: 92vw; max-height: 88vh; display: flex; flex-direction: column">
         <div class="dialog-head">
           <div style="display: flex; align-items: center; gap: 10px">
-            <h2>📋 放射学结构化诊断报告草案</h2>
+            <h2>${icon('report', { size: 18 })} 放射学结构化诊断报告草案</h2>
             <span class="muted small">${esc(d.code)}</span>
           </div>
           <button class="quiet" data-close-draft aria-label="关闭">✕</button>
@@ -1620,8 +1621,8 @@ ${recommendations}
         <div class="dialog-foot" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-top: 1px solid rgba(255,255,255,0.08)">
           <button class="quiet small-btn" data-close-draft>关闭</button>
           <div style="display: flex; gap: 8px">
-            <button class="small-btn quiet" id="radCopyDraftBtn">📋 复制报告全文</button>
-            <button class="primary small-btn" id="radSaveDocBtn">💾 落库为患者正式病历文档</button>
+            <button class="small-btn quiet" id="radCopyDraftBtn">${icon('copy')} 复制报告全文</button>
+            <button class="primary small-btn" id="radSaveDocBtn">${icon('save')} 落库为患者正式病历文档</button>
           </div>
         </div>
       </div>
@@ -1640,8 +1641,8 @@ ${recommendations}
 
     copyBtn.onclick = async () => {
       await navigator.clipboard.writeText(textarea.value).catch(() => {})
-      copyBtn.textContent = '✓ 已复制全文'
-      setTimeout(() => { copyBtn.textContent = '📋 复制报告全文' }, 1500)
+      copyBtn.innerHTML = `${icon('check')} 已复制全文`
+      setTimeout(() => { copyBtn.innerHTML = `${icon('copy')} 复制报告全文` }, 1500)
       notice('报告全文已成功复制到剪贴板！')
     }
 
@@ -1665,13 +1666,13 @@ ${recommendations}
             kind: 'case_report',
           }),
         })
-        statusEl.innerHTML = `<span style="color: var(--teal)">✓ 文档已成功落库归档！<a href="#/docs/${doc.id}" style="color: var(--blue); margin-left: 8px; text-decoration: underline" target="_blank">🔗 打开文档进行富文本编辑与排版</a></span>`
-        saveBtn.textContent = '✓ 已落库归档'
+        statusEl.innerHTML = `<span style="color: var(--teal)">${icon('check')} 文档已成功落库归档！<a href="#/docs/${doc.id}" style="color: var(--blue); margin-left: 8px; text-decoration: underline" target="_blank">${icon('link')} 打开文档进行富文本编辑与排版</a></span>`
+        saveBtn.innerHTML = `${icon('check')} 已落库归档`
         notice('放射诊断报告已落库并与患者关联！')
         void openPatient(patientId, true)
       } catch (err: any) {
         saveBtn.disabled = false
-        saveBtn.textContent = '💾 落库为患者正式病历文档'
+        saveBtn.innerHTML = `${icon('save')} 落库为患者正式病历文档`
         statusEl.innerHTML = `<span style="color: #F87171">保存失败: ${esc(err.message || String(err))}</span>`
       }
     }
@@ -1709,7 +1710,7 @@ ${recommendations}
       <div class="dialog-card pt-recist-dialog" role="dialog" aria-modal="true" style="max-height: 92vh; width: 96vw; max-width: 1080px; display: flex; flex-direction: column">
         <div class="dialog-head">
           <div style="display: flex; align-items: center; gap: 10px">
-            <h2>📈 多期影像随访对比与因果诊断工作台</h2>
+            <h2>${icon('compare', { size: 18 })} 多期影像随访对比与因果诊断工作台</h2>
             <span class="muted small">${esc(detail.code)}</span>
           </div>
           <button class="quiet" data-close-compare aria-label="关闭">✕</button>
@@ -1718,14 +1719,14 @@ ${recommendations}
           <!-- 选择对比基线与随访点 -->
           <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px 14px">
             <div style="flex: 1; min-width: 220px">
-              <label class="muted small" style="display: block; margin-bottom: 4px">📍 基线检查点 (Baseline):</label>
+              <label class="muted small" style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px">${icon('pin')} 基线检查点 (Baseline):</label>
               <select id="compareBaseSelect" style="width: 100%; padding: 6px 10px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: var(--text)">
                 ${sorted.map(r => `<option value="${r.id}" ${r.id === defaultBaseId ? 'selected' : ''}>${esc(r.report_date || r.created_at.slice(0, 10))} · ${esc(r.title)}</option>`).join('')}
               </select>
             </div>
-            <div style="font-size: 20px; color: var(--muted); align-self: flex-end; padding-bottom: 6px">➔</div>
+            <div style="color: var(--muted); align-self: flex-end; padding-bottom: 8px">${icon('arrowRight', { size: 18 })}</div>
             <div style="flex: 1; min-width: 220px">
-              <label class="muted small" style="display: block; margin-bottom: 4px">🎯 随访对比点 (Follow-up):</label>
+              <label class="muted small" style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px">${icon('target')} 随访对比点 (Follow-up):</label>
               <select id="compareFollowSelect" style="width: 100%; padding: 6px 10px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: var(--text)">
                 ${sorted.map(r => `<option value="${r.id}" ${r.id === defaultFollowId ? 'selected' : ''}>${esc(r.report_date || r.created_at.slice(0, 10))} · ${esc(r.title)}</option>`).join('')}
               </select>
@@ -1733,16 +1734,16 @@ ${recommendations}
             <button class="primary small-btn" id="compareRunBtn" style="align-self: flex-end; padding: 7px 16px">重新评估</button>
             <span class="grow"></span>
             <div style="display: flex; gap: 8px; align-self: flex-end">
-              <button class="small-btn quiet" id="exportFhirBtn" title="导出 HL7 FHIR R4 标准 DiagnosticReport JSON">📥 导出 FHIR</button>
-              <button class="small-btn quiet" id="exportDicomSrBtn" title="导出 DICOM PS 3.3 TID 1500 结构化报告 JSON">💾 导出 DICOM SR</button>
+              <button class="small-btn quiet" id="exportFhirBtn" title="导出 HL7 FHIR R4 标准 DiagnosticReport JSON">${icon('download')} 导出 FHIR</button>
+              <button class="small-btn quiet" id="exportDicomSrBtn" title="导出 DICOM PS 3.3 TID 1500 结构化报告 JSON">${icon('download')} 导出 DICOM SR</button>
             </div>
           </div>
 
           <!-- 子导航 Tab 切换 -->
           <div class="pt-compare-nav-tabs">
-            <button class="pt-compare-tab active" data-tab-name="overview">📊 随访疗效总览 (RECIST 1.1)</button>
-            <button class="pt-compare-tab" data-tab-name="dual-mpr">🖥️ 双联 MPR 联动切片 (Dual-Scrubber)</button>
-            <button class="pt-compare-tab" data-tab-name="evidence">🔬 多模态因果诊断链 (Evidence Chain)</button>
+            <button class="pt-compare-tab active" data-tab-name="overview">${icon('chart')} 随访疗效总览 (RECIST 1.1)</button>
+            <button class="pt-compare-tab" data-tab-name="dual-mpr">${icon('mpr')} 双联 MPR 联动切片 (Dual-Scrubber)</button>
+            <button class="pt-compare-tab" data-tab-name="evidence">${icon('evidence')} 多模态因果诊断链 (Evidence Chain)</button>
           </div>
 
           <!-- Tab 1: 随访疗效总览 -->
@@ -1778,13 +1779,13 @@ ${recommendations}
 
                 <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
                   <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--teal)">
-                    <input type="checkbox" id="dualSyncLock" checked> 🔗 锁定同步滚动
+                    <input type="checkbox" id="dualSyncLock" checked> ${icon('lock')} 锁定同步滚动
                   </label>
                   <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px">
                     <input type="checkbox" id="dualOverlayMask" checked> 半透明病灶高亮
                   </label>
                   <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #10B981; font-weight: 600">
-                    <input type="checkbox" id="dualDiffHeatmap"> 🎨 叠加 3D 差分吸收热力图 (🟢吸收/🔴进展)
+                    <input type="checkbox" id="dualDiffHeatmap"> ${icon('layers')} 叠加 3D 差分吸收热力图 (吸收/进展)
                   </label>
                 </div>
               </div>
@@ -1794,7 +1795,7 @@ ${recommendations}
                 <!-- 左：基线 Viewport -->
                 <div class="pt-dual-viewport" id="baseViewport">
                   <div class="pt-dual-viewport-head">
-                    <b>📍 基线 (Baseline) · <span id="baseTitleText">--</span></b>
+                    <b>${icon('pin')} 基线 (Baseline) · <span id="baseTitleText">--</span></b>
                     <span class="muted small" id="baseDateText">--</span>
                   </div>
                   <div class="pt-dual-viewport-view">
@@ -1813,7 +1814,7 @@ ${recommendations}
                 <!-- 右：随访 Viewport -->
                 <div class="pt-dual-viewport" id="followViewport">
                   <div class="pt-dual-viewport-head">
-                    <b>🎯 本次随访 (Follow-up) · <span id="followTitleText">--</span></b>
+                    <b>${icon('target')} 本次随访 (Follow-up) · <span id="followTitleText">--</span></b>
                     <span class="muted small" id="followDateText">--</span>
                   </div>
                   <div class="pt-dual-viewport-view">
@@ -1823,17 +1824,17 @@ ${recommendations}
                   <div class="pt-dual-viewport-controls">
                     <div style="display: flex; justify-content: space-between">
                       <span>切片层厚: 第 <b id="followSliceNum">0</b> / <span id="followSliceTotal">0</span> 层</span>
-                      <span class="muted small" id="followSliceSpacing">间距 -- mm</span>
+                      <span class="muted small" id="followDateText">--</span>
                     </div>
                     <input type="range" id="followSliceSlider" class="pt-dual-scrubber-slider" min="0" max="100" value="50">
                   </div>
                 </div>
               </div>
               <div id="diffHeatmapHud" style="display: none; padding: 10px 14px; background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); border-radius: 6px; font-size: 12px; margin: 10px 0; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
-                <span><b>🔬 3D 体素空间差分演变:</b> <span id="diffTrendText" style="color: #34D399; font-weight: 600">--</span></span>
+                <span><b>${icon('evidence')} 3D 体素空间差分演变:</b> <span id="diffTrendText" style="color: #34D399; font-weight: 600">--</span></span>
                 <span class="muted small" id="diffStatsDetail">--</span>
               </div>
-              <div class="muted small" style="text-align: center">💡 支持在任意一侧视窗使用鼠标滚轮上下滑动层厚。当「🔗 锁定同步滚动」开启时，两侧视窗按相对解剖比例同步平滑切片。</div>
+              <div class="muted small" style="text-align: center">支持在任意一侧视窗使用鼠标滚轮上下滑动层厚。当「锁定同步滚动」开启时，两侧视窗按相对解剖比例同步平滑切片。</div>
             </div>
           </div>
 
@@ -1913,7 +1914,7 @@ ${recommendations}
       }
       hud.style.display = 'flex'
       if (trendEl) trendEl.textContent = data.statistics_3d.dominant_trend || '计算完成'
-      if (detailEl) detailEl.textContent = `🟢 吸收退缩: ${data.statistics_3d.regressed_volume_cm3} cm³ · 🔴 浸润增大: ${data.statistics_3d.progressed_volume_cm3} cm³ (灵敏度 ±${data.threshold_hu || 50} HU)`
+      if (detailEl) detailEl.innerHTML = `<span style="color:#10B981">● 吸收退缩:</span> ${data.statistics_3d.regressed_volume_cm3} cm³ · <span style="color:#EF4444">● 浸润增大:</span> ${data.statistics_3d.progressed_volume_cm3} cm³ (灵敏度 ±${data.threshold_hu || 50} HU)`
     }
 
     async function loadComparison() {
@@ -2254,8 +2255,8 @@ ${recommendations}
             </div>
           </div>
           <div style="display: flex; gap: 8px">
-            <button class="small-btn quiet" id="compareCopyMdBtn">📋 复制 Markdown 报告</button>
-            <button class="primary small-btn" id="compareSaveRecBtn">💾 保存为随访记录</button>
+            <button class="small-btn quiet" id="compareCopyMdBtn">${icon('copy')} 复制 Markdown 报告</button>
+            <button class="primary small-btn" id="compareSaveRecBtn">${icon('save')} 保存为随访记录</button>
           </div>
         </div>
 
@@ -2350,16 +2351,16 @@ ${recommendations}
             }),
           })
           if (saveRes.record_id) {
-            saveRecBtn.textContent = '✓ 已保存记录'
+            saveRecBtn.innerHTML = `${icon('check')} 已保存记录`
             notice('RECIST 1.1 随访对比评估已存入患者病历记录！')
             void openPatient(patientId, true)
           } else {
             saveRecBtn.disabled = false
-            saveRecBtn.textContent = '💾 保存为随访记录'
+            saveRecBtn.innerHTML = `${icon('save')} 保存为随访记录`
           }
         } catch (e: any) {
           saveRecBtn.disabled = false
-          saveRecBtn.textContent = '💾 保存为随访记录'
+          saveRecBtn.innerHTML = `${icon('save')} 保存为随访记录`
           notice(`保存失败: ${e.message || String(e)}`, true)
         }
       })
@@ -2372,9 +2373,9 @@ ${recommendations}
   function renderEvidenceChainContent(container: HTMLElement, data: any, patientId: string, d: Detail | Patient, onInjectReport?: (md: string) => void) {
     const urg = data.clinical_urgency || 'routine'
     const urgMap: Record<string, { label: string; cls: string }> = {
-      high: { label: '⚠️ 高紧迫度 · 强烈提示临床干预', cls: 'high' },
-      medium: { label: '💡 中度 · 建议密切随访与补充检验', cls: 'medium' },
-      routine: { label: '✓ 常规 · 稳定随访状态', cls: 'routine' },
+      high: { label: `${icon('shield')} 高紧迫度 · 强烈提示临床干预`, cls: 'high' },
+      medium: { label: `${icon('info')} 中度 · 建议密切随访与补充检验`, cls: 'medium' },
+      routine: { label: `${icon('check')} 常规 · 稳定随访状态`, cls: 'routine' },
     }
     const urgencyBadge = urgMap[urg] || urgMap.routine!
     const criteria = data.criteria_table || []
@@ -2386,22 +2387,22 @@ ${recommendations}
         <div class="pt-evidence-header-card">
           <div style="flex: 1; min-width: 260px">
             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
-              <span class="pt-evidence-urgency-badge ${urgencyBadge.cls}">${esc(urgencyBadge.label)}</span>
+              <span class="pt-evidence-urgency-badge ${urgencyBadge.cls}">${urgencyBadge.label}</span>
               <span class="muted small">${esc(data.record_title || '医学影像')}</span>
             </div>
-            <h3 style="margin: 8px 0 6px; font-size: 16px; color: var(--text)">🔬 ${esc(data.syndrome || '多模态因果诊断链')}</h3>
+            <h3 style="margin: 8px 0 6px; font-size: 16px; color: var(--text)">${icon('evidence', { size: 16 })} ${esc(data.syndrome || '多模态因果诊断链')}</h3>
             <div style="font-size: 13px; line-height: 1.5; color: var(--text-1)">${esc(data.diagnostic_impression || '')}</div>
             <div class="muted small" style="margin-top: 6px">${esc(data.match_summary || '')}</div>
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap">
-            <button class="primary small-btn" id="evGenFullReportBtn">📄 生成全景影像诊断报告</button>
-            <button class="small-btn quiet" id="evCopyMdBtn">📋 复制 Markdown</button>
-            <button class="small-btn quiet" id="evInjectReportBtn">📝 注入病例报告草案</button>
+            <button class="primary small-btn" id="evGenFullReportBtn">${icon('report')} 生成全景影像诊断报告</button>
+            <button class="small-btn quiet" id="evCopyMdBtn">${icon('copy')} 复制 Markdown</button>
+            <button class="small-btn quiet" id="evInjectReportBtn">${icon('write')} 注入病例报告草案</button>
           </div>
         </div>
 
         <div>
-          <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-2)">📋 临床确诊依据对照表 (Clinical Criteria Matrix)</div>
+          <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-2)">${icon('template')} 临床确诊依据对照表 (Clinical Criteria Matrix)</div>
           <table class="pt-evidence-table">
             <thead>
               <tr>
@@ -2419,7 +2420,7 @@ ${recommendations}
                   <td class="muted small">${c.category === 'imaging' ? '医学影像' : c.category === 'lab' ? '实验室化验' : '既往病史'}</td>
                   <td>
                     <span class="pt-evidence-tag-status ${esc(c.status)}">
-                      ${c.status === 'positive' ? '✅ 阳性' : c.status === 'negative' ? '⚪ 阴性' : '⚠️ 缺漏待查'}
+                      ${c.status === 'positive' ? `${icon('check', { size: 12 })} 阳性` : c.status === 'negative' ? '阴性' : `${icon('info', { size: 12 })} 缺漏待查`}
                     </span>
                   </td>
                   <td>${esc(c.evidence_value)}</td>
@@ -2432,7 +2433,7 @@ ${recommendations}
 
         ${labs.length > 0 ? `
           <div>
-            <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-2)">🧪 协同关键实验室指标 (Correlated Laboratory Markers)</div>
+            <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: var(--text-2)">${icon('dna')} 协同关键实验室指标 (Correlated Laboratory Markers)</div>
             <table class="pt-evidence-table">
               <thead>
                 <tr>
@@ -2460,7 +2461,7 @@ ${recommendations}
 
         ${workup.length > 0 ? `
           <div style="background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 6px; padding: 12px">
-            <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: #FBBF24">💡 临床指南推荐完善检查 / 诊疗路径</div>
+            <div style="font-weight: 600; font-size: 13px; margin-bottom: 6px; color: #FBBF24">${icon('sparkles')} 临床指南推荐完善检查 / 诊疗路径</div>
             <ol style="margin: 0; padding-left: 20px; font-size: 12.5px; line-height: 1.6; color: var(--text-1)">
               ${workup.map((w: string) => `<li>${esc(w)}</li>`).join('')}
             </ol>
@@ -2497,7 +2498,7 @@ ${recommendations}
       <div class="dialog-card pt-rad-report-dialog" role="dialog" aria-modal="true" style="max-height: 92vh; width: 95vw; max-width: 900px; display: flex; flex-direction: column">
         <div class="dialog-head">
           <div style="display: flex; align-items: center; gap: 10px">
-            <h2>🔬 多模态因果诊断证据链 (Multimodal Evidence Chain)</h2>
+            <h2>${icon('evidence', { size: 18 })} 多模态因果诊断证据链 (Multimodal Evidence Chain)</h2>
             <span class="muted small">${esc(d.code)}</span>
           </div>
           <button class="quiet" data-close aria-label="关闭">✕</button>
@@ -2526,7 +2527,7 @@ ${recommendations}
       <div class="dialog-card pt-full-report-dialog" role="dialog" aria-modal="true">
         <div class="dialog-head no-print">
           <div style="display: flex; align-items: center; gap: 10px">
-            <h2>🏥 全景多模态影像诊断报告</h2>
+            <h2>${icon('hospital', { size: 18 })} 全景多模态影像诊断报告</h2>
             <span class="muted small">${esc(d.code)}</span>
           </div>
           <button class="quiet" data-close aria-label="关闭">✕</button>
@@ -2552,10 +2553,10 @@ ${recommendations}
 
       const urg = res.urgency || 'routine'
       const urgBadge = urg === 'high'
-        ? `<span class="pt-evidence-urgency-badge high">⚠️ 临床高危 · 强烈提示专科干预</span>`
+        ? `<span class="pt-evidence-urgency-badge high">${icon('shield')} 临床高危 · 强烈提示专科干预</span>`
         : urg === 'medium'
-        ? `<span class="pt-evidence-urgency-badge medium">💡 密切随访</span>`
-        : `<span class="pt-evidence-urgency-badge routine">✓ 常规评估</span>`
+        ? `<span class="pt-evidence-urgency-badge medium">${icon('info')} 密切随访</span>`
+        : `<span class="pt-evidence-urgency-badge routine">${icon('check')} 常规评估</span>`
 
       const m = res.metrics || {}
       const ev = res.evidence || {}
@@ -2566,20 +2567,20 @@ ${recommendations}
         <!-- 视图切换与顶部操作栏 -->
         <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px">
           <div style="display: flex; gap: 6px" id="reportViewTabs">
-            <button class="small-btn primary" data-view="formatted">👁️ 临床标准报告排版</button>
-            <button class="small-btn quiet" data-view="markdown">📝 Markdown 源码编辑</button>
+            <button class="small-btn primary" data-view="formatted">${icon('eye')} 临床标准报告排版</button>
+            <button class="small-btn quiet" data-view="markdown">${icon('write')} Markdown 源码编辑</button>
           </div>
           <div style="display: flex; gap: 8px; align-items: center">
             ${urgBadge}
-            <button class="small-btn quiet" id="btnCopyFullReportMd">📋 复制 Markdown</button>
-            <button class="small-btn primary" id="btnPrintFullReport">🖨️ 打印 / 导出 PDF</button>
+            <button class="small-btn quiet" id="btnCopyFullReportMd">${icon('copy')} 复制 Markdown</button>
+            <button class="small-btn primary" id="btnPrintFullReport">${icon('print')} 打印 / 导出 PDF</button>
           </div>
         </div>
 
         <!-- 格式化排版区 (同时作为打印区域) -->
         <div id="fullReportPrintArea" class="pt-report-paper" style="display: block">
           <div class="pt-report-hospital-head">
-            <div class="pt-report-hospital-title">🏥 Heurion 临床影像诊断中心 · 全景多模态影像诊断报告</div>
+            <div class="pt-report-hospital-title">${icon('hospital')} Heurion 临床影像诊断中心 · 全景多模态影像诊断报告</div>
             <div class="pt-report-hospital-sub">Medical Imaging &amp; Multimodal Diagnostic Report · 依据 RECIST 1.1 / Fleischner / CARE 规范生成</div>
           </div>
 
@@ -2683,7 +2684,7 @@ ${recommendations}
           <!-- 报告落款 -->
           <div class="pt-report-signature-row">
             <div>报告时间: <b>${esc(res.exam_date)}</b> · 诊断引擎: <b>MONAI 3D Quantitative Core</b></div>
-            <div>审核状态: <span class="pill ok">✓ 已存入病历记录 (${esc(res.saved_record_id || '已归档')})</span></div>
+            <div>审核状态: <span class="pill ok">${icon('check', { size: 12 })} 已存入病历记录 (${esc(res.saved_record_id || '已归档')})</span></div>
           </div>
         </div>
 
@@ -3202,7 +3203,7 @@ ${recommendations}
   const pickedBox = () => document.getElementById('ptPicked')!
   function renderPicked(): void {
     pickedBox().hidden = picked.length === 0
-    pickedBox().innerHTML = picked.map(p => `<span class="chip" data-id="${p.id}" title="AI 会读这位患者的资料与化验">⚕ ${esc(p.label)}<button class="chip-x" aria-label="移除">✕</button></span>`).join('')
+    pickedBox().innerHTML = picked.map(p => `<span class="chip" data-id="${p.id}" title="AI 会读这位患者的资料与化验">${icon('users', { size: 12 })} ${esc(p.label)}<button class="chip-x" aria-label="移除">${icon('close', { size: 10 })}</button></span>`).join('')
   }
   pickedBox().onclick = e => {
     const id = ((e.target as HTMLElement).closest('.chip-x')?.parentElement as HTMLElement | undefined)?.dataset.id

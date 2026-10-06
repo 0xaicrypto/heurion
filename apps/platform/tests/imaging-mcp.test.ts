@@ -201,6 +201,67 @@ beforeAll(async () => {
             summary_markdown: '### TotalSegmentator 全身体素 104 类解剖分割与肌少症分析报告\n- SMI: 45.7 cm²/m²\n- 状态: 肌少症阳性',
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
+        if (u.pathname.includes('/registration/deformable')) {
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            status: 'success',
+            iterations_completed: 15,
+            elapsed_sec: 0.12,
+            initial_ncc: 0.725,
+            final_ncc: 0.942,
+            ncc_improvement: 0.217,
+            initial_mse: 450.2,
+            final_mse: 88.5,
+            mse_reduction_percent: 80.3,
+            max_displacement_mm: 5.62,
+            mean_displacement_mm: 1.84,
+            key_slice_index: 18,
+            registered_slice_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            registered_slice_png_size_bytes: 1500,
+            summary_markdown: '### 3D 可形变配准报告\n- 改善率: 80.3%'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname.includes('/registration/pet-ct-fusion')) {
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            status: 'success',
+            suv_max: 9.85,
+            suv_mean: 4.82,
+            mtv_cm3: 28.5,
+            tlg: 137.37,
+            suv_threshold: 2.5,
+            key_slice_index: 18,
+            fusion_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            fusion_png_size_bytes: 1500,
+            summary_markdown: '### PET-CT 融合与代谢定量报告\n- SUVmax: 9.85\n- TLG: 137.37'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (u.pathname.includes('/rtstruct/delineate')) {
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            status: 'success',
+            gtv_volume_cm3: 15.2,
+            ctv_volume_cm3: 38.6,
+            ptv_volume_cm3: 62.4,
+            gtv_voxels: 1900,
+            ctv_voxels: 4825,
+            ptv_voxels: 7800,
+            ctv_margin_mm: 6.0,
+            ptv_margin_mm: 4.0,
+            key_slice_index: 18,
+            bone_barrier_clipped: true,
+            elapsed_sec: 0.15,
+            rtstruct_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            rtstruct_png_size_bytes: 1500,
+            summary_markdown: '### 放疗靶区勾画报告\n- GTV: 15.2 cm³\n- CTV: 38.6 cm³\n- PTV: 62.4 cm³'
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
         if (u.pathname.includes('/analyze/')) {
           let body: any = {}
           try {
@@ -698,6 +759,70 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
     expect(res.data.summary_markdown).toContain('TotalSegmentator')
   }, 30000)
+
+  it('15. imaging_deformable_register: 3D 可变形多模态弹性配准与密集位移场矢量计算', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_deformable_register', {
+      fixed_sample_id: 'pet_ct_pair',
+      moving_sample_id: 'pet_ct_pair',
+      iterations: 15,
+      save_asset: true,
+      label: '图 8 3D 可变形弹性配准切片',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.final_ncc).toBeGreaterThan(0)
+    expect(res.data.mse_reduction_percent).toBeGreaterThanOrEqual(0)
+    expect(res.data.max_displacement_mm).toBeGreaterThan(0)
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
+    expect(res.data.summary_markdown).toContain('可形变配准')
+  }, 30000)
+
+  it('16. imaging_pet_ct_fuse: PET-CT 代谢解剖融合、SUV 定量与假彩色渲染', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_pet_ct_fuse', {
+      sample_id: 'pet_ct_pair',
+      suv_threshold_ratio: 0.41,
+      alpha: 0.55,
+      colormap: 'turbo',
+      save_asset: true,
+      label: '图 9 肿瘤原发灶 PET-CT 代谢融合切片',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.suv_max).toBeGreaterThan(0)
+    expect(res.data.mtv_cm3).toBeGreaterThan(0)
+    expect(res.data.tlg).toBeGreaterThan(0)
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
+    expect(res.data.summary_markdown).toContain('SUV')
+  }, 30000)
+
+  it('17. imaging_rtstruct_delineate: 放疗靶区 (GTV/CTV/PTV) 勾画、骨解剖屏障阻断与 RT-STRUCT', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_rtstruct_delineate', {
+      sample_id: 'pet_ct_pair',
+      ctv_margin_mm: 6.0,
+      ptv_margin_mm: 4.0,
+      clip_bone_barrier: true,
+      save_asset: true,
+      label: '图 10 放疗多靶区三维勾画切片',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.gtv_volume_cm3).toBeGreaterThan(0)
+    expect(res.data.ctv_volume_cm3).toBeGreaterThan(res.data.gtv_volume_cm3)
+    expect(res.data.ptv_volume_cm3).toBeGreaterThan(res.data.ctv_volume_cm3)
+    expect(res.data.bone_barrier_clipped).toBe(true)
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
+    expect(res.data.summary_markdown).toContain('放疗靶区')
+  }, 30000)
 })
+
 
 

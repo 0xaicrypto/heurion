@@ -6,8 +6,9 @@ import type { DatasetRow, Store } from '../store/db.ts'
 import type { ColumnProfile, Ingest, Profile } from './ingest.ts'
 import { generateTable1FromData, type Table1Options, type Table1Result } from './table1.ts'
 import { generateSurvivalAnalysis, type SurvivalOptions, type SurvivalAnalysisResult } from './survival.ts'
+import { runImagingBiomarkerSurvival, type ImagingSurvivalRequest, type ImagingSurvivalResponse } from './imaging-survival.ts'
 
-export type { Table1Options, Table1Result, SurvivalOptions, SurvivalAnalysisResult }
+export type { Table1Options, Table1Result, SurvivalOptions, SurvivalAnalysisResult, ImagingSurvivalRequest, ImagingSurvivalResponse }
 
 
 /**
@@ -260,6 +261,33 @@ export class DatasetService {
     }
 
     return generateSurvivalAnalysis(records, mergedOpts)
+  }
+
+  /** 影像生物标志物生存分析：以 L3 SMI / VAT / 影像组学球形度等指标为切点拟合 KM 曲线与多变量 Cox 回归 */
+  imagingSurvival(user: string, id: string, req: ImagingSurvivalRequest): ImagingSurvivalResponse {
+    const dataset = this.get(user, id)
+    const row = this.own(user, id, 'read')
+    const csvFile = this.csvPath(row)
+    if (!existsSync(csvFile)) throw new DatasetError('not_ready', '数据集尚未处理完成')
+
+    const csvText = readFileSync(csvFile, 'utf8')
+    const parsed = parseCsv(csvText)
+    if (parsed.length < 2) throw new DatasetError('empty', '数据集为空')
+
+    const header = parsed[0]!
+    const records: Array<Record<string, unknown>> = []
+    for (let i = 1; i < parsed.length; i++) {
+      const r = parsed[i]!
+      if (!r || r.length === 0 || (r.length === 1 && !r[0])) continue
+      const rec: Record<string, unknown> = {}
+      for (let j = 0; j < header.length; j++) {
+        const col = header[j]!
+        rec[col] = r[j] ?? ''
+      }
+      records.push(rec)
+    }
+
+    return runImagingBiomarkerSurvival(records, req)
   }
 
 
