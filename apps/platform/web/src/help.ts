@@ -195,66 +195,193 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     id: 'imaging',
-    title: '3D 影像量化分析与 MPR 浏览器',
+    title: '患者管理与 3D 影像量化分析',
     badge: '临床核心',
     icon: '🩻',
-    summary: 'DICOM/NIfTI 上传、MONAI 3D 深度模型、BAR 支气管伴行动脉比、HAM 粘液栓分割与 MPR 三正交切片交互。',
+    summary: '零 PHI 虚拟代号建档、多期化验时间序列追踪、DICOM/NIfTI 空间解析、MONAI 3D 深度模型矩阵（胸部支扩/粘液栓/肺结节、前列腺 mpMRI、腹部 13 器官、脑部 MRI）及交互式 MPR 三正交切片浏览器。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>4. 患者管理与 3D 影像量化分析 (3D Imaging & MONAI Quantification)</h3>
-        <span class="help-tag ok">MONAI 深度学习 · 3D 体素</span>
+        <h3>4. 患者管理与 3D 影像量化分析 (Patient Management & 3D Imaging Quantification)</h3>
+        <span class="help-tag ok">零 PHI · MONAI 3D · MPR 交互</span>
       </div>
-      <p class="help-lead">集成 MONAI 临床深度学习架构，支持全肺 HRCT、前列腺 mpMRI 等多模态影像的三维体素级精准分割与定量参数提取。</p>
+      <p class="help-lead">深度打通「临床患者全景档案」与「3D 体素级影像量化分析」，既保障医疗隐私绝对安全，又赋予医生亚毫米级的定量诊断与智能读片能力。</p>
 
-      <h4>4.1 影像数据格式与上传规范</h4>
-      <p>进入「患者」工作空间，选中患者代号后即可上传影像：</p>
-      <ul>
-        <li><b>支持格式</b>：DICOM 序列压缩包 (<code>.zip</code> 或 <code>.tar.gz</code>)、标准科研 NIfTI 卷 (<code>.nii</code> 或 <code>.nii.gz</code>)。</li>
-        <li><b>元数据提取</b>：上传后后台自动解析体素几何间距 (Spacing 如 0.75mm)、空间维度 (512×512×N) 以及窗宽窗位标定。</li>
-      </ul>
-
-      <h4>4.2 MONAI 3D 深度学习病种量化能力</h4>
-      <div class="help-grid-2">
-        <div class="help-feature-card">
-          <div class="hfc-title">🫁 胸部 HRCT · 支扩与粘液栓分析</div>
-          <div class="hfc-desc">
-            <ul>
-              <li><b>支气管-伴行动脉比 (BAR)</b>：自动测量支气管内径与伴行动脉直径之比（正常 &lt; 1.0；&gt; 1.0 提示典型印戒征支扩）。</li>
-              <li><b>高密度粘液栓 (HAM / 指套征)</b>：自动分割全部粘液栓簇，统计平均 CT 测值 (HU)、最大极值 HU 及 3D 总体积 (cm³)。</li>
-              <li><b>气道壁增厚</b>：按管壁厚度与外径比率精确评估慢性炎症。</li>
-            </ul>
-          </div>
-        </div>
-        <div class="help-feature-card">
-          <div class="hfc-title">🎯 前列腺 mpMRI · PI-RADS 3D 分割</div>
-          <div class="hfc-desc">
-            <ul>
-              <li><b>解剖带分割</b>：T2WI 轴位精准分割移行带 (Transition Zone, TZ) 与外周带 (Peripheral Zone, PZ) 并测算体积。</li>
-              <li><b>多参数融合</b>：融合 ADC 弥散受限图与 DWI 高 b 值序列，对可疑占位病灶标注 3D 径线与 PI-RADS 分级。</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <h4>4.3 交互式 MPR 三正交切片浏览器 (Multi-Planar Reconstruction)</h4>
-      <p>点击任何已完成分析的影像，即可呼出全屏 MPR 诊断级浏览器：</p>
+      <h4>4.1 患者全流程档案建立与零 PHI 隐私规范 (Zero-PHI Patient Registry)</h4>
+      <p>为满足 HIPAA、GDPR 及医疗机构核心数据合规要求，平台推行严格的<b>零真实个人标识 (Zero-PHI)</b> 体系：</p>
       <ul class="help-list-steps">
         <li>
           <span class="step-num">1</span>
           <div>
-            <b>三视角即时切换</b>：支持<b>横断面 (Axial)</b>、<b>冠状面 (Coronal)</b>、<b>矢状面 (Sagittal)</b> 自由切换，通过切片滑块或鼠标滚轮逐层浏览。
+            <b>纯虚拟代号建档 (Research Code)</b>：患者入组统一采用去标识化的代号（如 <code>PT-BRONCHO-001</code>、<code>SUBJ-2026-08</code>）。系统同时支持记录性别、出生年份（自动推算当前实足年龄）及疾病标签（如 <code>哮喘</code>、<code>支气管扩张</code>、<code>ABPA</code>、<code>肺结节</code>、<code>前列腺癌</code>、<code>靶向治疗中</code>），支持标签一键过滤。
           </div>
         </li>
         <li>
           <span class="step-num">2</span>
           <div>
-            <b>临床窗宽窗位 (WW/WL) 一键调窗</b>：预设肺窗 (-600 / 1500 HU)、纵隔窗 (40 / 400 HU)、骨窗 (300 / 1500 HU)、脑窗 (40 / 80 HU) 及软组织窗 (50 / 350 HU)，支持鼠标拖拽无级微调。
+            <b>本机浏览器备注名物理隔离 (Local Private Names)</b>：
+            医生如需在本地辨识患者姓名，可直接在患者代号旁添加备注名。<b>该备注名仅加密保存在当前电脑浏览器的 <code>localStorage</code> 中</b>，绝不上云、绝不向服务器传输、绝不在数据库中落库，彻底消除云端患者姓名泄露的法律风险。
           </div>
         </li>
         <li>
           <span class="step-num">3</span>
           <div>
-            <b>关键截面存证截图 (Capture Snapshot)</b>：点击「截取当前切片」，当前层位影像及窗宽窗位参数将自动沉淀为患者报告资产，在生成诊断报告时直接嵌入。
+            <b>多维档案工作区 (Workspaces)</b>：
+            <ul>
+              <li><b>概览 (Overview)</b>：汇总患者简要病史、关键体征、关联科研课题 (Studies & Subject ID) 以及关联的查房报告与病历文档；</li>
+              <li><b>化验 (Labs)</b>：管理时间序列多期检验数据，支持纵向演变趋势可视化；</li>
+              <li><b>报告原件与影像 (Records)</b>：归档出院小结、病理报告、生化检验单原件及 DICOM/NIfTI 影像计算档案；</li>
+              <li><b>待确认操作 (Review / Human-in-the-Loop)</b>：AI 从原件中抽取的指标或提议的病历修改，需在此处由医生点击「采纳」或「驳回」。</li>
+            </ul>
+          </div>
+        </li>
+        <li>
+          <span class="step-num">4</span>
+          <div>
+            <b>医疗协作与权限机制</b>：支持设定主管医师 (Owner) 与参与医生 (Member) 权限；提供针对危急值抢救情境的<b>「紧急破窗访问 (Break-Glass Access)」</b>全流程审计；支持生成受控<b>「安全分享码 (Share Code)」</b>向科室同事或家庭只读共享化验与报告。
+          </div>
+        </li>
+      </ul>
+
+      <h4>4.2 多模态实验室检验指标追踪与时间序列管理 (Longitudinal Lab Analytics)</h4>
+      <p>化验单不仅是静态记录，更是临床评估病情演进的重要证据链：</p>
+      <div class="help-grid-2">
+        <div class="help-feature-card">
+          <div class="hfc-title">📈 核心检验指标全覆盖</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>变态反应与呼吸</b>：外周血嗜酸性粒细胞绝对值 (Eos #) 与百分比 (Eos %)、血清总 IgE、烟曲霉特异性 sIgE；</li>
+              <li><b>肿瘤标志物</b>：CEA、CYFRA21-1、NSE、PSA、游离 PSA (fPSA)；</li>
+              <li><b>感染与炎症生化</b>：CRP、降钙素原 (PCT)、肝肾功能、血气分析等。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">🔄 跨机构单位自动换算与原件追溯</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>国际标准单位归一化</b>：不同仪器与机构的化验单位（如 10⁹/L 与 /μL、IU/mL 与 kU/L）自动换算为统一标准单位，悬停可追溯原测值，确保数年随访趋势严密可比；</li>
+              <li><b>原件精准溯源 (Traceability)</b>：点击化验项可一键跳转并高亮检验单 PDF 原件的对应页码与测量区域。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <h4>4.3 3D 原始影像支持与空间几何解析 (3D Volumetric Imaging & Geometry)</h4>
+      <p>平台采用原生的三维体数据解析管线，支持高分辨率医学影像的端到端量化：</p>
+      <table class="help-table">
+        <thead>
+          <tr>
+            <th>特性维度</th>
+            <th>技术规格与临床规范</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>格式支持</b></td>
+            <td>
+              1. <b>DICOM 序列压缩包 (<code>.zip</code> / <code>.tar.gz</code>)</b>：流式递归解压、自动校验并排序数百张连续轴位切片；<br>
+              2. <b>单张 DICOM (<code>.dcm</code>)</b>；<br>
+              3. <b>科研标准三维 NIfTI 卷 (<code>.nii</code> / <code>.nii.gz</code>)</b>。
+            </td>
+          </tr>
+          <tr>
+            <td><b>空间几何提取</b></td>
+            <td>自动解析体素空间物理间距 (Voxel Spacing 如 0.75×0.75×1.25 mm)、体素空间矩阵维度 (Dimensions 如 512×512×280) 与解剖方位坐标系 (LPS / RAS)。</td>
+          </tr>
+          <tr>
+            <td><b>敏感 Tag 脱敏</b></td>
+            <td>影像入库前，后台自动清洗并抹除患者姓名、住院号、机构名、技师代号等私有 DICOM Tag，确保医学科研合规安全。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>4.4 MONAI 3D 临床深度学习病种量化全矩阵 (MONAI Model Zoo Matrix)</h4>
+      <p>系统内置基于 MONAI 的 13+ 套临床验证级 3D 卷积与 Transformer 深度学习模型，覆盖多解剖部位：</p>
+      <div class="help-grid-2">
+        <div class="help-feature-card">
+          <div class="hfc-title">🫁 1. 胸部 HRCT · 支气管扩张与粘液栓分析</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>支气管-伴行动脉比 (BAR)</b>：亚毫米级精确测量支气管内径与伴行动脉直径（正常 &lt; 1.0；≥ 1.0 提示典型印戒征支扩）；</li>
+              <li><b>高密度粘液栓 (HAM / 指套征)</b>：基于 3D 连通域自动分割全部粘液栓簇，输出平均 CT 测值 (HU)、最大极值 HU 及 3D 总体积 (cm³)，自动与胸壁肌肉 (40~50 HU) 对比判定 HAM 标准；</li>
+              <li><b>气道壁增厚率 (T/D Ratio)</b>：计算管壁厚度与外径比率，量化慢性气道重塑。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="help-feature-card">
+          <div class="hfc-title">🔬 2. 胸部 CT · 肺结节、肺叶与气道树</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>肺结节与实变分割 (MONAI 3D SegResNet)</b>：自动检出实性/磨玻璃/部分实性结节，测量 3D 体积、最大长径与垂直短径，关联 Fleischner 2017 随访指南；</li>
+              <li><b>5 大解剖肺叶分割 (MONAI V-Net)</b>：右肺上中下叶 (RUL/RML/RLL) 与左肺上下叶 (LUL/LLL) 体积与受累占比；</li>
+              <li><b>全气道树拓扑重建 (MONAI AirwayUNet)</b>：全肺气道树管腔三维拓扑骨架与各级支气管壁厚测量。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="help-feature-card">
+          <div class="hfc-title">🎯 3. 腹部与盆腔 · 多器官与肿瘤病灶</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>前列腺 mpMRI (Pelvic MRI)</b>：T2WI + ADC + DWI 序列对齐，外周带 (PZ) 与移行带 (TZ) 体积分割，可疑占位 3D 径线、ADC 极小值与 PI-RADS v2.1 分级；</li>
+              <li><b>腹部 13 器官多任务分割 (MONAI SwinUNETR)</b>：全自动解剖分割肝、脾、双肾、胰腺、胆囊、胃、主动脉等；</li>
+              <li><b>肝癌与胰腺肿瘤分割</b>：肝实质与 HCC/转移瘤靶病灶量化，胰腺导管腺癌与囊性占位体积分析。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="help-feature-card">
+          <div class="hfc-title">🧠 4. 神经系统 · 脑部 MRI 与急诊头颅 CT</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>脑胶质瘤多模态分割 (MONAI BraTS DynUNet)</b>：强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR) 三维体积测量；</li>
+              <li><b>急性脑梗死测定 (DWI/FLAIR UNet)</b>：缺血半暗带与核心梗死容积精准评估；</li>
+              <li><b>急诊颅内出血检出 (MONAI DenseNet)</b>：硬膜外、硬膜下、脑实质内及蛛网膜下腔出血检出与血肿容积量化。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <h4>4.5 诊断级交互式 MPR 三正交切片浏览器 (Multi-Planar Reconstruction)</h4>
+      <p>点击任何已完成分析的影像记录，即可打开全功能交互式 MPR 诊断工作台：</p>
+      <ul class="help-list-steps">
+        <li>
+          <span class="step-num">1</span>
+          <div>
+            <b>双引擎极速渲染</b>：
+            <ul>
+              <li><b>⚡ 2D 正交切片引擎</b>：轻量极速，内置 5cm 毫米级解剖标尺与 HUD 参数抬头显示；</li>
+              <li><b>🌐 NiiVue 3D WebGL2 引擎</b>：GPU 硬件加速，支持 3D 空间立体旋转体绘制 (Volume Rendering) 与横断面+冠状面+矢状面+3D模型四视图联动。</li>
+            </ul>
+          </div>
+        </li>
+        <li>
+          <span class="step-num">2</span>
+          <div>
+            <b>三正交解剖平面自由切换</b>：
+            <b>横断面 (Axial)</b>、<b>冠状面 (Coronal)</b>、<b>矢状面 (Sagittal)</b> 自由切换，切片滑块、鼠标滚轮上下滑动或键盘 ↑/↓/←/→ 连贯逐层浏览。
+          </div>
+        </li>
+        <li>
+          <span class="step-num">3</span>
+          <div>
+            <b>全模态临床标准窗宽窗位 (WW/WL) 一键调窗</b>：
+            预设肺窗 (-600 / 1500 HU)、纵隔窗 (40 / 400 HU)、腹部窗 (50 / 350 HU)、骨窗 (300 / 1500 HU) 及脑窗 (40 / 80 HU)，并支持鼠标拖拽无级微调。
+          </div>
+        </li>
+        <li>
+          <span class="step-num">4</span>
+          <div>
+            <b>三维准星与智能病灶导航</b>：
+            点击<b>「🎯 定位病灶中心」</b>按钮，系统自动依据 3D 卷积分割范围质心瞬时跳转到病灶最大截面层；抬头显示<b>「病灶探测标签 (Lesion Badge)」</b>，实时提示当前切片是否有病灶受累。
+          </div>
+        </li>
+        <li>
+          <span class="step-num">5</span>
+          <div>
+            <b>关键截面存证截图与文档资产沉淀 (Key Slice Snapshot)</b>：
+            点击<b>「💾 保存切片为文档资产」</b>，当前层位影像及窗宽窗位、物理标尺等参数自动转存为平台永久图像资产，并生成 Markdown 引用代码，可直接插入医学论文或汇报幻灯片；点击<b>「📋 一键生成放射诊断报告」</b>更可自动汇总参数出具规范影像报告草案。
           </div>
         </li>
       </ul>
@@ -560,24 +687,37 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 四、 3D 影像量化分析与 MPR 浏览器
+## 四、 患者管理与 3D 影像量化分析
 
-1. **影像上传规范**：
-   - 支持 DICOM 序列压缩包 (\`.zip\` / \`.tar.gz\`) 与 NIfTI (\`.nii\` / \`.nii.gz\`)；
-   - 自动解析体素空间间距 (Spacing) 与尺寸。
-2. **MONAI 3D 深度模型**：
+1. **患者全流程档案与零 PHI 准则**：
+   - **纯虚拟代号建档**：采用 \`PT-BRONCHO-001\` 等去标识化代号建档；
+   - **本机浏览器备注名物理隔离**：患者真实姓名仅保存在医生本地浏览器的 \`localStorage\` 中，绝不上云、绝不入库，彻底免除云端 PHI 泄露风险；
+   - **多维档案标签页**：涵盖概览 (Overview)、多期化验 (Labs)、报告原件与影像 (Records)、AI 抽取核对待确认卡 (Review) 及团队协作/破窗访问。
+2. **多模态实验室检验指标追踪**：
+   - 追踪嗜酸性粒细胞 (Eos)、血清总 IgE、烟曲霉特异性 sIgE、肿瘤标志物 (CEA/CYFRA21-1/NSE/PSA) 及感染生化指标；
+   - **国际标准单位自动换算**：跨机构单位自动归一化，支持纵向演变趋势图与检验单原件一键定位溯源。
+3. **3D 原始影像支持与空间几何解析**：
+   - 支持 DICOM 序列压缩包 (\`.zip\` / \`.tar.gz\`)、单张 DICOM (\`.dcm\`) 及 NIfTI 卷 (\`.nii\` / \`.nii.gz\`)；
+   - 自动解析体素空间几何间距 (Voxel Spacing) 与矩阵维度，入库前自动彻底清洗私有敏感 Tag。
+4. **MONAI 3D 临床深度学习模型全矩阵**：
    - **胸部 HRCT**：
-     - **支气管-伴行动脉比 (BAR)**：测量内径比值（正常 < 1.0；支气管扩张典型印戒征）；
-     - **高密度粘液栓 (HAM / 指套征)**：自动多簇分割，量化均值 HU、极值 HU 及 3D 总体积 (cm³)；
-     - **气道壁增厚率**。
-   - **前列腺 mpMRI**：
-     - T2WI + ADC + DWI 序列对齐；
-     - 移行带 (TZ) 与外周带 (PZ) 体积精确分割；
-     - PI-RADS 3D 病灶表征与体积勾画。
-3. **交互式 MPR 三正交切片浏览器**：
-   - 横断面 (Axial)、冠状面 (Coronal)、矢状面 (Sagittal) 三视角实时联动；
-   - 窗宽窗位快捷切换：肺窗 (-600/1500)、纵隔窗 (40/400)、骨窗 (300/1500)、脑窗 (40/80)、软组织窗 (50/350)；
-   - 关键切片一键存证截图 (Capture Snapshot)。
+     - **支气管-伴行动脉比 (BAR)**：测量内径比值（正常 < 1.0；≥ 1.0 提示典型印戒征支气管扩张）；
+     - **高密度粘液栓 (HAM / 指套征)**：自动多簇分割，量化均值 HU、极值 HU 及 3D 总体积 (cm³)，自动与胸壁肌肉 (40~50 HU) 对比判定 HAM 标准；
+     - **气道壁增厚率 (T/D Ratio)**：量化慢性气道炎性重塑；
+   - **胸部 CT 肺结节与肺叶**：
+     - **肺结节与实变分割 (SegResNet)**：实性/磨玻璃结节 3D 体积与长短径，关联 Fleischner 2017 随访指南；
+     - **5 大解剖肺叶分割 (V-Net)** 与全气道树三维拓扑骨架重建 (AirwayUNet)；
+   - **腹部与盆腔**：
+     - **前列腺 mpMRI**：T2WI+ADC+DWI 序列对齐，外周带/移行带分割，PI-RADS v2.1 3D 分级；
+     - **全腹部 13 器官多任务分割 (SwinUNETR)**、肝癌/转移瘤与胰腺导管腺癌 3D 量化；
+   - **神经系统**：
+     - 脑胶质瘤多模态分割 (BraTS)、急性脑梗死缺血半暗带测定及急诊颅内出血与血肿检出。
+5. **诊断级交互式 MPR 三正交切片浏览器**：
+   - **双引擎随心切换**：轻量极速 2D 正交切片引擎（内置 5cm 毫米标尺与 HUD 抬头显示）与 NiiVue 3D WebGL2 引擎（3D 体绘制与四视图联动）；
+   - **三正交解剖平面自由切换**：横断面 (Axial)、冠状面 (Coronal)、矢状面 (Sagittal) 自由切换，切片滑动条、鼠标滚轮上下滑动或键盘方向键平滑逐层浏览；
+   - **全模态临床窗宽窗位快捷预设**：肺窗 (-600/1500)、纵隔窗 (40/400)、腹部窗 (50/350)、骨窗 (300/1500)、脑窗 (40/80) 及鼠标拖拽无级微调；
+   - **三维准星与智能病灶导航**：点击「🎯 定位病灶中心」瞬时跳转到病灶最大截面层，实时展示病灶受累标签；
+   - **关键截面存证截图 (Capture Snapshot)**：一键转存为平台永久图像资产并生成 Markdown 引用代码，支持一键出具规范影像报告草案。
 
 ---
 

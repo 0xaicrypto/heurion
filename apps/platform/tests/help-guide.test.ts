@@ -30,17 +30,28 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
   it('2. 核心临床规范与技术指标真实落地', () => {
     const allHtml = HELP_SECTIONS.map(s => s.contentHtml).join('\n')
     
-    // 零 PHI 与安全准则
+    // 零 PHI 与患者档案安全准则
     expect(allHtml).toContain('零 PHI')
+    expect(allHtml).toContain('纯虚拟代号建档')
+    expect(allHtml).toContain('本机浏览器备注名物理隔离')
     expect(allHtml).toContain('AES-256-GCM')
     expect(allHtml).toContain('待确认操作卡')
     
-    // 影像量化指标与 MONAI 模型
+    // 多模态化验与单位归一化
+    expect(allHtml).toContain('国际标准单位归一化')
+    expect(allHtml).toContain('原件精准溯源')
+    
+    // 影像量化指标与 MONAI 模型矩阵
     expect(allHtml).toContain('BAR')
     expect(allHtml).toContain('高密度粘液栓')
     expect(allHtml).toContain('MONAI')
+    expect(allHtml).toContain('SegResNet')
+    expect(allHtml).toContain('PI-RADS')
     expect(allHtml).toContain('MPR')
-    expect(allHtml).toContain('轴位')
+    expect(allHtml).toContain('横断面 (Axial)')
+    expect(allHtml).toContain('NiiVue 3D WebGL2')
+    expect(allHtml).toContain('定位病灶中心')
+    expect(allHtml).toContain('保存切片为文档资产')
     
     // 双期 3D 刚性配准与差分热力图
     expect(allHtml).toContain('刚性/仿射配准')
@@ -63,8 +74,11 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     const md = buildHelpMarkdown()
     expect(md).toContain('# Heurion 临床智能工作站 · 全流程使用手册与操作指南')
     expect(md).toContain('## 一、 快速上手与界面导览')
-    expect(md).toContain('## 四、 3D 影像量化分析与 MPR 浏览器')
+    expect(md).toContain('## 四、 患者管理与 3D 影像量化分析')
     expect(md).toContain('## 五、 双期 3D 刚性配准与差分吸收热力图')
+    expect(md).toContain('纯虚拟代号建档')
+    expect(md).toContain('支气管-伴行动脉比 (BAR)')
+    expect(md).toContain('NiiVue 3D WebGL2')
     
     // 验证 parseBlocks 能够顺利将生成的 markdown 转换成 ProseMirror 节点
     const blocks = parseBlocks(md)

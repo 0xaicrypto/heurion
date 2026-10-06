@@ -197,6 +197,7 @@ $('newProject').onclick = async () => {
 
 $('trashBtn').onclick = () => void openTrash()
 $('helpBtn').onclick = () => openHelpGuide()
+if ($('topbarHelpBtn')) $('topbarHelpBtn').onclick = () => openHelpGuide()
 document.addEventListener('heurion:help', (e: Event) => {
   const detail = (e as CustomEvent).detail
   openHelpGuide(detail?.section)

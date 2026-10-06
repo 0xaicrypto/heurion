@@ -194,6 +194,9 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .status::before { content: ''; width: 6px; height: 6px; background: currentColor; }
 .status.synced { color: var(--mint-text); border-color: var(--green-line); }
 .status.offline { color: var(--warn); border-color: rgba(245, 181, 68, .4); }
+.topbar-help-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; font-size: 12.5px; color: var(--text-2); background: var(--card-glass); border: 1px solid var(--line-strong); cursor: pointer; white-space: nowrap; transition: all .15s; }
+.topbar-help-btn:hover { background: var(--hover); color: var(--mint-text); border-color: var(--mint); }
+.topbar-help-btn svg { width: 14px; height: 14px; color: var(--mint-text); flex: none; }
 .btn-group { display: inline-flex; }
 .btn-group button { margin-left: -1px; }
 
