@@ -147,6 +147,7 @@ const ALL_PARITY: Record<string, string> = {
   'POST /api/imaging/mpr/diff-slice': 'imaging_diff_slice',
   'POST /api/imaging/radiomics': 'imaging_radiomics',
   'POST /api/imaging/interactive-segment': 'imaging_interactive_segment',
+  'POST /api/imaging/whole-body': 'imaging_whole_body_segment',
   'POST /api/patients/:ptid/imaging/compare': 'imaging_longitudinal_compare',
   'GET /api/patients/:ptid/imaging/evidence-chain': 'imaging_evidence_chain',
   'GET /api/patients/:ptid/imaging/export': 'imaging_export_standard',

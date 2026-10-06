@@ -825,5 +825,71 @@ describe('患者影像量化分析与病历关联 (Patient Imaging Integration)'
     expect(apiData.impression).toContain('ABPA')
     expect(apiData.recommendations).toBeTruthy()
   })
+
+  it('12. HTTP API: POST /api/imaging/whole-body TotalSegmentator 全身体素 104 类分割与肌少症量化', async () => {
+    const isOnline = await fetch('http://127.0.0.1:8004/health', { signal: AbortSignal.timeout(500) }).then(r => r.ok).catch(() => false)
+    const t = env()
+    const { buildApi } = await import('../src/http/api.ts')
+    const { Documents } = await import('../src/model/runtime.ts')
+    const { OpService } = await import('../src/ops/service.ts')
+    const { TurnService } = await import('../src/turns/service.ts')
+    const { TurnRegistry } = await import('../src/mcp/turns.ts')
+    const { PostCheck } = await import('../src/collab/postcheck.ts')
+    const { SlideRenderer } = await import('../src/render/slides.ts')
+    const { Accounts } = await import('../src/auth/accounts.ts')
+    const { issueToken } = await import('../src/auth/token.ts')
+
+    const docs = new Documents(t.store)
+    const ops = new OpService(docs)
+    const SECRET = 'test-secret'
+    const accounts = new Accounts(t.store, { secret: SECRET, devMode: false, devToken: 'dev', devUser: 'dev' })
+    const uRow = t.store.getUser(t.user)!
+    const token = issueToken(SECRET, { u: t.user, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 300, v: uRow.token_version })
+
+    const app = buildApi({
+      docs,
+      ops,
+      turns: new TurnService(docs, {} as any, new TurnRegistry()),
+      postcheck: new PostCheck(docs),
+      crossref: {} as any,
+      renderer: new SlideRenderer(t.root),
+      accounts,
+      devMode: false,
+      devUser: 'dev',
+      patients: t.svc,
+    })
+
+    const res = await app.request('/api/imaging/whole-body', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sample_id: 'chest_lung_ct',
+        patient_sex: 'M',
+        patient_height_m: 1.75,
+        patient_weight_kg: 70.0,
+        save_asset: true,
+        label: '图 8 L3 骨骼肌与多器官容积',
+      }),
+    })
+
+    if (!isOnline) {
+      expect(res.status).toBe(503)
+      return
+    }
+
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.status).toBe('success')
+    expect(data.model_name).toBe('whole_body_ct_segmenter')
+    expect(data.body_composition).toBeDefined()
+    expect(data.body_composition.skeletal_muscle_index_cm2_m2).toBeGreaterThan(0)
+    expect(data.organ_volumetry_cm3).toBeDefined()
+    expect(data.organ_volumetry_cm3.liver).toBeGreaterThan(0)
+    expect(data.asset_id).toBeDefined()
+    expect(data.markdown_insert).toContain(`asset:${data.asset_id}`)
+  })
 })
 

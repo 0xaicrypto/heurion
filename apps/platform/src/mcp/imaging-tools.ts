@@ -662,6 +662,66 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
 
     return json(resultData)
   })
+
+  // 14. TotalSegmentator 全身体素 104 类解剖分割与肌少症量化 (imaging_whole_body_segment)
+  server.registerTool('imaging_whole_body_segment', {
+    description:
+      '运行 TotalSegmentator 全身体素 104 类解剖结构分割与 L3 断面肌少症 (Sarcopenia) 量化评估：' +
+      '提取骨骼肌面积 (SMA cm²)、骨骼肌质量指数 (SMI cm²/m²)、Prado 诊断阈值分层、内脏脂肪 (VAT) 与皮下脂肪 (SAT)、' +
+      'VAT/SAT 比值、肌肉衰减密度 (HU，评估肌脂肪浸润 Myosteatosis) 以及全腹部与胸腔主要器官 (肝/脾/肾/肺/骨骼) 3D 容积。' +
+      '自动生成多组织颜色编码切片与出版级 Markdown 分析报告。',
+    inputSchema: {
+      sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct, spleen_test'),
+      file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI 文件的绝对路径'),
+      patient_sex: z.enum(['M', 'F']).optional().describe('患者性别 (M/F)，用于肌少症切点分层（男性 52.4 cm²/m²，女性 38.5 cm²/m²），缺省 M'),
+      patient_height_m: z.number().positive().optional().describe('患者身高（米），用于计算 SMI，缺省 1.72'),
+      patient_weight_kg: z.number().positive().optional().describe('患者体重（千克），缺省 68.0'),
+      l3_slice_index: z.number().int().optional().describe('指定第三腰椎 L3 椎体横截面层号（缺省由算法自动依据骨骼体素峰值识别）'),
+      save_asset: z.boolean().optional().describe('是否将带颜色编码的切片图保存为用户资产，缺省 true'),
+      label: z.string().max(80).optional().describe('图注标签，例如「图 4 L3 层面骨骼肌与内脏脂肪量化」'),
+    },
+  }, async ({ sample_id, file_path, patient_sex, patient_height_m, patient_weight_kg, l3_slice_index, save_asset, label }) => {
+    let resultData: any
+    try {
+      const resp = await fetch(`${workerUrl}/api/v1/analyze/whole-body`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sample_id: sample_id || (!file_path ? 'chest_lung_ct' : undefined),
+          file_path,
+          patient_sex: patient_sex || 'M',
+          patient_height_m: patient_height_m || 1.72,
+          patient_weight_kg: patient_weight_kg || 68.0,
+          l3_slice_index,
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('whole_body_failed', `全身体素分割失败 HTTP ${resp.status}: ${errText}`)
+      }
+      resultData = await resp.json()
+    } catch (err) {
+      return fail('imaging_worker_offline', `连接影像微服务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (save_asset !== false && resultData.key_slice_png_base64 && claims.p.includes('write')) {
+      const b64Data = resultData.key_slice_png_base64.replace(/^data:image\/png;base64,/, '')
+      const pngBuf = Buffer.from(b64Data, 'base64')
+      const sliceIdx = resultData.l3_vertebra_slice_index ?? 0
+      const assetName = `${label || `totalsegmentator-l3-slice-${sliceIdx}`}.png`
+      const asset = store.putAsset({
+        owner: claims.u,
+        mime: 'image/png',
+        name: assetName,
+        bytes: pngBuf,
+      })
+      resultData.asset_id = asset.id
+      resultData.markdown_insert = `![${label || `TotalSegmentator L3 体成分分析切片 #${sliceIdx}`}](asset:${asset.id})`
+    }
+
+    return json(resultData)
+  })
 }
 
 function round(n: number, d = 1): number {

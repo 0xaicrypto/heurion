@@ -14,6 +14,7 @@ try:
     from .renderer import render_key_slice_png, png_to_base64
     from .radiomics import extract_radiomics_features
     from .interactive import interactive_segment_3d
+    from .totalsegmentator import analyze_whole_body_ct, generate_synthetic_whole_body_ct
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window, CT_WINDOWS
@@ -21,6 +22,7 @@ except (ImportError, ValueError):
     from renderer import render_key_slice_png, png_to_base64
     from radiomics import extract_radiomics_features
     from interactive import interactive_segment_3d
+    from totalsegmentator import analyze_whole_body_ct, generate_synthetic_whole_body_ct
 
 def generate_synthetic_ct_volume(
     shape: Tuple[int, int, int] = (48, 128, 128),
@@ -177,6 +179,33 @@ class MONAIEngine:
                 "has_lesion": True
             }
             return b_res
+
+        if model_name in ("whole_body_ct_segmenter", "totalsegmentator"):
+            try:
+                from .totalsegmentator import analyze_whole_body_ct
+            except (ImportError, ValueError):
+                from totalsegmentator import analyze_whole_body_ct
+            wb_args: Dict[str, Any] = {
+                "volume": volume,
+                "spacing": spacing,
+            }
+            if "patient_sex" in kwargs and kwargs["patient_sex"]:
+                wb_args["patient_sex"] = str(kwargs["patient_sex"])
+            if "patient_height_m" in kwargs and kwargs["patient_height_m"] is not None:
+                wb_args["patient_height_m"] = float(kwargs["patient_height_m"])
+            if "patient_weight_kg" in kwargs and kwargs["patient_weight_kg"] is not None:
+                wb_args["patient_weight_kg"] = float(kwargs["patient_weight_kg"])
+            if "l3_slice_index" in kwargs and kwargs["l3_slice_index"] is not None:
+                wb_args["l3_slice_index"] = int(kwargs["l3_slice_index"])
+            wb_res = analyze_whole_body_ct(**wb_args)
+            wb_res["recist_metrics"] = {
+                "longest_diameter_mm": round(float(np.sqrt(wb_res["body_composition"]["skeletal_muscle_area_cm2"] * 100.0)), 1),
+                "short_axis_mm": round(float(np.sqrt(wb_res["body_composition"]["visceral_adipose_cm2"] * 100.0)), 1),
+                "total_volume_cm3": wb_res["organ_volumetry_cm3"]["liver"],
+                "key_slice_index": wb_res["l3_vertebra_slice_index"],
+                "has_lesion": wb_res["body_composition"]["sarcopenia_detected"],
+            }
+            return wb_res
 
         t0 = time.time()
         tensor_vol = torch.from_numpy(volume).to(self.device)

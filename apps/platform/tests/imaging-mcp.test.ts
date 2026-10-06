@@ -160,6 +160,47 @@ beforeAll(async () => {
             summary_markdown: '**MONAI VISTA-3D 交互式点选分割结果**\n- 病灶总体积: 2.84 cm³'
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
+        if (u.pathname.includes('whole-body')) {
+          const pngBuf = Buffer.alloc(1500, 0)
+          pngBuf[0] = 0x89; pngBuf[1] = 0x50; pngBuf[2] = 0x4e; pngBuf[3] = 0x47
+          pngBuf[4] = 0x0d; pngBuf[5] = 0x0a; pngBuf[6] = 0x1a; pngBuf[7] = 0x0a
+          return new Response(JSON.stringify({
+            status: 'success',
+            model_name: 'whole_body_ct_segmenter',
+            modality: 'Whole-Body / Abdominal CT',
+            accelerator: 'CPU',
+            inference_duration_sec: 0.85,
+            volume_dimensions: [64, 128, 128],
+            voxel_spacing_mm: [1.5, 0.8, 0.8],
+            l3_vertebra_slice_index: 24,
+            body_composition: {
+              skeletal_muscle_area_cm2: 135.2,
+              skeletal_muscle_index_cm2_m2: 45.7,
+              smi_cutoff: 52.4,
+              sarcopenia_detected: true,
+              sarcopenia_status: '肌少症阳性 (Sarcopenia Positive)',
+              myosteatosis_detected: false,
+              muscle_radiodensity_hu: 42.5,
+              visceral_adipose_cm2: 115.8,
+              subcutaneous_adipose_cm2: 140.2,
+              total_adipose_cm2: 256.0,
+              vat_to_sat_ratio: 0.826,
+              sarcopenic_obesity: true,
+            },
+            organ_volumetry_cm3: {
+              liver: 1420.5,
+              spleen: 195.2,
+              kidneys: 285.0,
+              lungs: 3850.0,
+              skeleton_bones: 2150.0,
+              splenomegaly: false,
+              hepatomegaly: false,
+            },
+            key_slice_png_base64: 'data:image/png;base64,' + pngBuf.toString('base64'),
+            key_slice_png_size_bytes: 1500,
+            summary_markdown: '### TotalSegmentator 全身体素 104 类解剖分割与肌少症分析报告\n- SMI: 45.7 cm²/m²\n- 状态: 肌少症阳性',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
         if (u.pathname.includes('/analyze/')) {
           let body: any = {}
           try {
@@ -630,6 +671,32 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(res.data.asset_id).toBeDefined()
     expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
     expect(res.data.positive_prompts_count).toBeGreaterThanOrEqual(1)
+  }, 30000)
+
+  it('14. imaging_whole_body_segment: TotalSegmentator 104 类解剖分割与 L3 断面肌少症量化', async () => {
+    const { call } = await connectImagingMcp()
+    const res = await call('imaging_whole_body_segment', {
+      sample_id: 'chest_lung_ct',
+      patient_sex: 'M',
+      patient_height_m: 1.75,
+      patient_weight_kg: 70.0,
+      save_asset: true,
+      label: '图 7 L3 断面骨骼肌与体成分分析',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.model_name).toBe('whole_body_ct_segmenter')
+    expect(res.data.body_composition).toBeDefined()
+    expect(res.data.body_composition.skeletal_muscle_area_cm2).toBeGreaterThan(0)
+    expect(res.data.body_composition.skeletal_muscle_index_cm2_m2).toBeGreaterThan(0)
+    expect(res.data.body_composition.smi_cutoff).toBe(52.4)
+    expect(res.data.body_composition.visceral_adipose_cm2).toBeGreaterThan(0)
+    expect(res.data.organ_volumetry_cm3).toBeDefined()
+    expect(res.data.organ_volumetry_cm3.liver).toBeGreaterThan(0)
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
+    expect(res.data.summary_markdown).toContain('TotalSegmentator')
   }, 30000)
 })
 

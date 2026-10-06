@@ -109,6 +109,17 @@ class InteractiveSegmentRequest(BaseModel):
     plane: Optional[str] = "axial"
     slice_index: Optional[int] = None
 
+class WholeBodyAnalysisRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    patient_sex: Optional[str] = "M"
+    patient_height_m: Optional[float] = 1.72
+    patient_weight_kg: Optional[float] = 68.0
+    l3_slice_index: Optional[int] = None
+    z_slices: Optional[int] = 64
+    y_dim: Optional[int] = 128
+    x_dim: Optional[int] = 128
+
 
 @app.get("/health")
 def health_check():
@@ -552,6 +563,36 @@ def run_interactive_segmentation_endpoint(req: InteractiveSegmentRequest = Body(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Interactive segmentation failed: {str(e)}")
+
+@app.post("/api/v1/analyze/whole-body")
+def run_whole_body_analysis_endpoint(req: WholeBodyAnalysisRequest = Body(...)):
+    """Executes MONAI TotalSegmentator 104-class multi-organ and L3 sarcopenia analysis."""
+    target = req.file_path or (str(DATA_DIR / f"{req.sample_id}.nii.gz") if req.sample_id else None)
+    if target and os.path.exists(target):
+        return engine.analyze_file(
+            file_path=target,
+            model_name="whole_body_ct_segmenter",
+            patient_sex=req.patient_sex,
+            patient_height_m=req.patient_height_m,
+            patient_weight_kg=req.patient_weight_kg,
+            l3_slice_index=req.l3_slice_index
+        )
+    try:
+        from .totalsegmentator import generate_synthetic_whole_body_ct, analyze_whole_body_ct
+    except (ImportError, ValueError):
+        from totalsegmentator import generate_synthetic_whole_body_ct, analyze_whole_body_ct
+    vol, _ = generate_synthetic_whole_body_ct(
+        shape=(req.z_slices or 64, req.y_dim or 128, req.x_dim or 128),
+        spacing=(1.5, 0.8, 0.8)
+    )
+    return analyze_whole_body_ct(
+        volume=vol,
+        spacing=(1.5, 0.8, 0.8),
+        patient_sex=req.patient_sex or "M",
+        patient_height_m=req.patient_height_m or 1.72,
+        patient_weight_kg=req.patient_weight_kg or 68.0,
+        l3_slice_index=req.l3_slice_index
+    )
 
 @app.post("/api/v1/analyze/upload")
 async def run_upload_analysis(
