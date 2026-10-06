@@ -240,6 +240,7 @@ export function initUserMenu(me: Me, api: <T = any>(path: string, opts?: Request
     if (!item) return
     menu.hidden = true
     switch (item.dataset.action) {
+      case 'help': document.dispatchEvent(new CustomEvent('heurion:help')); break
       case 'settings': openSettings(me, api, notify); break
       case 'admin': void openAdmin(me, api, notify); break
       case 'tenant': void openTenant(me, api, notify); break

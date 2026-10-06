@@ -20,6 +20,7 @@ import { Provider, type ProviderStatus } from './provider.ts'
 import { applyTheme, mountThemeSwitch } from './theme.ts'
 import { photoFigure } from './photos.ts'
 import { openPhotoSearch, photoSearchEnabled } from './unsplash.ts'
+import { openHelpGuide, importHelpAsDoc } from './help.ts'
 
 const TOKEN = storedToken()
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
@@ -195,6 +196,14 @@ $('newProject').onclick = async () => {
 }
 
 $('trashBtn').onclick = () => void openTrash()
+$('helpBtn').onclick = () => openHelpGuide()
+document.addEventListener('heurion:help', (e: Event) => {
+  const detail = (e as CustomEvent).detail
+  openHelpGuide(detail?.section)
+})
+document.addEventListener('heurion:import-help-doc', () => {
+  void importHelpAsDoc(api, loadDocs, open, (msg, err) => showNotice(msg, err))
+})
 const library = initLibrary(api, () => TOKEN, (m, e) => showNotice(m, e), { showPage: (cls, title) => showPage(cls, title) })
 const memory = initMemory(api, (m, e) => showNotice(m, e), id => void open(id))
 const actions = initActions(api, (m, e) => showNotice(m, e))
@@ -323,8 +332,21 @@ function showWelcome(): void {
 }
 
 $('page').addEventListener('click', async e => {
-  const t = (e.target as HTMLElement).closest('[data-start], [data-example]') as HTMLElement | null
-  if (!t || session) return
+  const t = (e.target as HTMLElement).closest('[data-start], [data-example], [data-guide-action], [data-guide-topic]') as HTMLElement | null
+  if (!t) return
+  if (t.dataset.guideAction === 'open') {
+    openHelpGuide()
+    return
+  }
+  if (t.dataset.guideAction === 'import') {
+    await importHelpAsDoc(api, loadDocs, open, (msg, err) => showNotice(msg, err))
+    return
+  }
+  if (t.dataset.guideTopic) {
+    openHelpGuide(t.dataset.guideTopic)
+    return
+  }
+  if (session) return
   if (t.dataset.start === 'upload') { $('uploadInput').click(); return }
   if (t.dataset.start) { await createDoc(t.dataset.start as 'doc' | 'deck'); return }
   // 示例：新建对应的文档，把指令填进对话框（由用户确认后发送）
