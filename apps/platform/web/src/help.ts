@@ -658,7 +658,7 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
           <button class="quiet" data-close aria-label="关闭">✕</button>
         </div>
       </div>
-      <div class="dialog-body help-body">
+      <div class="help-split-layout">
         <aside class="help-sidebar" id="helpSidebar">
           <div class="help-sidebar-title">手册目录导航</div>
           <nav class="help-nav" id="helpNav">
@@ -703,18 +703,45 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
 
   // 导航点击跳转
   const navContainer = dlg.querySelector('#helpNav')!
-  const contentArea = dlg.querySelector('#helpContentArea')!
+  const contentArea = dlg.querySelector('#helpContentArea') as HTMLElement
   navContainer.addEventListener('click', e => {
     const item = (e.target as HTMLElement).closest('.help-nav-item') as HTMLElement | null
     if (!item || !item.dataset.target) return
     const targetId = item.dataset.target
     const secEl = dlg.querySelector(`#help-sec-${targetId}`) as HTMLElement | null
-    if (secEl) {
+    if (secEl && contentArea) {
       navContainer.querySelectorAll('.help-nav-item').forEach(b => b.classList.remove('active'))
       item.classList.add('active')
-      secEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      contentArea.scrollTo({
+        top: secEl.offsetTop - contentArea.offsetTop,
+        behavior: 'smooth'
+      })
     }
   })
+
+  // 滚动时自动高亮左侧当前章节
+  let scrollTimer: any = null
+  contentArea.addEventListener('scroll', () => {
+    if (scrollTimer) return
+    scrollTimer = setTimeout(() => {
+      scrollTimer = null
+      const sections = Array.from(dlg.querySelectorAll<HTMLElement>('.help-section'))
+      const currentScroll = contentArea.scrollTop + 60
+      for (let i = sections.length - 1; i >= 0; i--) {
+        const s = sections[i]
+        if (!s) continue
+        if (s.offsetTop - contentArea.offsetTop <= currentScroll) {
+          const id = s.dataset.secId
+          if (id) {
+            navContainer.querySelectorAll<HTMLElement>('.help-nav-item').forEach(b => {
+              b.classList.toggle('active', b.dataset.target === id)
+            })
+          }
+          break
+        }
+      }
+    }, 80)
+  }, { passive: true })
 
   // 搜索过滤
   const filterInput = dlg.querySelector<HTMLInputElement>('#helpFilterInput')
@@ -754,8 +781,10 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
   if (initialSectionId) {
     setTimeout(() => {
       const secEl = dlg.querySelector(`#help-sec-${initialSectionId}`) as HTMLElement | null
-      if (secEl) secEl.scrollIntoView({ behavior: 'auto', block: 'start' })
-    }, 50)
+      if (secEl && contentArea) {
+        contentArea.scrollTop = secEl.offsetTop - contentArea.offsetTop
+      }
+    }, 60)
   }
 }
 

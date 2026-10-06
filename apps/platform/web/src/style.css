@@ -2488,24 +2488,31 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   line-height: 1.4;
 }
 
-/* —— 产品使用手册全屏/大弹窗 —— */
-.help-dialog {
-  width: min(1160px, calc(100vw - 32px));
-  height: min(88vh, 860px);
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
+/* —— 产品使用手册全屏/大弹窗（严格左右分栏布局） —— */
+.dialog-card.help-dialog {
+  width: min(1200px, calc(100vw - 32px)) !important;
+  height: min(88vh, 860px) !important;
+  max-height: calc(100vh - 32px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid var(--line-strong) !important;
+  background: var(--panel) !important;
+  box-shadow: var(--shadow) !important;
 }
 .help-head {
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--panel);
-  position: relative;
-  z-index: 2;
+  flex: 0 0 54px !important;
+  height: 54px !important;
+  box-sizing: border-box !important;
+  padding: 0 20px !important;
+  border-bottom: 1px solid var(--line) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  background: var(--panel) !important;
+  position: relative !important;
+  z-index: 2 !important;
 }
 .help-head-title {
   display: flex;
@@ -2542,21 +2549,32 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   border-color: var(--mint);
   outline: none;
 }
-.help-body {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-  padding: 0;
-  gap: 0;
+.help-split-layout {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: calc(100% - 54px) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  gap: 0 !important;
+  background: var(--panel) !important;
 }
 .help-sidebar {
-  width: 280px;
-  flex: none;
-  background: var(--raised);
-  border-right: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
+  width: 280px !important;
+  min-width: 280px !important;
+  max-width: 280px !important;
+  flex: 0 0 280px !important;
+  height: 100% !important;
+  background: var(--raised) !important;
+  border-right: 1px solid var(--line) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
 }
 .help-sidebar-title {
   padding: 14px 16px 8px;
@@ -2626,10 +2644,14 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   line-height: 1.5;
 }
 .help-content-area {
-  flex: 1;
-  overflow-y: auto;
-  padding: 28px 36px;
-  background: var(--panel);
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  height: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding: 32px 48px 80px !important;
+  background: var(--panel) !important;
+  box-sizing: border-box !important;
 }
 .help-section {
   margin-bottom: 48px;
@@ -2878,22 +2900,24 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   .welcome-guide-topics {
     grid-template-columns: repeat(2, 1fr);
   }
-  .help-dialog {
-    width: 100%;
-    height: 100%;
-    max-height: 100vh;
+  .dialog-card.help-dialog {
+    width: 100% !important;
+    height: 100% !important;
+    max-height: 100vh !important;
   }
-  .help-body {
-    flex-direction: column;
+  .help-split-layout {
+    flex-direction: column !important;
   }
   .help-sidebar {
-    width: 100%;
-    max-height: 160px;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    max-height: 160px !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--line) !important;
   }
   .help-content-area {
-    padding: 18px 20px;
+    padding: 18px 20px 40px !important;
   }
   .help-grid-3, .help-grid-2 {
     grid-template-columns: 1fr;
