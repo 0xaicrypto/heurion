@@ -92,6 +92,302 @@ export const HELP_SECTIONS: HelpSection[] = [
     `
   },
   {
+    id: 'concepts',
+    title: '医学影像与核心逻辑通俗通识课 (零基础必读)',
+    badge: '小白通识',
+    icon: icon('book', { size: 16 }),
+    summary: '专为非医学专业与跨学科人员编写：用生活化比喻系统拆解 CT/MRI/超声原理、体素与亨氏单位、窗宽窗位、MPR 三正交、印戒征与 BAR、高密度粘液栓、3D 弹性配准、差分热力图、RECIST 1.1、肌少症与影像组学。',
+    contentHtml: `
+      <div class="help-section-head">
+        <h3>2. 医学影像与核心逻辑通俗通识课 (Zero-to-One Clinical Concepts Primer)</h3>
+        <span class="help-tag ok">零基础速成 · 跨学科必读</span>
+      </div>
+      <p class="help-lead">医学影像与临床智能融合了放射物理学、人体解剖学、免疫病理学与高维计算机视觉。本章节专为非医学背景的工程师、科研人员及产品设计者编写，抛弃晦涩难懂的死记硬背，采用生活化生动比喻与因果链条，带您从零建立完整的临床认知模型。</p>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.1 常见影像模态到底能看清什么？(CT vs MRI vs 超声 vs PET-CT)</span>
+          <span class="help-concept-badge">成像物理原理</span>
+        </div>
+        <p>很多初学者分不清做一次检查到底该拍 CT 还是磁共振 (MRI)。其实不同的设备就像具有不同超能力的“透视镜”：</p>
+        <div class="help-analogy">
+          <b>💡 生活化比喻：</b>
+          <ul>
+            <li><b>CT (计算机断层扫描)</b>：就像把一个西瓜用极薄的刀切成几百片，每一片都用高能 X 光透视拍摄。它对<b>密度差异</b>极度敏感，最擅长看骨头（硬骨头白亮）和肺部（空气纯黑，结节灰白）。</li>
+            <li><b>MRI (磁共振成像)</b>：完全没有辐射。它利用强磁场让体内的水分子（氢原子）“跳舞并产生共振”，接收水分子释放的无线电波。它对<b>含水软组织</b>极其敏感，最擅长看大脑神经、脊髓、关节韧带和前列腺。</li>
+            <li><b>超声波 (Ultrasound)</b>：就像海豚或军用潜艇的声呐雷达，探头向身体里发射超声波并接收回音。它能够实时看到心脏搏动和血管里的血液流动（红蓝血流多普勒），适合查甲状腺、乳腺、胆囊和胎儿。</li>
+            <li><b>PET-CT (正电子发射断层显像)</b>：CT 负责给身体画“精细解剖地图”，PET 则给身体装上“能量代谢探针”。因为恶性肿瘤细胞生长飞快，疯狂抢吃葡萄糖，注入带标记的微量“假糖”后，肿瘤细胞就会在扫描仪下像灯泡一样发光！</li>
+          </ul>
+        </div>
+        <div class="help-why-need">
+          <b>❓ 为什么临床要联合检查？</b> 
+          因为“同病异影，同影异病”。例如一个肺部阴影，CT 看到形态像肿瘤，但无法确定是不是坏死组织；结合 PET-CT 发现阴影区域葡萄糖代谢极高，结合增强 MRI 发现周围血管侵犯，三者合一才能下定论。
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.2 为什么叫“体素 (Voxel)”？从二维贴纸到三维乐高积木</span>
+          <span class="help-concept-badge">空间几何</span>
+        </div>
+        <p>普通电脑屏幕上的照片由长方形的<b>像素 (Pixel, Picture Element)</b> 构成，就像一张平面贴纸，只有长和宽，没有厚度。</p>
+        <div class="help-analogy">
+          <b>💡 生活化比喻：</b>
+          医学扫描生成的是三维立体数据。每一个采样点不仅有横纵坐标，还有扫描层与层之间的<b>切片厚度 (Slice Thickness)</b>。这个具有物理体积的三维立方块就叫<b>体素 (Voxel = Volume Pixel)</b>，就像一块具有明确长、宽、高尺寸的微小<b>乐高积木</b>。
+        </div>
+        <div class="help-why-need">
+          <b>❓ 为什么不能直接拿 2D 像素算面积和体积？（各向异性痛点）</b>
+          医院为了省时间或减少患者受辐射，经常扫描层厚较厚（例如水平切片上每个像素是 0.75×0.75 mm，但层与层之间间隔厚达 5 mm）。这时积木不是正方体，而是被压扁拉长的扁长方体（这在数学上叫<b>各向异性 Anisotropy</b>）。如果直接斜着切片或者算病灶体积，图像就会被严重拉伸失真！
+        </div>
+        <p><b>💻 Heurion 平台怎么处理？</b> 系统内置高阶样条插值重采样引擎，在影像导入瞬间全自动将体素统一重构成规整的 1×1×1 mm³ 各向同性立方体积木，确保在任意切面上测量的体积和长径都分毫不差。</p>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.3 亨氏单位 (HU) 与窗宽窗位 (WW/WL)：医学“偏光太阳镜”的秘密</span>
+          <span class="help-concept-badge">密度刻度与调窗</span>
+        </div>
+        <p>在 CT 图像中，不同组织显示出不同的黑白灰度，这个灰度对应的物理量叫<b>亨氏单位 (Hounsfield Unit, HU)</b>，以 CT 发明人、诺贝尔奖得主高弗雷·亨斯菲尔德命名。</p>
+        <div class="help-analogy">
+          <b>💡 亨氏单位的标尺（以水为零点）：</b>
+          <ul>
+            <li><b>空气</b>：最轻、阻挡 X 光最少，定为 <code>-1000 HU</code>（图像上呈纯黑）；</li>
+            <li><b>纯水</b>：标准零点，定为 <code>0 HU</code>；</li>
+            <li><b>普通软组织与肌肉</b>：主要是水和蛋白质，一般在 <code>+40 ~ +50 HU</code>（中灰色）；</li>
+            <li><b>致密骨骼与钙化</b>：含钙高、阻挡射线极强，高达 <code>+1000 ~ +3000 HU</code>（极亮纯白）。</li>
+          </ul>
+        </div>
+        <div class="help-analogy">
+          <b>💡 为什么需要窗宽窗位 (Windowing)？——“偏光太阳镜”的比喻</b>
+          人眼的视网膜在同一时刻最多只能识别 20~30 级灰度变化，但 CT 仪器的物理探测范围从 -1000 到 +3000 足足有 4000 多个灰阶！如果把这 4000 个数值硬生生挤在屏幕上，所有软组织都会挤成一片模糊的死灰。<br>
+          因此，医生必须带上一副<b>“智能偏光太阳镜”</b>，只看我们关心的那一段密度：
+          <ul>
+            <li><b>窗位 (Window Level, 窗中心)</b>：你要观察的目标组织的中心密度（看肺泡空气就定在 -600 HU；看心脏纵隔就定在 +40 HU）；</li>
+            <li><b>窗宽 (Window Width, 视野跨度)</b>：围绕窗位上下展开多少个数值跨度来映射显示器黑白。</li>
+          </ul>
+        </div>
+        <p><b>💻 Heurion 平台怎么操作？</b> 顶部工具栏内置一键快捷调窗：按 <b>肺窗</b>（看结节与支气管）、<b>纵隔窗</b>（看心脏大血管与粘液栓）、<b>腹部窗</b>（看肝肾胰腺）、<b>骨窗</b>（看骨折线）或鼠标直接在画面上按住左右上下拖拽无级微调。</p>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.4 什么是 MPR 三正交切片？像切吐司一样透视人体</span>
+          <span class="help-concept-badge">空间视图</span>
+        </div>
+        <p>平时体检拿到的 CT 胶片大都是横着切的（医生叫轴位或横断面）。但在复杂病变面前，单看横切面很容易“管中窥豹”。</p>
+        <div class="help-analogy">
+          <b>💡 生活化比喻：切长方体吐司面包的三个方向</b>
+          <ul>
+            <li><b>横断面 (Axial / 轴状面)</b>：平放吐司，从头顶到脚底一片片平行切开（从上往下俯视人）；</li>
+            <li><b>冠状面 (Coronal / 额状面)</b>：竖放吐司，从鼻尖到后脑勺一片片切开（正面面对人）；</li>
+            <li><b>矢状面 (Sagittal / 侧状面)</b>：侧放吐司，从左耳朵到右耳朵一片片切开（侧面看人）。</li>
+          </ul>
+        </div>
+        <div class="help-why-need">
+          <b>❓ 为什么三正交联动不可或缺？</b>
+          支气管像树枝一样斜着向四面八方生长。如果一根支气管斜着穿过横切面，医生只看到一个小圆点，无法判断这根管子在纵向上有没有被一整条长长的粘液栓堵死。而在冠状面和矢状面上，整根树枝的走向一目了然！
+        </div>
+        <p><b>💻 Heurion 平台怎么操作？</b> 浏览器支持 WebGL2 实时四视图联动：移动任意一个切片上的十字准星，其他两个正交平面与 3D 立体模型会瞬间联动对齐到该空间点，毫秒级同步。</p>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.5 支气管扩张的铁证：为什么叫“印戒征”？BAR 怎么算？</span>
+          <span class="help-concept-badge">呼吸病学经典体征</span>
+        </div>
+        <div class="help-analogy">
+          <b>💡 正常解剖的“贴身卫士”常识：</b>
+          在健康的肺部，输送空气的“支气管”和输送血液的“肺动脉小血管”是一对形影不离的搭档。在肺组织的任何一个截面上，它们总是紧挨在一起同行。正常情况下，输送空气的管子内径比血管稍小一点或差不多大。
+        </div>
+        <div class="help-analogy">
+          <b>💡 为什么叫“印戒征 (Signet Ring Sign)”？</b>
+          当支气管因反复感染或变态反应遭到破坏而发生病理性扩张时，支气管腔变得异常宽大，而旁边的血管大小保持不变。在横截面上看：扩张的支气管是一个透亮的大圆圈（充气空腔），旁边紧挨着的小血管是一个白白实实的小圆点——两者组合在一起，极像西方古典贵族佩戴的<b>一枚镶嵌着珍珠宝石的指环印章</b>！
+        </div>
+        <div class="help-why-need">
+          <b>❓ BAR (支气管-伴行动脉比) 的数学计算：</b>
+          BAR = 支气管内腔直径 / 伴行动脉外径。
+          <ul>
+            <li>BAR &lt; 1.0：正常；</li>
+            <li>BAR &ge; 1.0：明确存在支气管扩张；BAR 数值越大（如 1.45），扩张越严重。</li>
+          </ul>
+        </div>
+        <p><b>💻 Heurion 平台怎么做？</b> MONAI 深度学习网络自动在三维体素中追踪伴行血管对，毫秒级测算出精准至 0.01mm 的 BAR 数值并用绿色/橙色标签直观标出，无需医生拿尺子在屏幕上费时手工测量。</p>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.6 什么是高密度粘液栓 (HAM)？为什么痰栓会变成“牙膏泥”？</span>
+          <span class="help-concept-badge">ABPA 关键病理标志</span>
+        </div>
+        <p>普通感冒或支气管炎咳出的痰主要成分是水和粘液，在 CT 上的密度很低（约 0~20 HU，比普通肌肉暗很多）。</p>
+        <div class="help-analogy">
+          <b>💡 痰栓为什么会变“硬”变“亮”？</b>
+          在变应性支气管肺曲霉病 (ABPA) 这种免疫性疾病中，人体免疫细胞（嗜酸性粒细胞）在气道里疯狂聚集杀敌，最终大量同归于尽崩解，释放出极高浓度的钙、铁、锰等金属离子，并形成针尖状的“夏科-雷登结晶”。浓缩脱水后，稀薄的痰液变成了如同牙膏泥甚至橡胶块一样致密的栓子，把扩张的气道死死堵死（医学上叫指套征或牙膏征）。
+        </div>
+        <div class="help-why-need">
+          <b>❓ 为什么高密度粘液栓 (HAM) 是诊断金标准？</b>
+          在 CT 纵隔窗下观察，如果气管里的粘液栓密度<b>超过了旁边脊柱胸壁肌肉的密度（肌肉一般在 40~50 HU，HAM 常高达 70~120 HU 以上）</b>，即可确诊为高密度粘液栓 (HAM)。出现 HAM 说明患者免疫反应剧烈，是极易复发的高危重症信号，必须启动全身糖皮质激素联合抗真菌治疗！
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.7 随访对比为什么要配准？刚性配准 vs 弹性形变配准 (DIR) 与差分热力图</span>
+          <span class="help-concept-badge">纵向多期随访</span>
+        </div>
+        <p>患者经过 3 个月治疗后回医院复查 CT，医生想知道“原来的病灶到底小了没有”。但直接对比两次片子非常困难。</p>
+        <div class="help-analogy">
+          <b>💡 为什么不能直接叠图对比？——“气球”的比喻</b>
+          人的肺就像一个充满弹性的大气球。两次检查相隔几个月，患者不可能吸进一模一样多的空气，躺在检查床上的肩膀体位也稍微歪了一点点。稍微吸大一口气，肺里的结节就能移动 2~3 厘米！如果把这两次扫描直接叠在一起，就像把两张不同角度拍摄的照片叠图，满屏都是错位假象。
+        </div>
+        <div class="help-analogy">
+          <b>💡 刚性配准 vs 弹性形变配准 (DIR)：</b>
+          <ul>
+            <li><b>刚性配准 (Rigid Registration)</b>：就像把两张硬纸板在桌上挪动、旋转对齐四边。它只能纠正整体的平移和歪斜，无法对付肺泡局部拉伸；</li>
+            <li><b>3D 非刚性弹性形变配准 (Deformable Image Registration, DIR)</b>：就像把一块被揉皱的面团或丝巾，用数学形变位移场 (DVF) 在电脑里逐个体素抚平、拉伸，让随访 CT 里的每一根血管、每一根肋骨和基线 CT 达到体素级完美重叠！</li>
+          </ul>
+        </div>
+        <div class="help-why-need">
+          <b>❓ 差分吸收热力图 (Difference Heatmap) 的奇迹：</b>
+          完美对齐后，电脑计算前后两次 CT 每个像素的密度差异相减：
+          <ul>
+            <li><span style="color:#00ff93; font-weight:600;">● 绿色</span>：代表病灶吸收缩小了（治疗起效，好转缓解！）；</li>
+            <li><span style="color:#ff6b6b; font-weight:600;">● 红色</span>：代表新出现了病灶或原来的病灶变大了（病情恶化进展！）；</li>
+            <li><span style="color:#ffd000; font-weight:600;">● 黄色</span>：代表病灶既没有缩小也没有长大（稳定状态）。</li>
+          </ul>
+          医生和患者一眼就能看懂治疗效果，彻底取代耗费数小时的人工逐层肉眼肉测。
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.8 实体瘤缩了还是大了？肿瘤界通用的尺子：RECIST 1.1</span>
+          <span class="help-concept-badge">肿瘤疗效评估</span>
+        </div>
+        <p>在抗肿瘤临床试验中，评价一种新靶向药到底管不管用，全世界有一把公认的度量衡——<b>RECIST 1.1 (实体瘤疗效评价标准)</b>。</p>
+        <div class="help-analogy">
+          <b>💡 怎么测量和分类？</b>
+          挑选最具代表性的肿瘤靶病灶（最多 5 个），用卡尺量取它们的最大长径，将长径加在一起算总和 (Sum of Diameters, SOD)：
+          <ul>
+            <li><b>CR (完全缓解，Complete Response)</b>：所有靶病灶彻底消失，全部扫清！</li>
+            <li><b>PR (部分缓解，Partial Response)</b>：病灶长径总和缩小了 30% 以上（有效缩小）；</li>
+            <li><b>PD (疾病进展，Progressive Disease)</b>：病灶长径总和增大了 20% 以上，或者冒出了任何新病灶（恶化失控）；</li>
+            <li><b>SD (疾病稳定，Stable Disease)</b>：缩小不足 30%、增大不足 20%，处于胶着僵持期。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.9 隐匿性肌少症 (Sarcopenia)：为什么要在第三腰椎 (L3) 算 SMI？</span>
+          <span class="help-concept-badge">机体成分分析</span>
+        </div>
+        <div class="help-analogy">
+          <b>💡 临床痛点：“虚胖”的癌症患者</b>
+          很多癌症晚期患者站上体重秤发现体重正常甚至偏胖，但医生却很担忧。因为这些患者体内的肌肉已经被癌细胞大量吞噬消耗，被无用的水肿和脂肪填满，这种现象叫<b>“隐匿性肌少症 (Sarcopenia)”</b>。肌肉量极度匮乏的患者，往往扛不住下一轮化疗或靶向药的毒性副作用，极易发生严重感染甚至早期死亡。
+        </div>
+        <div class="help-why-need">
+          <b>❓ 为什么全世界医生都选第三腰椎 (L3)？</b>
+          大量解剖学和尸检数据证实：<b>人体第 3 腰椎切面上的骨骼肌总面积（包括腰大肌、竖脊肌和腹部肌肉），与人体全身的总肌肉储备有着严格正比的数学线性关系！</b> 只要扫一个腹部平扫，看一眼 L3 层面，就能准确推算全身肌肉营养状况。
+        </div>
+        <div class="help-why-need">
+          <b>❓ 骨骼肌指数 (SMI) 的计算公式：</b>
+          SMI = L3 层面骨骼肌总横截面积 (cm²) / [患者身高 (m)]² (单位: cm²/m²)。
+          <ul>
+            <li>依据国际权威 Prado 共识标准：男性 SMI &lt; 52.4 cm²/m²、女性 SMI &lt; 38.5 cm²/m² 即可确诊肌少症预警！</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.10 什么是 IBSI 影像组学 (Radiomics)？“肉眼看不见的微观数字指纹”</span>
+          <span class="help-concept-badge">AI 科研特征工程</span>
+        </div>
+        <p>人类放射科医生即使经验再丰富，肉眼也只能看到“这个结节边缘不太光滑、里面有点发白”。</p>
+        <div class="help-analogy">
+          <b>💡 电脑眼中的微观纹理：</b>
+          对计算机而言，医学影像本质是一个包含成千上万个离散数值的三维数字矩阵。两个表面看起来一样的肿瘤，一个内部细胞排列松散均匀，另一个内部细胞疯狂挤压增殖、灰度剧烈跳跃。这些隐藏在像素灰度分布背后的高阶微观数学特征，就叫<b>影像组学特征 (Radiomics Features)</b>。
+        </div>
+        <div class="help-why-need">
+          <b>❓ 提取这些特征有什么用？</b>
+          IBSI 国际标准定义了 107 个特征（包括球形度、一阶直方图、灰度共生矩阵 GLCM、灰度游程 GLRLM 等）。把这些特征提取出来存入表格，科研人员可以用随机森林、XGBoost 或深度学习模型，<b>在不开刀做病理穿刺的前提下，提前预测肿瘤基因突变状态 (如 EGFR、KRAS) 以及患者对 PD-1 免疫治疗是否敏感！</b>
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.11 什么是 PET-CT 的 SUV？肿瘤细胞疯狂吃糖的信号</span>
+          <span class="help-concept-badge">分子代谢显像</span>
+        </div>
+        <div class="help-analogy">
+          <b>💡 生活化比喻：</b>
+          把身体想象成一个热闹的城市。恶性肿瘤细胞就像正在秘密举行狂欢派对的房间。我们向全身静脉注射一种带有微量安全同位素辐射的“假葡萄糖”(&sup1;&sup8;F-FDG)。狂欢的肿瘤细胞为了增殖抢着大口吃糖，吃得越多，发出的放射线就越强。<br>
+          <b>SUV (Standardized Uptake Value, 标准摄取值)</b> 就是测量这个病灶吃糖的强度到底比人体全身平均水平高出几倍！
+        </div>
+        <div class="help-why-need">
+          <b>❓ 核心参数指标说明：</b>
+          <ul>
+            <li><b>SUVmax (最大标准摄取值)</b>：病灶中最活跃、发光最亮的那个单点的摄取倍数。良性病灶往往较低，恶性肿瘤 SUVmax 常常超过 2.5 甚至高达 15~30 以上；</li>
+            <li><b>MTV (代谢肿瘤体积)</b>：病灶中真正具有高代谢活性的肿瘤核心体积（剔除了死掉的坏死区）；</li>
+            <li><b>TLG (总糖酵解量)</b>：TLG = MTV &times; SUVmean，代表肿瘤全身消耗葡萄糖的总能量负荷，是评估靶向药物把癌细胞饿死了多少的最佳指标。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.12 放疗的“电子围栏”：什么是 DICOM RT-STRUCT？</span>
+          <span class="help-concept-badge">肿瘤放射治疗规划</span>
+        </div>
+        <div class="help-analogy">
+          <b>💡 生活化比喻：</b>
+          肿瘤放射治疗（放疗）就像用超高能量的光子射线机关枪消灭癌细胞。但身体里有很多极其娇嫩的重要器官（比如脊髓神经、心脏大血管、直肠壁），一旦被射线过量打中就会瘫痪或坏死。因此，医生必须在 3D 图像上给射线规划精密的“电子围栏”：
+          <ul>
+            <li><b>GTV (大体肿瘤体积)</b>：肉眼或 AI 明确看到的实体肿瘤；</li>
+            <li><b>CTV (临床靶区)</b>：GTV 加上可能潜伏有微小癌细胞扩散的周边安全防御缓冲带；</li>
+            <li><b>OAR (危及器官)</b>：周边需要千方百计避让的正常器官（如脑干、视神经、脊髓）。</li>
+          </ul>
+        </div>
+        <p><b>💻 什么是 RT-STRUCT？</b> 它是国际医学数字影像标准 (DICOM) 中专门用来存放这些 3D 勾画闭合多边形轮廓线的文件标准。Heurion 支持将 AI 分割的 3D 轮廓一键导出为标准的 DICOM RT-STRUCT，直接发给医院放疗机（瓦里安、医科达加速器）执行照射。</p>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.13 为什么不能单凭一张片子下诊断？多模态因果诊断链的闭环逻辑</span>
+          <span class="help-concept-badge">临床循证思维</span>
+        </div>
+        <div class="help-analogy">
+          <b>💡 现代临床三元证据链：</b>
+          医生在看病时，从来不敢仅仅因为“CT 发现肺里有一块阴影”就草率下结论。因为同样的阴影既可能是真菌感染，也可能是肺结核或恶性肺癌。必须结合三层证据相互锁死：
+          <ul>
+            <li><b>第一层（宏观解剖形态 · 影像）</b>：CT 发现中央型支气管扩张伴高密度粘液栓 (HAM)；</li>
+            <li><b>第二层（机体免疫反应 · 化验生化）</b>：验血发现嗜酸性粒细胞绝对值超标 (&gt; 0.5 &times; 10⁹/L)，总 IgE 突破天际 (&gt; 1000 IU/mL)，烟曲霉特异性抗体阳性；</li>
+            <li><b>第三层（病原学与微观病理 · 金标准）</b>：气管镜洗出黏稠黄色痰栓，镜下找到曲霉菌丝或夏科-雷登结晶。</li>
+          </ul>
+        </div>
+        <p><b>💻 Heurion 平台怎么做？</b> 系统在「患者中心」将 3D 影像量化值、多期化验趋势线与临床基因特征自动织成一张互锁的<b>因果推演图谱</b>，杜绝任何孤立片段带来的误诊误治。</p>
+      </div>
+
+      <div class="help-concept-box">
+        <div class="help-concept-head">
+          <span>2.14 为什么必须严防死守“零 PHI”？法律底线与本地沙盒隔离</span>
+          <span class="help-concept-badge">医疗合规与法律边界</span>
+        </div>
+        <p><b>PHI 是什么？</b> 全称是 <b>Protected Health Information (受保护的健康信息)</b>。包括患者真实姓名、身份证号码、电话号码、医保卡号、住院号、甚至带有面部特征的 3D 头颅扫描。</p>
+        <div class="help-why-need">
+          <b>❓ 为什么不能直接将带姓名的病历发给 AI 模型？</b>
+          国内外法律法规（HIPAA、GDPR、数据安全法）对医疗健康隐私有极其严苛的追责要求。任何真实的患者姓名如果未经许可被上传到第三方大模型云端服务器进行训练或推理，一旦泄露，医疗机构和科研人员将面临严重的行政处罚甚至吊销执业资质。
+        </div>
+        <p><b>💻 Heurion 平台的双重保险架构：</b></p>
+        <ul>
+          <li><b>云端与大模型视角</b>：只看到去标识化的虚拟代号（如 <code>PT-BRONCHO-001</code>），所有进出云端的数据完全清洗掉个人敏感信息；</li>
+          <li><b>医生个人视角</b>：医生如果给代号加了备注名（如“张阿姨”），这个名字<b>100% 仅仅存储在医生当前电脑浏览器的 <code>localStorage</code> 物理隔离缓存中</b>，绝不上网、绝不发往服务器数据库，彻底消除法律合规隐患！</li>
+        </ul>
+      </div>
+    `
+  },
+  {
     id: 'privacy',
     title: '医学隐私与安全架构 (零 PHI)',
     badge: '安全合规',
@@ -99,12 +395,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '了解零 PHI 准则、AES-256-GCM 租户数据密钥隔离、高风险操作二次确认卡与敏感操作审计机制。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>2. 医学隐私与安全架构 (Zero-PHI & Compliance)</h3>
+        <h3>3. 医学隐私与安全架构 (Zero-PHI & Compliance)</h3>
         <span class="help-tag danger">核心准则 · 严禁违规</span>
       </div>
       <p class="help-lead">医疗数据的隐私与安全是 Heurion 的立身之本。系统严格按照 HIPAA、GDPR 及国家卫生健康数据合规标准设计架构。</p>
 
-      <h4>2.1 强制零 PHI (Zero Protected Health Information) 准则</h4>
+      <h4>3.1 强制零 PHI (Zero Protected Health Information) 准则</h4>
       <p>为了从根本上规避患者真实隐私外泄风险，Heurion 采用<b>「全流程纯代号化」</b>建档与分析机制：</p>
       <div class="help-alert-box alert-important">
         <b>${icon('shield', { size: 14 })} 严格禁止输入任何真实患者个人敏感信息：</b>
@@ -115,13 +411,13 @@ export const HELP_SECTIONS: HelpSection[] = [
         </ul>
       </div>
 
-      <h4>2.2 租户级数据密钥加密隔离</h4>
+      <h4>3.2 租户级数据密钥加密隔离</h4>
       <p>每个医院或科研机构拥有独立的 AES-256-GCM 数据加密密钥 (DEK)。即使在底层数据库物理层面，不同租户之间的数据亦完全隔离，杜绝跨机构横向越权。</p>
 
-      <h4>2.3 高风险操作确认卡 (Human-in-the-Loop)</h4>
+      <h4>3.3 高风险操作确认卡 (Human-in-the-Loop)</h4>
       <p>AI 在系统中具备高阶辅助分析能力，但<b>绝不具备最终裁决权</b>。当 AI 提议执行不可恢复或高敏感操作时（如：删除患者随访数据、覆盖既往病历、下发正式诊断报告），系统会自动弹窗生成<b>「待确认操作卡」</b>，必须由执业医师主动点击确认后方才执行。</p>
 
-      <h4>2.4 访问审计留痕 (Audit Trail)</h4>
+      <h4>3.4 访问审计留痕 (Audit Trail)</h4>
       <p>所有对患者病历、3D 影像切片及临床科研数据集的查阅、下载与导出行为，均自动记录包含操作医师 ID、时间戳、操作模态及脱敏患者代号的不可篡改审计日志。</p>
     `
   },
@@ -133,12 +429,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '文档与学术汇报幻灯片双模态编辑、Word/PPTX/Markdown 无损双向导入导出、PubMed 智能引用及 Resvg 矢量图表。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>3. 医学写作与文献溯源 (Medical Writing & Evidence Tracing)</h3>
+        <h3>4. 医学写作与文献溯源 (Medical Writing & Evidence Tracing)</h3>
         <span class="help-tag">写作 · 幻灯片 · 文献</span>
       </div>
       <p class="help-lead">支持文档 (Docs) 与幻灯片 (Slides) 双模态自由创作，专为学术发表与科室汇报量身打造。</p>
 
-      <h4>3.1 双模态创作中心</h4>
+      <h4>4.1 双模态创作中心</h4>
       <table class="help-table">
         <thead>
           <tr>
@@ -171,14 +467,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         </tbody>
       </table>
 
-      <h4>3.2 AI 伴随修订模式 (Suggest / Diff Mode)</h4>
+      <h4>4.2 AI 伴随修订模式 (Suggest / Diff Mode)</h4>
       <p>在右侧对话框上方，常驻<b>「修订模式 · 生成 Diff 待采纳」</b>开关：</p>
       <ul>
         <li><b>开启修订模式（推荐）</b>：AI 针对正文的润色、新增证据、语法精炼会作为红绿 Diff 标记渲染在画布上。您可以点击单处修订单独采纳/拒绝，亦可点击「全部采纳」。</li>
         <li><b>关闭修订模式</b>：AI 将直接修改正文，适用于快速重构大纲或从零起草全新段落。</li>
       </ul>
 
-      <h4>3.3 PubMed 智能文献检索与参考资料库</h4>
+      <h4>4.3 PubMed 智能文献检索与参考资料库</h4>
       <ul class="help-list-steps">
         <li>
           <span class="step-num">1</span>
@@ -194,7 +490,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </li>
       </ul>
 
-      <h4>3.4 高清矢量图表生成与无损导出保护</h4>
+      <h4>4.4 高清矢量图表生成与无损导出保护</h4>
       <p>AI 可根据临床数据通过 Python 自动绘制森林图、生存曲线、箱线图并嵌入正文。系统采用 Resvg 高性能矢量渲染引擎与 DrawingML 双模嵌入技术，导出 Word 或 PowerPoint 时图表绝对清晰锐利、绝不丢图。</p>
     `
   },
@@ -206,12 +502,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '零 PHI 虚拟代号建档、多期化验时间序列追踪、DICOM/NIfTI 空间解析、MONAI 3D 深度模型矩阵（胸部支扩/粘液栓/肺结节、前列腺 mpMRI、腹部 13 器官、脑部 MRI）及交互式 MPR 三正交切片浏览器。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>4. 患者管理与 3D 影像量化分析 (Patient Management & 3D Imaging Quantification)</h3>
+        <h3>5. 患者管理与 3D 影像量化分析 (Patient Management & 3D Imaging Quantification)</h3>
         <span class="help-tag ok">零 PHI · MONAI 3D · MPR 交互</span>
       </div>
       <p class="help-lead">深度打通「临床患者全景档案」与「3D 体素级影像量化分析」，既保障医疗隐私绝对安全，又赋予医生亚毫米级的定量诊断与智能读片能力。</p>
 
-      <h4>4.0 影像智能分析全流程业务闭环 (The Complete 9-Step Imaging Pipeline)</h4>
+      <h4>5.0 影像智能分析全流程业务闭环 (The Complete 9-Step Imaging Pipeline)</h4>
       <p>Heurion 影像系统严格遵循现代循证放射学与多学科临床诊疗路径，打通从原始图像摄入到治疗评估与科研输出的九大完整业务阶段：</p>
       <div class="help-grid-3">
         <div class="help-feature-card">
@@ -252,7 +548,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>4.1 患者全流程档案建立与零 PHI 隐私规范 (Zero-PHI Patient Registry)</h4>
+      <h4>5.1 患者全流程档案建立与零 PHI 隐私规范 (Zero-PHI Patient Registry)</h4>
       <p>为满足 HIPAA、GDPR 及医疗机构核心数据合规要求，平台推行严格的<b>零真实个人标识 (Zero-PHI)</b> 体系：</p>
       <ul class="help-list-steps">
         <li>
@@ -288,7 +584,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </li>
       </ul>
 
-      <h4>4.2 多模态实验室检验指标追踪与时间序列管理 (Longitudinal Lab Analytics)</h4>
+      <h4>5.2 多模态实验室检验指标追踪与时间序列管理 (Longitudinal Lab Analytics)</h4>
       <p>化验单不仅是静态记录，更是临床评估病情演进的重要证据链：</p>
       <div class="help-grid-2">
         <div class="help-feature-card">
@@ -312,7 +608,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>4.3 3D 原始影像支持与空间几何解析 (3D Volumetric Imaging & Geometry)</h4>
+      <h4>5.3 3D 原始影像支持与空间几何解析 (3D Volumetric Imaging & Geometry)</h4>
       <p>平台采用原生的三维体数据解析管线，支持高分辨率医学影像的端到端量化：</p>
       <table class="help-table">
         <thead>
@@ -351,7 +647,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </tbody>
       </table>
 
-      <h4>4.4 MONAI 3D 临床深度学习病种量化全矩阵 (MONAI Model Zoo Matrix)</h4>
+      <h4>5.4 MONAI 3D 临床深度学习病种量化全矩阵 (MONAI Model Zoo Matrix)</h4>
       <p>系统内置基于 MONAI 的 <b>18+ 款分科预训练临床 3D 深度模型</b>，覆盖人体 5 大核心系统，满足多学科综合读片与专科科研需要：</p>
       <div class="help-grid-2">
         <div class="help-feature-card">
@@ -411,7 +707,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>4.5 诊断级交互式 MPR 三正交切片浏览器 (Multi-Planar Reconstruction)</h4>
+      <h4>5.5 诊断级交互式 MPR 三正交切片浏览器 (Multi-Planar Reconstruction)</h4>
       <p>点击任何已完成分析的影像记录，即可打开全功能交互式 MPR 诊断工作台：</p>
       <ul class="help-list-steps">
         <li>
@@ -454,14 +750,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         </li>
       </ul>
 
-      <h4>4.6 全身体素机体成分与肌少症量化 (Body Composition & Sarcopenia)</h4>
+      <h4>5.6 全身体素机体成分与肌少症量化 (Body Composition & Sarcopenia)</h4>
       <p>基于 TotalSegmentator 3D 全身体素网络，系统提供肿瘤恶液质与衰弱综合征的量化筛查方案：</p>
       <ul>
         <li><b>L3 骨骼肌指数 (SMI, cm²/m²)</b>：自动定位 L3 椎体中位截面，分割腰大肌、竖脊肌及腹壁肌群面积，结合患者身高计算 SMI；依据 Prado 国际共识（男性 &lt; 52.4 cm²/m²，女性 &lt; 38.5 cm²/m²）自动进行肌少症红黄预警。</li>
         <li><b>内脏脂肪与皮下脂肪比 (VAT / SAT)</b>：精准测算腹腔内脏脂肪面积与皮下脂肪面积，评估代谢综合征及放化疗毒副反应风险。</li>
       </ul>
 
-      <h4>4.7 IBSI 国际标准影像组学高阶特征矩阵 (Radiomics Extraction)</h4>
+      <h4>5.7 IBSI 国际标准影像组学高阶特征矩阵 (Radiomics Extraction)</h4>
       <p>遵循 IBSI (Image Biomarker Standardisation Initiative) 国际影像组学标准规范，一键提取 107 项高维生物特征：</p>
       <ul>
         <li>一阶灰度统计 (First Order Statistics)、形状球形度与表面积体积比 (Shape & Compactness)；</li>
@@ -469,7 +765,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         <li>支持小波滤波变换 (Wavelet Decomposition)，所有高维组学数据均可一键载入科研数据集开展机器学习建模。</li>
       </ul>
 
-      <h4>4.8 三甲标准四段式全景影像诊断报告</h4>
+      <h4>5.8 三甲标准四段式全景影像诊断报告</h4>
       <p>在影像卡片上点击<b>「${icon('report', { size: 13 })} 全景诊断报告」</b>，自动汇聚检查方法与序列信息、3D MONAI 定量测量参数、多模态化验因果链、鉴别诊断与随访处置建议，支持一键保存为正式病历或打印导出。</p>
     `
   },
@@ -481,12 +777,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '基线与随访 CT 空间自动刚性/非刚性弹性形变配准、差分吸收热力图、双联屏联动滑动、PET-CT 融合及放疗靶区勾画 (RT-STRUCT)。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>5. 双期 3D 刚性配准与差分吸收热力图 (Registration, Fusion & RT-STRUCT)</h3>
+        <h3>6. 双期 3D 刚性配准与差分吸收热力图 (Registration, Fusion & RT-STRUCT)</h3>
         <span class="help-tag">随访对比 · 空间对齐 · 放疗规划</span>
       </div>
       <p class="help-lead">针对多期随访患者，彻底告别“单张切片肉眼目测对比”，实现基于 3D 体素空间刚性与非刚性弹性配准的动态演变量化，并支持 PET-CT 多模态融合与放疗靶区勾画。</p>
 
-      <h4>5.1 双期 3D 体素刚性与非刚性弹性配准及差分吸收热力图 (Difference Heatmap Overlay)</h4>
+      <h4>6.1 双期 3D 体素刚性与非刚性弹性配准及差分吸收热力图 (Difference Heatmap Overlay)</h4>
       <p>当同一患者拥有基线期 (Baseline) 与随访期 (Follow-up) 两套 CT 扫描时：</p>
       <ul>
         <li><b>刚性与仿射对齐</b>：调用 MONAI 刚性/仿射配准网络，将随访 CT 空间平移旋转对齐至基线坐标系。</li>
@@ -499,13 +795,13 @@ export const HELP_SECTIONS: HelpSection[] = [
         </li>
       </ul>
 
-      <h4>5.2 双联屏联动切片滑动 (Synchronized Dual-Scrubber MPR)</h4>
+      <h4>6.2 双联屏联动切片滑动 (Synchronized Dual-Scrubber MPR)</h4>
       <p>在随访对比弹窗中，嵌入左右并排的双 MPR 播放器：</p>
       <ul>
         <li>开启<b>「联动滚动 (Cursor Lock)」</b>后，滚轮在左侧基线切片滑动到相应解剖层面时，右侧随访根据对齐比例自动同步滚到对应层面，方便医生一目了然对比同解剖位点变化。</li>
       </ul>
 
-      <h4>5.3 PET-CT 与多模态融合成像 (PET-CT & Multimodal Fusion)</h4>
+      <h4>6.3 PET-CT 与多模态融合成像 (PET-CT & Multimodal Fusion)</h4>
       <p>支持将解剖结构与代谢功能多模态影像融合同屏显示：</p>
       <ul>
         <li><b>解剖与代谢空间重采样</b>：将 128×128 代谢 PET (SUV) 空间网格重采样至 512×512 结构 CT (HU) 网格；</li>
@@ -513,14 +809,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         <li><b>SUV 恶性高摄取预警</b>：设定 SUVmax 阈值（默认 ≥ 2.5 提示高代谢恶性病灶），协助精准识别肿瘤活性边界。</li>
       </ul>
 
-      <h4>5.4 放疗靶区勾画与导出 (Radiation Target Delineation & DICOM RT-STRUCT)</h4>
+      <h4>6.4 放疗靶区勾画与导出 (Radiation Target Delineation & DICOM RT-STRUCT)</h4>
       <p>基于 MONAI 3D 卷积网络的肿瘤靶区与解剖危及器官分割结果：</p>
       <ul>
         <li><b>三维多边形网格提取</b>：采用 Marching Cubes 算法自动提取肿瘤大体靶区 (GTV)、临床靶区 (CTV)、计划靶区 (PTV) 及危及器官 (OAR: 脊髓、双肺、心脏、食管) 的闭合边界多边形；</li>
         <li><b>标准 DICOM RT-STRUCT (PS 3.3) 导出</b>：导出符合国际放疗标准的结构文件，可直接一键导入瓦里安 Eclipse、医科达 Monaco 等主流放疗计划系统 (TPS) 或三维手术规划系统。</li>
       </ul>
 
-      <h4>5.5 严格解耦的疗效评估准则 (RECIST 1.1 vs 良性炎性病灶)</h4>
+      <h4>6.5 严格解耦的疗效评估准则 (RECIST 1.1 vs 良性炎性病灶)</h4>
       <div class="help-callout important">
         <span class="callout-icon">${icon('shield', { size: 16 })}</span>
         <div class="callout-body">
@@ -541,12 +837,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '影像+化验+基因证据链自动拼装、全景病例报告生成、标准 DICOM SR 及 HL7 FHIR 格式导出对接院内 PACS。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>6. 多模态因果诊断链与标准报告导出 (Multimodal Evidence & Export)</h3>
+        <h3>7. 多模态因果诊断链与全景报告导出 (Multimodal Evidence & Export)</h3>
         <span class="help-tag">诊断报告 · 互联互通</span>
       </div>
       <p class="help-lead">打破“影像归影像、化验归化验”的数据孤岛，自动聚合多模态临床证据链，支持国际标准医学数据交换。</p>
 
-      <h4>6.1 多模态因果诊断链条 (Multimodal Clinical Evidence Chain)</h4>
+      <h4>7.1 多模态因果诊断链条 (Multimodal Clinical Evidence Chain)</h4>
       <p>当系统检测到患者的影像学阳性体征时，自动触发跨模态规则引擎，聚合多维度证据：</p>
       <div class="help-feature-card" style="margin: 12px 0;">
         <div class="hfc-title">典型范式：变应性支气管肺曲霉病 (ABPA) 证据链拼装</div>
@@ -572,10 +868,10 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>6.2 全景病例诊断报告与图谱</h4>
+      <h4>7.2 全景病例诊断报告与图谱</h4>
       <p>在患者影像分析页面点击「生成完整病例报告」，系统将自动合成包含：患者脱敏信息、检查方法规范、定量征象测量、MPR 截面截图、随访体积演变曲线及专家建议的综合报告。</p>
 
-      <h4>6.3 医疗行业标准格式导出</h4>
+      <h4>7.3 医疗行业标准格式导出</h4>
       <ul class="help-list-steps">
         <li>
           <span class="step-num">${icon('hospital', { size: 14 })}</span>
@@ -600,12 +896,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '以真实确诊的支扩伴高密度粘液栓 (ABPA) 患者 PT-BRONCHO-001 为例，图文详解 HRCT 深度量化、三正交切片浏览、双期配准差分热力图、L3 机体成分及多模态因果诊断链全流程。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>7. 真实病例深度实战图解 (Real-World Case Study)</h3>
+        <h3>8. 真实病例深度实战图解 (Real-World Case Study)</h3>
         <span class="help-tag ok">真实病例 · 诊断级图解 · 证据闭环</span>
       </div>
       <p class="help-lead">医学影像功能的复杂性在于“从 3D 几何体素到临床决策的全链路因果串联”。本节以真实确诊的变应性支气管肺曲霉病 (ABPA) 患者 <code>PT-BRONCHO-001</code> 为完整范例，手把手图解单期深度量化、三正交切片交互、多期配准差分热力图、全身体素肌少症预后及多模态因果诊断链的全部实战操作。</p>
 
-      <h4>7.1 患者基本资料与临床主诉 (Clinical Profile)</h4>
+      <h4>8.1 患者基本资料与临床主诉 (Clinical Profile)</h4>
       <div class="help-feature-card" style="margin: 12px 0;">
         <div class="hfc-title">患者脱敏档案 · PT-BRONCHO-001</div>
         <div class="hfc-desc">
@@ -617,7 +913,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>7.2 第一步：3D HRCT 上传与 MONAI 深度学习病灶量化 (Baseline HRCT)</h4>
+      <h4>8.2 第一步：3D HRCT 上传与 MONAI 深度学习病灶量化 (Baseline HRCT)</h4>
       <p>医生在「患者 ➔ 影像」面板上传包含 269 层的胸部高分辨 CT 序列 (DICOM/NIfTI)。系统调用 <code>bronchiectasis_mucus_analyzer</code> 深度网络完成全肺体素解析并自动聚焦病灶最大截面（第 #114 层）：</p>
 
       <div class="help-case-card">
@@ -637,7 +933,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>7.3 第二步：诊断级 3D MPR 三正交切片交互浏览 (Interactive 3D MPR)</h4>
+      <h4>8.3 第二步：诊断级 3D MPR 三正交切片交互浏览 (Interactive 3D MPR)</h4>
       <p>点击「打开 3D 浏览器」，进入全景三正交切片工作台。克服单一切片肉眼难以观察气道立体走行的缺陷：</p>
 
       <div class="help-case-card">
@@ -657,7 +953,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>7.4 第三步：TotalSegmentator 全身体素机体成分与 L3 肌少症预后分析 (Body Composition)</h4>
+      <h4>8.4 第三步：TotalSegmentator 全身体素机体成分与 L3 肌少症预后分析 (Body Composition)</h4>
       <p>为评估该长期慢性气道炎性消耗患者能否耐受大剂量激素与抗真菌治疗，医生在工作台一键运行「机体成分分析」：</p>
 
       <div class="help-case-card">
@@ -676,7 +972,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>7.5 第四步：治疗 3 个月随访：双期配准与差分吸收热力图对比 (Follow-up Diff Heatmap)</h4>
+      <h4>8.5 第四步：治疗 3 个月随访：双期配准与差分吸收热力图对比 (Follow-up Diff Heatmap)</h4>
       <p>患者接受正规口服糖皮质激素（起始剂量 0.5 mg/kg/d，逐周规律递减）联合伏立康唑抗真菌药物治疗 3 个月后，于 2026-10-01 进行胸部 HRCT 复查。医生在工作台点击「多期随访对比」：</p>
 
       <div class="help-case-card">
@@ -695,7 +991,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
       </div>
 
-      <h4>7.6 第五步：多模态因果诊断链闭环与标准报告出具 (Multimodal Evidence Chain)</h4>
+      <h4>8.6 第五步：多模态因果诊断链闭环与标准报告出具 (Multimodal Evidence Chain)</h4>
       <p>影像分析并非孤立存在，系统将 3D CT 影像征象与患者实验室多模态指标深度联动，一键拼装出符合国际共识的因果诊断链：</p>
 
       <div class="help-case-card">
@@ -724,19 +1020,19 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '方案设计、多中心数据集质控清洗、Table 1 基线表一键制表、Kaplan-Meier 生存曲线与 Cox 比例风险回归。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>8. 临床科研工作流 (Clinical Research & Automated Biostatistics)</h3>
+        <h3>9. 临床科研工作流 (Clinical Research & Automated Biostatistics)</h3>
         <span class="help-tag">科研立项 · 统计分析</span>
       </div>
       <p class="help-lead">覆盖临床研究方案拟定、多源多格式数据表质控导入、自动化医学统计学制表及文章发表归档全周期。</p>
 
-      <h4>8.1 研究项目与方案管理</h4>
+      <h4>9.1 研究项目与方案管理</h4>
       <p>进入「研究」工作空间，点击「＋ 新建研究」：</p>
       <ul>
         <li>输入研究题目、临床试验注册号 (如 ChiCTR / ClinicalTrials.gov NCT ID)、研究类型（前瞻性 RCT、回顾性队列或病例对照）。</li>
         <li>结构化设定纳入与排除标准、暴露/干预因素及主要终点事件 (Primary Endpoint)。</li>
       </ul>
 
-      <h4>8.2 多格式原始数据集导入与质控</h4>
+      <h4>9.2 多格式原始数据集导入与质控</h4>
       <p>在「数据集」面板中，支持直接上传主流统计软件原始文件：</p>
       <div class="help-grid-3">
         <div class="help-chip-card"><b>.csv / .xlsx</b><span>通用表格文件</span></div>
@@ -745,7 +1041,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       </div>
       <p>系统自动扫描变量字典、数据类型识别、缺失值比例报告及异常极端值警示。</p>
 
-      <h4>8.3 自动化高保真医学统计分析</h4>
+      <h4>9.3 自动化高保真医学统计分析</h4>
       <ul class="help-list-steps">
         <li>
           <span class="step-num">${icon('template', { size: 14 })}</span>
@@ -766,7 +1062,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           </div>
         </li>
       </ul>
-      <h4>8.4 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
+      <h4>9.4 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
       <p>将深度学习量化指标与长期临床随访结局深度融合：</p>
       <ul>
         <li><b>肌少症 (SMI) 与脂肪分布预后分层</b>：依据 L3 骨骼肌指数 (SMI) 与内脏/皮下脂肪比 (VAT/SAT) 自动进行低 SMI 肌少症组 vs 对照组分组，一键绘制 Kaplan-Meier 生存曲线并计算 Log-Rank p 值；</li>
@@ -785,25 +1081,25 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '科室诊疗组 RBAC 权限矩阵、个人专属知家家庭健康档案、患者安全扫码分享令牌及防泄密管控。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>9. 科室协作与知家家庭健康空间 (Collaboration & PHR)</h3>
+        <h3>10. 科室协作与知家家庭健康空间 (Collaboration & PHR)</h3>
         <span class="help-tag">权限矩阵 · 家人健康</span>
       </div>
       <p class="help-lead">兼顾院内科室团队高效协作与医生个人家庭健康管理，双重身份安全解耦。</p>
 
-      <h4>9.1 科室团队与诊疗组 (Care Team)</h4>
+      <h4>10.1 科室团队与诊疗组 (Care Team)</h4>
       <ul>
         <li><b>角色分工</b>：机构管理员 (Admin)、主管医师 (Attending Physician)、辅助医师 (Fellow/Resident)。</li>
         <li><b>数据可见性</b>：不同医疗组之间实行患者病历权限隔离，确保诊疗隐私与数据追溯责任到人。</li>
       </ul>
 
-      <h4>9.2 知家 (Personal Health Record, PHR) · 个人专属家庭空间</h4>
+      <h4>10.2 知家 (Personal Health Record, PHR) · 个人专属家庭空间</h4>
       <p>在右上角账户菜单点击「个人空间 (知家)」，即可切换至独立个人档案：</p>
       <ul>
         <li><b>物理级隔离</b>：知家属于医生个人空间，与医院工作台完全物理隔离。即使未来更换执业医院，知家中的家人体检报告、化验单及慢病指标永不丢失。</li>
         <li><b>AI 亲情化解读</b>：利用通俗易懂的语言对长辈体检异常指标进行科普化分析与随访建议。</li>
       </ul>
 
-      <h4>9.3 患者随访与安全扫码分享</h4>
+      <h4>10.3 患者随访与安全扫码分享</h4>
       <p>医生可为特定患者生成具有有效期的<b>外部安全访问令牌 (Secure Share Token)</b>：</p>
       <ul>
         <li>患者在微信或移动端浏览器打开，仅能查阅经过去标识化的通俗化报告与趋势图，无法看到医生内部工作流与其他患者数据。</li>
@@ -819,7 +1115,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '影像上传失败排查、切片对齐精度、导出排版微调与临床法律安全边界说明。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>10. 常见问题与操作贴士 (FAQ & Troubleshooting)</h3>
+        <h3>11. 常见问题与操作贴士 (FAQ & Troubleshooting)</h3>
         <span class="help-tag warn">避坑指引 · 临床备忘</span>
       </div>
 
@@ -860,7 +1156,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '记录 Heurion 从 v2.0 到 v2.4 核心版本演进、临床影像量化、生物统计、零 PHI 隐私与交互设计里程碑。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>11. 版本发布更新日志 (Release Notes & Milestones)</h3>
+        <h3>12. 版本发布更新日志 (Release Notes & Milestones)</h3>
         <span class="help-tag ok">持续演进 · 循证创新</span>
       </div>
       <p class="help-lead">Heurion 始终秉承「临床医生与科研人员的专业辅助伙伴」定位，每个版本均历经三甲临床专家严苛验证与医学数据安全审查。</p>
@@ -961,7 +1257,92 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 二、 医学隐私与安全架构 (Zero-PHI)
+## 二、 医学影像与核心逻辑通俗通识课 (零基础必读)
+
+为了让临床各专科医师、医学科研人员、算法工程师及产品研发团队能在同一语境下无障碍协作，本节用生活化比喻、临床痛点推导及系统技术落地，通俗拆解 14 个核心医学影像与诊断逻辑概念：
+
+### 2.1 常见影像模态能看清什么？(CT vs MRI vs 超声 vs PET-CT)
+- **💡 生活化比喻**：
+  - **CT (计算机断层扫描)**：像“切西瓜看果肉和西瓜籽”，穿透力强，骨头和高密度硬组织极清；
+  - **MRI (磁共振成像)**：像“摇晃体内的水分子听回声”，不发辐射，软组织、大脑神经与韧带边界分辨率极高；
+  - **超声 (Ultrasound)**：像“蝙蝠声呐探水下游鱼”，便携无创无辐射，看心脏跳动、血管血液流动等动态器官；
+  - **PET-CT (正电子发射断层成像)**：像“给饥饿的癌细胞喂荧光白糖”，肿瘤细胞代谢旺盛疯狂摄取，在漆黑的断层上亮如明灯。
+- **❓ 为什么需要它**：不同组织物理密度不同，没有任何一种模态可以包打天下。
+- **💻 平台系统落地**：支持全模态 DICOM 与 NIfTI 卷解析，并在对话窗口支持直接拖入/粘贴单张超声、CT、胸片截图进行 AI 视觉辅助解读。
+
+### 2.2 为什么叫“体素”？(Voxel vs Pixel)
+- **💡 生活化比喻**：屏幕上的“像素 (Pixel)”是一张 2D 扁平彩色贴纸（只有长和宽）；“体素 (Voxel)”是 3D 空间立体乐高积木（拥有真实物理毫米的长、宽、高）。
+- **❓ 为什么需要它**：CT 切片间距往往不均匀（如切片厚度 5mm，但切片内分辨率 0.7mm），如果直接旋转或拉伸会像压扁的面团严重变形。
+- **💻 平台系统落地**：Heurion 底层管线自动将原始体数据统一重采样 (Resampling) 至 **1×1×1 mm³ 各向同性 (Isotropic) 空间立方体**，确保任意角度切割与体积计算绝对真实。
+
+### 2.3 亨氏单位 (HU) 与窗宽窗位 (Window Width / Level)
+- **💡 生活化比喻**：
+  - **HU (Hounsfield Unit, CT值)**：物理密度的温度计。以水为 0 度，空气为 -1000 度，坚硬骨头为 +1000 度；
+  - **窗宽窗位 (WW/WL)**：人的肉眼只能辨别几十种灰度，但 CT 值跨越 2000 多度。窗宽窗位就像一副“智能偏光太阳镜”，旋转旋钮就能过滤掉干扰，只看肺泡气道（肺窗）或心脏大血管（纵隔窗）。
+- **❓ 为什么需要它**：如果只用一套黑白显示，看清了骨头，肺野就会变成一片死黑。
+- **💻 平台系统落地**：Heurion MPR 提供预设快捷键：肺窗 (-600/1500)、纵隔窗 (40/400)、腹部窗 (50/350)、骨窗 (300/1500)、脑窗 (40/80)，一键切换无需反复手动拖动。
+
+### 2.4 MPR 三正交切片联动 (Axial / Coronal / Sagittal)
+- **💡 生活化比喻**：像一把激光刀切吐司面包：
+  - **横断面 (Axial)**：从头到脚横着一层层切（俯视图）；
+  - **冠状面 (Coronal)**：从前胸到后背竖着切（正视图）；
+  - **矢状面 (Sagittal)**：从左耳到右耳侧着切（侧视图）。
+- **❓ 为什么需要它**：血管和气道在三维人体中曲折蜿蜒，单张二维切片容易把斜切的管道误判为结节或肿瘤。
+- **💻 平台系统落地**：三正交切片同屏十字准星联动，点击「定位病灶中心」，准星自动飞跃到病灶最大几何截面。
+
+### 2.5 印戒征与支气管-伴行动脉比 (BAR)
+- **💡 生活化比喻**：在肺野深处，支气管像空心水管，旁边紧贴着供血实心血管，宛如一对形影不离的伴侣（血管是宝石，支气管是细指环）。正常时指环比宝石小；如果支气管发炎扩张，变成大指环镶嵌小宝石，就是著名的“印戒征 (Signet Ring Sign)”。
+- **❓ 为什么需要它**：支气管内径比伴行动脉内径 (BAR) ≥ 1.0 是放射学确诊支气管扩张的核心客观标准。
+- **💻 平台系统落地**：MONAI 模型自动识别并测算 BAR 比值与管壁厚度比 (T/D)，亚毫米级卡尺直观标记。
+
+### 2.6 高密度粘液栓 (HAM)
+- **💡 生活化比喻**：普通痰液像稀薄淘米水，CT 值接近水 (0~20 HU)；但在变态反应性疾病中，嗜酸性坏死蛋白、夏科-雷登结晶凝聚脱水，像坚韧的“牙膏泥”，CT 值飙升到 70~120 HU，比胸壁肌肉 (40~50 HU) 还要发白发硬。
+- **❓ 为什么需要它**：HAM 是变应性支气管肺曲霉病 (ABPA) 的王牌特异性征象，一旦出现几乎锁死过敏性真菌感染。
+- **💻 平台系统落地**：自动连通域分割粘液栓，测算 3D 总体积 (cm³) 与极值 HU，自动对比胸壁肌肉确认 HAM。
+
+### 2.7 随访配准与差分吸收热力图
+- **💡 生活化比喻**：同一位患者隔三个月复查，呼吸深浅不同、胸廓微侧，就像同一块被轻微揉皱拉伸的印花丝巾。3D 弹性配准 (DIR) 是把两块丝巾抚平对齐，然后两层叠放扣除，剩下有差异的部分。
+- **❓ 为什么需要它**：肉眼逐张肉眼找病灶费时费力且容易漏诊微小吸收或进展。
+- **💻 平台系统落地**：配准后生成差分热力图（绿色吸收好转、红色进展恶化、黄色稳定），直观呈现治疗效果。
+
+### 2.8 实体瘤尺子 RECIST 1.1 的边界与 3D 容积评估
+- **💡 生活化比喻**：拿一把直尺量土豆长径很合适（实体瘤），但如果拿直尺去量像树根一样分支蔓延的泥浆（良性支气管粘液栓），长径毫无意义，必须量容积（体积）。
+- **❓ 为什么需要它**：很多医生容易生搬硬套肿瘤 RECIST 1.1（PR 需长径缩小 ≥ 30%），导致良性病灶无法合理评估。
+- **💻 平台系统落地**：严格解耦标准，实体瘤采用 RECIST 1.1 靶病灶长径和，良性炎性粘液栓采用 3D 容积吸收评估 (≥ 50% 为显著好转)。
+
+### 2.9 隐匿性肌少症与 L3 骨骼肌指数 (SMI)
+- **💡 生活化比喻**：有些人外观看起来微胖甚至超重（皮下脂肪厚），但内脏骨骼肌已严重萎缩流失（虚胖/隐匿性恶液质）。
+- **❓ 为什么需要它**：肌少症患者对大剂量化疗药物、抗真菌药或糖皮质激素的耐受力极差，极易发生严重器官毒性。腰三椎骨 (L3) 横截面的骨骼肌面积是全身肌肉储量的黄金风向标。
+- **💻 平台系统落地**：TotalSegmentator 自动定位 L3 层面，分割腰大肌与腹壁肌群，计算 SMI (SMA/身高² cm²/m²)，基于 Prado 国际标准预警。
+
+### 2.10 IBSI 国际标准影像组学 (Radiomics)
+- **💡 生活化比喻**：人眼看 CT 图像只能分辨粗略的黑白块，而影像组学像用高倍放大镜扫描病灶的微观“数字指纹”，计算灰度粗糙度、异质性、空间纹理排列。
+- **❓ 为什么需要它**：不用动刀穿刺，仅凭 CT 就能预测肿瘤内在基因突变（如 EGFR/KRAS）和免疫治疗应答。
+- **💻 平台系统落地**：严格遵循 IBSI 国际标准提取 107 项组学高阶特征，一键载入科研数据集用于机器学习建模。
+
+### 2.11 PET-CT 代谢融合与 SUVmax / MTV / TLG
+- **💡 生活化比喻**：CT 告诉你房间的墙壁和家具长什么样（解剖结构）；PET 告诉你房间里的人是不是在疯狂聚会跳舞（代谢活性）。
+- **❓ 为什么需要它**：良性疤痕也可以在 CT 上表现为大阴影，只有 PET 才能辨别里面究竟是死组织还是活跃癌细胞。
+- **💻 平台系统落地**：自动换算 SUV 标准摄取值，半透明彩虹热力叠加显示，自动标定 SUVmax、代谢肿瘤体积 (MTV) 与总糖酵解量 (TLG)。
+
+### 2.12 放疗电子围栏 RT-STRUCT (GTV / CTV / OAR)
+- **💡 生活化比喻**：放疗是用高能射线精准打击肿瘤。GTV 是肉眼可见的敌人堡垒；CTV 是可能潜伏散兵的警戒缓冲圈；OAR (危及器官) 则是绝对不能误伤的平民医院与学校（脊髓、心脏、食管）。
+- **❓ 为什么需要它**：手工在几百层 CT 上画圈极为耗时，且各医生勾画一致性差。
+- **💻 平台系统落地**：3D AI 自动勾画各靶区与危及器官，一键导出国际标准 DICOM RT-STRUCT 结构文件，直接导入放疗规划系统。
+
+### 2.13 多模态因果诊断链
+- **💡 生活化比喻**：孤证不立。只看一张 CT 阴影不能轻易下定论；必须像法官判案一样，将“影像学物证（支扩+HAM）+ 实验室生化血液化验（嗜酸粒细胞+总 IgE+曲霉特异抗体）+ 病史主诉”三方铁证串联锁死。
+- **❓ 为什么需要它**：避免只见树木不见森林造成的误诊误治。
+- **💻 平台系统落地**：系统跨模态自动串联规则引擎，自动拼装因果证据链，出具置信度与标准 DICOM SR / FHIR 报告。
+
+### 2.14 零 PHI 隐私法律底线与本地 localStorage 隔离
+- **💡 生活化比喻**：去医院体检，病历上不写真名只写数字胸牌号；但你自己手机备忘录里悄悄记下“这是张阿姨的体检单”。
+- **❓ 为什么需要它**：医疗数据上云若泄露真实姓名将面临极其严重的法律制裁（HIPAA/GDPR）。
+- **💻 平台系统落地**：平台云端和大模型仅见虚拟代号；医生添加的备注名 100% 物理保存在医生电脑浏览器本地 localStorage，绝不上云、绝不入库，彻底免除合规风险。
+
+---
+
+## 三、 医学隐私与安全架构 (Zero-PHI)
 
 1. **零 PHI (Zero Protected Health Information) 强制准则**：
    - **严禁录入真实患者个人敏感信息**（真实姓名、身份证、门诊住院号、手机号）；
@@ -976,7 +1357,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 三、 医学写作与文献溯源
+## 四、 医学写作与文献溯源
 
 1. **文档与幻灯片双模态**：
    - 支持起草 SCI 论文、综述、病例报告及学术汇报幻灯片；
@@ -991,7 +1372,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 四、 患者管理与 3D 影像量化分析
+## 五、 患者管理与 3D 影像量化分析
 
 0. **影像智能分析全流程业务闭环 (The Complete 9-Step Imaging Pipeline)**：
    - ① **影像摄入与合规脱敏**：DICOM 序列/NIfTI 体数据上传，自动剥离 18 项 HIPAA 敏感标识；支持对话直接粘贴/上传单张超声、CT、胸片截图进行 AI 视觉解读；
@@ -1050,7 +1431,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 五、 双期 3D 刚性配准与差分吸收热力图
+## 六、 双期 3D 刚性配准与差分吸收热力图
 
 1. **自动 3D 空间刚性与非刚性弹性形变配准**：
    - **刚性/仿射对齐**：利用 MONAI 轻量 3D 刚性/仿射配准网络，将随访 CT 空间自动平移旋转对齐至基线 CT；
@@ -1074,7 +1455,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 六、 多模态因果诊断链与标准报告导出
+## 七、 多模态因果诊断链与标准报告导出
 
 1. **多模态因果诊断链**：
    - 影像特征（支扩伴高密度粘液栓 HAM）+ 实验室指标（嗜酸性粒细胞、血清总 IgE、曲霉特异性 IgE）自动联动，拼装确诊证据链表（如变应性支气管肺曲霉病 ABPA）。
@@ -1084,7 +1465,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 七、 【实战案例深度图解】真实患者 3D 影像全流程量化与随访评定范例
+## 八、 【实战案例深度图解】真实患者 3D 影像全流程量化与随访评定范例
 
 医学影像功能的复杂性在于“从 3D 几何体素到临床决策的全链路因果串联”。本节以真实确诊的变应性支气管肺曲霉病 (ABPA) 患者 \`PT-BRONCHO-001\` 为完整范例：
 
@@ -1119,7 +1500,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 八、 临床科研工作流 (Research)
+## 九、 临床科研工作流 (Research)
 
 1. **科研立项与方案管理**：临床试验注册号、纳入排除标准、主要终点设定；
 2. **多格式数据集质控导入**：支持 CSV、Excel (\`.xlsx\`)、SAS (\`.sas7bdat\`)、SPSS (\`.sav\`)；自动检测缺失值与极端值；
@@ -1135,7 +1516,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 九、 科室协作与知家家庭健康空间 (PHR)
+## 十、 科室协作与知家家庭健康空间 (PHR)
 
 1. **科室诊疗组 (Care Team)**：主诊医师与组员权限矩阵，敏感病历访问审计留痕；
 2. **知家个人空间 (PHR)**：医生专属家庭健康空间，与医院工作台物理隔离，终身保留家人健康档案；
@@ -1143,7 +1524,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 十、 常见问题解答 (FAQ)
+## 十一、 常见问题解答 (FAQ)
 
 - **Q: 为什么上传 DICOM 耗时较长？**  
   A: 建议上传单个序列的压缩包（< 500MB），去除定位像后再压缩。
@@ -1154,7 +1535,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 十一、 版本更新日志 (Release Notes)
+## 十二、 版本更新日志 (Release Notes)
 
 ### v2.4 Pro (当前最新版本 · 2026年10月)
 - **TotalSegmentator L3 椎体机体成分分析**：自动定位 L3 椎体层面，分割腰大肌、竖脊肌及腹壁肌群，测算骨骼肌指数 (SMI = SMA / 身高² cm²/m²)，基于 Prado 国际共识提供肌少症衰弱风险预警；自动计算内脏脂肪 (VAT) 与皮下脂肪 (SAT) 面积及 VAT/SAT 肥胖比。

@@ -3056,3 +3056,56 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   color: var(--text);
 }
 
+/* 通俗概念通识卡与比喻高亮 (Concept Primer & Analogies) */
+.help-concept-box {
+  margin-bottom: 22px;
+  padding: 16px 20px;
+  background: var(--card-glass);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  line-height: 1.68;
+}
+.help-concept-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.help-concept-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--green-soft);
+  color: var(--mint-text);
+  border: 1px solid var(--green-line);
+}
+.help-analogy {
+  padding: 10px 14px;
+  background: rgba(0, 229, 153, 0.08);
+  border-left: 3px solid #00E599;
+  border-radius: 0 6px 6px 0;
+  margin: 10px 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.help-analogy b {
+  color: var(--text);
+}
+.help-why-need {
+  padding: 10px 14px;
+  background: rgba(251, 146, 60, 0.08);
+  border-left: 3px solid #fb923c;
+  border-radius: 0 6px 6px 0;
+  margin: 10px 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.help-why-need b {
+  color: #ea580c;
+}
+
+

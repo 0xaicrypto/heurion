@@ -49,6 +49,7 @@ export type IconName =
   | 'arrowRight'
   | 'grid'
   | 'edit'
+  | 'book'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -173,6 +174,9 @@ const ICONS: Record<IconName, string> = {
 
   // 编辑
   edit: '<path d="M11.5 3.5l5 5-9.5 9.5H2.5v-4.5z"/>',
+
+  // 教程、指南、书本
+  book: '<path d="M4 16.5A2.5 2.5 0 0 1 6.5 14H17"/><path d="M6.5 3H17v14H6.5A2.5 2.5 0 0 1 4 14.5v-9A2.5 2.5 0 0 1 6.5 3z"/>',
 }
 
 export interface IconOptions {
