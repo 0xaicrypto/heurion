@@ -44,9 +44,9 @@ RUN uv pip install --no-cache --python /opt/venv/bin/python \
       "scipy>=1.12.0" \
       "python-multipart>=0.0.32"
 
-# 3. 复制代码与预装基准解剖体素数据
+# 3. 复制代码与创建数据目录
 COPY apps/imaging-worker/src /app/apps/imaging-worker/src
-COPY apps/imaging-worker/data /app/apps/imaging-worker/data
+RUN mkdir -p /app/apps/imaging-worker/data
 
 WORKDIR /app/apps/imaging-worker
 

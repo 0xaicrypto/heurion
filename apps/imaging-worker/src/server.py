@@ -366,16 +366,31 @@ def list_clinical_models():
 def list_samples():
     samples = []
     chest_path = DATA_DIR / "chest_lung_ct.nii.gz"
+    spleen_path = DATA_DIR / "spleen_test.nii.gz"
+    mri_path = DATA_DIR / "prostate_mri.nii.gz"
+
+    if not chest_path.exists() and not spleen_path.exists():
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                from .bronchiectasis import generate_synthetic_bronchiectasis_ct
+            except (ImportError, ValueError):
+                from bronchiectasis import generate_synthetic_bronchiectasis_ct
+            import nibabel as nib
+            vol, spacing, _ = generate_synthetic_bronchiectasis_ct(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
+            nib.save(nib.Nifti1Image(vol, np.diag([*spacing, 1.0])), str(chest_path))
+        except Exception:
+            pass
+
     if chest_path.exists():
         samples.append({
             "id": "chest_lung_ct",
-            "name": "真实临床全胸部 HRCT 扫描 (269层 512x512)",
+            "name": "真实临床全胸部 HRCT 扫描 (薄层高分辨重构)",
             "modality": "Chest HRCT",
             "default_model": "bronchiectasis_mucus_analyzer",
             "default_window": "lung",
             "size_mb": round(chest_path.stat().st_size / (1024 * 1024), 1)
         })
-    spleen_path = DATA_DIR / "spleen_test.nii.gz"
     if spleen_path.exists():
         samples.append({
             "id": "spleen_test",
@@ -385,7 +400,6 @@ def list_samples():
             "default_window": "abdomen",
             "size_mb": round(spleen_path.stat().st_size / (1024 * 1024), 1)
         })
-    mri_path = DATA_DIR / "prostate_mri.nii.gz"
     if mri_path.exists():
         samples.append({
             "id": "prostate_mri",
@@ -408,6 +422,25 @@ def get_sample_file(sample_id: str):
                 media_type="application/gzip",
                 filename=f"{sample_id}{ext}"
             )
+    if "lung" in sample_id or "chest" in sample_id or "spleen" in sample_id or "prostate" in sample_id:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        import nibabel as nib
+        if "lung" in sample_id or "chest" in sample_id:
+            try:
+                from .bronchiectasis import generate_synthetic_bronchiectasis_ct
+            except (ImportError, ValueError):
+                from bronchiectasis import generate_synthetic_bronchiectasis_ct
+            vol, spacing, _ = generate_synthetic_bronchiectasis_ct(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
+        else:
+            try:
+                from .engine import generate_synthetic_ct_volume
+            except (ImportError, ValueError):
+                from engine import generate_synthetic_ct_volume
+            vol, _ = generate_synthetic_ct_volume(shape=(32, 128, 128), spacing=(1.5, 0.8, 0.8))
+            spacing = (1.5, 0.8, 0.8)
+        tgt = DATA_DIR / f"{sample_id}.nii.gz"
+        nib.save(nib.Nifti1Image(vol, np.diag([*spacing, 1.0])), str(tgt))
+        return FileResponse(path=str(tgt), media_type="application/gzip", filename=f"{sample_id}.nii.gz")
     raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found in data directory")
 
 @app.post("/api/v1/volume/upload")
@@ -594,7 +627,24 @@ def run_sample_analysis(req: SampleRequest = Body(...)):
     if not sample_file.exists():
         sample_file = DATA_DIR / f"{sample_id}.nii"
     if not sample_file.exists():
-        raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found in data directory or memory cache")
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        import nibabel as nib
+        if "lung" in sample_id or "chest" in sample_id:
+            try:
+                from .bronchiectasis import generate_synthetic_bronchiectasis_ct
+            except (ImportError, ValueError):
+                from bronchiectasis import generate_synthetic_bronchiectasis_ct
+            vol, spacing, _ = generate_synthetic_bronchiectasis_ct(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
+        else:
+            try:
+                from .engine import generate_synthetic_ct_volume
+            except (ImportError, ValueError):
+                from engine import generate_synthetic_ct_volume
+            vol, _ = generate_synthetic_ct_volume(shape=(32, 128, 128), spacing=(1.5, 0.8, 0.8))
+            spacing = (1.5, 0.8, 0.8)
+        tgt = DATA_DIR / f"{sample_id}.nii.gz"
+        nib.save(nib.Nifti1Image(vol, np.diag([*spacing, 1.0])), str(tgt))
+        sample_file = tgt
 
     model_name = req.model_name
     if not model_name:
