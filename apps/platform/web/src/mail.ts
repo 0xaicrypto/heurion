@@ -2,10 +2,15 @@
  * 医疗与科研邮件工作空间 (Heurion Clinical & Research Mailbox)
  * 
  * 专为临床医生与医学科研工作者设计：
- * 1. 邮箱域名：@heurion.com (如 dr.<username>@heurion.com)
+ * 1. 邮箱域名：@heurion.org (如 <username>@heurion.org)
  * 2. 随访提醒邮件：患者影像 3D 容积复查、耐药基因突变监测、恶病质恶化警示
  * 3. 科研进度邮件：多中心 RCT 倾向评分匹配 (PSM) 质控报告、DSMB 盲态审核
- * 4. 深度交互联动：
+ * 4. 完备的收件箱管理体系：
+ *    - 分页导航 (Paging & Page Size)
+ *    - 批量操作 (Batch Read / Unread / Star / Trash / Restore / Delete)
+ *    - 星标收藏 (Starred) 与废纸篓 (Trash)
+ *    - 列表管理视图 (Mail Table) 与统计看板 (Dashboard) 自由切换
+ * 5. 深度交互联动：
  *    - 邮件一键「添加到日历」
  *    - 随访邮件一键直达「患者档案」
  *    - 科研邮件一键进入「科研课题」
@@ -26,20 +31,25 @@ export interface MailHooks {
 
 export interface MailMessage {
   id: string
-  owner: string
+  owner?: string
+  user_id?: string
   sender: string
+  sender_name?: string
   recipient: string
   subject: string
   body: string
-  category: 'followup' | 'research' | 'general'
+  category: 'followup' | 'research' | 'notification' | 'general'
   patient_id?: string | null
   patient_code?: string | null
   study_id?: string | null
+  study_title?: string | null
   read: number | boolean
+  starred?: number | boolean
   created_at: string
   folder?: 'inbox' | 'sent' | 'trash'
   delivery_status?: 'delivered' | 'external_sent' | 'simulated' | 'failed'
   delivery_note?: string | null
+  calendar_event_id?: string | null
 }
 
 export interface MailStatus {
@@ -66,6 +76,7 @@ function renderDeliveryPill(status?: string): string {
 const CATEGORY_NAMES: Record<string, string> = {
   followup: '随访提醒',
   research: '科研进展',
+  notification: '系统通知',
   general: '综合沟通',
 }
 
@@ -86,15 +97,15 @@ function formatEmailBody(raw: string): string {
       continue
     }
 
-    // 标题识别
     if (trimmed.startsWith('【') && trimmed.endsWith('】')) {
       out.push(`<h4 class="mail-section-title">${esc(trimmed)}</h4>`)
     } else if (trimmed.startsWith('# ')) {
       out.push(`<h3 class="mail-h1">${esc(trimmed.slice(2))}</h3>`)
     } else if (trimmed.startsWith('## ')) {
       out.push(`<h4 class="mail-h2">${esc(trimmed.slice(3))}</h4>`)
+    } else if (trimmed.startsWith('### ')) {
+      out.push(`<h4 class="mail-h3">${esc(trimmed.slice(4))}</h4>`)
     } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      // 强调临床重点指标
       const content = trimmed.slice(2)
       out.push(`<div class="mail-bullet"><span class="mail-bullet-dot">▪</span><span>${formatHighlights(content)}</span></div>`)
     } else {
@@ -107,7 +118,6 @@ function formatEmailBody(raw: string): string {
 
 function formatHighlights(text: string): string {
   let res = esc(text)
-  // 高亮代号与指标
   res = res.replace(/(PT-[A-Z0-9-]+)/g, '<span class="mail-hl-code">$1</span>')
   res = res.replace(/(BAR\s*=\s*[0-9.]+)/g, '<span class="mail-hl-metric">$1</span>')
   res = res.replace(/(HAM\s*=\s*[0-9.]+\s*cm³)/g, '<span class="mail-hl-metric">$1</span>')
@@ -119,11 +129,17 @@ function formatHighlights(text: string): string {
 export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   const $ = (id: string) => document.getElementById(id)!
   let messages: MailMessage[] = []
-  let activeFolder: 'inbox' | 'sent' = 'inbox'
-  let activeFilter: 'all' | 'followup' | 'research' = 'all'
+  let activeFolder: 'inbox' | 'sent' | 'trash' = 'inbox'
+  let activeFilter: 'all' | 'unread' | 'starred' | 'followup' | 'research' = 'all'
   let selectedMailId: string | null = null
-  let currentUserEmail = 'dr.user@heurion.com'
+  let currentUserEmail = 'doctor@heurion.org'
   let mailStatus: MailStatus | null = null
+
+  // 视图与分页状态
+  let mainViewMode: 'list' | 'dashboard' = 'list'
+  let currentPage = 1
+  let pageSize = 15
+  const selectedIds = new Set<string>()
 
   async function loadStatus(): Promise<void> {
     try {
@@ -143,10 +159,14 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       }
       const params = new URLSearchParams()
       params.set('folder', activeFolder)
-      if (activeFilter !== 'all') params.set('category', activeFilter)
       messages = await api<MailMessage[]>(`/api/mail/messages?${params.toString()}`)
       if (messages[0]?.recipient && activeFolder === 'inbox') {
         currentUserEmail = messages[0].recipient
+      }
+      // 清理已不在列表中的选中项
+      const currentIds = new Set(messages.map(m => m.id))
+      for (const id of Array.from(selectedIds)) {
+        if (!currentIds.has(id)) selectedIds.delete(id)
       }
       renderNavList()
       renderMain()
@@ -155,37 +175,51 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     }
   }
 
-  function renderNavList(): void {
-    const listEl = $('mailList')
-    if (!listEl) return
-
+  function getFilteredMessages(): MailMessage[] {
     const searchInput = $('docSearch') as HTMLInputElement | null
     const kw = (searchInput?.value ?? '').trim().toLowerCase()
 
-    const filtered = messages.filter(m => {
-      if (activeFilter !== 'all' && m.category !== activeFilter) return false
+    return messages.filter(m => {
+      if (activeFilter === 'unread' && (m.read || activeFolder !== 'inbox')) return false
+      if (activeFilter === 'starred' && !m.starred) return false
+      if (activeFilter === 'followup' && m.category !== 'followup') return false
+      if (activeFilter === 'research' && m.category !== 'research') return false
+
       if (!kw) return true
       return (
         m.subject.toLowerCase().includes(kw) ||
         m.sender.toLowerCase().includes(kw) ||
         m.recipient.toLowerCase().includes(kw) ||
+        m.body.toLowerCase().includes(kw) ||
         (m.patient_code && m.patient_code.toLowerCase().includes(kw)) ||
         (m.study_id && m.study_id.toLowerCase().includes(kw))
       )
     })
+  }
+
+  function renderNavList(): void {
+    const listEl = $('mailList')
+    if (!listEl) return
+
+    const filtered = getFilteredMessages()
 
     if (filtered.length === 0) {
-      const emptyText = activeFolder === 'sent' ? '已发送邮件箱为空' : '收件箱为空'
+      const emptyText = activeFolder === 'sent'
+        ? '已发送邮件箱为空'
+        : activeFolder === 'trash'
+          ? '废纸篓为空'
+          : '收件箱为空'
       listEl.innerHTML = `<li class="doclist-empty"><div class="muted">${emptyText}</div></li>`
       return
     }
 
     listEl.innerHTML = filtered.map(m => {
       const isUnread = !m.read && activeFolder === 'inbox'
+      const isStarred = Boolean(m.starred)
       const isSel = m.id === selectedMailId
       const catClass = `cat-${m.category}`
       const dateShort = m.created_at.slice(5, 16)
-      const snippet = m.body.slice(0, 48).replace(/\n/g, ' ')
+      const snippet = m.body.slice(0, 42).replace(/\n/g, ' ')
       const party = activeFolder === 'sent'
         ? `至: ${esc(m.recipient.split('@')[0])}`
         : esc(m.sender.split('@')[0])
@@ -193,7 +227,10 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       return `<li class="docitem mail-nav-item ${isSel ? 'selected' : ''} ${isUnread ? 'unread' : ''}" data-mail-id="${m.id}">
         <div class="mail-nav-top">
           <span class="mail-nav-sender">${party}</span>
-          <span class="mail-nav-time">${dateShort}</span>
+          <div class="mail-nav-top-right">
+            ${isStarred ? '<span class="mail-nav-star" title="已加星标">★</span>' : ''}
+            <span class="mail-nav-time">${dateShort}</span>
+          </div>
         </div>
         <div class="mail-nav-subject">
           ${isUnread ? '<span class="mail-unread-dot" title="未读"></span>' : ''}
@@ -217,15 +254,215 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     const selectedMail = messages.find(m => m.id === selectedMailId)
     if (selectedMail) {
       renderMailDetail(selectedMail)
-    } else {
+    } else if (mainViewMode === 'dashboard') {
       renderMailDashboard()
+    } else {
+      renderMailListView()
     }
 
     bindMainEvents()
   }
 
-  function renderMailDashboard(): string {
-    const unreadCount = messages.filter(m => !m.read).length
+  /**
+   * 现代化临床收件箱表格管理视图 (带批量操作、全选、标星、分页)
+   */
+  function renderMailListView(): void {
+    const page = $('page')
+    const filtered = getFilteredMessages()
+    const totalItems = filtered.length
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+    if (currentPage > totalPages) currentPage = totalPages
+    if (currentPage < 1) currentPage = 1
+
+    const startIdx = (currentPage - 1) * pageSize
+    const pageItems = filtered.slice(startIdx, startIdx + pageSize)
+
+    const allPageSelected = pageItems.length > 0 && pageItems.every(m => selectedIds.has(m.id))
+    const hasSelection = selectedIds.size > 0
+
+    const unreadCount = messages.filter(m => !m.read && m.folder !== 'sent' && m.folder !== 'trash').length
+    const starredCount = messages.filter(m => m.starred).length
+    const isSent = activeFolder === 'sent'
+    const isTrash = activeFolder === 'trash'
+
+    const folderTitle = isSent ? '已发送邮件 (Sent)' : isTrash ? '废纸篓 (Trash)' : '收件箱 (Inbox)'
+
+    page.innerHTML = `
+      <div class="mail-list-view">
+        <!-- 顶部信息与快速操作条 -->
+        <div class="mail-list-topbar">
+          <div class="mail-list-title-group">
+            <div class="mail-title-icon">${icon('mail', { size: 24 })}</div>
+            <div>
+              <h1 class="mail-main-heading">${folderTitle}</h1>
+              <div class="mail-subheading">
+                <span>医生专属接收信箱：<strong id="copyMailAddress" class="mail-copyable" title="点击复制">${esc(currentUserEmail)}</strong></span>
+                <span class="mail-sep">·</span>
+                <span>共 <strong>${totalItems}</strong> 封邮件</span>
+                ${unreadCount > 0 ? `<span class="mail-sep">·</span><span class="mail-unread-alert">${unreadCount} 封未读待阅</span>` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div class="mail-top-actions">
+            <button class="mail-btn ghost icon-text" id="mailRefreshBtn" title="从服务器重新获取最新邮件与状态">
+              ${icon('refresh', { size: 14 })} 刷新收取
+            </button>
+            <div class="cal-btn-group">
+              <button class="cal-btn ${mainViewMode === 'list' ? 'active' : ''}" id="mailViewListBtn">邮件列表</button>
+              <button class="cal-btn ${mainViewMode === 'dashboard' ? 'active' : ''}" id="mailViewDashBtn">统计看板</button>
+            </div>
+            <button class="mail-btn primary" id="mailComposeActionBtn">＋ 写邮件</button>
+          </div>
+        </div>
+
+        <!-- 文件夹切换标签 -->
+        <div class="mail-folder-bar">
+          <div class="mail-folder-tabs">
+            <button class="mail-folder-tab ${activeFolder === 'inbox' ? 'active' : ''}" data-folder="inbox">
+              ${icon('mail', { size: 14 })} 收件箱 ${unreadCount > 0 ? `<span class="mail-tab-count">${unreadCount}</span>` : ''}
+            </button>
+            <button class="mail-folder-tab ${activeFolder === 'sent' ? 'active' : ''}" data-folder="sent">
+              ${icon('send', { size: 14 })} 已发送
+            </button>
+            <button class="mail-folder-tab ${activeFolder === 'trash' ? 'active' : ''}" data-folder="trash">
+              ${icon('trash', { size: 14 })} 废纸篓
+            </button>
+          </div>
+
+          <!-- 快速分类与过滤筛选 -->
+          <div class="mail-filter-pills">
+            <button class="mail-filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-filter="all">全部</button>
+            ${!isSent && !isTrash ? `<button class="mail-filter-chip ${activeFilter === 'unread' ? 'active' : ''}" data-filter="unread">未读 (${unreadCount})</button>` : ''}
+            <button class="mail-filter-chip ${activeFilter === 'starred' ? 'active' : ''}" data-filter="starred">★ 星标 (${starredCount})</button>
+            <button class="mail-filter-chip ${activeFilter === 'followup' ? 'active' : ''}" data-filter="followup">随访通知</button>
+            <button class="mail-filter-chip ${activeFilter === 'research' ? 'active' : ''}" data-filter="research">科研进展</button>
+          </div>
+        </div>
+
+        <!-- 批量操作工具条 (当有勾选时高亮吸顶显示) -->
+        <div class="mail-batch-bar ${hasSelection ? 'visible' : ''}">
+          <div class="mail-batch-left">
+            <label class="mail-checkbox-wrap">
+              <input type="checkbox" id="mailSelectAllPage" ${allPageSelected ? 'checked' : ''} />
+              <span class="mail-checkbox-label">全选本页 (${pageItems.length} 封)</span>
+            </label>
+            <span class="mail-batch-selected-count">已选择 <strong>${selectedIds.size}</strong> 封邮件</span>
+          </div>
+          <div class="mail-batch-actions">
+            ${activeFolder !== 'sent' ? `
+              <button class="mail-btn ghost sm" id="batchMarkReadBtn">
+                ${icon('check', { size: 13 })} 标为已读
+              </button>
+              <button class="mail-btn ghost sm" id="batchMarkUnreadBtn">标为未读</button>
+            ` : ''}
+            <button class="mail-btn ghost sm" id="batchStarBtn">★ 标星</button>
+            <button class="mail-btn ghost sm" id="batchUnstarBtn">☆ 取消星标</button>
+            ${isTrash ? `
+              <button class="mail-btn ghost sm ok" id="batchRestoreBtn">恢复至收件箱</button>
+              <button class="mail-btn ghost sm danger" id="batchDeletePermanentBtn">彻底删除</button>
+            ` : `
+              <button class="mail-btn ghost sm danger" id="batchMoveTrashBtn">
+                ${icon('trash', { size: 13 })} 移入废纸篓
+              </button>
+            `}
+            <button class="mail-btn ghost sm" id="batchClearSelection">取消选择</button>
+          </div>
+        </div>
+
+        <!-- 邮件列表表格区 -->
+        <div class="mail-table-container">
+          ${pageItems.length === 0 ? `
+            <div class="mail-empty-state">
+              <div class="mail-empty-icon">${icon('mail', { size: 36 })}</div>
+              <h3>${isTrash ? '废纸篓为空' : isSent ? '已发送邮件箱为空' : '暂无匹配邮件'}</h3>
+              <p class="muted">当前分类或搜索条件下没有找到任何邮件</p>
+            </div>
+          ` : `
+            <div class="mail-rows-list">
+              ${pageItems.map(m => {
+                const isUnread = !m.read && activeFolder === 'inbox'
+                const isStarred = Boolean(m.starred)
+                const isChecked = selectedIds.has(m.id)
+                const catClass = `cat-${m.category}`
+                const party = isSent ? `至: ${m.recipient}` : (m.sender_name ? `${m.sender_name} (${m.sender.split('@')[0]})` : m.sender)
+                const snippet = m.body.slice(0, 64).replace(/\n/g, ' ')
+
+                return `
+                  <div class="mail-row ${isUnread ? 'unread' : ''} ${isChecked ? 'checked' : ''}" data-mail-id="${m.id}">
+                    <div class="mail-row-check" onclick="event.stopPropagation()">
+                      <input type="checkbox" class="mail-item-checkbox" data-id="${m.id}" ${isChecked ? 'checked' : ''} />
+                    </div>
+                    <button class="mail-row-star ${isStarred ? 'starred' : ''}" data-star-id="${m.id}" title="${isStarred ? '取消星标' : '标记星标'}" onclick="event.stopPropagation()">
+                      ${isStarred ? '★' : '☆'}
+                    </button>
+                    <div class="mail-row-sender" title="${esc(party)}">${esc(party)}</div>
+                    <div class="mail-row-body-info">
+                      <div class="mail-row-badges">
+                        <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
+                        ${renderDeliveryPill(m.delivery_status)}
+                        ${m.patient_code ? `<span class="mail-nav-tag tag-pt">${esc(m.patient_code)}</span>` : ''}
+                        ${m.study_id ? `<span class="mail-nav-tag tag-st">${esc(m.study_id)}</span>` : ''}
+                      </div>
+                      <div class="mail-row-subject">
+                        ${isUnread ? '<span class="mail-unread-dot" title="未读"></span>' : ''}
+                        <span class="mail-subject-title">${esc(m.subject)}</span>
+                        <span class="mail-subject-snippet">— ${esc(snippet)}</span>
+                      </div>
+                    </div>
+                    <div class="mail-row-right">
+                      <span class="mail-row-time">${m.created_at.slice(5, 16)}</span>
+                      <div class="mail-row-hover-actions" onclick="event.stopPropagation()">
+                        ${!isSent ? `
+                          <button class="mail-hover-btn" data-toggle-read="${m.id}" title="${isUnread ? '标为已读' : '标为未读'}">
+                            ${isUnread ? icon('check', { size: 13 }) : icon('mail', { size: 13 })}
+                          </button>
+                        ` : ''}
+                        <button class="mail-hover-btn" data-add-cal="${m.id}" title="加入日历排期">
+                          ${icon('calendar', { size: 13 })}
+                        </button>
+                        <button class="mail-hover-btn danger" data-del-mail="${m.id}" title="${isTrash ? '彻底删除' : '移入废纸篓'}">
+                          ${icon('trash', { size: 13 })}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                `
+              }).join('')}
+            </div>
+          `}
+        </div>
+
+        <!-- 完备分页控制栏 (Paging Bar) -->
+        <div class="mail-paging-bar">
+          <div class="mail-paging-info">
+            显示 <strong>${totalItems === 0 ? 0 : startIdx + 1}</strong> - <strong>${Math.min(startIdx + pageSize, totalItems)}</strong> 条 / 共 <strong>${totalItems}</strong> 封邮件
+          </div>
+          <div class="mail-paging-controls">
+            <div class="mail-page-size-wrap">
+              <span class="muted">每页</span>
+              <select id="mailPageSizeSelect" class="mail-select-sm">
+                <option value="15" ${pageSize === 15 ? 'selected' : ''}>15 条</option>
+                <option value="30" ${pageSize === 30 ? 'selected' : ''}>30 条</option>
+                <option value="50" ${pageSize === 50 ? 'selected' : ''}>50 条</option>
+              </select>
+            </div>
+            <div class="mail-page-btn-group">
+              <button class="mail-btn ghost sm" id="mailFirstPage" ${currentPage <= 1 ? 'disabled' : ''}>« 首页</button>
+              <button class="mail-btn ghost sm" id="mailPrevPage" ${currentPage <= 1 ? 'disabled' : ''}>‹ 上一页</button>
+              <span class="mail-page-indicator">第 <strong>${currentPage}</strong> / ${totalPages} 页</span>
+              <button class="mail-btn ghost sm" id="mailNextPage" ${currentPage >= totalPages ? 'disabled' : ''}>下一页 ›</button>
+              <button class="mail-btn ghost sm" id="mailLastPage" ${currentPage >= totalPages ? 'disabled' : ''}>末页 »</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="mailModalAnchor"></div>
+    `
+  }
+
+  function renderMailDashboard(): void {
+    const unreadCount = messages.filter(m => !m.read && m.folder !== 'sent' && m.folder !== 'trash').length
     const followupCount = messages.filter(m => m.category === 'followup').length
     const researchCount = messages.filter(m => m.category === 'research').length
     const deliveredCount = messages.filter(m => m.delivery_status === 'delivered' || m.delivery_status === 'external_sent').length
@@ -243,12 +480,17 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
               <p class="mail-dash-sub">${isSent ? '记录所有外发随访提醒、科研进展通报与外网 SMTP / 本地模拟投递状态' : '专属临床随访跟踪通知、真实世界研究 (RWE) 质控与跨中心科研协作专邮'}</p>
             </div>
           </div>
-          <div class="mail-doctor-badge">
-            <span class="mail-doc-label">当前医生专属邮箱</span>
-            <span class="mail-doc-address" id="copyMailAddress" title="点击复制邮箱地址">
-              ${esc(currentUserEmail)}
-              <span class="mail-copy-icon">${icon('copy', { size: 13 })}</span>
-            </span>
+          <div class="mail-dash-hero-right">
+            <div class="mail-doctor-badge">
+              <span class="mail-doc-label">当前医生专属邮箱</span>
+              <span class="mail-doc-address" id="copyMailAddress" title="点击复制邮箱地址">
+                ${esc(currentUserEmail)}
+                <span class="mail-copy-icon">${icon('copy', { size: 13 })}</span>
+              </span>
+            </div>
+            <div class="mail-dash-nav-btns">
+              <button class="mail-btn primary" id="mailEnterListBtn">进入邮件管理列表 →</button>
+            </div>
           </div>
         </div>
 
@@ -334,7 +576,6 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       </div>
       <div id="mailModalAnchor"></div>
     `
-    return ''
   }
 
   function renderMailDetail(m: MailMessage): void {
@@ -342,17 +583,39 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     const catClass = `cat-${m.category}`
     const isUnread = !m.read && activeFolder === 'inbox'
     const isSent = m.folder === 'sent' || activeFolder === 'sent'
+    const isTrash = m.folder === 'trash' || activeFolder === 'trash'
+    const isStarred = Boolean(m.starred)
+
+    // 计算上一封/下一封
+    const filtered = getFilteredMessages()
+    const currentIdx = filtered.findIndex(x => x.id === m.id)
+    const prevMail = currentIdx > 0 ? filtered[currentIdx - 1] : null
+    const nextMail = currentIdx >= 0 && currentIdx < filtered.length - 1 ? filtered[currentIdx + 1] : null
 
     page.innerHTML = `
       <div class="mail-detail-wrap">
         <div class="mail-toolbar">
-          <button class="mail-btn ghost" id="mailBackBtn">${isSent ? '‹ 返回已发送' : '‹ 返回收件箱'}</button>
+          <button class="mail-btn ghost" id="mailBackBtn">
+            ‹ 返回列表
+          </button>
+          <div class="mail-toolbar-nav">
+            <button class="mail-btn ghost sm icon-only" id="mailPrevDetailBtn" ${!prevMail ? 'disabled' : ''} title="上一封邮件">‹</button>
+            <button class="mail-btn ghost sm icon-only" id="mailNextDetailBtn" ${!nextMail ? 'disabled' : ''} title="下一封邮件">›</button>
+          </div>
           <span class="grow"></span>
-          ${!isSent ? `<button class="mail-btn ghost" id="mailToggleRead">${isUnread ? '标为已读' : '标为未读'}</button>` : ''}
+          <button class="mail-btn ghost" id="mailToggleStar" title="${isStarred ? '取消星标' : '标记星标'}">
+            ${isStarred ? '★ 已标星' : '☆ 标星'}
+          </button>
+          ${!isSent && !isTrash ? `<button class="mail-btn ghost" id="mailToggleRead">${isUnread ? '标为已读' : '标为未读'}</button>` : ''}
           <button class="mail-btn ghost" id="mailAddToCal" title="将邮件关联的复查或会议添加到日历">
             ${icon('calendar', { size: 14 })} 添加到日历
           </button>
-          <button class="mail-btn ghost danger" id="mailDelete">删除</button>
+          ${isTrash ? `
+            <button class="mail-btn ghost ok" id="mailRestoreBtn">恢复到收件箱</button>
+            <button class="mail-btn ghost danger" id="mailDeletePermanentBtn">彻底删除</button>
+          ` : `
+            <button class="mail-btn ghost danger" id="mailDelete">移入废纸篓</button>
+          `}
         </div>
 
         <div class="mail-content-card">
@@ -360,8 +623,9 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             <div class="mail-header-badge-row">
               <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
               ${renderDeliveryPill(m.delivery_status)}
-              ${m.patient_code ? `<span class="mail-header-tag tag-pt">${icon('users', { size: 13 })} 患者代号: ${esc(m.patient_code)}</span>` : ''}
-              ${m.study_id ? `<span class="mail-header-tag tag-st">${icon('microscope', { size: 13 })} 课题代号: ${esc(m.study_id)}</span>` : ''}
+              ${isStarred ? '<span class="mail-badge cat-general">★ 星标收藏</span>' : ''}
+              ${m.patient_code ? `<span class="mail-header-tag tag-pt">${icon('users', { size: 13 })} 患者: ${esc(m.patient_code)}</span>` : ''}
+              ${m.study_id ? `<span class="mail-header-tag tag-st">${icon('microscope', { size: 13 })} 课题: ${esc(m.study_id)}</span>` : ''}
               <span class="grow"></span>
               <span class="mail-header-time">${m.created_at}</span>
             </div>
@@ -369,7 +633,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             <div class="mail-meta-info">
               <div class="mail-meta-row">
                 <span class="mail-meta-k">发件人:</span>
-                <span class="mail-meta-v"><b class="mail-sender-name">${esc(m.sender)}</b></span>
+                <span class="mail-meta-v"><b class="mail-sender-name">${esc(m.sender_name ? `${m.sender_name} <${m.sender}>` : m.sender)}</b></span>
               </div>
               <div class="mail-meta-row">
                 <span class="mail-meta-k">收件人:</span>
@@ -389,7 +653,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                   ${m.delivery_note ? esc(m.delivery_note) : (
                     m.delivery_status === 'external_sent' ? `已通过外网 SMTP 服务成功推送给收件人 ${esc(m.recipient)}。` :
                     m.delivery_status === 'delivered' ? `收件人系院内专邮工作站用户，已投递至其收件箱。` :
-                    m.delivery_status === 'simulated' ? `当前环境未配置 SMTP_HOST / RESEND_API_KEY，系统在本地已模拟记录。如需真正发送至外部邮箱，请在 .env 中设置 SMTP 参数。` :
+                    m.delivery_status === 'simulated' ? `当前环境未配置 SMTP_HOST / RESEND_API_KEY，系统在本地已模拟记录。如需真正发送至外部邮箱，请在 .env 中配置发信服务。` :
                     '外发状态已记录。'
                   )}
                 </div>
@@ -426,7 +690,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       <div id="mailModalAnchor"></div>
     `
 
-    // Mark as read automatically when opening
+    // 自动标记已读
     if (isUnread) {
       void api(`/api/mail/messages/${m.id}/read`, {
         method: 'PATCH',
@@ -442,26 +706,315 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   function bindMainEvents(): void {
     const page = $('page')
 
-    // Copy doctor email address
+    // 复制医生邮箱
     $('copyMailAddress')?.addEventListener('click', () => {
       navigator.clipboard?.writeText(currentUserEmail)
       notice('已复制医生工作邮箱地址: ' + currentUserEmail)
     })
 
-    // Back to dashboard
+    // 切换到列表 / 看板
+    $('mailViewListBtn')?.addEventListener('click', () => {
+      mainViewMode = 'list'
+      renderMain()
+    })
+    $('mailViewDashBtn')?.addEventListener('click', () => {
+      mainViewMode = 'dashboard'
+      renderMain()
+    })
+    $('mailEnterListBtn')?.addEventListener('click', () => {
+      mainViewMode = 'list'
+      renderMain()
+    })
+
+    // 刷新按钮
+    $('mailRefreshBtn')?.addEventListener('click', async () => {
+      notice('正在刷新收件箱...')
+      await loadMessages()
+      notice('收件箱已刷新！')
+    })
+
+    // 撰写邮件
+    $('mailComposeActionBtn')?.addEventListener('click', () => showComposeModal())
+
+    // 文件夹切换
+    page.querySelectorAll<HTMLButtonElement>('.mail-folder-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const folder = btn.dataset.folder as 'inbox' | 'sent' | 'trash'
+        if (folder && activeFolder !== folder) {
+          activeFolder = folder
+          selectedMailId = null
+          selectedIds.clear()
+          currentPage = 1
+          updateFolderButtons()
+          void loadMessages()
+        }
+      })
+    })
+
+    // 过滤药丸点击
+    page.querySelectorAll<HTMLButtonElement>('.mail-filter-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const filter = btn.dataset.filter as any
+        if (filter) {
+          activeFilter = filter
+          currentPage = 1
+          renderNavList()
+          renderMain()
+        }
+      })
+    })
+
+    // 分页数量改变
+    const pageSizeSelect = $('mailPageSizeSelect') as HTMLSelectElement | null
+    pageSizeSelect?.addEventListener('change', () => {
+      pageSize = parseInt(pageSizeSelect.value, 10) || 15
+      currentPage = 1
+      renderMain()
+    })
+
+    // 翻页操作
+    $('mailFirstPage')?.addEventListener('click', () => { currentPage = 1; renderMain() })
+    $('mailPrevPage')?.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderMain() } })
+    $('mailNextPage')?.addEventListener('click', () => { currentPage++; renderMain() })
+    $('mailLastPage')?.addEventListener('click', () => {
+      const filtered = getFilteredMessages()
+      currentPage = Math.max(1, Math.ceil(filtered.length / pageSize))
+      renderMain()
+    })
+
+    // 全选本页复选框
+    $('mailSelectAllPage')?.addEventListener('change', e => {
+      const checked = (e.target as HTMLInputElement).checked
+      const filtered = getFilteredMessages()
+      const startIdx = (currentPage - 1) * pageSize
+      const pageItems = filtered.slice(startIdx, startIdx + pageSize)
+      if (checked) {
+        pageItems.forEach(m => selectedIds.add(m.id))
+      } else {
+        pageItems.forEach(m => selectedIds.delete(m.id))
+      }
+      renderMain()
+    })
+
+    // 单项 Checkbox
+    page.querySelectorAll<HTMLInputElement>('.mail-item-checkbox').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const id = chk.dataset.id
+        if (!id) return
+        if (chk.checked) selectedIds.add(id)
+        else selectedIds.delete(id)
+        renderMain()
+      })
+    })
+
+    // 清空选择
+    $('batchClearSelection')?.addEventListener('click', () => {
+      selectedIds.clear()
+      renderMain()
+    })
+
+    // 批量标为已读
+    $('batchMarkReadBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'read', ids }),
+      })
+      messages.forEach(m => { if (selectedIds.has(m.id)) m.read = 1 })
+      notice(`已将 ${ids.length} 封邮件标记为已读`)
+      selectedIds.clear()
+      renderNavList()
+      renderMain()
+    })
+
+    // 批量标为未读
+    $('batchMarkUnreadBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unread', ids }),
+      })
+      messages.forEach(m => { if (selectedIds.has(m.id)) m.read = 0 })
+      notice(`已将 ${ids.length} 封邮件标记为未读`)
+      selectedIds.clear()
+      renderNavList()
+      renderMain()
+    })
+
+    // 批量标星
+    $('batchStarBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'star', ids }),
+      })
+      messages.forEach(m => { if (selectedIds.has(m.id)) m.starred = 1 })
+      notice(`已为 ${ids.length} 封邮件添加星标`)
+      selectedIds.clear()
+      renderNavList()
+      renderMain()
+    })
+
+    // 批量取消星标
+    $('batchUnstarBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unstar', ids }),
+      })
+      messages.forEach(m => { if (selectedIds.has(m.id)) m.starred = 0 })
+      notice(`已取消 ${ids.length} 封邮件的星标`)
+      selectedIds.clear()
+      renderNavList()
+      renderMain()
+    })
+
+    // 批量移入废纸篓
+    $('batchMoveTrashBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      const ok = await askConfirm({
+        title: '移入废纸篓',
+        message: `确定要将选中的 ${ids.length} 封邮件移入废纸篓吗？`,
+        confirm: '确认移入',
+        danger: true,
+      })
+      if (!ok) return
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'trash', ids }),
+      })
+      notice(`已将 ${ids.length} 封邮件移入废纸篓`)
+      selectedIds.clear()
+      await loadMessages()
+    })
+
+    // 批量恢复
+    $('batchRestoreBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore', ids }),
+      })
+      notice(`已恢复 ${ids.length} 封邮件至收件箱`)
+      selectedIds.clear()
+      await loadMessages()
+    })
+
+    // 批量彻底删除
+    $('batchDeletePermanentBtn')?.addEventListener('click', async () => {
+      if (selectedIds.size === 0) return
+      const ids = Array.from(selectedIds)
+      const ok = await askConfirm({
+        title: '彻底永久删除',
+        message: `彻底删除后这 ${ids.length} 封邮件将无法恢复，确定彻底删除吗？`,
+        confirm: '彻底删除',
+        danger: true,
+      })
+      if (!ok) return
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', ids }),
+      })
+      notice(`已彻底删除 ${ids.length} 封邮件`)
+      selectedIds.clear()
+      await loadMessages()
+    })
+
+    // 返回列表
     $('mailBackBtn')?.addEventListener('click', () => {
       selectedMailId = null
       renderNavList()
       renderMain()
     })
 
-    // Click on preview card
+    // 详情页：上一封/下一封
+    $('mailPrevDetailBtn')?.addEventListener('click', () => {
+      const filtered = getFilteredMessages()
+      const currentIdx = filtered.findIndex(x => x.id === selectedMailId)
+      if (currentIdx > 0 && filtered[currentIdx - 1]) {
+        selectedMailId = filtered[currentIdx - 1]!.id
+        renderNavList()
+        renderMain()
+      }
+    })
+    $('mailNextDetailBtn')?.addEventListener('click', () => {
+      const filtered = getFilteredMessages()
+      const currentIdx = filtered.findIndex(x => x.id === selectedMailId)
+      if (currentIdx >= 0 && currentIdx < filtered.length - 1 && filtered[currentIdx + 1]) {
+        selectedMailId = filtered[currentIdx + 1]!.id
+        renderNavList()
+        renderMain()
+      }
+    })
+
+    // 详情页：星标切换
+    $('mailToggleStar')?.addEventListener('click', async () => {
+      if (!selectedMailId) return
+      const mail = messages.find(x => x.id === selectedMailId)
+      if (!mail) return
+      const newStar = !mail.starred
+      await api(`/api/mail/messages/${mail.id}/star`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ starred: newStar }),
+      })
+      mail.starred = newStar ? 1 : 0
+      notice(newStar ? '已为邮件添加星标' : '已取消星标')
+      renderNavList()
+      renderMain()
+    })
+
+    // 详情页：恢复到收件箱
+    $('mailRestoreBtn')?.addEventListener('click', async () => {
+      if (!selectedMailId) return
+      await api('/api/mail/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore', ids: [selectedMailId] }),
+      })
+      notice('邮件已恢复至收件箱')
+      selectedMailId = null
+      await loadMessages()
+    })
+
+    // 详情页：彻底删除
+    $('mailDeletePermanentBtn')?.addEventListener('click', async () => {
+      if (!selectedMailId) return
+      const ok = await askConfirm({
+        title: '彻底永久删除邮件',
+        message: '彻底删除后此邮件将无法找回，确认永久删除吗？',
+        confirm: '永久删除',
+        danger: true,
+      })
+      if (ok) {
+        await api(`/api/mail/messages/${selectedMailId}`, { method: 'DELETE' })
+        notice('邮件已彻底删除')
+        selectedMailId = null
+        await loadMessages()
+      }
+    })
+
+    // 事件委托：行点击、快速操作
     page.addEventListener('click', async e => {
       const target = e.target as HTMLElement
 
-      const card = target.closest<HTMLElement>('[data-mail-id]')
-      if (card && !target.closest('button')) {
-        const id = card.dataset.mailId
+      // 点击行进入详情（排除复选框、按钮）
+      const row = target.closest<HTMLElement>('.mail-row')
+      if (row && !target.closest('button') && !target.closest('input')) {
+        const id = row.dataset.mailId
         if (id) {
           selectedMailId = id
           renderNavList()
@@ -470,7 +1023,85 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
-      // Patient jump
+      // 星标切换点击
+      const starBtn = target.closest<HTMLElement>('[data-star-id]')
+      if (starBtn) {
+        const id = starBtn.dataset.starId!
+        const mail = messages.find(x => x.id === id)
+        if (mail) {
+          const nextStar = !mail.starred
+          await api(`/api/mail/messages/${id}/star`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ starred: nextStar }),
+          })
+          mail.starred = nextStar ? 1 : 0
+          renderNavList()
+          renderMain()
+        }
+        return
+      }
+
+      // 行内：已读/未读切换
+      const readToggle = target.closest<HTMLElement>('[data-toggle-read]')
+      if (readToggle) {
+        const id = readToggle.dataset.toggleRead!
+        const mail = messages.find(x => x.id === id)
+        if (mail) {
+          const nextRead = !mail.read
+          await api(`/api/mail/messages/${id}/read`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ read: nextRead }),
+          })
+          mail.read = nextRead ? 1 : 0
+          notice(nextRead ? '已标为已读' : '已标为未读')
+          renderNavList()
+          renderMain()
+        }
+        return
+      }
+
+      // 行内：添加到日历
+      const addCalBtn = target.closest<HTMLElement>('[data-add-cal]')
+      if (addCalBtn) {
+        const id = addCalBtn.dataset.addCal!
+        const mail = messages.find(x => x.id === id)
+        if (mail) {
+          await addEmailToCalendar(mail)
+        }
+        return
+      }
+
+      // 行内：删除 / 移入废纸篓
+      const delMailBtn = target.closest<HTMLElement>('[data-del-mail]')
+      if (delMailBtn) {
+        const id = delMailBtn.dataset.delMail!
+        if (activeFolder === 'trash') {
+          const ok = await askConfirm({
+            title: '永久删除邮件',
+            message: '确定要彻底删除该邮件吗？',
+            confirm: '永久删除',
+            danger: true,
+          })
+          if (ok) {
+            await api(`/api/mail/messages/${id}`, { method: 'DELETE' })
+            notice('邮件已永久删除')
+            await loadMessages()
+          }
+        } else {
+          await api('/api/mail/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'trash', ids: [id] }),
+          })
+          notice('已移入废纸篓')
+          await loadMessages()
+        }
+        return
+      }
+
+      // 患者跳转
       const ptJump = target.closest<HTMLElement>('#mailJumpPatient')
       if (ptJump && hooks.openPatient) {
         const code = ptJump.dataset.code!
@@ -478,7 +1109,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
-      // Study jump
+      // 课题跳转
       const stJump = target.closest<HTMLElement>('#mailJumpStudy')
       if (stJump && hooks.openStudy) {
         const study = stJump.dataset.study!
@@ -486,7 +1117,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
-      // Add to calendar
+      // 添加到日历（详情页）
       const calBtn = target.closest<HTMLElement>('#mailAddToCal')
       if (calBtn && selectedMailId) {
         const mail = messages.find(x => x.id === selectedMailId)
@@ -496,7 +1127,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
-      // Toggle read
+      // 已读切换（详情页）
       const readBtn = target.closest<HTMLElement>('#mailToggleRead')
       if (readBtn && selectedMailId) {
         const mail = messages.find(x => x.id === selectedMailId)
@@ -515,18 +1146,22 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
-      // Delete
+      // 详情页：移入废纸篓
       const delBtn = target.closest<HTMLElement>('#mailDelete')
       if (delBtn && selectedMailId) {
         const ok = await askConfirm({
-          title: '删除邮件',
-          message: '确定要删除此邮件吗？',
-          confirm: '确认删除',
+          title: '移入废纸篓',
+          message: '确定要将此邮件移入废纸篓吗？',
+          confirm: '移入废纸篓',
           danger: true,
         })
         if (ok) {
-          await api(`/api/mail/messages/${selectedMailId}`, { method: 'DELETE' })
-          notice('邮件已删除')
+          await api('/api/mail/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'trash', ids: [selectedMailId] }),
+          })
+          notice('邮件已移入废纸篓')
           selectedMailId = null
           await loadMessages()
         }
@@ -546,7 +1181,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: `【${CATEGORY_NAMES[mail.category]}】${mail.subject}`,
+          title: `【${CATEGORY_NAMES[mail.category] || '事项'}】${mail.subject}`,
           category: mail.category === 'research' ? 'research' : 'followup',
           start_time: startTime,
           end_time: endTime,
@@ -579,13 +1214,13 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <div class="mail-smtp-status-tip ${mailStatus?.configured ? 'configured' : 'mock'}">
             ${mailStatus?.configured
               ? `<span class="smtp-dot ok"></span> <strong>发信服务已连接 (${mailStatus.mode === 'smtp' ? '标准 SMTP' : 'Resend'})</strong>：支持直接向外部真实邮箱（如 Gmail、网易、QQ 邮箱等）真实发信。`
-              : `<span class="smtp-dot warn"></span> <strong>本地开发模拟模式</strong>：当前未配置外网发信服务 (SMTP)。发往外部邮箱时将在本地保留记录并模拟成功。如需真实发送至外部邮箱，请在 <code>.env</code> 中配置 <code>SMTP_HOST</code>。`
+              : `<span class="smtp-dot warn"></span> <strong>本地开发模拟模式</strong>：当前未配置外网发信服务 (SMTP)。发往外部邮箱时将在本地保留记录并模拟成功。`
             }
           </div>
           <form id="mailComposeForm" class="mail-form">
             <div class="form-row">
               <label>收件人邮箱 (Recipient) *</label>
-              <input type="email" id="composeTo" required value="colleague@heurion.com" placeholder="someone@heurion.com" />
+              <input type="email" id="composeTo" required placeholder="如：patient@gmail.com 或 dr.wang@heurion.org" />
             </div>
 
             <div class="form-grid">
@@ -664,7 +1299,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         })
 
         if (res?.delivery?.status === 'external_sent') {
-          notice('邮件已通过外网 SMTP 成功发出！')
+          notice('邮件已通过外网发信服务成功发出！')
         } else if (res?.delivery?.status === 'simulated') {
           notice('邮件已保存为已发送（本地模拟记录，未配置外网 SMTP）')
         } else if (res?.delivery?.status === 'failed') {
@@ -674,7 +1309,6 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         }
 
         close()
-        // Switch to Sent folder and auto select newly sent message
         activeFolder = 'sent'
         updateFolderButtons()
         selectedMailId = res?.id || null
@@ -688,18 +1322,23 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   function updateFolderButtons(): void {
     const btnInbox = $('mailFolderInbox')
     const btnSent = $('mailFolderSent')
+    const btnTrash = $('mailFolderTrash')
     btnInbox?.classList.toggle('on', activeFolder === 'inbox')
     btnSent?.classList.toggle('on', activeFolder === 'sent')
+    btnTrash?.classList.toggle('on', activeFolder === 'trash')
   }
 
-  // Wire action buttons in nav-panel
+  // 绑定左侧栏交互按钮
   function initActionPills(): void {
     const fAll = $('mailFilterAll')
+    const fUnread = $('mailFilterUnread')
+    const fStarred = $('mailFilterStarred')
     const fFollowup = $('mailFilterFollowup')
     const fResearch = $('mailFilterResearch')
     const composeBtn = $('composeMailBtn')
     const btnInbox = $('mailFolderInbox')
     const btnSent = $('mailFolderSent')
+    const btnTrash = $('mailFolderTrash')
 
     composeBtn?.addEventListener('click', () => showComposeModal())
 
@@ -707,6 +1346,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       if (activeFolder !== 'inbox') {
         activeFolder = 'inbox'
         selectedMailId = null
+        selectedIds.clear()
+        currentPage = 1
         updateFolderButtons()
         void loadMessages()
       }
@@ -716,28 +1357,51 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       if (activeFolder !== 'sent') {
         activeFolder = 'sent'
         selectedMailId = null
+        selectedIds.clear()
+        currentPage = 1
         updateFolderButtons()
         void loadMessages()
       }
     })
 
-    const updatePills = (active: 'all' | 'followup' | 'research') => {
+    btnTrash?.addEventListener('click', () => {
+      if (activeFolder !== 'trash') {
+        activeFolder = 'trash'
+        selectedMailId = null
+        selectedIds.clear()
+        currentPage = 1
+        updateFolderButtons()
+        void loadMessages()
+      }
+    })
+
+    const updatePills = (active: typeof activeFilter) => {
       activeFilter = active
+      currentPage = 1
       fAll?.classList.toggle('on', active === 'all')
+      fUnread?.classList.toggle('on', active === 'unread')
+      fStarred?.classList.toggle('on', active === 'starred')
       fFollowup?.classList.toggle('on', active === 'followup')
       fResearch?.classList.toggle('on', active === 'research')
-      void loadMessages()
+      renderNavList()
+      renderMain()
     }
 
     fAll?.addEventListener('click', () => updatePills('all'))
+    fUnread?.addEventListener('click', () => updatePills('unread'))
+    fStarred?.addEventListener('click', () => updatePills('starred'))
     fFollowup?.addEventListener('click', () => updatePills('followup'))
     fResearch?.addEventListener('click', () => updatePills('research'))
 
     $('docSearch')?.addEventListener('input', () => {
-      if (!$('mailList')?.hidden) renderNavList()
+      if (!$('mailList')?.hidden) {
+        currentPage = 1
+        renderNavList()
+        renderMain()
+      }
     })
 
-    // Left nav item selection
+    // 左侧栏条目点击
     $('mailList')?.addEventListener('click', e => {
       const li = (e.target as HTMLElement).closest<HTMLElement>('.mail-nav-item')
       if (li) {

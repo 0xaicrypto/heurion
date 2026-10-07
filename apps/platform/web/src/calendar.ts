@@ -4,9 +4,13 @@
  * 专为临床医生与医学科研工作者设计：
  * 1. 随访复查排期 (Follow-up Plans): 靶向药耐药监测、气道三维容积复查、化疗间歇期评估
  * 2. 临床科研进度 (Research Progress): 方案讨论、伦理提交、PSM倾向评分匹配评审、DSMB独立数据监察会议
- * 3. 深度联动：
+ * 3. 完备的日程排期管理：
+ *    - 列表视图分页控制 (Paging & Page Size)
+ *    - 批量操作 (Batch Complete / Reschedule / Delete)
+ *    - 多维状态与分类筛选 (Status & Category Filters)
+ * 4. 深度联动：
  *    - 一键直达患者全景档案 (PT-*) 或临床研究课题 (ST-*)
- *    - 日程创建支持同步通知医生专属 @heurion.com 邮箱
+ *    - 日程创建支持同步通知医生专属 @heurion.org 邮箱
  */
 
 import { icon } from './icons.ts'
@@ -52,16 +56,26 @@ const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&am
 export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
   const $ = (id: string) => document.getElementById(id)!
   let events: CalendarEvent[] = []
-  let activeFilter: 'all' | 'followup' | 'research' = 'all'
+  let activeFilter: 'all' | 'followup' | 'research' | 'meeting' = 'all'
+  let statusFilter: 'all' | 'scheduled' | 'completed' = 'all'
   let currentYear = new Date().getFullYear()
   let currentMonth = new Date().getMonth() // 0-11
   let selectedEventId: string | null = null
   let viewMode: 'month' | 'agenda' = 'month'
 
+  // 分页与批量状态
+  let agendaPage = 1
+  let agendaPageSize = 10
+  const selectedCalIds = new Set<string>()
+
   async function loadEvents(): Promise<void> {
     try {
-      const q = activeFilter !== 'all' ? `?category=${activeFilter}` : ''
-      events = await api<CalendarEvent[]>(`/api/calendar/events${q}`)
+      events = await api<CalendarEvent[]>('/api/calendar/events')
+      // 清除不存在的已选中 id
+      const currentIds = new Set(events.map(e => e.id))
+      for (const id of Array.from(selectedCalIds)) {
+        if (!currentIds.has(id)) selectedCalIds.delete(id)
+      }
       renderNavList()
       renderMain()
     } catch (err) {
@@ -69,23 +83,29 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
     }
   }
 
-  function renderNavList(): void {
-    const listEl = $('calList')
-    if (!listEl) return
-
+  function getFilteredEvents(): CalendarEvent[] {
     const searchInput = $('docSearch') as HTMLInputElement | null
     const kw = (searchInput?.value ?? '').trim().toLowerCase()
 
-    const filtered = events.filter(ev => {
+    return events.filter(ev => {
       if (activeFilter !== 'all' && ev.category !== activeFilter) return false
+      if (statusFilter !== 'all' && ev.status !== statusFilter) return false
       if (!kw) return true
       return (
         ev.title.toLowerCase().includes(kw) ||
         (ev.patient_code && ev.patient_code.toLowerCase().includes(kw)) ||
         (ev.study_title && ev.study_title.toLowerCase().includes(kw)) ||
-        (ev.location && ev.location.toLowerCase().includes(kw))
+        (ev.location && ev.location.toLowerCase().includes(kw)) ||
+        (ev.notes && ev.notes.toLowerCase().includes(kw))
       )
     })
+  }
+
+  function renderNavList(): void {
+    const listEl = $('calList')
+    if (!listEl) return
+
+    const filtered = getFilteredEvents()
 
     if (filtered.length === 0) {
       listEl.innerHTML = `<li class="doclist-empty"><div class="muted">无日程安排</div></li>`
@@ -116,6 +136,9 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
     page.className = 'page calendar-page'
 
     const monthStr = `${currentYear} 年 ${currentMonth + 1} 月`
+    const filtered = getFilteredEvents()
+    const scheduledCount = events.filter(e => e.status !== 'completed').length
+    const completedCount = events.filter(e => e.status === 'completed').length
 
     page.innerHTML = `
       <div class="cal-header">
@@ -124,7 +147,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
             <span class="cal-icon">${icon('calendar', { size: 24 })}</span>
             <h1 class="cal-main-title">临床与科研日程排期</h1>
           </div>
-          <p class="cal-subtitle">规划患者随访复查周期、科研项目评审节点与学术研讨会，无缝联动 @heurion.com 邮件通知</p>
+          <p class="cal-subtitle">规划患者随访复查周期、科研项目评审节点与学术研讨会，无缝联动医生专属邮箱通知</p>
         </div>
         <div class="cal-header-actions">
           <button class="cal-btn ghost" id="calTodayBtn">今天</button>
@@ -135,9 +158,28 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
           </div>
           <div class="cal-btn-group">
             <button class="cal-btn ${viewMode === 'month' ? 'active' : ''}" id="calViewMonth">月视图</button>
-            <button class="cal-btn ${viewMode === 'agenda' ? 'active' : ''}" id="calViewAgenda">列表</button>
+            <button class="cal-btn ${viewMode === 'agenda' ? 'active' : ''}" id="calViewAgenda">排期列表 (${filtered.length})</button>
           </div>
           <button class="cal-btn primary" id="calAddEventBtn">＋ 新建排期</button>
+        </div>
+      </div>
+
+      <!-- 快速分类与状态筛选栏 -->
+      <div class="cal-filter-toolbar">
+        <div class="cal-filter-left">
+          <div class="cal-chip-group">
+            <span class="cal-filter-label">分类：</span>
+            <button class="cal-filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-cal-cat="all">全部</button>
+            <button class="cal-filter-chip ${activeFilter === 'followup' ? 'active' : ''}" data-cal-cat="followup">随访复查</button>
+            <button class="cal-filter-chip ${activeFilter === 'research' ? 'active' : ''}" data-cal-cat="research">科研进展</button>
+            <button class="cal-filter-chip ${activeFilter === 'meeting' ? 'active' : ''}" data-cal-cat="meeting">学术研讨</button>
+          </div>
+          <div class="cal-chip-group">
+            <span class="cal-filter-label">状态：</span>
+            <button class="cal-filter-chip ${statusFilter === 'all' ? 'active' : ''}" data-cal-status="all">全部 (${events.length})</button>
+            <button class="cal-filter-chip ${statusFilter === 'scheduled' ? 'active' : ''}" data-cal-status="scheduled">待执行 (${scheduledCount})</button>
+            <button class="cal-filter-chip ${statusFilter === 'completed' ? 'active' : ''}" data-cal-status="completed">已完成 (${completedCount})</button>
+          </div>
         </div>
       </div>
 
@@ -153,7 +195,6 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
 
   function renderMonthGrid(): string {
     const firstDay = new Date(currentYear, currentMonth, 1).getDay() // 0 = Sunday
-    // Monday as first column (0 = Mon, ..., 6 = Sun)
     const startOffset = (firstDay + 6) % 7
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate()
     const daysInPrevMonth = new Date(currentYear, currentMonth, 0).getDate()
@@ -165,27 +206,26 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
     const weekHeaders = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
     let html = `<div class="cal-grid">`
 
-    // Week header
     html += `<div class="cal-grid-header">`
     for (const h of weekHeaders) {
       html += `<div class="cal-grid-col-title">${h}</div>`
     }
     html += `</div>`
 
-    // Days grid
     html += `<div class="cal-grid-cells">`
 
-    // Previous month trailing days
+    // 上个月剩余天
     for (let i = startOffset - 1; i >= 0; i--) {
       const d = daysInPrevMonth - i
       html += `<div class="cal-day-cell other-month"><div class="cal-day-num">${d}</div></div>`
     }
 
-    // Current month days
+    // 当月天
+    const filtered = getFilteredEvents()
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
       const isToday = isCurrentMonth && d === todayDate
-      const dayEvents = events.filter(ev => ev.start_time.startsWith(dateStr))
+      const dayEvents = filtered.filter(ev => ev.start_time.startsWith(dateStr))
 
       html += `<div class="cal-day-cell ${isToday ? 'today' : ''}" data-date="${dateStr}">
         <div class="cal-day-cell-top">
@@ -204,7 +244,6 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
       </div>`
     }
 
-    // Trailing days of next month to fill 35 or 42 grid cells
     const totalFilled = startOffset + daysInMonth
     const remaining = (7 - (totalFilled % 7)) % 7
     for (let d = 1; d <= remaining; d++) {
@@ -215,48 +254,129 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
     return html
   }
 
+  /**
+   * 列表管理视图 (Agenda View) · 具备完善的分页、全选与批量操作
+   */
   function renderAgendaView(): string {
-    const sorted = [...events].sort((a, b) => a.start_time.localeCompare(b.start_time))
-    if (sorted.length === 0) {
-      return `<div class="cal-empty-view">
-        <div class="cal-empty-icon">${icon('calendar', { size: 36 })}</div>
-        <h3>当前无排期事件</h3>
-        <p class="muted">点击右上角「＋ 新建排期」安排患者复查与科研里程碑</p>
-      </div>`
+    const filtered = getFilteredEvents()
+    const sorted = [...filtered].sort((a, b) => a.start_time.localeCompare(b.start_time))
+    const totalEvents = sorted.length
+    const totalPages = Math.max(1, Math.ceil(totalEvents / agendaPageSize))
+    if (agendaPage > totalPages) agendaPage = totalPages
+    if (agendaPage < 1) agendaPage = 1
+
+    const startIdx = (agendaPage - 1) * agendaPageSize
+    const pageItems = sorted.slice(startIdx, startIdx + agendaPageSize)
+
+    const allPageSelected = pageItems.length > 0 && pageItems.every(e => selectedCalIds.has(e.id))
+    const hasSelection = selectedCalIds.size > 0
+
+    if (totalEvents === 0) {
+      return `
+        <div class="cal-empty-view">
+          <div class="cal-empty-icon">${icon('calendar', { size: 36 })}</div>
+          <h3>当前筛选条件下无排期日程</h3>
+          <p class="muted">点击右上角「＋ 新建排期」安排患者复查与科研里程碑，或切换筛选条件</p>
+        </div>
+      `
     }
 
-    return `<div class="cal-agenda-list">
-      ${sorted.map(ev => {
-        const catClass = `cat-${ev.category}`
-        const isDone = ev.status === 'completed'
-        return `<div class="cal-agenda-card ${catClass} ${isDone ? 'done' : ''}" data-ev-id="${ev.id}">
-          <div class="cal-agenda-side">
-            <span class="cal-agenda-date">${ev.start_time.slice(5, 10)}</span>
-            <span class="cal-agenda-time">${ev.start_time.slice(11, 16)} - ${ev.end_time.slice(11, 16)}</span>
-            <span class="cal-badge ${catClass}">${CATEGORY_NAMES[ev.category]}</span>
+    return `
+      <div class="cal-agenda-container">
+        <!-- 批量操作栏 -->
+        <div class="cal-batch-bar ${hasSelection ? 'visible' : ''}">
+          <div class="cal-batch-left">
+            <label class="mail-checkbox-wrap">
+              <input type="checkbox" id="calSelectAllPage" ${allPageSelected ? 'checked' : ''} />
+              <span class="mail-checkbox-label">全选本页 (${pageItems.length} 项)</span>
+            </label>
+            <span class="cal-batch-count">已选中 <strong>${selectedCalIds.size}</strong> 项日程</span>
           </div>
-          <div class="cal-agenda-content">
-            <div class="cal-agenda-title ${isDone ? 'strikethrough' : ''}">${esc(ev.title)}</div>
-            ${ev.location ? `<div class="cal-agenda-loc">${icon('hospital', { size: 13 })} ${esc(ev.location)}</div>` : ''}
-            ${ev.notes ? `<div class="cal-agenda-notes">${esc(ev.notes)}</div>` : ''}
-            <div class="cal-agenda-tags">
-              ${ev.patient_code ? `<button class="cal-link-btn pt-btn" data-nav-pt="${esc(ev.patient_code)}">${icon('users', { size: 12 })} 患者 ${esc(ev.patient_code)}</button>` : ''}
-              ${ev.study_title ? `<button class="cal-link-btn st-btn" data-nav-st="${esc(ev.study_id || ev.study_title)}">${icon('microscope', { size: 12 })} 课题: ${esc(ev.study_title)}</button>` : ''}
+          <div class="cal-batch-actions">
+            <button class="cal-btn ghost sm" id="calBatchCompleteBtn">
+              ${icon('check', { size: 13 })} 批量设为已完成
+            </button>
+            <button class="cal-btn ghost sm" id="calBatchScheduleBtn">恢复为待执行</button>
+            <button class="cal-btn ghost sm danger" id="calBatchDeleteBtn">
+              ${icon('trash', { size: 13 })} 批量删除
+            </button>
+            <button class="cal-btn ghost sm" id="calBatchClearBtn">取消选择</button>
+          </div>
+        </div>
+
+        <!-- 日程列表卡片 -->
+        <div class="cal-agenda-list">
+          ${pageItems.map(ev => {
+            const catClass = `cat-${ev.category}`
+            const isDone = ev.status === 'completed'
+            const isChecked = selectedCalIds.has(ev.id)
+
+            return `
+              <div class="cal-agenda-card ${catClass} ${isDone ? 'done' : ''} ${isChecked ? 'checked' : ''}" data-ev-id="${ev.id}">
+                <div class="cal-agenda-check" onclick="event.stopPropagation()">
+                  <input type="checkbox" class="cal-item-checkbox" data-id="${ev.id}" ${isChecked ? 'checked' : ''} />
+                </div>
+                <div class="cal-agenda-side">
+                  <span class="cal-agenda-date">${ev.start_time.slice(5, 10)}</span>
+                  <span class="cal-agenda-time">${ev.start_time.slice(11, 16)} - ${ev.end_time.slice(11, 16)}</span>
+                  <div class="cal-badge-row">
+                    <span class="cal-badge ${catClass}">${CATEGORY_NAMES[ev.category]}</span>
+                    <span class="cal-status-badge ${isDone ? 'completed' : 'scheduled'}">${isDone ? '已完成' : '待执行'}</span>
+                  </div>
+                </div>
+                <div class="cal-agenda-content">
+                  <div class="cal-agenda-title ${isDone ? 'strikethrough' : ''}">${esc(ev.title)}</div>
+                  ${ev.location ? `<div class="cal-agenda-loc">${icon('hospital', { size: 13 })} ${esc(ev.location)}</div>` : ''}
+                  ${ev.notes ? `<div class="cal-agenda-notes">${esc(ev.notes)}</div>` : ''}
+                  <div class="cal-agenda-tags">
+                    ${ev.patient_code ? `<button class="cal-link-btn pt-btn" data-nav-pt="${esc(ev.patient_code)}">${icon('users', { size: 12 })} 患者 ${esc(ev.patient_code)}</button>` : ''}
+                    ${ev.study_title ? `<button class="cal-link-btn st-btn" data-nav-st="${esc(ev.study_id || ev.study_title)}">${icon('microscope', { size: 12 })} 课题: ${esc(ev.study_title)}</button>` : ''}
+                  </div>
+                </div>
+                <div class="cal-agenda-actions" onclick="event.stopPropagation()">
+                  <button class="cal-action-btn ${isDone ? 'reset' : 'done'}" data-toggle-done="${ev.id}" title="${isDone ? '设为待办' : '设为已完成'}">
+                    ${isDone ? '恢复待办' : '✓ 标记完成'}
+                  </button>
+                  <button class="cal-action-btn danger" data-del-ev="${ev.id}" title="删除日程">
+                    ${icon('trash', { size: 12 })} 删除
+                  </button>
+                </div>
+              </div>
+            `
+          }).join('')}
+        </div>
+
+        <!-- 列表分页条 (Paging Bar) -->
+        <div class="cal-paging-bar">
+          <div class="cal-paging-info">
+            显示 <strong>${startIdx + 1}</strong> - <strong>${Math.min(startIdx + agendaPageSize, totalEvents)}</strong> 条 / 共 <strong>${totalEvents}</strong> 项排期
+          </div>
+          <div class="cal-paging-controls">
+            <div class="cal-page-size-wrap">
+              <span class="muted">每页</span>
+              <select id="calPageSizeSelect" class="cal-select-sm">
+                <option value="10" ${agendaPageSize === 10 ? 'selected' : ''}>10 项</option>
+                <option value="20" ${agendaPageSize === 20 ? 'selected' : ''}>20 项</option>
+                <option value="50" ${agendaPageSize === 50 ? 'selected' : ''}>50 项</option>
+              </select>
+            </div>
+            <div class="cal-page-btn-group">
+              <button class="cal-btn ghost sm" id="calFirstPage" ${agendaPage <= 1 ? 'disabled' : ''}>« 首页</button>
+              <button class="cal-btn ghost sm" id="calPrevPage" ${agendaPage <= 1 ? 'disabled' : ''}>‹ 上一页</button>
+              <span class="cal-page-indicator">第 <strong>${agendaPage}</strong> / ${totalPages} 页</span>
+              <button class="cal-btn ghost sm" id="calNextPage" ${agendaPage >= totalPages ? 'disabled' : ''}>下一页 ›</button>
+              <button class="cal-btn ghost sm" id="calLastPage" ${agendaPage >= totalPages ? 'disabled' : ''}>末页 »</button>
             </div>
           </div>
-          <div class="cal-agenda-actions">
-            <button class="cal-action-btn" data-toggle-done="${ev.id}" title="${isDone ? '设为未完成' : '设为已完成'}">${isDone ? '恢复待办' : '完成'}</button>
-            <button class="cal-action-btn danger" data-del-ev="${ev.id}" title="删除日程">删除</button>
-          </div>
-        </div>`
-      }).join('')}
-    </div>`
+        </div>
+      </div>
+    `
   }
 
   function bindMainEvents(): void {
     const page = $('page')
 
-    // Navigation buttons
+    // 月历导航按钮
     $('calPrevMonth')?.addEventListener('click', () => {
       currentMonth--
       if (currentMonth < 0) {
@@ -296,14 +416,133 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
       showEventDialog()
     })
 
-    // Delegation on page
+    // 分类筛选药丸
+    page.querySelectorAll<HTMLButtonElement>('[data-cal-cat]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeFilter = btn.dataset.calCat as any
+        agendaPage = 1
+        renderNavList()
+        renderMain()
+      })
+    })
+
+    // 状态筛选药丸
+    page.querySelectorAll<HTMLButtonElement>('[data-cal-status]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        statusFilter = btn.dataset.calStatus as any
+        agendaPage = 1
+        renderNavList()
+        renderMain()
+      })
+    })
+
+    // 分页容量切换
+    const pageSizeSelect = $('calPageSizeSelect') as HTMLSelectElement | null
+    pageSizeSelect?.addEventListener('change', () => {
+      agendaPageSize = parseInt(pageSizeSelect.value, 10) || 10
+      agendaPage = 1
+      renderMain()
+    })
+
+    // 分页按钮
+    $('calFirstPage')?.addEventListener('click', () => { agendaPage = 1; renderMain() })
+    $('calPrevPage')?.addEventListener('click', () => { if (agendaPage > 1) { agendaPage--; renderMain() } })
+    $('calNextPage')?.addEventListener('click', () => { agendaPage++; renderMain() })
+    $('calLastPage')?.addEventListener('click', () => {
+      const filtered = getFilteredEvents()
+      agendaPage = Math.max(1, Math.ceil(filtered.length / agendaPageSize))
+      renderMain()
+    })
+
+    // 全选本页复选框
+    $('calSelectAllPage')?.addEventListener('change', e => {
+      const checked = (e.target as HTMLInputElement).checked
+      const filtered = getFilteredEvents()
+      const sorted = [...filtered].sort((a, b) => a.start_time.localeCompare(b.start_time))
+      const startIdx = (agendaPage - 1) * agendaPageSize
+      const pageItems = sorted.slice(startIdx, startIdx + agendaPageSize)
+      if (checked) {
+        pageItems.forEach(ev => selectedCalIds.add(ev.id))
+      } else {
+        pageItems.forEach(ev => selectedCalIds.delete(ev.id))
+      }
+      renderMain()
+    })
+
+    // 单项 Checkbox
+    page.querySelectorAll<HTMLInputElement>('.cal-item-checkbox').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const id = chk.dataset.id
+        if (!id) return
+        if (chk.checked) selectedCalIds.add(id)
+        else selectedCalIds.delete(id)
+        renderMain()
+      })
+    })
+
+    // 取消选择
+    $('calBatchClearBtn')?.addEventListener('click', () => {
+      selectedCalIds.clear()
+      renderMain()
+    })
+
+    // 批量设为已完成
+    $('calBatchCompleteBtn')?.addEventListener('click', async () => {
+      if (selectedCalIds.size === 0) return
+      const ids = Array.from(selectedCalIds)
+      await api('/api/calendar/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete', ids }),
+      })
+      notice(`已将选中的 ${ids.length} 项排期标记为完成`)
+      selectedCalIds.clear()
+      await loadEvents()
+    })
+
+    // 批量恢复为待办
+    $('calBatchScheduleBtn')?.addEventListener('click', async () => {
+      if (selectedCalIds.size === 0) return
+      const ids = Array.from(selectedCalIds)
+      await api('/api/calendar/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'schedule', ids }),
+      })
+      notice(`已恢复 ${ids.length} 项排期为待执行`)
+      selectedCalIds.clear()
+      await loadEvents()
+    })
+
+    // 批量删除日程
+    $('calBatchDeleteBtn')?.addEventListener('click', async () => {
+      if (selectedCalIds.size === 0) return
+      const ids = Array.from(selectedCalIds)
+      const ok = await askConfirm({
+        title: '批量删除日程',
+        message: `确定要删除选中的 ${ids.length} 项日程排期吗？`,
+        confirm: '确认删除',
+        danger: true,
+      })
+      if (!ok) return
+      await api('/api/calendar/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', ids }),
+      })
+      notice(`已删除 ${ids.length} 项日程`)
+      selectedCalIds.clear()
+      await loadEvents()
+    })
+
+    // 事件委托：点击卡片或芯片查看详情
     page.addEventListener('click', async e => {
       const target = e.target as HTMLElement
 
-      // Click on event chip or nav item
-      const chip = target.closest<HTMLElement>('[data-ev-id]')
-      if (chip && !target.closest('button')) {
-        const id = chip.dataset.evId
+      // 点击日历卡片或月芯片
+      const itemEl = target.closest<HTMLElement>('[data-ev-id]')
+      if (itemEl && !target.closest('button') && !target.closest('input')) {
+        const id = itemEl.dataset.evId
         if (id) {
           selectedEventId = id
           renderNavList()
@@ -312,7 +551,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
         return
       }
 
-      // Add on specific date
+      // 月历指定日期添加
       const addBtn = target.closest<HTMLElement>('[data-add-date]')
       if (addBtn) {
         const d = addBtn.dataset.addDate
@@ -320,7 +559,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
         return
       }
 
-      // Patient navigation
+      // 患者跳转
       const ptBtn = target.closest<HTMLElement>('[data-nav-pt]')
       if (ptBtn && hooks.openPatient) {
         const code = ptBtn.dataset.navPt!
@@ -328,7 +567,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
         return
       }
 
-      // Study navigation
+      // 课题跳转
       const stBtn = target.closest<HTMLElement>('[data-nav-st]')
       if (stBtn && hooks.openStudy) {
         const study = stBtn.dataset.navSt!
@@ -336,7 +575,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
         return
       }
 
-      // Toggle done
+      // 单项切换完成状态
       const doneBtn = target.closest<HTMLElement>('[data-toggle-done]')
       if (doneBtn) {
         const id = doneBtn.dataset.toggleDone!
@@ -354,7 +593,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
         return
       }
 
-      // Delete event
+      // 单项删除
       const delBtn = target.closest<HTMLElement>('[data-del-ev]')
       if (delBtn) {
         const id = delBtn.dataset.delEv!
@@ -435,7 +674,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
 
             <div class="cal-mail-synced-hint">
               <span class="cal-mail-icon">${icon('mail', { size: 14 })}</span>
-              <span>排期提醒已同步在邮箱列表，随时支持多端跟进</span>
+              <span>排期提醒已同步在医生信箱，随时支持多端跟进</span>
             </div>
           </div>
           <div class="cal-modal-foot">
@@ -559,7 +798,7 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
             <div class="form-checkbox-row">
               <label class="checkbox-label">
                 <input type="checkbox" id="evSendEmail" checked />
-                <span>同步向我的 <b class="brand-domain">@heurion.com</b> 医生工作邮箱发送日程提醒</span>
+                <span>同步向医生工作邮箱发送日程提醒</span>
               </label>
             </div>
 
@@ -616,32 +855,41 @@ export function initCalendar(api: Api, notice: Notice, hooks: CalendarHooks) {
     }
   }
 
-  // Wire action filters in nav-panel
+  // 绑定侧边栏分类按钮
   function initActionPills(): void {
     const fAll = $('calFilterAll')
     const fFollowup = $('calFilterFollowup')
     const fResearch = $('calFilterResearch')
+    const fMeeting = $('calFilterMeeting')
     const newBtn = $('newCalEvent')
 
     newBtn?.addEventListener('click', () => showEventDialog())
 
-    const updatePills = (active: 'all' | 'followup' | 'research') => {
+    const updatePills = (active: typeof activeFilter) => {
       activeFilter = active
+      agendaPage = 1
       fAll?.classList.toggle('on', active === 'all')
       fFollowup?.classList.toggle('on', active === 'followup')
       fResearch?.classList.toggle('on', active === 'research')
-      void loadEvents()
+      fMeeting?.classList.toggle('on', active === 'meeting')
+      renderNavList()
+      renderMain()
     }
 
     fAll?.addEventListener('click', () => updatePills('all'))
     fFollowup?.addEventListener('click', () => updatePills('followup'))
     fResearch?.addEventListener('click', () => updatePills('research'))
+    fMeeting?.addEventListener('click', () => updatePills('meeting'))
 
     $('docSearch')?.addEventListener('input', () => {
-      if (!$('calList')?.hidden) renderNavList()
+      if (!$('calList')?.hidden) {
+        agendaPage = 1
+        renderNavList()
+        renderMain()
+      }
     })
 
-    // Left nav item selection
+    // 左侧栏条目点击
     $('calList')?.addEventListener('click', e => {
       const li = (e.target as HTMLElement).closest<HTMLElement>('.cal-nav-item')
       if (li) {

@@ -25,8 +25,8 @@ export class CalendarService {
     private readonly mailService?: MailService
   ) {}
 
-  /** 获取日历事件列表（支持时间范围与分类过滤） */
-  list(userId: string, opts?: { from?: string; to?: string; category?: string; username?: string }): CalendarEventRow[] {
+  /** 获取日历事件列表（支持时间范围、分类、状态与搜索过滤） */
+  list(userId: string, opts?: { from?: string; to?: string; category?: string; status?: string; search?: string; username?: string }): CalendarEventRow[] {
     if (opts?.username) {
       this.ensureSeed(userId, opts.username)
     }
@@ -93,6 +93,16 @@ export class CalendarService {
   /** 删除日历事件 */
   delete(userId: string, id: string): void {
     this.store.deleteCalendarEvent(userId, id)
+  }
+
+  /** 批量更新日程状态 (scheduled / completed) */
+  batchUpdateStatus(userId: string, ids: string[], status: 'scheduled' | 'completed'): void {
+    this.store.batchUpdateCalendarStatus(userId, ids, status)
+  }
+
+  /** 批量删除日程事件 */
+  batchDelete(userId: string, ids: string[]): void {
+    this.store.batchDeleteCalendarEvents(userId, ids)
   }
 
   /** 首次访问用户初始化种子日程 */

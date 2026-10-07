@@ -204,13 +204,16 @@ const NOT_FOR_AI: Record<string, string> = {
   'GET /api/mail/messages/:id': '医生查阅邮件详情（本人阅览）',
   'POST /api/mail/messages': '医生起草并发送医疗通知专函（医生操作）',
   'PATCH /api/mail/messages/:id/read': '医生在界面上标记已读或未读（医生操作）',
+  'PATCH /api/mail/messages/:id/star': '医生在界面上对邮件标星或取消标星（医生操作）',
   'POST /api/mail/read-all': '医生在界面上一键标记全部已读（医生操作）',
+  'POST /api/mail/batch': '医生在界面上批量操作邮件（标记已读/未读、星标、移入废纸篓、批量删除）',
   'DELETE /api/mail/messages/:id': '医生在界面上删除邮件（医生操作）',
   'POST /api/mail/inbound': '外部邮件系统 (Cloudflare/Resend) 的 Inbound Webhook 投递回调，供外部系统投递邮件到站内',
   'GET /api/calendar/events': '医生排期日历事件列表（本人查阅）',
   'GET /api/calendar/events/:id': '医生查阅排期事件详情（本人查阅）',
   'POST /api/calendar/events': '医生安排随访与科研日程（医生操作）',
   'PATCH /api/calendar/events/:id': '医生更新排期或标记完成（医生操作）',
+  'POST /api/calendar/batch': '医生在界面上批量操作排期日程（批量标记完成、恢复待办、批量删除）',
   'DELETE /api/calendar/events/:id': '医生删除排期日程（医生操作）',
 }
 

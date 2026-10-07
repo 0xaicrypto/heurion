@@ -1985,7 +1985,7 @@ export class Store {
     return this.getMailMessage(input.user_id, id)!
   }
 
-  listMailMessages(userId: string, filterOrCategory?: string | { category?: string; folder?: string }): MailMessageRow[] {
+  listMailMessages(userId: string, filterOrCategory?: string | { category?: string; folder?: string; starred?: boolean; unreadOnly?: boolean; search?: string }): MailMessageRow[] {
     const opts = typeof filterOrCategory === 'string' ? { category: filterOrCategory } : filterOrCategory
     const folder = opts?.folder ?? 'inbox'
     let sql = 'SELECT * FROM mail_messages WHERE user_id = ?'
@@ -1997,6 +1997,17 @@ export class Store {
     if (opts?.category && opts.category !== 'all') {
       sql += ' AND category = ?'
       params.push(opts.category)
+    }
+    if (opts?.starred) {
+      sql += ' AND starred = 1'
+    }
+    if (opts?.unreadOnly) {
+      sql += ' AND read = 0'
+    }
+    if (opts?.search) {
+      const q = `%${opts.search.trim().toLowerCase()}%`
+      sql += ' AND (LOWER(subject) LIKE ? OR LOWER(sender) LIKE ? OR LOWER(recipient) LIKE ? OR LOWER(body) LIKE ? OR LOWER(COALESCE(patient_code, \'\')) LIKE ? OR LOWER(COALESCE(study_id, \'\')) LIKE ?)'
+      params.push(q, q, q, q, q, q)
     }
     sql += ' ORDER BY created_at DESC'
     return this.db.prepare(sql).all(...params) as unknown as MailMessageRow[]
@@ -2010,7 +2021,6 @@ export class Store {
     return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? AND id = ?').get(userId, id) as MailMessageRow | undefined
   }
 
-
   markMailRead(userId: string, id: string, read = true): void {
     this.db.prepare('UPDATE mail_messages SET read = ? WHERE user_id = ? AND id = ?').run(read ? 1 : 0, userId, id)
   }
@@ -2019,8 +2029,40 @@ export class Store {
     this.db.prepare('UPDATE mail_messages SET read = 1 WHERE user_id = ?').run(userId)
   }
 
+  setMailStarred(userId: string, id: string, starred = true): void {
+    this.db.prepare('UPDATE mail_messages SET starred = ? WHERE user_id = ? AND id = ?').run(starred ? 1 : 0, userId, id)
+  }
+
+  moveMailFolder(userId: string, id: string, folder: 'inbox' | 'sent' | 'trash'): void {
+    this.db.prepare('UPDATE mail_messages SET folder = ? WHERE user_id = ? AND id = ?').run(folder, userId, id)
+  }
+
   deleteMailMessage(userId: string, id: string): void {
     this.db.prepare('DELETE FROM mail_messages WHERE user_id = ? AND id = ?').run(userId, id)
+  }
+
+  batchMarkMailRead(userId: string, ids: string[], read = true): void {
+    if (!ids.length) return
+    const placeholders = ids.map(() => '?').join(', ')
+    this.db.prepare(`UPDATE mail_messages SET read = ? WHERE user_id = ? AND id IN (${placeholders})`).run(read ? 1 : 0, userId, ...ids)
+  }
+
+  batchSetMailStarred(userId: string, ids: string[], starred = true): void {
+    if (!ids.length) return
+    const placeholders = ids.map(() => '?').join(', ')
+    this.db.prepare(`UPDATE mail_messages SET starred = ? WHERE user_id = ? AND id IN (${placeholders})`).run(starred ? 1 : 0, userId, ...ids)
+  }
+
+  batchMoveMailFolder(userId: string, ids: string[], folder: 'inbox' | 'sent' | 'trash'): void {
+    if (!ids.length) return
+    const placeholders = ids.map(() => '?').join(', ')
+    this.db.prepare(`UPDATE mail_messages SET folder = ? WHERE user_id = ? AND id IN (${placeholders})`).run(folder, userId, ...ids)
+  }
+
+  batchDeleteMailMessages(userId: string, ids: string[]): void {
+    if (!ids.length) return
+    const placeholders = ids.map(() => '?').join(', ')
+    this.db.prepare(`DELETE FROM mail_messages WHERE user_id = ? AND id IN (${placeholders})`).run(userId, ...ids)
   }
 
   // —— 日历 (Calendar) ——
@@ -2040,12 +2082,16 @@ export class Store {
     return this.getCalendarEvent(input.user_id, id)!
   }
 
-  listCalendarEvents(userId: string, opts?: { from?: string; to?: string; category?: string }): CalendarEventRow[] {
+  listCalendarEvents(userId: string, opts?: { from?: string; to?: string; category?: string; status?: string; search?: string }): CalendarEventRow[] {
     let sql = 'SELECT * FROM calendar_events WHERE user_id = ?'
     const params: any[] = [userId]
     if (opts?.category && opts.category !== 'all') {
       sql += ' AND category = ?'
       params.push(opts.category)
+    }
+    if (opts?.status && opts.status !== 'all') {
+      sql += ' AND status = ?'
+      params.push(opts.status)
     }
     if (opts?.from) {
       sql += ' AND end_time >= ?'
@@ -2054,6 +2100,11 @@ export class Store {
     if (opts?.to) {
       sql += ' AND start_time <= ?'
       params.push(opts.to)
+    }
+    if (opts?.search) {
+      const q = `%${opts.search.trim().toLowerCase()}%`
+      sql += ' AND (LOWER(title) LIKE ? OR LOWER(COALESCE(description, \'\')) LIKE ? OR LOWER(COALESCE(patient_code, \'\')) LIKE ? OR LOWER(COALESCE(study_title, \'\')) LIKE ? OR LOWER(COALESCE(location, \'\')) LIKE ?)'
+      params.push(q, q, q, q, q)
     }
     sql += ' ORDER BY start_time ASC'
     return this.db.prepare(sql).all(...params) as unknown as CalendarEventRow[]
@@ -2082,6 +2133,18 @@ export class Store {
 
   deleteCalendarEvent(userId: string, id: string): void {
     this.db.prepare('DELETE FROM calendar_events WHERE user_id = ? AND id = ?').run(userId, id)
+  }
+
+  batchUpdateCalendarStatus(userId: string, ids: string[], status: 'scheduled' | 'completed'): void {
+    if (!ids.length) return
+    const placeholders = ids.map(() => '?').join(', ')
+    this.db.prepare(`UPDATE calendar_events SET status = ?, updated_at = ? WHERE user_id = ? AND id IN (${placeholders})`).run(status, now(), userId, ...ids)
+  }
+
+  batchDeleteCalendarEvents(userId: string, ids: string[]): void {
+    if (!ids.length) return
+    const placeholders = ids.map(() => '?').join(', ')
+    this.db.prepare(`DELETE FROM calendar_events WHERE user_id = ? AND id IN (${placeholders})`).run(userId, ...ids)
   }
 }
 

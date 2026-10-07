@@ -67,21 +67,25 @@
         <div class="split one"><button id="datasetsBtn" class="ghost-dark" title="全部数据集：上传研究数据表（CSV、Excel、SAS、SPSS、Stata）">数据集</button></div>
       </div>
       <div class="actions" id="calActions" hidden>
-        <button id="newCalEvent" class="sky block" title="安排新的随访复查或科研会议日程">＋ 新建日程</button>
-        <div class="split">
+        <button id="newCalEvent" class="sky block" title="安排新的随访复查或科研会议日程">＋ 新建排期</button>
+        <div class="split cal-category-split">
           <button id="calFilterAll" class="ghost-dark on">全部</button>
           <button id="calFilterFollowup" class="ghost-dark">随访</button>
           <button id="calFilterResearch" class="ghost-dark">科研</button>
+          <button id="calFilterMeeting" class="ghost-dark">研讨</button>
         </div>
       </div>
       <div class="actions" id="mailActions" hidden>
         <button id="composeMailBtn" class="sky block" title="起草并发送医疗通知或随访科研邮件">＋ 写邮件</button>
         <div class="split mail-folder-split">
-          <button id="mailFolderInbox" class="ghost-dark on" title="查看收件箱（随访警示、课题通报）">收件箱</button>
-          <button id="mailFolderSent" class="ghost-dark" title="查看已发送邮件（外发通知、外网送达状态）">已发送</button>
+          <button id="mailFolderInbox" class="ghost-dark on" title="查看收件箱">收件箱</button>
+          <button id="mailFolderSent" class="ghost-dark" title="查看已发送邮件">已发送</button>
+          <button id="mailFolderTrash" class="ghost-dark" title="查看废纸篓（已删除邮件）">废纸篓</button>
         </div>
         <div class="split mail-category-split">
           <button id="mailFilterAll" class="ghost-dark on">全部</button>
+          <button id="mailFilterUnread" class="ghost-dark">未读</button>
+          <button id="mailFilterStarred" class="ghost-dark">星标</button>
           <button id="mailFilterFollowup" class="ghost-dark">随访</button>
           <button id="mailFilterResearch" class="ghost-dark">科研</button>
         </div>

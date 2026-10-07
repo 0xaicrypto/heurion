@@ -322,4 +322,79 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(forward.opts?.replyTo).toBe('patient.li@163.com')
     expect(forward.opts?.senderAddress).toBe('hui@heurion.org')
   })
+
+  it('5. 邮件与日历的分页 (Paging) 与批量操作 (Batch Operations) 端到端接口验证', async () => {
+    const api = makeTestApp()
+
+    // 1. 测试邮件分页接口
+    const pagedRes = await api.get('/api/mail/messages?page=1&page_size=2&folder=inbox')
+    expect(pagedRes.status).toBe(200)
+    const pagedData = await pagedRes.json() as any
+    expect(pagedData.items).toBeDefined()
+    expect(pagedData.items.length).toBe(2)
+    expect(pagedData.total).toBeGreaterThanOrEqual(5)
+    expect(pagedData.page).toBe(1)
+    expect(pagedData.page_size).toBe(2)
+    expect(pagedData.total_pages).toBeGreaterThanOrEqual(3)
+
+    const [mail1, mail2] = pagedData.items
+    expect(mail1.id).toBeDefined()
+    expect(mail2.id).toBeDefined()
+
+    // 2. 测试邮件标星接口
+    const starRes = await api.patch(`/api/mail/messages/${mail1.id}/star`, {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ starred: true }),
+    })
+    expect(starRes.status).toBe(200)
+
+    // 3. 测试批量标为已读与批量标星
+    const batchReadRes = await api.post('/api/mail/batch', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', ids: [mail1.id, mail2.id] }),
+    })
+    expect(batchReadRes.status).toBe(200)
+    const batchReadData = await batchReadRes.json() as any
+    expect(batchReadData.ok).toBe(true)
+    expect(batchReadData.count).toBe(2)
+
+    // 4. 测试批量移入废纸篓 (trash) 与批量恢复 (restore)
+    const batchTrashRes = await api.post('/api/mail/batch', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'trash', ids: [mail1.id] }),
+    })
+    expect(batchTrashRes.status).toBe(200)
+
+    const checkTrashRes = await api.get('/api/mail/messages?folder=trash')
+    const trashItems = await checkTrashRes.json() as any[]
+    expect(trashItems.some(m => m.id === mail1.id)).toBe(true)
+
+    // 恢复
+    const batchRestoreRes = await api.post('/api/mail/batch', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restore', ids: [mail1.id] }),
+    })
+    expect(batchRestoreRes.status).toBe(200)
+
+    // 5. 测试日历分页接口
+    const calPagedRes = await api.get('/api/calendar/events?page=1&page_size=2')
+    expect(calPagedRes.status).toBe(200)
+    const calPagedData = await calPagedRes.json() as any
+    expect(calPagedData.items.length).toBe(2)
+    expect(calPagedData.total).toBeGreaterThanOrEqual(5)
+
+    // 6. 测试日历批量设为已完成与批量恢复待办
+    const [ev1, ev2] = calPagedData.items
+    const calBatchRes = await api.post('/api/calendar/batch', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'complete', ids: [ev1.id, ev2.id] }),
+    })
+    expect(calBatchRes.status).toBe(200)
+    const calBatchData = await calBatchRes.json() as any
+    expect(calBatchData.ok).toBe(true)
+
+    const checkEv1 = await api.get(`/api/calendar/events/${ev1.id}`)
+    const ev1Data = await checkEv1.json() as any
+    expect(ev1Data.status).toBe('completed')
+  })
 })

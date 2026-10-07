@@ -2237,7 +2237,30 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const u = store.getUser(user)
     const category = c.req.query('category') || undefined
     const folder = c.req.query('folder') || 'inbox'
-    const list = mail.list(user, u?.username ?? user, { category, folder })
+    const starred = c.req.query('starred') === '1' || c.req.query('starred') === 'true'
+    const unreadOnly = c.req.query('unread') === '1' || c.req.query('unread') === 'true'
+    const search = c.req.query('search') || undefined
+    const pageParam = c.req.query('page')
+    const pageSizeParam = c.req.query('page_size') || c.req.query('pageSize')
+
+    const list = mail.list(user, u?.username ?? user, { category, folder, starred, unreadOnly, search })
+
+    if (pageParam !== undefined) {
+      const page = Math.max(1, parseInt(pageParam, 10) || 1)
+      const pageSize = Math.max(1, Math.min(100, parseInt(pageSizeParam || '20', 10) || 20))
+      const total = list.length
+      const totalPages = Math.ceil(total / pageSize) || 1
+      const start = (page - 1) * pageSize
+      const items = list.slice(start, start + pageSize)
+      return c.json({
+        items,
+        total,
+        page,
+        page_size: pageSize,
+        total_pages: totalPages,
+      })
+    }
+
     return c.json(list)
   })
 
@@ -2270,7 +2293,6 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json({ ...result.message, delivery: result.delivery }, 201)
   })
 
-
   app.patch('/api/mail/messages/:id/read', async c => {
     const user = c.get('user')
     const m = mail.get(user, c.req.param('id'))
@@ -2280,10 +2302,57 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json({ ok: true })
   })
 
+  app.patch('/api/mail/messages/:id/star', async c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+    const body = (await c.req.json().catch(() => ({ starred: true }))) as { starred?: boolean }
+    mail.setStarred(user, c.req.param('id'), body.starred !== false)
+    return c.json({ ok: true })
+  })
+
   app.post('/api/mail/read-all', c => {
     const user = c.get('user')
     mail.markAllRead(user)
     return c.json({ ok: true })
+  })
+
+  app.post('/api/mail/batch', async c => {
+    const user = c.get('user')
+    const body = await c.req.json().catch(() => ({})) as { action?: string; ids?: string[]; folder?: 'inbox' | 'sent' | 'trash' }
+    const ids = Array.isArray(body.ids) ? body.ids : []
+    if (!ids.length) return c.json({ ok: false, error: '未提供邮件 ID 列表' }, 400)
+    switch (body.action) {
+      case 'read':
+        mail.batchRead(user, ids, true)
+        break
+      case 'unread':
+        mail.batchRead(user, ids, false)
+        break
+      case 'star':
+        mail.batchStar(user, ids, true)
+        break
+      case 'unstar':
+        mail.batchStar(user, ids, false)
+        break
+      case 'trash':
+        mail.batchMove(user, ids, 'trash')
+        break
+      case 'restore':
+        mail.batchMove(user, ids, 'inbox')
+        break
+      case 'delete':
+        mail.batchDelete(user, ids)
+        break
+      case 'move':
+        if (body.folder === 'inbox' || body.folder === 'sent' || body.folder === 'trash') {
+          mail.batchMove(user, ids, body.folder)
+        }
+        break
+      default:
+        return c.json({ ok: false, error: '未知的邮件批量操作类型' }, 400)
+    }
+    return c.json({ ok: true, count: ids.length })
   })
 
   app.delete('/api/mail/messages/:id', c => {
@@ -2326,7 +2395,29 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const from = c.req.query('from') || undefined
     const to = c.req.query('to') || undefined
     const category = c.req.query('category') || undefined
-    const list = calendar.list(user, { from, to, category, username: u?.username ?? user })
+    const status = c.req.query('status') || undefined
+    const search = c.req.query('search') || undefined
+    const pageParam = c.req.query('page')
+    const pageSizeParam = c.req.query('page_size') || c.req.query('pageSize')
+
+    const list = calendar.list(user, { from, to, category, status, search, username: u?.username ?? user })
+
+    if (pageParam !== undefined) {
+      const page = Math.max(1, parseInt(pageParam, 10) || 1)
+      const pageSize = Math.max(1, Math.min(100, parseInt(pageSizeParam || '20', 10) || 20))
+      const total = list.length
+      const totalPages = Math.ceil(total / pageSize) || 1
+      const start = (page - 1) * pageSize
+      const items = list.slice(start, start + pageSize)
+      return c.json({
+        items,
+        total,
+        page,
+        page_size: pageSize,
+        total_pages: totalPages,
+      })
+    }
+
     return c.json(list)
   })
 
@@ -2370,6 +2461,27 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const updated = calendar.update(user, c.req.param('id'), body)
     if (!updated) return c.json({ error: '日程不存在' }, 404)
     return c.json(updated)
+  })
+
+  app.post('/api/calendar/batch', async c => {
+    const user = c.get('user')
+    const body = await c.req.json().catch(() => ({})) as { action?: string; ids?: string[] }
+    const ids = Array.isArray(body.ids) ? body.ids : []
+    if (!ids.length) return c.json({ ok: false, error: '未提供日程 ID 列表' }, 400)
+    switch (body.action) {
+      case 'complete':
+        calendar.batchUpdateStatus(user, ids, 'completed')
+        break
+      case 'schedule':
+        calendar.batchUpdateStatus(user, ids, 'scheduled')
+        break
+      case 'delete':
+        calendar.batchDelete(user, ids)
+        break
+      default:
+        return c.json({ ok: false, error: '未知的日程批量操作类型' }, 400)
+    }
+    return c.json({ ok: true, count: ids.length })
   })
 
   app.delete('/api/calendar/events/:id', c => {

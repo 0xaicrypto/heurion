@@ -60,7 +60,7 @@ export class MailService {
   }
 
   /** 获取邮件列表（若首次访问则自动载入临床与科研示范邮件） */
-  list(userId: string, username: string, filterOrCategory?: string | { category?: string; folder?: string }): MailMessageRow[] {
+  list(userId: string, username: string, filterOrCategory?: string | { category?: string; folder?: string; starred?: boolean; unreadOnly?: boolean; search?: string }): MailMessageRow[] {
     this.ensureSeed(userId, username)
     return this.store.listMailMessages(userId, filterOrCategory)
   }
@@ -391,9 +391,39 @@ export class MailService {
     this.store.markAllMailsRead(userId)
   }
 
+  /** 标星 / 取消标星 */
+  setStarred(userId: string, id: string, starred = true): void {
+    this.store.setMailStarred(userId, id, starred)
+  }
+
+  /** 移动邮件文件夹 (inbox / sent / trash) */
+  moveFolder(userId: string, id: string, folder: 'inbox' | 'sent' | 'trash'): void {
+    this.store.moveMailFolder(userId, id, folder)
+  }
+
   /** 删除邮件 */
   delete(userId: string, id: string): void {
     this.store.deleteMailMessage(userId, id)
+  }
+
+  /** 批量标为已读/未读 */
+  batchRead(userId: string, ids: string[], read = true): void {
+    this.store.batchMarkMailRead(userId, ids, read)
+  }
+
+  /** 批量标星 / 取消标星 */
+  batchStar(userId: string, ids: string[], starred = true): void {
+    this.store.batchSetMailStarred(userId, ids, starred)
+  }
+
+  /** 批量移动文件夹 (如移入废纸篓 / 批量恢复) */
+  batchMove(userId: string, ids: string[], folder: 'inbox' | 'sent' | 'trash'): void {
+    this.store.batchMoveMailFolder(userId, ids, folder)
+  }
+
+  /** 批量彻底删除 */
+  batchDelete(userId: string, ids: string[]): void {
+    this.store.batchDeleteMailMessages(userId, ids)
   }
 
 

@@ -57,6 +57,8 @@ export type IconName =
   | 'mail'
   | 'clock'
   | 'send'
+  | 'star'
+  | 'trash'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -205,6 +207,12 @@ const ICONS: Record<IconName, string> = {
 
   // 发送
   send: '<path d="M17.5 2.5L8.5 11.5M17.5 2.5l-6 15-3-6-6-3 15-6z"/>',
+
+  // 标星、收藏
+  star: '<polygon points="10 2 12.5 7.5 18.5 8.2 14 12.3 15.3 18.2 10 15.2 4.7 18.2 6 12.3 1.5 8.2 7.5 7.5 10 2"/>',
+
+  // 废纸篓、删除
+  trash: '<path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5l1 11h7l1-11M8.5 9v5M11.5 9v5"/>',
 }
 
 export interface IconOptions {

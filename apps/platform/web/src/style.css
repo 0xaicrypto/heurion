@@ -4041,13 +4041,23 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   color: var(--muted);
 }
 
-/* 邮箱栏分栏与按钮激活态 */
+/* 邮箱与日历栏分栏与按钮激活态 */
 .mail-folder-split {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   margin-bottom: 2px;
 }
 .mail-category-split {
-  grid-template-columns: 1fr 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.mail-category-split button {
+  flex: 1 1 calc(33.333% - 4px);
+  padding: 4px 6px;
+  font-size: 11.5px;
+}
+.cal-category-split {
+  grid-template-columns: repeat(4, 1fr);
 }
 .actions .split button.on, button.ghost-dark.on {
   background: var(--teal);
@@ -4382,6 +4392,537 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 .brand-domain {
   color: var(--mint);
 }
+
+/* ==========================================================================
+   收件箱与排期日历管理系统：分页 (Paging)、批量操作 (Batch Operations) 与表格
+   ========================================================================== */
+
+/* 邮件列表视图根容器 */
+.mail-list-view, .cal-agenda-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+/* 邮件顶栏 */
+.mail-list-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.mail-list-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.mail-title-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: rgba(0, 229, 153, 0.12);
+  color: var(--mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.mail-main-heading {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.mail-subheading {
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mail-sep {
+  opacity: 0.5;
+}
+.mail-copyable {
+  color: var(--mint);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+.mail-copyable:hover {
+  background: var(--teal);
+  text-decoration: underline;
+}
+.mail-unread-alert {
+  color: #38bdf8;
+  font-weight: 600;
+}
+.mail-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mail-btn.icon-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 文件夹与分类条 */
+.mail-folder-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.mail-folder-tabs {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.mail-folder-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--line);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.mail-folder-tab:last-child {
+  border-right: 0;
+}
+.mail-folder-tab:hover {
+  background: var(--teal);
+  color: var(--text);
+}
+.mail-folder-tab.active {
+  background: var(--teal-hover);
+  color: var(--mint);
+  font-weight: 600;
+}
+.mail-tab-count {
+  background: var(--mint);
+  color: #06110D;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  line-height: 1.2;
+}
+
+.mail-filter-pills, .cal-chip-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mail-filter-chip, .cal-filter-chip {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.mail-filter-chip:hover, .cal-filter-chip:hover {
+  background: var(--teal);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+.mail-filter-chip.active, .cal-filter-chip.active {
+  background: var(--teal-hover);
+  border-color: var(--mint);
+  color: var(--mint);
+  font-weight: 600;
+}
+
+/* 批量操作工具条 (Batch Bar) */
+.mail-batch-bar, .cal-batch-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 16px;
+  background: linear-gradient(90deg, rgba(0, 229, 153, 0.08) 0%, rgba(56, 189, 248, 0.06) 100%);
+  border: 1px solid rgba(0, 229, 153, 0.35);
+  border-radius: 6px;
+  animation: fadeIn 0.15s ease-out;
+}
+.mail-batch-bar.visible, .cal-batch-bar.visible {
+  display: flex;
+}
+.mail-batch-left, .cal-batch-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mail-batch-selected-count, .cal-batch-count {
+  font-size: 13px;
+  color: var(--text);
+}
+.mail-batch-selected-count strong, .cal-batch-count strong {
+  color: var(--mint);
+  font-size: 14px;
+}
+.mail-checkbox-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.mail-checkbox-wrap input, .mail-row-check input, .cal-agenda-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mint);
+  cursor: pointer;
+}
+.mail-batch-actions, .cal-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mail-btn.sm, .cal-btn.sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.mail-btn.ghost.ok {
+  color: var(--mint);
+  border-color: rgba(0, 229, 153, 0.3);
+}
+.mail-btn.ghost.ok:hover {
+  background: rgba(0, 229, 153, 0.1);
+}
+
+/* 邮件列表表格区 */
+.mail-table-container {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.mail-rows-list {
+  display: flex;
+  flex-direction: column;
+}
+.mail-row {
+  display: grid;
+  grid-template-columns: 32px 30px 170px 1fr 140px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  position: relative;
+}
+.mail-row:last-child {
+  border-bottom: 0;
+}
+.mail-row:hover {
+  background: var(--teal);
+}
+.mail-row.checked {
+  background: rgba(0, 229, 153, 0.05);
+}
+.mail-row.unread {
+  background: rgba(0, 229, 153, 0.03);
+}
+.mail-row.unread .mail-subject-title {
+  font-weight: 700;
+  color: var(--text);
+}
+.mail-row.unread .mail-row-sender {
+  font-weight: 700;
+  color: var(--text);
+}
+.mail-row-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mail-row-star {
+  background: transparent;
+  border: 0;
+  color: var(--faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, transform 0.1s ease;
+}
+.mail-row-star:hover {
+  color: #fbbf24;
+  transform: scale(1.15);
+}
+.mail-row-star.starred {
+  color: #fbbf24;
+}
+.mail-nav-top-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mail-nav-star {
+  color: #fbbf24;
+  font-size: 11px;
+}
+.mail-row-sender {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-row-body-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+.mail-row-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mail-row-subject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mail-subject-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-subject-snippet {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-row-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+}
+.mail-row-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+.mail-row-hover-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  right: 0;
+  background: var(--panel);
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.mail-row:hover .mail-row-hover-actions {
+  display: flex;
+}
+.mail-hover-btn {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.mail-hover-btn:hover {
+  background: var(--teal);
+  color: var(--text);
+}
+.mail-hover-btn.danger:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+/* 分页控制栏 (Paging Bar) */
+.mail-paging-bar, .cal-paging-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.mail-paging-info, .cal-paging-info {
+  color: var(--muted);
+}
+.mail-paging-info strong, .cal-paging-info strong {
+  color: var(--text);
+}
+.mail-paging-controls, .cal-paging-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.mail-page-size-wrap, .cal-page-size-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mail-select-sm, .cal-select-sm {
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--teal);
+  color: var(--text);
+  cursor: pointer;
+}
+.mail-page-btn-group, .cal-page-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mail-page-indicator, .cal-page-indicator {
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 0 6px;
+}
+.mail-page-indicator strong, .cal-page-indicator strong {
+  color: var(--text);
+}
+
+/* 空状态 */
+.mail-empty-state, .cal-empty-view {
+  padding: 60px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.mail-empty-icon, .cal-empty-icon {
+  color: var(--muted);
+  opacity: 0.6;
+}
+.mail-empty-state h3, .cal-empty-view h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text);
+}
+
+/* 详情页导航按钮组 */
+.mail-toolbar-nav {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.mail-toolbar-nav button {
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+}
+.mail-toolbar-nav button:last-child {
+  border-right: 0;
+}
+
+/* 日历列表视图增强 */
+.cal-filter-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.cal-filter-left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.cal-filter-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.cal-agenda-card {
+  position: relative;
+}
+.cal-agenda-card.checked {
+  background: rgba(0, 229, 153, 0.05);
+  border-color: var(--mint);
+}
+.cal-agenda-check {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 3px;
+}
+.cal-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+.cal-status-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.cal-status-badge.scheduled {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+.cal-status-badge.completed {
+  background: rgba(0, 229, 153, 0.12);
+  color: var(--mint);
+}
+.cal-action-btn.done {
+  color: var(--mint);
+  border-color: rgba(0, 229, 153, 0.3);
+}
+.cal-action-btn.done:hover {
+  background: rgba(0, 229, 153, 0.1);
+}
+.cal-action-btn.reset {
+  color: var(--muted);
+}
+
 
 
 
