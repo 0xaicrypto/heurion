@@ -40,6 +40,15 @@ jobs:
             exit 0
           fi
 
+          echo "确保 Cloudflare Email Routing 已开启并自动配置 MX 记录..."
+          curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/email/routing/enable" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" || true
+
+          curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/email/routing/dns" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" || true
+
           echo "查询并尝试更新 Cloudflare Email Routing Catch-all 规则..."
           RES=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/email/routing/rules/catch_all" \
             -H "Authorization: Bearer $CF_TOKEN" \
