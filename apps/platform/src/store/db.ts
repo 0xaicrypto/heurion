@@ -43,6 +43,8 @@ export interface UserRow {
   imported_from: string | null
   /** 已验证的邮箱（找回密码用）；未绑定为 null。 */
   email: string | null
+  /** 专属工作邮箱前缀（如 hz -> hz@heurion.org）；未设置为 null。 */
+  work_email_prefix: string | null
   /** 工作空间（机构）：加入了医院就是医院，否则是个人空间。工作台（/app）的患者、研究、科室、机构模板按它走。 */
   tenant_id: string | null
   /** 个人空间（知家的家人档案所在）。加入医院后保留；为 null 时知家用到再建（纯医院账号）。docs/design/TENANCY.md §双重身份 */
@@ -79,6 +81,8 @@ export interface MailMessageRow {
   folder: 'inbox' | 'sent' | 'trash'
   delivery_status: 'delivered' | 'external_sent' | 'simulated' | 'failed' | null
   delivery_note: string | null
+  thread_id?: string | null
+  in_reply_to?: string | null
   created_at: string
 }
 
@@ -630,6 +634,10 @@ export class Store {
       this.db.exec('ALTER TABLE users ADD COLUMN personal_tenant_id TEXT')
       this.db.exec("UPDATE users SET personal_tenant_id = tenant_id WHERE tenant_id IN (SELECT id FROM tenants WHERE kind = 'personal')")
     }
+    if (!userCols.includes('work_email_prefix')) {
+      this.db.exec('ALTER TABLE users ADD COLUMN work_email_prefix TEXT')
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_work_email_prefix ON users (work_email_prefix) WHERE work_email_prefix IS NOT NULL')
+    }
     const inviteCols = (this.db.prepare('PRAGMA table_info(tenant_invites)').all() as Array<{ name: string }>).map(c => c.name)
     if (!inviteCols.includes('target_user_id')) this.db.exec('ALTER TABLE tenant_invites ADD COLUMN target_user_id TEXT')
     const auditCols = (this.db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>).map(c => c.name)
@@ -729,6 +737,12 @@ export class Store {
     }
     if (!mailCols.includes('delivery_note')) {
       this.db.exec('ALTER TABLE mail_messages ADD COLUMN delivery_note TEXT')
+    }
+    if (!mailCols.includes('thread_id')) {
+      this.db.exec('ALTER TABLE mail_messages ADD COLUMN thread_id TEXT')
+    }
+    if (!mailCols.includes('in_reply_to')) {
+      this.db.exec('ALTER TABLE mail_messages ADD COLUMN in_reply_to TEXT')
     }
     this.db.exec("UPDATE mail_messages SET delivery_status = 'simulated', delivery_note = '本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)' WHERE folder = 'sent' AND delivery_status IS NULL")
   }
@@ -860,6 +874,12 @@ export class Store {
     return this.db.prepare('SELECT * FROM users WHERE email = ?').get(email) as unknown as UserRow | undefined
   }
 
+  getUserByWorkEmailPrefix(prefix: string): UserRow | undefined {
+    const p = (prefix || '').trim().toLowerCase()
+    if (!p) return undefined
+    return this.db.prepare('SELECT * FROM users WHERE LOWER(work_email_prefix) = ?').get(p) as unknown as UserRow | undefined
+  }
+
   setUserEmail(id: string, email: string | null): void {
     this.db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, id)
   }
@@ -894,11 +914,11 @@ export class Store {
       .all() as unknown as Array<UserRow & { doc_count: number }>
   }
 
-  updateUser(id: string, patch: Partial<Pick<UserRow, 'display_name' | 'password_hash' | 'role' | 'status'>> & { bumpTokenVersion?: boolean; touchLogin?: boolean }): UserRow | undefined {
+  updateUser(id: string, patch: Partial<Pick<UserRow, 'display_name' | 'password_hash' | 'role' | 'status' | 'work_email_prefix'>> & { bumpTokenVersion?: boolean; touchLogin?: boolean }): UserRow | undefined {
     const sets: string[] = []
-    const args: Array<string | number> = []
-    for (const k of ['display_name', 'password_hash', 'role', 'status'] as const) {
-      if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]!) }
+    const args: Array<string | number | null> = []
+    for (const k of ['display_name', 'password_hash', 'role', 'status', 'work_email_prefix'] as const) {
+      if (patch[k] !== undefined) { sets.push(`${k} = ?`); args.push(patch[k]) }
     }
     if (patch.bumpTokenVersion) sets.push('token_version = token_version + 1')
     if (patch.touchLogin) { sets.push('last_login_at = ?'); args.push(now()) }
@@ -1966,23 +1986,52 @@ export class Store {
 
   // —— 邮件 (Mail) ——
 
-  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at' | 'folder' | 'delivery_status' | 'delivery_note'> & { id?: string; created_at?: string; folder?: MailMessageRow['folder']; delivery_status?: MailMessageRow['delivery_status']; delivery_note?: string | null }): MailMessageRow {
+  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at' | 'folder' | 'delivery_status' | 'delivery_note'> & { id?: string; created_at?: string; folder?: MailMessageRow['folder']; delivery_status?: MailMessageRow['delivery_status']; delivery_note?: string | null; thread_id?: string | null; in_reply_to?: string | null }): MailMessageRow {
     const id = input.id ?? randomUUID()
     const createdAt = input.created_at ?? now()
     const folder = input.folder ?? 'inbox'
     const deliveryStatus = input.delivery_status ?? (folder === 'sent' ? 'delivered' : null)
     const deliveryNote = input.delivery_note ?? null
+    const threadId = input.thread_id ?? null
+    const inReplyTo = input.in_reply_to ?? null
     this.db.prepare(`
-      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, folder, delivery_status, delivery_note, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, folder, delivery_status, delivery_note, thread_id, in_reply_to, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.user_id, input.tenant_id ?? null, input.sender, input.sender_name,
       input.recipient, input.subject, input.body, input.category,
       input.patient_id ?? null, input.patient_code ?? null, input.study_id ?? null, input.study_title ?? null,
       input.read ? 1 : 0, input.starred ? 1 : 0, input.calendar_event_id ?? null,
-      folder, deliveryStatus, deliveryNote, createdAt
+      folder, deliveryStatus, deliveryNote, threadId, inReplyTo, createdAt
     )
     return this.getMailMessage(input.user_id, id)!
+  }
+
+  listThreadMessages(userId: string, targetId: string): MailMessageRow[] {
+    const target = this.getMailMessage(userId, targetId)
+    if (!target) return []
+    const cleanSubject = target.subject.replace(/^(?:(?:\s*(?:re|fwd|fw|回复|转发)[：:]\s*)+)/i, '').trim().toLowerCase()
+    const allUserMails = this.db.prepare(`
+      SELECT * FROM mail_messages 
+      WHERE user_id = ? AND folder != 'trash'
+      ORDER BY created_at ASC, rowid ASC
+    `).all(userId) as unknown as MailMessageRow[]
+
+    const thread = allUserMails.filter(m => {
+      if (m.id === target.id) return true
+      if (target.thread_id && m.thread_id && target.thread_id === m.thread_id) return true
+      if (m.in_reply_to === target.id || target.in_reply_to === m.id) return true
+      const sub = m.subject.replace(/^(?:(?:\s*(?:re|fwd|fw|回复|转发)[：:]\s*)+)/i, '').trim().toLowerCase()
+      if (sub === cleanSubject) {
+        const sameParty = (m.sender === target.sender || m.recipient === target.sender || m.sender === target.recipient || m.recipient === target.recipient)
+        const samePt = Boolean(target.patient_code && m.patient_code && target.patient_code === m.patient_code)
+        const sameSt = Boolean(target.study_id && m.study_id && target.study_id === m.study_id)
+        return sameParty || samePt || sameSt
+      }
+      return false
+    })
+
+    return thread.length > 0 ? thread : [target]
   }
 
   listMailMessages(userId: string, filterOrCategory?: string | { category?: string; folder?: string; starred?: boolean; unreadOnly?: boolean; search?: string }): MailMessageRow[] {

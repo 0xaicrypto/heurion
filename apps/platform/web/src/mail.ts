@@ -50,6 +50,20 @@ export interface MailMessage {
   delivery_status?: 'delivered' | 'external_sent' | 'simulated' | 'failed'
   delivery_note?: string | null
   calendar_event_id?: string | null
+  thread_id?: string | null
+  in_reply_to?: string | null
+  thread?: MailMessage[]
+}
+
+export interface ComposeInitial {
+  recipient?: string
+  subject?: string
+  body?: string
+  category?: 'followup' | 'research' | 'notification' | 'general'
+  patient_code?: string
+  study_id?: string
+  thread_id?: string
+  in_reply_to?: string
 }
 
 export interface MailStatus {
@@ -187,6 +201,44 @@ function formatSenderDisplay(senderName?: string, sender?: string): string {
   return `${decodedName} <${cleanSender}>`
 }
 
+export function extractPureEmail(str?: string): string {
+  if (!str) return ''
+  const m = str.match(/<([^>]+)>/)
+  if (m && m[1]) return m[1].trim()
+  return str.trim()
+}
+
+export function normalizeSubject(sub?: string): string {
+  const decoded = decodeMimeWords(sub || '')
+  return decoded.replace(/^(?:(?:\s*(?:re|fwd|fw|回复|转发)[：:]\s*)+)/i, '').trim()
+}
+
+export function getAvatarInitial(nameOrEmail?: string): string {
+  if (!nameOrEmail) return 'M'
+  const clean = nameOrEmail.replace(/<[^>]+>/g, '').trim()
+  const first = clean[0] || 'M'
+  return first.toUpperCase()
+}
+
+export function formatTimeShort(dateStr?: string): string {
+  if (!dateStr) return ''
+  const clean = dateStr.replace('T', ' ').replace(/\.\d+Z$/, '')
+  return clean.length >= 16 ? clean.slice(5, 16) : clean
+}
+
+export function snippetText(str?: string, max = 80): string {
+  if (!str) return ''
+  const clean = str.replace(/[\r\n\t]+/g, ' ').replace(/>+[^\n]*/g, '').trim()
+  return clean.length > max ? clean.slice(0, max) + '...' : clean
+}
+
+export function generateThreadQuote(msg: MailMessage): string {
+  const dateStr = msg.created_at || '近期'
+  const senderStr = formatSenderDisplay(msg.sender_name, msg.sender)
+  const bodyText = (msg.body || '').split('\n').map(l => `> ${l}`).join('\n')
+  return `\n\n------------------ 原始邮件 ------------------\n发件人: ${senderStr}\n发送时间: ${dateStr}\n收件人: ${msg.recipient}\n主题: ${decodeMimeWords(msg.subject)}\n\n${bodyText}`
+}
+
 /**
  * 格式化邮件正文为具有临床科研专业排版的 HTML
  */
@@ -318,6 +370,18 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       console.error('[mail] failed to load status', err)
     }
   }
+
+  document.addEventListener('heurion:user-updated', ((e: CustomEvent<any>) => {
+    if (e.detail?.work_email) {
+      currentUserEmail = e.detail.work_email
+      if (selectedMailId) {
+        const cur = messages.find(x => x.id === selectedMailId)
+        if (cur) renderMailDetail(cur)
+      } else {
+        renderMain()
+      }
+    }
+  }) as EventListener)
 
   async function loadSummary(force = false): Promise<void> {
     summaryLoading = true
@@ -464,39 +528,6 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         <div class="mail-briefing-body">
           ${formatBriefingMarkdown(summary)}
         </div>
-
-        <!-- 来源邮件线索 (最近收到的信件) -->
-        ${sourceMails && sourceMails.length > 0 ? `
-          <div class="mail-briefing-sources-wrap">
-            <div class="mail-briefing-sources-head">
-              <span class="mail-sources-title">48小时来源邮件 (${sourceMails.length})</span>
-              <button class="mail-sources-all-btn" id="mailBriefingViewAllBtn" title="在右侧主视窗打开收件箱列表">右侧列表 ➔</button>
-            </div>
-            <div class="mail-briefing-sources-list">
-              ${sourceMails.map((sm: any) => {
-                const isSel = sm.id === selectedMailId
-                const catClass = `cat-${sm.category}`
-                const timeShort = sm.created_at ? sm.created_at.slice(5, 16) : ''
-                return `
-                  <div class="mail-briefing-source-item ${isSel ? 'selected' : ''}" data-mail-id="${sm.id}" title="点击在右侧查看此邮件详情">
-                    <div class="mail-source-top">
-                      <span class="mail-badge ${catClass}">${CATEGORY_NAMES[sm.category] || '邮件'}</span>
-                      <span class="mail-source-sender">${formatSenderDisplay(sm.sender_name, sm.sender)}</span>
-                      <span class="grow"></span>
-                      <span class="mail-source-time">${timeShort}</span>
-                    </div>
-                    <div class="mail-source-sub">${esc(decodeMimeWords(sm.subject))}</div>
-                    ${sm.patient_code ? `
-                      <div class="mail-source-pt-row">
-                        <span class="mail-briefing-pill" data-pt-code="${esc(sm.patient_code)}" title="点击打开患者档案">${esc(sm.patient_code)}</span>
-                      </div>
-                    ` : ''}
-                  </div>
-                `
-              }).join('')}
-            </div>
-          </div>
-        ` : ''}
 
         <!-- 底部生成元数据 -->
         <div class="mail-briefing-foot">
@@ -857,8 +888,26 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     const prevMail = currentIdx > 0 ? filtered[currentIdx - 1] : null
     const nextMail = currentIdx >= 0 && currentIdx < filtered.length - 1 ? filtered[currentIdx + 1] : null
 
+    // 会话流列表 (Gmail Threads)
+    let threadMessages: MailMessage[] = (m.thread && m.thread.length > 0) ? [...m.thread] : [m]
+
+    // 默认展开的邮件 ID 集合（当前查看的邮件和最新一封邮件默认展开，其余折叠）
+    const expandedIds = new Set<string>()
+    expandedIds.add(m.id)
+    if (threadMessages.length > 0) {
+      expandedIds.add(threadMessages[threadMessages.length - 1]!.id)
+    }
+
+    let inlineComposerActive = false
+    let currentReplyTargetId: string = threadMessages[threadMessages.length - 1]!.id
+    let quoteExpanded = false
+
+    const cleanSubject = normalizeSubject(m.subject) || '邮件'
+    const displaySubject = decodeMimeWords(m.subject)
+
     page.innerHTML = `
-      <div class="mail-detail-wrap">
+      <div class="mail-detail-wrap" id="mailDetailWrap">
+        <!-- 顶部操作工具栏 (Top Toolbar) -->
         <div class="mail-toolbar">
           <button class="mail-btn ghost" id="mailBackBtn">
             ‹ 返回列表
@@ -868,6 +917,15 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             <button class="mail-btn ghost sm icon-only" id="mailNextDetailBtn" ${!nextMail ? 'disabled' : ''} title="下一封邮件">›</button>
           </div>
           <span class="grow"></span>
+
+          <!-- Google Email 核心：快捷回复与转发按钮 -->
+          <button class="mail-btn ghost" id="mailReplyTopBtn" title="快捷回复最新邮件">
+            ${icon('reply', { size: 14 })} 回复
+          </button>
+          <button class="mail-btn ghost" id="mailForwardTopBtn" title="转发此会话">
+            ${icon('forward', { size: 14 })} 转发
+          </button>
+
           <button class="mail-btn ghost" id="mailToggleStar" title="${isStarred ? '取消星标' : '标记星标'}">
             ${isStarred ? '★ 已标星' : '☆ 标星'}
           </button>
@@ -883,48 +941,22 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           `}
         </div>
 
-        <div class="mail-content-card">
-          <div class="mail-card-header">
-            <div class="mail-header-badge-row">
-              <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
-              ${renderDeliveryPill(m.delivery_status)}
-              ${isStarred ? '<span class="mail-badge cat-general">★ 星标收藏</span>' : ''}
-              ${m.patient_code ? `<span class="mail-header-tag tag-pt">${icon('users', { size: 13 })} 患者: ${esc(m.patient_code)}</span>` : ''}
-              ${m.study_id ? `<span class="mail-header-tag tag-st">${icon('microscope', { size: 13 })} 课题: ${esc(m.study_id)}</span>` : ''}
-              <span class="grow"></span>
-              <span class="mail-header-time">${m.created_at}</span>
-            </div>
-            <h1 class="mail-subject-display">${esc(m.subject)}</h1>
-            <div class="mail-meta-info">
-              <div class="mail-meta-row">
-                <span class="mail-meta-k">发件人:</span>
-                <span class="mail-meta-v"><b class="mail-sender-name">${esc(formatSenderDisplay(m.sender_name, m.sender))}</b></span>
-              </div>
-              <div class="mail-meta-row">
-                <span class="mail-meta-k">收件人:</span>
-                <span class="mail-meta-v">${esc(m.recipient)}</span>
-              </div>
-            </div>
-
-            ${(m.delivery_status || isSent) ? `
-              <div class="mail-delivery-notice ${m.delivery_status === 'external_sent' || m.delivery_status === 'delivered' ? 'ok' : m.delivery_status === 'simulated' ? 'simulated' : 'fail'}">
-                <div class="mail-delivery-title">
-                  ${m.delivery_status === 'external_sent' ? '✓ 外网邮件投递成功 (SMTP)' :
-                    m.delivery_status === 'delivered' ? '✓ 站内信件投递成功' :
-                    m.delivery_status === 'simulated' ? '⚡ 本地开发模拟（未配置外网发信服务）' :
-                    m.delivery_status === 'failed' ? '✕ 外网发信失败' : '投递状态已记录'}
-                </div>
-                <div class="mail-delivery-text">
-                  ${m.delivery_note ? esc(m.delivery_note) : (
-                    m.delivery_status === 'external_sent' ? `已通过外网 SMTP 服务成功推送给收件人 ${esc(m.recipient)}。` :
-                    m.delivery_status === 'delivered' ? `收件人系院内专邮工作站用户，已投递至其收件箱。` :
-                    m.delivery_status === 'simulated' ? `当前环境未配置 SMTP_HOST / RESEND_API_KEY，系统在本地已模拟记录。如需真正发送至外部邮箱，请在 .env 中配置发信服务。` :
-                    '外发状态已记录。'
-                  )}
-                </div>
-              </div>
-            ` : ''}
+        <!-- 邮件会话头部卡片 (Thread Header) -->
+        <div class="mail-thread-header-card">
+          <div class="mail-header-badge-row">
+            <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
+            ${renderDeliveryPill(m.delivery_status)}
+            ${isStarred ? '<span class="mail-badge cat-general">★ 星标收藏</span>' : ''}
+            ${m.patient_code ? `<span class="mail-header-tag tag-pt">${icon('users', { size: 13 })} 患者: ${esc(m.patient_code)}</span>` : ''}
+            ${m.study_id ? `<span class="mail-header-tag tag-st">${icon('microscope', { size: 13 })} 课题: ${esc(m.study_id)}</span>` : ''}
+            <span class="grow"></span>
+            <span class="mail-thread-count-chip" id="mailThreadCountChip" ${threadMessages.length <= 1 ? 'style="display:none;"' : ''}>
+              ${threadMessages.length} 封往来会话
+            </span>
+            <span class="mail-header-time">${m.created_at}</span>
           </div>
+
+          <h1 class="mail-subject-display">${esc(displaySubject)}</h1>
 
           ${(m.patient_code || m.study_id) ? `
             <div class="mail-fast-actions-bar">
@@ -941,19 +973,446 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
               ` : ''}
             </div>
           ` : ''}
+        </div>
 
-          <div class="mail-body-render">
-            ${formatEmailBody(m.body)}
-          </div>
+        <!-- 会话流列表 (Thread Stream) -->
+        <div class="mail-thread-stream" id="mailThreadStream"></div>
 
-          <div class="mail-footer-signature">
-            <div class="mail-sig-line">Heurion Clinical Intelligence & Research Gateway</div>
-            <div class="mail-sig-sub">电子邮箱通知专函 · 统一身份与多中心科研系统</div>
-          </div>
+        <!-- Gmail 风格底部内联快速回复框 -->
+        <div class="mail-inline-composer-wrap" id="mailInlineComposerWrap"></div>
+
+        <!-- 底部落款 -->
+        <div class="mail-footer-signature">
+          <div class="mail-sig-line">Heurion Clinical Intelligence & Research Gateway</div>
+          <div class="mail-sig-sub">电子邮箱通知专函 · 统一身份与多中心科研系统 (支持与外部真实邮箱双向流转)</div>
         </div>
       </div>
       <div id="mailModalAnchor"></div>
     `
+
+    const wrap = $('mailDetailWrap')
+    const threadStreamEl = $('mailThreadStream')
+    const composerWrapEl = $('mailInlineComposerWrap')
+
+    function updateThreadCards(): void {
+      if (!threadStreamEl) return
+
+      threadStreamEl.innerHTML = threadMessages.map((msg, idx) => {
+        const isExp = expandedIds.has(msg.id)
+        const isLast = idx === threadMessages.length - 1
+        const avatar = getAvatarInitial(msg.sender_name || msg.sender)
+        const pureSender = extractPureEmail(msg.sender)
+        const senderDisplay = formatSenderDisplay(msg.sender_name, msg.sender)
+        const timeShort = formatTimeShort(msg.created_at)
+
+        if (!isExp) {
+          // 折叠摘要行 (Collapsed Summary Card)
+          return `
+            <div class="mail-thread-msg collapsed" data-msg-id="${esc(msg.id)}">
+              <div class="thread-msg-avatar" title="${esc(senderDisplay)}">${avatar}</div>
+              <div class="thread-msg-sender" title="${esc(senderDisplay)}">${esc(senderDisplay)}</div>
+              <div class="thread-msg-snippet">${esc(snippetText(msg.body, 90))}</div>
+              <div class="thread-msg-meta">
+                ${renderDeliveryPill(msg.delivery_status)}
+                <span class="thread-msg-time">${timeShort}</span>
+              </div>
+            </div>
+          `
+        }
+
+        // 展开正文卡片 (Expanded Message Card)
+        return `
+          <div class="mail-thread-msg expanded" data-msg-id="${esc(msg.id)}">
+            <div class="thread-msg-head" data-toggle-msg="${threadMessages.length > 1 ? esc(msg.id) : ''}">
+              <div class="thread-msg-avatar lg">${avatar}</div>
+              <div class="thread-msg-info">
+                <div class="thread-msg-info-top">
+                  <span class="thread-msg-author"><b>${esc(senderDisplay)}</b></span>
+                  <span class="thread-msg-addr">&lt;${esc(pureSender)}&gt;</span>
+                  <span class="grow"></span>
+                  <span class="thread-msg-time">${msg.created_at}</span>
+                </div>
+                <div class="thread-msg-info-sub">
+                  <span class="thread-msg-recipient">发送给：${esc(msg.recipient)}</span>
+                  ${renderDeliveryPill(msg.delivery_status)}
+                </div>
+              </div>
+              <div class="thread-msg-actions" onclick="event.stopPropagation()">
+                <button class="mail-btn ghost sm" data-card-reply="${esc(msg.id)}" title="针对此邮件回复">
+                  ${icon('reply', { size: 13 })} 回复
+                </button>
+                <button class="mail-btn ghost sm" data-card-forward="${esc(msg.id)}" title="转发此邮件">
+                  ${icon('forward', { size: 13 })} 转发
+                </button>
+              </div>
+            </div>
+
+            ${(msg.delivery_status || msg.folder === 'sent') ? `
+              <div class="mail-delivery-notice ${msg.delivery_status === 'external_sent' || msg.delivery_status === 'delivered' ? 'ok' : msg.delivery_status === 'simulated' ? 'simulated' : 'fail'}">
+                <div class="mail-delivery-title">
+                  ${msg.delivery_status === 'external_sent' ? '✓ 外网邮件投递成功 (SMTP)' :
+                    msg.delivery_status === 'delivered' ? '✓ 站内信件投递成功' :
+                    msg.delivery_status === 'simulated' ? '⚡ 本地开发模拟（未配置外网发信服务）' :
+                    msg.delivery_status === 'failed' ? '✕ 外网发信失败' : '投递状态已记录'}
+                </div>
+                <div class="mail-delivery-text">
+                  ${msg.delivery_note ? esc(msg.delivery_note) : (
+                    msg.delivery_status === 'external_sent' ? `已通过外网 SMTP 服务成功推送给收件人 ${esc(msg.recipient)}。` :
+                    msg.delivery_status === 'delivered' ? `收件人系院内专邮工作站用户，已投递至其收件箱。` :
+                    msg.delivery_status === 'simulated' ? `当前环境未配置 SMTP_HOST / RESEND_API_KEY，系统在本地已模拟记录。如需真正发送至外部邮箱，请在 .env 中配置发信服务。` :
+                    '外发状态已记录。'
+                  )}
+                </div>
+              </div>
+            ` : ''}
+
+            <div class="mail-body-render">
+              ${formatEmailBody(msg.body)}
+            </div>
+          </div>
+        `
+      }).join('')
+    }
+
+    function updateInlineComposer(): void {
+      if (!composerWrapEl) return
+
+      const targetMsg = threadMessages.find(x => x.id === currentReplyTargetId) || threadMessages[threadMessages.length - 1] || m
+      const myEmail = currentUserEmail.toLowerCase()
+      const pureSender = extractPureEmail(targetMsg.sender)
+      const pureRecipient = extractPureEmail(targetMsg.recipient)
+      const replyRecipient = pureSender.toLowerCase() === myEmail ? pureRecipient : (pureSender || pureRecipient)
+      const targetCleanSub = normalizeSubject(targetMsg.subject)
+      const replySubject = `Re: ${targetCleanSub || '邮件'}`
+
+      if (!inlineComposerActive) {
+        composerWrapEl.innerHTML = `
+          <div class="mail-inline-collapsed" id="inlineReplyCollapsedBar">
+            <div class="thread-msg-avatar sm">${getAvatarInitial(currentUserEmail)}</div>
+            <div class="inline-collapsed-text">点击此处快速回复给 <strong>${esc(replyRecipient)}</strong>...</div>
+            <span class="grow"></span>
+            <button class="mail-btn ghost sm" id="btnActivateReply">${icon('reply', { size: 13 })} 快速回复</button>
+            <button class="mail-btn ghost sm" id="btnActivateForward">${icon('forward', { size: 13 })} 转发</button>
+          </div>
+        `
+        return
+      }
+
+      composerWrapEl.innerHTML = `
+        <div class="mail-inline-expanded" id="inlineReplyExpandedBox">
+          <div class="inline-expanded-header">
+            <div class="inline-to-info">
+              <span class="inline-to-tag">${icon('reply', { size: 13 })} 回复：</span>
+              <span class="mail-recipient-chip">${esc(replyRecipient)}</span>
+              <span class="inline-subject-preview">主题：${esc(replySubject)}</span>
+            </div>
+            <button class="mail-btn ghost sm" id="btnPopoutModal" title="在弹窗中进行全屏编辑">
+              ⤢ 弹窗全屏编辑
+            </button>
+          </div>
+
+          <textarea id="inlineReplyTextarea" class="inline-reply-textarea" rows="4" placeholder="在此键入回复内容… 支持按 ⌘ + Enter 或 Ctrl + Enter 快捷发送"></textarea>
+
+          <div class="inline-quote-container">
+            <button type="button" class="inline-quote-toggle" id="btnToggleQuote">
+              ··· ${quoteExpanded ? '收起引用的原文' : '展开引用的原文'}
+            </button>
+            <div class="inline-quote-body ${quoteExpanded ? '' : 'hidden'}" id="inlineQuoteBody">
+              <pre>${esc(generateThreadQuote(targetMsg))}</pre>
+            </div>
+          </div>
+
+          <div class="inline-expanded-footer">
+            <div class="inline-footer-left">
+              <button class="mail-btn primary" id="btnSubmitInlineReply">
+                ${icon('send', { size: 14 })} 发送回复
+              </button>
+              <button class="mail-btn ghost" id="btnCancelInline">取消</button>
+            </div>
+            <div class="inline-footer-right">
+              <span class="inline-sender-hint">以 <strong>${esc(currentUserEmail)}</strong> 身份发出</span>
+            </div>
+          </div>
+        </div>
+      `
+    }
+
+    // 初始渲染
+    updateThreadCards()
+    updateInlineComposer()
+
+    // 异步加载完整会话流 (Gmail Thread)
+    if (!m.thread) {
+      void api<MailMessage & { thread?: MailMessage[] }>(`/api/mail/messages/${m.id}`).then(full => {
+        if (full && full.thread && full.thread.length > 0) {
+          m.thread = full.thread
+          if (selectedMailId === m.id) {
+            threadMessages = [...full.thread]
+            expandedIds.add(threadMessages[threadMessages.length - 1]!.id)
+            currentReplyTargetId = threadMessages[threadMessages.length - 1]!.id
+            const chip = $('mailThreadCountChip')
+            if (chip) {
+              chip.textContent = `${threadMessages.length} 封往来会话`
+              chip.style.display = threadMessages.length > 1 ? '' : 'none'
+            }
+            updateThreadCards()
+            updateInlineComposer()
+          }
+        }
+      }).catch(err => console.warn('[mail] load thread failed', err))
+    }
+
+    function triggerForward(targetMsg: MailMessage): void {
+      const targetCleanSub = normalizeSubject(targetMsg.subject)
+      const forwardSubject = `Fwd: ${targetCleanSub || '邮件'}`
+      const forwardBody = `\n\n------------------ 转发邮件 ------------------\n发件人: ${formatSenderDisplay(targetMsg.sender_name, targetMsg.sender)}\n时间: ${targetMsg.created_at}\n收件人: ${targetMsg.recipient}\n主题: ${decodeMimeWords(targetMsg.subject)}\n\n${targetMsg.body}`
+
+      showComposeModal({
+        subject: forwardSubject,
+        body: forwardBody,
+        category: m.category,
+        patient_code: m.patient_code || undefined,
+        study_id: m.study_id || undefined,
+      })
+    }
+
+    async function handleInlineReply(): Promise<void> {
+      const textarea = $('inlineReplyTextarea') as HTMLTextAreaElement | null
+      const content = textarea?.value.trim()
+      if (!content) {
+        notice('请输入回复内容', true)
+        textarea?.focus()
+        return
+      }
+
+      const targetMsg = threadMessages.find(x => x.id === currentReplyTargetId) || threadMessages[threadMessages.length - 1] || m
+      const myEmail = currentUserEmail.toLowerCase()
+      const pureSender = extractPureEmail(targetMsg.sender)
+      const pureRecipient = extractPureEmail(targetMsg.recipient)
+      const replyRecipient = pureSender.toLowerCase() === myEmail ? pureRecipient : (pureSender || pureRecipient)
+      const targetCleanSub = normalizeSubject(targetMsg.subject)
+      const replySubject = `Re: ${targetCleanSub || '邮件'}`
+
+      const submitBtn = $('btnSubmitInlineReply') as HTMLButtonElement | null
+      if (submitBtn) {
+        submitBtn.disabled = true
+        submitBtn.textContent = '发送中…'
+      }
+
+      const quoteText = generateThreadQuote(targetMsg)
+      const fullBody = `${content}\n${quoteText}`
+
+      try {
+        const res = await api<{ id?: string; delivery?: { status?: string; note?: string } }>('/api/mail/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipient: replyRecipient,
+            category: m.category,
+            subject: replySubject,
+            patient_code: m.patient_code || undefined,
+            study_id: m.study_id || undefined,
+            thread_id: m.thread_id || m.id,
+            in_reply_to: targetMsg.id,
+            body: fullBody,
+          }),
+        })
+
+        if (res?.delivery?.status === 'external_sent') {
+          notice('回复已通过外网 SMTP 服务成功发出！')
+        } else if (res?.delivery?.status === 'simulated') {
+          notice('回复已在本地模拟记录（未配置外网 SMTP）')
+        } else if (res?.delivery?.status === 'failed') {
+          notice('外发失败：' + (res.delivery.note || '请检查发信配置'), true)
+        } else {
+          notice('回复已成功发送！')
+        }
+
+        const newMsg: MailMessage = {
+          id: res?.id || `reply-${Date.now()}`,
+          sender: currentUserEmail,
+          sender_name: '我',
+          recipient: replyRecipient,
+          subject: replySubject,
+          body: fullBody,
+          category: m.category,
+          patient_code: m.patient_code,
+          study_id: m.study_id,
+          read: 1,
+          created_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          folder: 'sent',
+          delivery_status: (res?.delivery?.status as any) || 'delivered',
+          delivery_note: res?.delivery?.note,
+          thread_id: m.thread_id || m.id,
+          in_reply_to: targetMsg.id,
+        }
+
+        threadMessages.push(newMsg)
+        if (!m.thread) m.thread = [m]
+        m.thread.push(newMsg)
+        expandedIds.add(newMsg.id)
+
+        inlineComposerActive = false
+        quoteExpanded = false
+
+        const chip = $('mailThreadCountChip')
+        if (chip) {
+          chip.textContent = `${threadMessages.length} 封往来会话`
+          chip.style.display = threadMessages.length > 1 ? '' : 'none'
+        }
+
+        updateThreadCards()
+        updateInlineComposer()
+
+        setTimeout(() => {
+          const newEl = document.querySelector(`[data-msg-id="${newMsg.id}"]`)
+          newEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }, 100)
+
+        void loadMessages()
+      } catch (err) {
+        notice((err as Error).message, true)
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false
+          submitBtn.innerHTML = `${icon('send', { size: 14 })} 发送回复`
+        }
+      }
+    }
+
+    // 绑定当前会话详情页内的交互事件
+    wrap?.addEventListener('click', e => {
+      const target = e.target as HTMLElement
+
+      // 点击折叠消息卡展开
+      const collapsedRow = target.closest<HTMLElement>('.mail-thread-msg.collapsed')
+      if (collapsedRow) {
+        const id = collapsedRow.dataset.msgId
+        if (id) {
+          expandedIds.add(id)
+          updateThreadCards()
+        }
+        return
+      }
+
+      // 点击展开卡头部折叠
+      const toggleHead = target.closest<HTMLElement>('[data-toggle-msg]')
+      if (toggleHead && !target.closest('button')) {
+        const id = toggleHead.dataset.toggleMsg
+        if (id && expandedIds.size > 1) {
+          expandedIds.delete(id)
+          updateThreadCards()
+        }
+        return
+      }
+
+      // 卡片内回复按钮
+      const cardReplyBtn = target.closest<HTMLElement>('[data-card-reply]')
+      if (cardReplyBtn) {
+        currentReplyTargetId = cardReplyBtn.dataset.cardReply || m.id
+        inlineComposerActive = true
+        updateInlineComposer()
+        $('inlineReplyTextarea')?.focus()
+        $('mailInlineComposerWrap')?.scrollIntoView({ behavior: 'smooth' })
+        return
+      }
+
+      // 卡片内转发按钮
+      const cardFwdBtn = target.closest<HTMLElement>('[data-card-forward]')
+      if (cardFwdBtn) {
+        const id = cardFwdBtn.dataset.cardForward
+        const fwdMsg = threadMessages.find(x => x.id === id) || m
+        triggerForward(fwdMsg)
+        return
+      }
+
+      // 顶部回复
+      if (target.closest('#mailReplyTopBtn')) {
+        inlineComposerActive = true
+        updateInlineComposer()
+        $('inlineReplyTextarea')?.focus()
+        $('mailInlineComposerWrap')?.scrollIntoView({ behavior: 'smooth' })
+        return
+      }
+
+      // 顶部转发
+      if (target.closest('#mailForwardTopBtn')) {
+        const lastMsg = threadMessages[threadMessages.length - 1] || m
+        triggerForward(lastMsg)
+        return
+      }
+
+      // 底部折叠条激活回复
+      if (target.closest('#inlineReplyCollapsedBar') || target.closest('#btnActivateReply')) {
+        inlineComposerActive = true
+        updateInlineComposer()
+        $('inlineReplyTextarea')?.focus()
+        return
+      }
+
+      // 底部折叠条激活转发
+      if (target.closest('#btnActivateForward')) {
+        const lastMsg = threadMessages[threadMessages.length - 1] || m
+        triggerForward(lastMsg)
+        return
+      }
+
+      // 弹窗全屏编辑
+      if (target.closest('#btnPopoutModal')) {
+        const text = ($('inlineReplyTextarea') as HTMLTextAreaElement)?.value || ''
+        const targetMsg = threadMessages.find(x => x.id === currentReplyTargetId) || threadMessages[threadMessages.length - 1] || m
+        const myEmail = currentUserEmail.toLowerCase()
+        const pureSender = extractPureEmail(targetMsg.sender)
+        const pureRecipient = extractPureEmail(targetMsg.recipient)
+        const replyRecipient = pureSender.toLowerCase() === myEmail ? pureRecipient : (pureSender || pureRecipient)
+        const quoteText = generateThreadQuote(targetMsg)
+        showComposeModal({
+          recipient: replyRecipient,
+          subject: 'Re: ' + (normalizeSubject(targetMsg.subject) || '邮件'),
+          body: text ? `${text}\n${quoteText}` : quoteText,
+          category: m.category,
+          patient_code: m.patient_code || undefined,
+          study_id: m.study_id || undefined,
+          thread_id: m.thread_id || m.id,
+          in_reply_to: targetMsg.id,
+        })
+        return
+      }
+
+      // 引用折叠切换
+      if (target.closest('#btnToggleQuote')) {
+        quoteExpanded = !quoteExpanded
+        const qb = $('inlineQuoteBody')
+        if (qb) qb.classList.toggle('hidden', !quoteExpanded)
+        const tbtn = $('btnToggleQuote')
+        if (tbtn) tbtn.textContent = `··· ${quoteExpanded ? '收起引用的原文' : '展开引用的原文'}`
+        return
+      }
+
+      // 取消内联回复
+      if (target.closest('#btnCancelInline')) {
+        inlineComposerActive = false
+        updateInlineComposer()
+        return
+      }
+
+      // 提交回复
+      if (target.closest('#btnSubmitInlineReply')) {
+        void handleInlineReply()
+        return
+      }
+    })
+
+    // 快捷键支持：⌘ + Enter 或 Ctrl + Enter 触发回复发送
+    wrap?.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        const textarea = $('inlineReplyTextarea')
+        if (document.activeElement === textarea) {
+          e.preventDefault()
+          void handleInlineReply()
+        }
+      }
+    })
 
     // 自动标记已读
     if (isUnread) {
@@ -966,6 +1425,18 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         renderNavList()
       })
     }
+
+    // 将会话中所有未读邮件均标为已读
+    threadMessages.forEach(msg => {
+      if (!msg.read && msg.folder !== 'sent' && msg.id !== m.id) {
+        void api(`/api/mail/messages/${msg.id}/read`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ read: true }),
+        }).catch(() => {})
+        msg.read = 1
+      }
+    })
   }
 
   function bindMainEvents(): void {
@@ -1465,15 +1936,17 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     }
   }
 
-  function showComposeModal(): void {
+  function showComposeModal(initial?: ComposeInitial): void {
     const anchor = $('mailModalAnchor')
     if (!anchor) return
+
+    const initialCat = initial?.category || 'followup'
 
     anchor.innerHTML = `
       <div class="mail-modal-scrim" id="mailComposeScrim">
         <div class="mail-modal-card compose-card" role="dialog" aria-modal="true">
           <div class="mail-modal-head">
-            <h2>＋ 起草并发送医疗通知专邮</h2>
+            <h2>${initial?.in_reply_to ? '↩ 回复专邮' : initial?.subject?.startsWith('Fwd:') ? '↪ 转发专邮' : '＋ 起草并发送医疗通知专邮'}</h2>
             <button class="mail-modal-close" id="mailComposeClose">✕</button>
           </div>
           <div class="mail-smtp-status-tip ${mailStatus?.configured ? 'configured' : 'mock'}">
@@ -1485,16 +1958,16 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <form id="mailComposeForm" class="mail-form">
             <div class="form-row">
               <label>收件人邮箱 (Recipient) *</label>
-              <input type="email" id="composeTo" required placeholder="如：patient@gmail.com 或 wang@heurion.org" />
+              <input type="email" id="composeTo" required value="${esc(initial?.recipient || '')}" placeholder="如：patient@gmail.com 或 wang@heurion.org" />
             </div>
 
             <div class="form-grid">
               <div class="form-row">
                 <label>邮件分类</label>
                 <select id="composeCategory">
-                  <option value="followup">患者随访计划 (Follow-up)</option>
-                  <option value="research">科研项目进展 (Research)</option>
-                  <option value="general">临床综合沟通 (General)</option>
+                  <option value="followup" ${initialCat === 'followup' ? 'selected' : ''}>患者随访计划 (Follow-up)</option>
+                  <option value="research" ${initialCat === 'research' ? 'selected' : ''}>科研项目进展 (Research)</option>
+                  <option value="general" ${initialCat === 'general' ? 'selected' : ''}>临床综合沟通 (General)</option>
                 </select>
               </div>
               <div class="form-row">
@@ -1505,23 +1978,23 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
 
             <div class="form-row">
               <label>邮件主题 (Subject) *</label>
-              <input type="text" id="composeSubject" required placeholder="如：PT-BRONCHO-001 气道高密度栓塞第12周三维影像随访计划" />
+              <input type="text" id="composeSubject" required value="${esc(initial?.subject || '')}" placeholder="如：PT-BRONCHO-001 气道高密度栓塞第12周三维影像随访计划" />
             </div>
 
             <div class="form-grid">
               <div class="form-row">
                 <label>关联患者代号 (可选)</label>
-                <input type="text" id="composePtCode" placeholder="如：PT-BRONCHO-001" />
+                <input type="text" id="composePtCode" value="${esc(initial?.patient_code || '')}" placeholder="如：PT-BRONCHO-001" />
               </div>
               <div class="form-row">
                 <label>关联科研项目 (可选)</label>
-                <input type="text" id="composeStudy" placeholder="如：DAPA-HF (NCT03036124)" />
+                <input type="text" id="composeStudy" value="${esc(initial?.study_id || '')}" placeholder="如：DAPA-HF (NCT03036124)" />
               </div>
             </div>
 
             <div class="form-row">
               <label>正文内容 (Body) *</label>
-              <textarea id="composeBody" rows="8" required placeholder="输入详细随访计划、影像复查指引、临床指标预警或科研推进通知…"></textarea>
+              <textarea id="composeBody" rows="8" required placeholder="输入详细随访计划、影像复查指引、临床指标预警或科研推进通知…">${esc(initial?.body || '')}</textarea>
             </div>
 
             <div class="mail-modal-foot">
@@ -1559,6 +2032,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             subject,
             patient_code,
             study_id,
+            thread_id: initial?.thread_id,
+            in_reply_to: initial?.in_reply_to,
             body,
           }),
         })

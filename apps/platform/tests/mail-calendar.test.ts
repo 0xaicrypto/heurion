@@ -512,6 +512,82 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(saved.body).toContain('> 测试')
     expect(saved.body).not.toContain('=E6=B5=8B=E8=AF=95')
   })
+
+  it('9. Google Email (Gmail Threads) 会话流自动聚合、专属工作邮箱前缀与往来回复关联', async () => {
+    const api = makeTestApp()
+
+    // 1. 医生设置专属工作邮箱前缀 (work_email_prefix)
+    const patchMeRes = await api.patch('/api/me', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ work_email_prefix: 'zhaohui' }),
+    })
+    expect(patchMeRes.status).toBe(200)
+    const meData = await patchMeRes.json() as any
+    expect(meData.user.work_email_prefix).toBe('zhaohui')
+    expect(meData.user.work_email).toBe('zhaohui@heurion.org')
+
+    // 2. 外部患者来信，投递给医生的专属前缀邮箱 zhaohui@heurion.org
+    const inboundRes1 = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Jimmy Zhao <zhaojimmy13@gmail.com>',
+        to: 'Dr. Zhao <zhaohui@heurion.org>',
+        subject: 'PT-BRONCHO-001 气道随访排期咨询',
+        body: '赵医生您好，请问我下周二需要复查薄层 HRCT 吗？',
+      }),
+    })
+    expect(inboundRes1.status).toBe(201)
+    const inbound1 = await inboundRes1.json() as any
+
+    // 3. 医生在站内查看这封邮件并获取会话流
+    const detailRes1 = await api.get(`/api/mail/messages/${inbound1.id}`)
+    expect(detailRes1.status).toBe(200)
+    const mail1 = await detailRes1.json() as any
+    expect(mail1.sender).toBe('zhaojimmy13@gmail.com')
+    expect(mail1.thread).toBeDefined()
+    expect(mail1.thread.length).toBe(1)
+
+    // 4. 医生针对此邮件进行内联快速回复
+    const replyRes = await api.post('/api/mail/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient: 'zhaojimmy13@gmail.com',
+        subject: 'Re: PT-BRONCHO-001 气道随访排期咨询',
+        body: '您好，需要按期进行复查，我已为您在门诊日历中排期。\n\n> 赵医生您好，请问我下周二需要复查薄层 HRCT 吗？',
+        category: 'followup',
+        patient_code: 'PT-BRONCHO-001',
+        thread_id: inbound1.id,
+        in_reply_to: inbound1.id,
+      }),
+    })
+    expect(replyRes.status).toBe(201)
+    const replyData = await replyRes.json() as any
+    expect(replyData.sender).toBe('zhaohui@heurion.org')
+
+    // 5. 外部用户再次回复
+    const inboundRes2 = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Jimmy Zhao <zhaojimmy13@gmail.com>',
+        to: 'Dr. Zhao <zhaohui@heurion.org>',
+        subject: 'Re: Re: PT-BRONCHO-001 气道随访排期咨询',
+        body: '收到，非常感谢赵医生！周二上午我会准时到院。',
+      }),
+    })
+    expect(inboundRes2.status).toBe(201)
+
+    // 6. 验证会话流 (Gmail Thread) 自动将上述 3 封邮件全部按时间顺序聚合
+    const threadCheck = await api.get(`/api/mail/messages/${inbound1.id}`)
+    const threadData = await threadCheck.json() as any
+    expect(threadData.thread).toBeDefined()
+    expect(threadData.thread.length).toBe(3)
+    expect(threadData.thread[0].sender).toBe('zhaojimmy13@gmail.com')
+    expect(threadData.thread[1].sender).toBe('zhaohui@heurion.org')
+    expect(threadData.thread[2].sender).toBe('zhaojimmy13@gmail.com')
+    expect(threadData.thread[2].body).toContain('周二上午我会准时到院')
+  })
 })
 
 

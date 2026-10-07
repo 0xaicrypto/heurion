@@ -17,6 +17,8 @@ export interface SendMailInput {
   studyTitle?: string | null
   calendarEventId?: string | null
   folder?: 'inbox' | 'sent'
+  threadId?: string | null
+  inReplyTo?: string | null
 }
 
 export interface MailDeliveryInfo {
@@ -159,12 +161,18 @@ export class MailService {
     return this.mailer?.mode ?? 'dev-mock'
   }
 
-  /** 用户的工作邮箱地址 (优先根据用户名生成专属邮箱，如 hz@heurion.org) */
-  userEmail(username: string): string {
-    let cleanUser = username.toLowerCase().replace(/[^a-z0-9_.-]/g, '') || 'doctor'
-    cleanUser = cleanUser.replace(/^dr[._-]/, '') || cleanUser
+  /** 用户的工作邮箱地址 (支持设置专属前缀，如 hz@heurion.org 或 zhaohui@heurion.org) */
+  userEmail(username: string, workEmailPrefix?: string | null): string {
+    const raw = (workEmailPrefix || username).toLowerCase().replace(/[^a-z0-9_.-]/g, '') || 'doctor'
+    const cleanUser = raw.replace(/^dr[._-]/, '') || raw
     const domain = (this.domain || 'heurion.org').replace(/heurion\.com$/, 'heurion.org')
     return `${cleanUser}@${domain}`
+  }
+
+  /** 获取与某邮件相关的往来会话流 (Gmail Threads 模式) */
+  getThread(userId: string, mailId: string): MailMessageRow[] {
+    const thread = this.store.listThreadMessages(userId, mailId)
+    return thread.map(m => this.normalizeMail(m))
   }
 
   /** 是否属于平台内部域名 */
@@ -427,6 +435,8 @@ export class MailService {
       folder: 'sent',
       delivery_status: deliveryStatus,
       delivery_note: deliveryNote,
+      thread_id: input.threadId ?? null,
+      in_reply_to: input.inReplyTo ?? null,
     })
 
     // 2. 若收件人为系统内部用户（或发给自己），投递一封至收件人收件箱 (folder = 'inbox')
@@ -450,6 +460,8 @@ export class MailService {
         folder: 'inbox',
         delivery_status: 'delivered',
         delivery_note: '院内即时协同送达',
+        thread_id: input.threadId ?? null,
+        in_reply_to: input.inReplyTo ?? null,
       })
     }
 
@@ -673,6 +685,9 @@ export class MailService {
     return all.find(u => {
       const uname = u.username.toLowerCase()
       const unameStripped = uname.replace(/^dr[._-]/, '')
+      const workPrefix = (u.work_email_prefix || '').toLowerCase()
+      if (workPrefix && (`${workPrefix}@${this.domain}` === clean || `${workPrefix}@heurion.org` === clean || `dr.${workPrefix}@heurion.org` === clean)) return true
+      if (workPrefix && workPrefix === cleanUser) return true
       if (u.email && u.email.toLowerCase() === clean) return true
       if (uname === clean || unameStripped === cleanUser) return true
       if (`${uname}@${this.domain}` === clean || `${unameStripped}@${this.domain}` === clean) return true

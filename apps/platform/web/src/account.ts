@@ -17,6 +17,8 @@ export interface Me {
   username: string
   display_name: string
   email: string | null
+  work_email_prefix?: string | null
+  work_email?: string | null
   role: 'user' | 'admin'
   dev?: boolean
   dev_mode: boolean
@@ -365,6 +367,19 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
       <label>显示名<input type="text" name="display_name" value="${esc(me.display_name)}" maxlength="40" required></label>
       <div class="row end"><button class="primary">保存</button></div>
     </form>
+    <form id="workEmailForm" class="form">
+      <h3>专属工作邮箱 (Heurion Mail)</h3>
+      <div class="muted">配置您在院内与多中心科研协作中的专属发件/收件邮箱前缀：</div>
+      <label>专属工作邮箱前缀
+        <span class="field-row">
+          <input type="text" id="workEmailPrefixInput" name="work_email_prefix" value="${esc(me.work_email_prefix || me.username.toLowerCase())}" placeholder="例如：${esc(me.username.toLowerCase())}" maxlength="32" required pattern="[a-zA-Z0-9._-]+">
+          <span class="work-email-suffix" style="display:inline-flex;align-items:center;padding:0 8px;font-family:var(--mono);color:var(--muted);background:var(--bg-deep);border:1px solid var(--line);border-left:none;">@heurion.org</span>
+        </span>
+      </label>
+      <div class="muted small work-email-preview">生效邮箱：<strong id="workEmailPreview">${esc(me.work_email || `${(me.work_email_prefix || me.username.toLowerCase())}@heurion.org`)}</strong>（外部真实来信与院内信件均直达此邮箱）</div>
+      <div class="form-error" id="workEmailError"></div>
+      <div class="row end"><button class="primary" id="workEmailSaveBtn">保存工作邮箱前缀</button></div>
+    </form>
     <form id="emailForm" class="form">
       <h3>找回密码邮箱</h3>
       <div class="muted">${me.email ? `已绑定 <b>${esc(me.email)}</b>。忘记密码时可以用它自助找回；要换绑，在下面填新邮箱。` : '还没有绑定邮箱：绑定后忘记密码可以自助找回，否则只能找管理员重置。'}</div>
@@ -389,6 +404,33 @@ function openSettings(me: Me, api: <T = any>(path: string, opts?: RequestInit) =
       $('userName').textContent = name
       notify('已保存')
     } catch (err) { notify((err as Error).message, true) }
+  }
+
+  const workEmailForm = dlg.querySelector<HTMLFormElement>('#workEmailForm')!
+  const prefixInput = dlg.querySelector<HTMLInputElement>('#workEmailPrefixInput')!
+  const previewEl = dlg.querySelector<HTMLElement>('#workEmailPreview')!
+  prefixInput.oninput = () => {
+    const raw = prefixInput.value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')
+    previewEl.textContent = `${raw || me.username.toLowerCase()}@heurion.org`
+  }
+  workEmailForm.onsubmit = async e => {
+    e.preventDefault()
+    const prefix = prefixInput.value.trim().toLowerCase()
+    const errEl = dlg.querySelector('#workEmailError')!
+    errEl.textContent = ''
+    try {
+      const res = await api<{ user: any }>('/api/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_email_prefix: prefix }),
+      })
+      me.work_email_prefix = res.user?.work_email_prefix || prefix
+      me.work_email = res.user?.work_email || `${prefix}@heurion.org`
+      notify(`专属工作邮箱已更新为：${me.work_email}`)
+      document.dispatchEvent(new CustomEvent('heurion:user-updated', { detail: me }))
+    } catch (err) {
+      errEl.textContent = (err as Error).message
+    }
   }
   const emailForm = dlg.querySelector<HTMLFormElement>('#emailForm')!
   dlg.querySelector<HTMLButtonElement>('#emailSend')!.onclick = async () => {

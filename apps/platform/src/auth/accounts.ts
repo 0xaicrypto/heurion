@@ -24,15 +24,29 @@ export interface PublicUser {
   username: string
   display_name: string
   email: string | null
+  work_email_prefix: string | null
+  work_email: string
   role: UserRow['role']
   status: UserRow['status']
   created_at: string
   last_login_at: string | null
 }
 
-export const publicUser = (u: UserRow): PublicUser => ({
-  id: u.id, username: u.username, display_name: u.display_name, email: u.email ?? null, role: u.role, status: u.status, created_at: u.created_at, last_login_at: u.last_login_at,
-})
+export const publicUser = (u: UserRow): PublicUser => {
+  const prefix = (u.work_email_prefix || u.username.toLowerCase()).replace(/[^a-z0-9._-]/g, '') || 'doctor'
+  return {
+    id: u.id,
+    username: u.username,
+    display_name: u.display_name,
+    email: u.email ?? null,
+    work_email_prefix: u.work_email_prefix ?? null,
+    work_email: `${prefix}@heurion.org`,
+    role: u.role,
+    status: u.status,
+    created_at: u.created_at,
+    last_login_at: u.last_login_at,
+  }
+}
 
 const USERNAME = /^[\p{L}\p{N}_.-]{2,32}$/u
 const BCRYPT_COST = 10
@@ -180,7 +194,7 @@ export class Accounts {
     return { id: userId, username: userId, display_name: userId, email: null, role: 'user', dev: true }
   }
 
-  updateProfile(userId: string, input: { display_name?: string; current_password?: string; new_password?: string }): { user: PublicUser; token?: string } {
+  updateProfile(userId: string, input: { display_name?: string; work_email_prefix?: string; current_password?: string; new_password?: string }): { user: PublicUser; token?: string } {
     const user = this.store.getUser(userId)
     if (!user) throw new AuthError('no_account', '开发用户没有账户资料', 400)
     let token: string | undefined
@@ -196,6 +210,21 @@ export class Accounts {
       const name = input.display_name.trim().slice(0, 40)
       if (!name) throw new AuthError('invalid_display_name', '显示名不能为空')
       this.store.updateUser(userId, { display_name: name })
+    }
+    if (input.work_email_prefix !== undefined) {
+      const raw = input.work_email_prefix.trim().toLowerCase()
+      if (raw) {
+        if (!/^[a-z0-9._-]{2,32}$/.test(raw)) {
+          throw new AuthError('invalid_prefix', '邮箱前缀须为 2-32 位小写字母、数字、点号或短横线', 400)
+        }
+        const existing = this.store.getUserByWorkEmailPrefix(raw)
+        if (existing && existing.id !== userId) {
+          throw new AuthError('prefix_taken', '该专属工作邮箱前缀已被其他医生占用', 409)
+        }
+        this.store.updateUser(userId, { work_email_prefix: raw })
+      } else {
+        this.store.updateUser(userId, { work_email_prefix: null })
+      }
     }
     return { user: publicUser(this.store.getUser(userId)!), ...(token ? { token } : {}) }
   }

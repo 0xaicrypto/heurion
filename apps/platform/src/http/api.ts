@@ -2233,7 +2233,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     return c.json({
       configured: mail.isConfigured(),
       mode: mail.mailerMode(),
-      user_email: mail.userEmail(u?.username ?? user),
+      user_email: mail.userEmail(u?.username ?? user, u?.work_email_prefix),
+      work_email_prefix: u?.work_email_prefix ?? null,
     })
   })
 
@@ -2283,7 +2284,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const user = c.get('user')
     const m = mail.get(user, c.req.param('id'))
     if (!m) return c.json({ error: '邮件不存在' }, 404)
-    return c.json(m)
+    const thread = mail.getThread(user, m.id)
+    return c.json({ ...m, thread })
   })
 
   app.post('/api/mail/messages', async c => {
@@ -2294,7 +2296,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const result = await mail.sendAsync({
       userId: user,
       tenantId: u?.tenant_id,
-      sender: mail.userEmail(u?.username ?? user),
+      sender: mail.userEmail(u?.username ?? user, u?.work_email_prefix),
       senderName: u?.display_name ?? '主诊医师',
       recipient: body.recipient || body.to || 'colleague@heurion.org',
       subject: body.subject,
@@ -2304,6 +2306,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       patientCode: body.patient_code,
       studyId: body.study_id,
       studyTitle: body.study_title,
+      threadId: body.thread_id,
+      inReplyTo: body.in_reply_to,
     })
     return c.json({ ...result.message, delivery: result.delivery }, 201)
   })

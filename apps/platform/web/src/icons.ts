@@ -59,6 +59,8 @@ export type IconName =
   | 'send'
   | 'star'
   | 'trash'
+  | 'reply'
+  | 'forward'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -213,6 +215,12 @@ const ICONS: Record<IconName, string> = {
 
   // 废纸篓、删除
   trash: '<path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5l1 11h7l1-11M8.5 9v5M11.5 9v5"/>',
+
+  // 往来回复
+  reply: '<polyline points="7 14 2 9 7 4"/><path d="M18 17v-4a4 4 0 0 0-4-4H2"/>',
+
+  // 往来转发
+  forward: '<polyline points="13 14 18 9 13 4"/><path d="M2 17v-4a4 4 0 0 1 4-4h12"/>',
 }
 
 export interface IconOptions {
