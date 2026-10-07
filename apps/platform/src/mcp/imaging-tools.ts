@@ -154,8 +154,11 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
     const ld = recist.longest_diameter_mm ?? 0
     const vol = recist.total_volume_cm3 ?? 0
     const sliceIdx = recist.key_slice_index ?? 0
-    const figCaption = label || `图 1 目标病灶 RECIST 1.1 关键截面图（长径 ${ld} mm，体积 ${vol} cm³）`
-    const figNote = `图 1 3D MONAI CT 肿瘤靶病灶自动分割与最大横截面量化标尺（第 #${sliceIdx} 层，长径 ${ld} mm，短径 ${recist.short_axis_mm ?? 0} mm，总体积 ${vol} cm³）`
+    const rads = recist.lung_rads
+    const figCaption = label || (recist.has_lesion === false ? '图 1 胸部 CT 扫描横截面（未检出局灶性病灶）' : `图 1 目标病灶 RECIST 1.1 关键截面图（长径 ${ld} mm，体积 ${vol} cm³）`)
+    const figNote = recist.has_lesion === false
+      ? `图 1 胸部 CT 平扫解剖横截面（第 #${sliceIdx} 层，未检出 ≥ 3 mm 实质结节，Lung-RADS 1 类阴性）`
+      : `图 1 3D MONAI CT 肿瘤靶病灶自动分割与最大横截面量化标尺（第 #${sliceIdx} 层，长径 ${ld} mm，短径 ${recist.short_axis_mm ?? 0} mm，总体积 ${vol} cm³${rads ? `，${rads.name}` : ''}）`
 
     return json({
       status: 'success',
@@ -170,6 +173,8 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
         short_axis_mm: recist.short_axis_mm ?? 0,
         total_volume_cm3: vol,
         key_slice_index: sliceIdx,
+        lung_rads: recist.lung_rads,
+        has_lesion: recist.has_lesion,
       },
       markdown_insert: `![${figCaption}](asset:${asset.id} "${figNote}")`,
       summary: resultData.summary_markdown,

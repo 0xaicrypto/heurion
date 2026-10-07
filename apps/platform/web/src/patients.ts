@@ -223,7 +223,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       const m = (imgData.metrics || imgData.raw_metrics || {}) as Record<string, any>
       const isHAM = Boolean(m.high_attenuation_mucus || (m.ham_max_hu && m.ham_max_hu > 70) || (m.high_attenuation_mucus_cm3 && m.high_attenuation_mucus_cm3 > 0))
-      const isHighRiskNodule = Boolean(m.longest_diameter_mm && m.longest_diameter_mm > 8)
+      const isNegative = m.has_lesion === false || (m.lung_rads && m.lung_rads.category === '1') || (m.longest_diameter_mm === 0)
+      const isHighRiskNodule = !isNegative && Boolean(m.longest_diameter_mm && m.longest_diameter_mm >= 8)
       const igeLab = d.latest_labs.find(l => l.test_key === 'ige' || l.test_name.includes('IgE'))
 
       let proactiveBanner = ''
@@ -249,18 +250,21 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           </div>
         `
       } else if (isHighRiskNodule) {
+        const radsBadge = m.lung_rads ? esc(m.lung_rads.name) : 'Lung-RADS 评估'
+        const radsDesc = m.lung_rads?.description ? esc(m.lung_rads.description) : `实性靶病灶长径超标 (${m.longest_diameter_mm} mm &gt; 8 mm)`
+        const radsRec = m.lung_rads?.recommendation ? `临床随访指引：${esc(m.lung_rads.recommendation)}。` : '建议结合临床症状生成全景诊断报告指导多学科会诊 (MDT)。'
         proactiveBanner = `
           <div class="pt-proactive-banner alert-nodule">
             <div class="pt-proactive-main">
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-                <span class="pt-proactive-pill medium">靶病灶干预预警 (Fleischner Criteria)</span>
-                <span class="muted small">实性靶病灶长径超标 (${m.longest_diameter_mm} mm &gt; 8 mm)</span>
+                <span class="pt-proactive-pill ${m.lung_rads?.category === '4B' ? 'high' : 'medium'}">结节风险分层 · ${radsBadge}</span>
+                <span class="muted small">${radsDesc}</span>
               </div>
               <div style="font-weight: 600; font-size: 13.5px; color: #FDE68A; margin-bottom: 4px">
-                检出 RECIST 1.1 靶病灶长径超标，达到高危实性结节随访/穿刺干预阈值
+                检出局灶性实性/亚实性结节 (长径 ${m.longest_diameter_mm} mm)，符合 ${radsBadge} 特征
               </div>
               <div class="muted small" style="line-height: 1.5; color: var(--text-1)">
-                MONAI 3D 卷积网络测得靶病灶长径达 ${m.longest_diameter_mm} mm（三维体积 ${m.total_volume_cm3 ?? '--'} cm³）。建议进一步排查肿瘤标志物 (CEA/CYFRA21-1) 并生成全景诊断报告指导多学科会诊 (MDT)。
+                经 MONAI 3D 卷积体素网络测得病灶长径 ${m.longest_diameter_mm} mm（三维体积 ${m.total_volume_cm3 ?? '--'} cm³）。${radsRec}
               </div>
             </div>
             <div class="pt-proactive-actions">
@@ -367,7 +371,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const anyNoduleRec = scanRecords.find(r => {
       const imgD = (r.imaging_data || {}) as Record<string, any>
       const nm = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
-      return Boolean(nm.longest_diameter_mm && nm.longest_diameter_mm > 8)
+      const isNeg = nm.has_lesion === false || (nm.lung_rads && nm.lung_rads.category === '1') || (nm.longest_diameter_mm === 0)
+      return !isNeg && Boolean(nm.longest_diameter_mm && nm.longest_diameter_mm >= 8)
     })
     const igeLab = d.latest_labs.find(l => l.test_key === 'ige' || l.test_name.includes('IgE'))
 
@@ -396,18 +401,21 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     } else if (anyNoduleRec) {
       const imgD = (anyNoduleRec.imaging_data || {}) as Record<string, any>
       const nm = (imgD.metrics || imgD.raw_metrics || {}) as Record<string, any>
+      const radsBadge = nm.lung_rads ? esc(nm.lung_rads.name) : 'Lung-RADS 评估'
+      const radsDesc = nm.lung_rads?.description ? esc(nm.lung_rads.description) : `实性靶病灶长径超标 (${nm.longest_diameter_mm} mm &gt; 8 mm)`
+      const radsRec = nm.lung_rads?.recommendation ? `临床随访指引：${esc(nm.lung_rads.recommendation)}。` : '建议结合临床指征生成全景诊断报告指导多学科会诊 (MDT)。'
       sectionAlertBanner = `
         <div class="pt-proactive-banner alert-nodule" style="margin-top: 10px">
           <div class="pt-proactive-main">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-              <span class="pt-proactive-pill medium">${icon('info')} 靶病灶干预预警 (Fleischner Criteria)</span>
-              <span class="muted small">实性靶病灶长径超标 (${nm.longest_diameter_mm} mm &gt; 8 mm)</span>
+              <span class="pt-proactive-pill ${nm.lung_rads?.category === '4B' ? 'high' : 'medium'}">${icon('info')} 结节风险分层 · ${radsBadge}</span>
+              <span class="muted small">${radsDesc}</span>
             </div>
             <div style="font-weight: 600; font-size: 13.5px; color: #FDE68A; margin-bottom: 4px">
-              检出 RECIST 1.1 靶病灶长径超标，达到高危实性结节随访/穿刺干预阈值
+              检出局灶性实性/亚实性结节 (长径 ${nm.longest_diameter_mm} mm)，符合 ${radsBadge} 特征
             </div>
             <div class="muted small" style="line-height: 1.5; color: var(--text-1)">
-              MONAI 3D 卷积网络测得靶病灶长径达 ${nm.longest_diameter_mm} mm（三维体积 ${nm.total_volume_cm3 ?? '--'} cm³）。建议进一步排查肿瘤标志物 (CEA/CYFRA21-1) 并生成全景诊断报告指导多学科会诊 (MDT)。
+              经 MONAI 3D 卷积体素网络测得病灶长径 ${nm.longest_diameter_mm} mm（三维体积 ${nm.total_volume_cm3 ?? '--'} cm³）。${radsRec}
             </div>
           </div>
           <div class="pt-proactive-actions">
@@ -498,10 +506,15 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                         </div>
                       ` : ''}
                     ` : `
-                      ${m.longest_diameter_mm ? `<span class="pt-imaging-pill alert">RECIST 1.1 长径: ${m.longest_diameter_mm} mm</span>` : ''}
-                      ${m.short_axis_mm ? `<span class="pt-imaging-pill">短径: ${m.short_axis_mm} mm</span>` : ''}
-                      ${m.total_volume_cm3 ? `<span class="pt-imaging-pill">3D 体积: ${m.total_volume_cm3} cm³</span>` : ''}
-                      ${m.key_slice_index !== undefined ? `<span class="pt-imaging-pill">最大截面: #${m.key_slice_index} 层</span>` : ''}
+                      ${m.has_lesion === false || (m.longest_diameter_mm === 0) ? `
+                        <span class="pt-imaging-pill ok">Lung-RADS 1 类 (阴性/无活动性结节)</span>
+                      ` : `
+                        ${m.lung_rads ? `<span class="pt-imaging-pill ${m.lung_rads.category === '4B' || m.lung_rads.category === '4A' ? 'alert' : 'ok'}">${esc(m.lung_rads.name)}</span>` : ''}
+                        ${m.longest_diameter_mm ? `<span class="pt-imaging-pill alert">RECIST 1.1 长径: ${m.longest_diameter_mm} mm</span>` : ''}
+                        ${m.short_axis_mm ? `<span class="pt-imaging-pill">短径: ${m.short_axis_mm} mm</span>` : ''}
+                        ${m.total_volume_cm3 ? `<span class="pt-imaging-pill">3D 体积: ${m.total_volume_cm3} cm³</span>` : ''}
+                        ${m.key_slice_index !== undefined ? `<span class="pt-imaging-pill">最大截面: #${m.key_slice_index} 层</span>` : ''}
+                      `}
                     `}
                   </div>
                   ${r.extraction_note ? `<div class="pt-imaging-note muted small">${esc(r.extraction_note)}</div>` : ''}
@@ -1968,8 +1981,14 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         impression = `1. 符合双肺多发性支气管扩张影像改变，以${m.primary_location || '双下肺'}为著；\n2. 支气管管腔内多发粘液栓嵌顿${m.high_attenuation_mucus_cm3 ? '，伴高密度粘液栓 (HAM)，高度提示变应性支气管肺曲霉病 (ABPA)' : ''}。`
         recommendations = `1. 建议临床结合血常规嗜酸性粒细胞计数、血清总 IgE 与曲霉特异性 IgE (sIgE) 检查排查 ABPA；\n2. 建议规范气道廓清治疗，并于治疗 3 个月后复查胸部 HRCT 评估粘液栓吸收转归。`
       } else {
-        impression = `1. ${r?.title || '占位性病变'}，符合靶病灶 RECIST 1.1 测量标准（长径 ${m.longest_diameter_mm || '--'} mm，3D 体积 ${m.total_volume_cm3 || '--'} cm³）。`
-        recommendations = `1. 建议结合既往基线检查对比疗效评估；\n2. 建议按诊疗方案于 8–12 周后安排复查。`
+        const rads = m.lung_rads
+        if (m.has_lesion === false || m.longest_diameter_mm === 0 || (rads && rads.category === '1')) {
+          impression = `1. 胸部 CT 平扫未见确切活动性实质性占位（未检出 ≥ 3 mm 实质性肺结节）；\n2. 临床分级: ${rads?.name || 'Lung-RADS 1 类'} (阴性 / 无活动性结节，恶性风险 < 1%)。`
+          recommendations = `1. 遵照 Lung-RADS 1 类指引建议 12 个月后常规安排低剂量 CT (LDCT) 复查；\n2. 建议结合临床病史定期体检随访。`
+        } else {
+          impression = `1. ${r?.title || '肺实质局灶性结节'}，经 MONAI 3D 卷积体素量化网络测得长径约 ${m.longest_diameter_mm || '--'} mm，3D 体积约 ${m.total_volume_cm3 || '--'} cm³${rads ? `，符合 ${rads.name} (${rads.description})` : ''}；\n2. 鉴别诊断需结合炎性肉芽肿、错构瘤及早期浸润病变综合评估。`
+          recommendations = `1. ${rads?.recommendation || '建议呼吸/胸外科专科医师结合既往基线检查对比疗效评估；'}\n2. 后续复查建议利用双期 3D 刚性配准与差分吸收热力图动态追踪病灶消长；\n3. 影像 AI 测值仅供辅助参考，请以执业医师处方及临床处置方案为准。`
+        }
       }
 
       if (manualFindings.length > 0) {
@@ -2003,6 +2022,13 @@ ${impression}
 
 ### 四、 临床建议 (Recommendations)
 ${recommendations}
+
+---
+
+> ⚠️ **医疗器械软件 (SaMD) 与临床合规声明 (Regulatory & Clinical Disclaimer)**:
+> 1. 本影像报告及相关三维体素量化测量（包括 RECIST 1.1 径线、Lung-RADS 评级、BAR 支气管伴行动脉比、粘液栓密度 HU 统计）均由 Heurion 医学影像 AI 算法与 MONAI 深度学习推理核心辅助生成；
+> 2. 本报告所载全部影像测量数据、临床评级及随访指引仅供具备合法资质的执业医师临床决策参考，不单独作为确定性疾病诊断依据，亦不构成任何直接用药处方或医疗干预方案；
+> 3. 最终临床诊断结论、用药方案与手术治疗决策必须由主管执业医师结合患者现场体征、组织病理金标准及全面临床病史综合审定、签字确认并负专业责任。
 `
 
       showRadiologyReportDraftDialog(patientId, d, `${d.code} 放射学影像诊断报告 (${reportDate})`, reportMarkdown)

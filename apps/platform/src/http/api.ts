@@ -1061,6 +1061,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         short_axis_mm: rm?.short_axis_mm ?? rawMetrics.artery_caliber_mm ?? 0,
         total_volume_cm3: rm?.total_volume_cm3 ?? mucusVol,
         key_slice_index: resultData.key_slice_index ?? rm?.key_slice_index ?? 0,
+        lung_rads: rm?.lung_rads,
+        has_lesion: rm?.has_lesion,
       }
 
       const findings: string[] = []
@@ -1081,14 +1083,27 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         if (hasTreeInBud) {
           findings.push('树芽征 (Tree-in-Bud) 细支气管炎表现阳性')
         }
+      } else if (rm && (rm.has_lesion === false || rm.longest_diameter_mm === 0)) {
+        findings.push(`胸部 CT 扫描未检出 ≥ 3 mm 实质性肺结节`)
+        findings.push(`临床评级: Lung-RADS 1 类 (阴性，恶性风险 < 1%)`)
+        findings.push(`随访指引: 建议 12 个月后常规安排低剂量胸部 CT (LDCT) 复查`)
+        tagsToAdd.push('Lung-RADS 1类(阴性)')
       } else if (rm && rm.longest_diameter_mm > 0) {
         findings.push(`RECIST 1.1 靶病灶最大截面长径 ${rm.longest_diameter_mm} mm (短径 ${rm.short_axis_mm} mm)`)
         findings.push(`3D 病灶体积 ${rm.total_volume_cm3} cm³ (关键截面第 #${rm.key_slice_index} 层)`)
-        tagsToAdd.push('占位性病变')
+        if (rm.lung_rads) {
+          findings.push(`临床评级: ${rm.lung_rads.name} (${rm.lung_rads.description})`)
+          findings.push(`随访指引: ${rm.lung_rads.recommendation}`)
+          tagsToAdd.push(rm.lung_rads.name)
+        } else {
+          tagsToAdd.push('局灶性结节')
+        }
       }
 
       const defaultTitle = modelId === 'bronchiectasis_mucus_analyzer' || resultData.model_name?.includes('bronchiectasis')
         ? '胸部 HRCT 支气管扩张与粘液栓定量分析'
+        : (rm?.has_lesion === false || rm?.longest_diameter_mm === 0)
+        ? '胸部 CT 平扫筛查 (Lung-RADS 1类 阴性)'
         : `${resultData.modality || 'CT'} 3D 靶病灶 RECIST 1.1 量化分析`
 
       let rawVolume: { name: string; bytes: Uint8Array; mime?: string } | undefined
