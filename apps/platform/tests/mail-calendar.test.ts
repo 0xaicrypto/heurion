@@ -619,6 +619,89 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(msg.body).toContain('修改了专属邮件前缀')
     expect(msg.body).not.toContain('5Zue5aSNDQoNCk9u')
   })
+
+  it('11. 多行换行与行首空格容错的 Base64 邮件解码（用户真实案例：什么情况？我打的是中文）', async () => {
+    const api = makeTestApp()
+
+    // 用户真实案例截图中的多行 Base64 字符串（含 76 字符换行与行首空格折行）
+    const realUserBase64 = `5LuA5LmI5oOF5Ya177yfIOaIkeaJk+eahOaYr+S4reaWhw0KDQpPbiBXZWQsIE9jdCA3LCAyMDI2
+ IGF0IDExOjU44oCvQU0gSlogPHpoYW9qaW1teTEzQGdtYWlsLmNvbT4gd3JvdGU6DQoNCj4g5Zue
+5aSNDQo+DQo+IE9uIFdlZCwgT2N0IDcsIDIwMjYgYXQgMTE6NTTigK9BTSBIWiA8aHVpemhhb0Bo
+ZXVyaW9uLm9yZz4gd3JvdGU6DQo+DQo+PiDkv67mlLnkuobkuJPlsZ7pgq7ku7bliY3nvIANCj4N
+Cj4NCg==`
+
+    const inboundRes = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Jimmy Zhao <zhaojimmy13@gmail.com>',
+        to: 'HZ <dev@heurion.org>',
+        subject: 'Re: 专属邮件前缀测试',
+        body: realUserBase64,
+      }),
+    })
+
+    expect(inboundRes.status).toBe(201)
+    const json = await inboundRes.json() as any
+    expect(json.ok).toBe(true)
+
+    const msgRes = await api.get(`/api/mail/messages/${json.id}`)
+    expect(msgRes.status).toBe(200)
+    const msg = await msgRes.json() as any
+    // 必须成功解码出中文正文与引用回复
+    expect(msg.body).toContain('什么情况？ 我打的是中文')
+    expect(msg.body).toContain('修改了专属邮件前缀')
+    expect(msg.body).not.toContain('5LuA5LmI')
+  })
+
+  it('12. 外部原始 Multipart/Alternative MIME 邮件流的端到端自动解包与中文还原', async () => {
+    const api = makeTestApp()
+
+    const rawMimeBody = `MIME-Version: 1.0
+Date: Wed, 7 Oct 2026 11:58:24 +0200
+Subject: =?UTF-8?B?UmU6IOa1i+ivlQ==?=
+From: JZ <zhaojimmy13@gmail.com>
+To: huizhao@heurion.org
+Content-Type: multipart/alternative; boundary="00000000000078b6630623e1f0e4"
+
+--00000000000078b6630623e1f0e4
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: base64
+
+5LuA5LmI5oOF5Ya177yfIOaIkeaJk+eahOaYr+S4reaWhw0KDQpPbiBXZWQsIE9jdCA3LCAyMDI2
+IGF0IDExOjU44oCvQU0gSlogPHpoYW9qaW1teTEzQGdtYWlsLmNvbT4gd3JvdGU6DQoNCj4g5Zue
+5aSNDQo+DQo+IE9uIFdlZCwgT2N0IDcsIDIwMjYgYXQgMTE6NTTigK9BTSBIWiA8aHVpemhhb0Bo
+ZXVyaW9uLm9yZz4gd3JvdGU6DQo+DQo+PiDkv67mlLnkuobkuJPlsZ7pgq7ku7bliY3nvIANCj4N
+Cj4NCg==
+--00000000000078b6630623e1f0e4
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: base64
+
+PGRpdiBkaXI9ImF1dG8iPuS7gOS5iOaDheWGte+8nyDmiJHmiZPlhYPnmoTmmK/kuK3mloc8L2Rp
+dj4=
+--00000000000078b6630623e1f0e4--`
+
+    const inboundRes = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Jimmy Zhao <zhaojimmy13@gmail.com>',
+        to: 'HZ <dev@heurion.org>',
+        subject: 'Re: 测试',
+        body: rawMimeBody,
+      }),
+    })
+
+    expect(inboundRes.status).toBe(201)
+    const json = await inboundRes.json() as any
+    expect(json.ok).toBe(true)
+
+    const msgRes = await api.get(`/api/mail/messages/${json.id}`)
+    expect(msgRes.status).toBe(200)
+    const msg = await msgRes.json() as any
+    expect(msg.body).toContain('什么情况？ 我打的是中文')
+    expect(msg.body).not.toContain('--00000000000078b6630623e1f0e4')
+  })
 })
 
 

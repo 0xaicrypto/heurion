@@ -153,8 +153,8 @@ export function decodeMimeWords(str: string): string {
   })
 }
 
-/** 浏览器端 Quoted-Printable 正文解码 */
-export function decodeQuotedPrintable(str: string): string {
+/** 浏览器端 Quoted-Printable 正文解码 (支持 UTF-8 与 GB18030 / GBK) */
+export function decodeQuotedPrintable(str: string, charset?: string): string {
   if (!str) return ''
   const s = str.replace(/=\r?\n/g, '')
   if (!/=[0-9A-Fa-f]{2}/.test(s)) return s
@@ -174,33 +174,64 @@ export function decodeQuotedPrintable(str: string): string {
       }
     }
   }
+  const u8 = new Uint8Array(bytes)
+  const cs = (charset || '').toLowerCase()
+  if (cs.includes('gb')) {
+    try {
+      return new TextDecoder('gb18030').decode(u8)
+    } catch {}
+  }
   try {
-    return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+    return new TextDecoder('utf-8', { fatal: true }).decode(u8)
   } catch {
-    return s
+    try {
+      return new TextDecoder('gb18030').decode(u8)
+    } catch {
+      return s
+    }
   }
 }
 
-/** 智能探测并解码 Base64 编码的邮件正文（如 Gmail / 外部客户端以 Base64 方式发送的邮件） */
-export function decodeBase64Text(raw: string): string {
+/** 智能探测并解码 Base64 编码的邮件正文块（支持换行折行、空格容错、UTF-8 及 GB18030） */
+export function decodeBase64Chunk(raw: string, charset?: string): string {
   if (!raw) return raw
-  const trimmed = raw.trim()
-  const nonB64 = trimmed.replace(/[A-Za-z0-9+/=\r\n]/g, '')
-  if (nonB64.length > 0) return raw
+  const compact = raw.replace(/\s+/g, '')
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length < 8) {
+    return raw
+  }
 
-  const compact = trimmed.replace(/\s+/g, '')
-  if (compact.length < 16) return raw
+  const padLen = (4 - (compact.length % 4)) % 4
+  const padded = compact + '='.repeat(padLen)
 
   try {
-    const padLen = (4 - (compact.length % 4)) % 4
-    const padded = compact + '='.repeat(padLen)
     const bin = atob(padded)
     const bytes = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-    const decoded = new TextDecoder('utf-8').decode(bytes)
 
-    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(decoded)) return raw
-    if (/[\u4e00-\u9fa5\w]/.test(decoded)) {
+    let decoded = ''
+    const cs = (charset || '').toLowerCase()
+    if (cs.includes('gb')) {
+      try {
+        decoded = new TextDecoder('gb18030').decode(bytes)
+      } catch {}
+    }
+    if (!decoded) {
+      try {
+        decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      } catch {
+        try {
+          decoded = new TextDecoder('gb18030').decode(bytes)
+        } catch {}
+      }
+    }
+    if (!decoded) return raw
+
+    // 含有中文，或者是正常可读文本
+    if (/[\u4e00-\u9fa5]/.test(decoded)) {
+      return decoded
+    }
+    const cleanChars = decoded.replace(/[\r\n\t\x20-\x7e\u00a0-\uffff]/g, '')
+    if (cleanChars.length === 0 && decoded.trim().length > 3) {
       return decoded
     }
   } catch {
@@ -209,15 +240,83 @@ export function decodeBase64Text(raw: string): string {
   return raw
 }
 
-export function decodeEmailBody(body: string): string {
-  if (!body) return ''
-  let text = body
-  // 1. 优先尝试 Base64 智能解码（适配外部 Gmail/Outlook 的 UTF-8 Base64 转码邮件）
-  text = decodeBase64Text(text)
-  // 2. 尝试 Quoted-Printable 解码
-  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
-    text = decodeQuotedPrintable(text)
+/** 智能从原始 MIME 字符串中提取 text/plain 或 text/html 内容 */
+export function parseMimeText(rawText: string): string {
+  if (!rawText) return ''
+  const boundaryMatch = rawText.match(/boundary="?([^"\r\n;]+)"?/i)
+  if (boundaryMatch) {
+    const boundary = boundaryMatch[1]!.trim()
+    const parts = rawText.split(new RegExp(`--${boundary}(?:--)?`))
+    // 优先寻找 text/plain
+    for (const part of parts) {
+      const split = part.split(/\r?\n\r?\n/)
+      if (split.length > 1 && /content-type:\s*text\/plain/i.test(split[0]!)) {
+        const bodyPart = split.slice(1).join('\n\n').trim()
+        const csMatch = split[0]!.match(/charset="?([^"\r\n;]+)"?/i)
+        return decodeEmailBody(bodyPart, csMatch ? csMatch[1] : undefined)
+      }
+    }
+    // 备选 text/html
+    for (const part of parts) {
+      const split = part.split(/\r?\n\r?\n/)
+      if (split.length > 1 && /content-type:\s*text\/html/i.test(split[0]!)) {
+        const bodyPart = split.slice(1).join('\n\n').trim()
+        const csMatch = split[0]!.match(/charset="?([^"\r\n;]+)"?/i)
+        const html = decodeEmailBody(bodyPart, csMatch ? csMatch[1] : undefined)
+        return html
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/p>/gi, '\n\n')
+          .replace(/<\/div>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/gi, ' ')
+          .replace(/&lt;/gi, '<')
+          .replace(/&gt;/gi, '>')
+          .replace(/&amp;/gi, '&')
+          .replace(/&quot;/gi, '"')
+          .replace(/&#39;/gi, "'")
+          .trim()
+      }
+    }
   }
+  return rawText
+}
+
+/** 智能探测并解码邮件正文（兼容全文本 Base64、分块 Base64、Quoted-Printable、MIME Multipart 及多字符集） */
+export function decodeEmailBody(body: string, charset?: string): string {
+  if (!body) return ''
+  // 1. 若正文中包含 MIME boundary 结构，优先提取正文分块
+  let text = parseMimeText(body).trim()
+
+  // 2. 全文 Base64 探测与解码
+  const fullDecoded = decodeBase64Chunk(text, charset)
+  if (fullDecoded !== text) {
+    text = fullDecoded
+  } else {
+    // 3. 分段 Base64 探测（如邮件带有部分未分块明文，或带有引用头部）
+    const blocks = text.split(/\r?\n\r?\n/)
+    let changed = false
+    const decodedBlocks = blocks.map(b => {
+      const trimmedBlock = b.trim()
+      const d = decodeBase64Chunk(trimmedBlock, charset)
+      if (d !== trimmedBlock) {
+        changed = true
+        return d
+      }
+      return b
+    })
+    if (changed) {
+      text = decodedBlocks.join('\n\n')
+    }
+  }
+
+  // 4. Quoted-Printable 探测与解码 (支持 UTF-8 与 GB18030)
+  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
+    text = decodeQuotedPrintable(text, charset)
+  }
+
+  // 5. 清理残留的 MIME boundary 标记
   text = text.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, '').trim()
   return text
 }
@@ -268,7 +367,8 @@ export function formatTimeShort(dateStr?: string): string {
 
 export function snippetText(str?: string, max = 80): string {
   if (!str) return ''
-  const clean = str.replace(/[\r\n\t]+/g, ' ').replace(/>+[^\n]*/g, '').trim()
+  const decoded = decodeEmailBody(str)
+  const clean = decoded.replace(/[\r\n\t]+/g, ' ').replace(/>+[^\n]*/g, '').trim()
   return clean.length > max ? clean.slice(0, max) + '...' : clean
 }
 
@@ -1289,9 +1389,15 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     if (!m.thread) {
       void api<MailMessage & { thread?: MailMessage[] }>(`/api/mail/messages/${m.id}`).then(full => {
         if (full && full.thread && full.thread.length > 0) {
-          m.thread = full.thread
+          const decodedThread = full.thread.map(t => ({
+            ...t,
+            subject: decodeMimeWords(t.subject),
+            body: decodeEmailBody(t.body),
+            sender_name: t.sender_name ? decodeMimeWords(t.sender_name) : t.sender_name,
+          }))
+          m.thread = decodedThread
           if (selectedMailId === m.id) {
-            threadMessages = [...full.thread]
+            threadMessages = [...decodedThread]
             expandedIds.add(threadMessages[threadMessages.length - 1]!.id)
             currentReplyTargetId = threadMessages[threadMessages.length - 1]!.id
             const chip = $('mailThreadCountChip')

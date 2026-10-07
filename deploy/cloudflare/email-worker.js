@@ -48,7 +48,7 @@ function decodeMimeWords(str) {
   });
 }
 
-function decodeQuotedPrintable(str) {
+function decodeQuotedPrintable(str, charset) {
   if (!str) return "";
   const s = str.replace(/=\r?\n/g, "");
   if (!/=[0-9A-Fa-f]{2}/.test(s)) return s;
@@ -68,38 +68,169 @@ function decodeQuotedPrintable(str) {
       }
     }
   }
+  const u8 = new Uint8Array(bytes);
+  const cs = (charset || "").toLowerCase();
+  if (cs.includes("gb")) {
+    try { return new TextDecoder("gb18030").decode(u8); } catch {}
+  }
   try {
-    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+    return new TextDecoder("utf-8", { fatal: true }).decode(u8);
   } catch {
-    return s;
+    try {
+      return new TextDecoder("gb18030").decode(u8);
+    } catch {
+      return s;
+    }
   }
 }
 
-function decodeBase64Text(raw) {
+function decodeBase64Chunk(raw, charset) {
   if (!raw) return raw;
-  const trimmed = raw.trim();
-  const nonB64 = trimmed.replace(/[A-Za-z0-9+/=\r\n]/g, "");
-  if (nonB64.length > 0) return raw;
+  const compact = raw.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length < 8) {
+    return raw;
+  }
 
-  const compact = trimmed.replace(/\s+/g, "");
-  if (compact.length < 16) return raw;
+  const padLen = (4 - (compact.length % 4)) % 4;
+  const padded = compact + "=".repeat(padLen);
 
   try {
-    const padLen = (4 - (compact.length % 4)) % 4;
-    const padded = compact + "=".repeat(padLen);
     const bin = atob(padded);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const decoded = new TextDecoder("utf-8").decode(bytes);
 
-    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(decoded)) return raw;
-    if (/[\u4e00-\u9fa5\w]/.test(decoded)) {
+    let decoded = "";
+    const cs = (charset || "").toLowerCase();
+    if (cs.includes("gb")) {
+      try { decoded = new TextDecoder("gb18030").decode(bytes); } catch {}
+    }
+    if (!decoded) {
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        try {
+          decoded = new TextDecoder("gb18030").decode(bytes);
+        } catch {}
+      }
+    }
+    if (!decoded) return raw;
+
+    // 含有中文，或者是正常可读文本
+    if (/[\u4e00-\u9fa5]/.test(decoded)) {
       return decoded;
     }
-  } catch {
-    // not valid base64
-  }
+    const cleanChars = decoded.replace(/[\r\n\t\x20-\x7e\u00a0-\uffff]/g, "");
+    if (cleanChars.length === 0 && decoded.trim().length > 3) {
+      return decoded;
+    }
+  } catch {}
   return raw;
+}
+
+function decodeEmailBody(body, charset) {
+  if (!body) return "";
+  let text = body.trim();
+
+  // 1. 全文 Base64 探测与解码（无论是否有换行与空格折行）
+  const fullDecoded = decodeBase64Chunk(text, charset);
+  if (fullDecoded !== text) {
+    text = fullDecoded;
+  } else {
+    // 2. 分段 Base64 探测（如邮件带有部分未分块明文，或带有引用头部）
+    const blocks = text.split(/\r?\n\r?\n/);
+    let changed = false;
+    const decodedBlocks = blocks.map(b => {
+      const trimmedBlock = b.trim();
+      const d = decodeBase64Chunk(trimmedBlock, charset);
+      if (d !== trimmedBlock) {
+        changed = true;
+        return d;
+      }
+      return b;
+    });
+    if (changed) {
+      text = decodedBlocks.join("\n\n");
+    }
+  }
+
+  // 3. Quoted-Printable 探测与解码 (支持 UTF-8 与 GB18030)
+  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
+    text = decodeQuotedPrintable(text, charset);
+  }
+
+  // 4. 清理残留的 MIME boundary 标记
+  text = text.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, "").trim();
+  return text;
+}
+
+function htmlToPlainText(html) {
+  if (!html) return "";
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .trim();
+}
+
+function parseMimeEmail(rawText) {
+  if (!rawText) return "";
+
+  // 1. 尝试从 Content-Type 中提取 multipart boundary
+  const boundaryMatch = rawText.match(/boundary="?([^"\r\n;]+)"?/i);
+  if (boundaryMatch) {
+    const boundary = boundaryMatch[1].trim();
+    const parts = rawText.split(new RegExp(`--${boundary}(?:--)?`));
+
+    // 优先寻找 text/plain 分块
+    for (const part of parts) {
+      const headerBodySplit = part.split(/\r?\n\r?\n/);
+      if (headerBodySplit.length > 1) {
+        const headerSection = headerBodySplit[0] || "";
+        if (/content-type:\s*text\/plain/i.test(headerSection)) {
+          const partBody = headerBodySplit.slice(1).join("\n\n").trim();
+          const charsetMatch = headerSection.match(/charset="?([^"\r\n;]+)"?/i);
+          const charset = charsetMatch ? charsetMatch[1].trim() : "utf-8";
+          return decodeEmailBody(partBody, charset);
+        }
+      }
+    }
+
+    // 备选：寻找 text/html 分块（部分客户端仅发送 HTML）
+    for (const part of parts) {
+      const headerBodySplit = part.split(/\r?\n\r?\n/);
+      if (headerBodySplit.length > 1) {
+        const headerSection = headerBodySplit[0] || "";
+        if (/content-type:\s*text\/html/i.test(headerSection)) {
+          const partBody = headerBodySplit.slice(1).join("\n\n").trim();
+          const charsetMatch = headerSection.match(/charset="?([^"\r\n;]+)"?/i);
+          const charset = charsetMatch ? charsetMatch[1].trim() : "utf-8";
+          const decodedHtml = decodeEmailBody(partBody, charset);
+          return htmlToPlainText(decodedHtml);
+        }
+      }
+    }
+  }
+
+  // 2. 单分块纯文本邮件：去除顶部头部字段并按 charset 与 transfer-encoding 解码
+  const headerBodySplit = rawText.split(/\r?\n\r?\n/);
+  if (headerBodySplit.length > 1) {
+    const headerSection = headerBodySplit[0] || "";
+    const partBody = headerBodySplit.slice(1).join("\n\n").trim();
+    const charsetMatch = headerSection.match(/charset="?([^"\r\n;]+)"?/i);
+    const charset = charsetMatch ? charsetMatch[1].trim() : "utf-8";
+    return decodeEmailBody(partBody, charset);
+  }
+
+  return decodeEmailBody(rawText);
 }
 
 export default {
@@ -124,49 +255,8 @@ export default {
       console.error("读取邮件流失败:", err);
     }
 
-    // 解析文本正文（去除 MIME 头并按编码规范解码）
-    let cleanBody = rawText;
-    const boundaryMatch = rawText.match(/boundary="?([^"\r\n]+)"?/i);
-    if (boundaryMatch) {
-      const boundary = boundaryMatch[1];
-      const parts = rawText.split(`--${boundary}`);
-      for (const part of parts) {
-        if (part.includes("Content-Type: text/plain")) {
-          const bodySplit = part.split(/\r?\n\r?\n/);
-          if (bodySplit.length > 1) {
-            const headerSection = bodySplit[0] || "";
-            let partBody = bodySplit.slice(1).join("\n\n").trim();
-            if (/content-transfer-encoding:\s*base64/i.test(headerSection)) {
-              partBody = decodeBase64Text(partBody);
-            } else if (/content-transfer-encoding:\s*quoted-printable/i.test(headerSection)) {
-              partBody = decodeQuotedPrintable(partBody);
-            }
-            cleanBody = partBody;
-            break;
-          }
-        }
-      }
-    } else {
-      // 非 multipart 纯文本邮件：头部与正文以双换行分隔
-      const headerBodySplit = rawText.split(/\r?\n\r?\n/);
-      if (headerBodySplit.length > 1) {
-        const headerSection = headerBodySplit[0] || "";
-        let partBody = headerBodySplit.slice(1).join("\n\n").trim();
-        if (/content-transfer-encoding:\s*base64/i.test(headerSection)) {
-          partBody = decodeBase64Text(partBody);
-        } else if (/content-transfer-encoding:\s*quoted-printable/i.test(headerSection)) {
-          partBody = decodeQuotedPrintable(partBody);
-        }
-        cleanBody = partBody;
-      }
-    }
-
-    // 智能兜底解码：优先探测 Base64（如 Gmail 外部来信），再探测 Quoted-Printable
-    let finalBody = decodeBase64Text(cleanBody || rawText || "");
-    if (/=[0-9A-Fa-f]{2}/.test(finalBody) || /=\r?\n/.test(finalBody)) {
-      finalBody = decodeQuotedPrintable(finalBody);
-    }
-    finalBody = finalBody.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, "").trim();
+    // 解析文本正文（去除 MIME 头并按编码规范全方位智能解码）
+    const finalBody = parseMimeEmail(rawText);
 
     const payload = {
       from,

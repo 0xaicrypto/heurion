@@ -102,8 +102,8 @@ export function decodeMimeWords(str: string): string {
   })
 }
 
-/** 解码 Quoted-Printable 格式的正文 */
-export function decodeQuotedPrintable(str: string): string {
+/** 解码 Quoted-Printable 格式的正文 (支持 UTF-8 与 GB18030 / GBK) */
+export function decodeQuotedPrintable(str: string, charset?: string): string {
   if (!str) return ''
   // 1. 去除软换行 (soft line breaks: =\r\n 或 =\n)
   const s = str.replace(/=\r?\n/g, '')
@@ -125,31 +125,63 @@ export function decodeQuotedPrintable(str: string): string {
       }
     }
   }
+  const u8 = new Uint8Array(bytes)
+  const cs = (charset || '').toLowerCase()
+  if (cs.includes('gb')) {
+    try {
+      return new TextDecoder('gb18030').decode(u8)
+    } catch {}
+  }
   try {
-    return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+    return new TextDecoder('utf-8', { fatal: true }).decode(u8)
   } catch {
-    return s
+    try {
+      return new TextDecoder('gb18030').decode(u8)
+    } catch {
+      return s
+    }
   }
 }
 
-/** 智能探测并解码 Base64 编码的邮件正文（如 Gmail / Outlook 以 Base64 方式发送的邮件） */
-export function decodeBase64Text(raw: string): string {
+/** 智能探测并解码 Base64 编码的邮件正文块（支持换行折行、空格容错、UTF-8 及 GB18030） */
+export function decodeBase64Chunk(raw: string, charset?: string): string {
   if (!raw) return raw
-  const trimmed = raw.trim()
-  const nonB64 = trimmed.replace(/[A-Za-z0-9+/=\r\n]/g, '')
-  if (nonB64.length > 0) return raw
+  // 移除所有空白符（空格、换行、制表符）
+  const compact = raw.replace(/\s+/g, '')
+  // 合法 Base64 结构判定
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length < 8) {
+    return raw
+  }
 
-  const compact = trimmed.replace(/\s+/g, '')
-  if (compact.length < 16) return raw
+  const padLen = (4 - (compact.length % 4)) % 4
+  const padded = compact + '='.repeat(padLen)
 
   try {
-    const padLen = (4 - (compact.length % 4)) % 4
-    const padded = compact + '='.repeat(padLen)
     const buf = Buffer.from(padded, 'base64')
-    const decoded = buf.toString('utf-8')
+    let decoded = ''
+    const cs = (charset || '').toLowerCase()
+    if (cs.includes('gb')) {
+      try {
+        decoded = new TextDecoder('gb18030').decode(buf)
+      } catch {}
+    }
+    if (!decoded) {
+      try {
+        decoded = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+      } catch {
+        try {
+          decoded = new TextDecoder('gb18030').decode(buf)
+        } catch {}
+      }
+    }
+    if (!decoded) return raw
 
-    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(decoded)) return raw
-    if (/[\u4e00-\u9fa5\w]/.test(decoded)) {
+    // 含有中文，或者是正常可读文本
+    if (/[\u4e00-\u9fa5]/.test(decoded)) {
+      return decoded
+    }
+    const cleanChars = decoded.replace(/[\r\n\t\x20-\x7e\u00a0-\uffff]/g, '')
+    if (cleanChars.length === 0 && decoded.trim().length > 3) {
       return decoded
     }
   } catch {
@@ -158,16 +190,83 @@ export function decodeBase64Text(raw: string): string {
   return raw
 }
 
-/** 智能探测并解码邮件正文（兼容 Base64、Quoted-Printable 或纯文本） */
-export function decodeEmailBody(body: string): string {
-  if (!body) return ''
-  let text = body
-  // 1. 优先尝试 Base64 解码 (针对外部 Gmail / Outlook 客户端的 Base64 转码邮件)
-  text = decodeBase64Text(text)
-  // 2. 尝试 Quoted-Printable 解码
-  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
-    text = decodeQuotedPrintable(text)
+/** 智能从原始 MIME 字符串中提取 text/plain 或 text/html 内容 */
+export function parseMimeText(rawText: string): string {
+  if (!rawText) return ''
+  const boundaryMatch = rawText.match(/boundary="?([^"\r\n;]+)"?/i)
+  if (boundaryMatch) {
+    const boundary = boundaryMatch[1]!.trim()
+    const parts = rawText.split(new RegExp(`--${boundary}(?:--)?`))
+    // 优先寻找 text/plain
+    for (const part of parts) {
+      const split = part.split(/\r?\n\r?\n/)
+      if (split.length > 1 && /content-type:\s*text\/plain/i.test(split[0]!)) {
+        const bodyPart = split.slice(1).join('\n\n').trim()
+        const csMatch = split[0]!.match(/charset="?([^"\r\n;]+)"?/i)
+        return decodeEmailBody(bodyPart, csMatch ? csMatch[1] : undefined)
+      }
+    }
+    // 备选 text/html
+    for (const part of parts) {
+      const split = part.split(/\r?\n\r?\n/)
+      if (split.length > 1 && /content-type:\s*text\/html/i.test(split[0]!)) {
+        const bodyPart = split.slice(1).join('\n\n').trim()
+        const csMatch = split[0]!.match(/charset="?([^"\r\n;]+)"?/i)
+        const html = decodeEmailBody(bodyPart, csMatch ? csMatch[1] : undefined)
+        return html
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/p>/gi, '\n\n')
+          .replace(/<\/div>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/gi, ' ')
+          .replace(/&lt;/gi, '<')
+          .replace(/&gt;/gi, '>')
+          .replace(/&amp;/gi, '&')
+          .replace(/&quot;/gi, '"')
+          .replace(/&#39;/gi, "'")
+          .trim()
+      }
+    }
   }
+  return rawText
+}
+
+/** 智能探测并解码邮件正文（兼容全文本 Base64、分块 Base64、Quoted-Printable、MIME Multipart 及多字符集） */
+export function decodeEmailBody(body: string, charset?: string): string {
+  if (!body) return ''
+  // 1. 若正文中包含 MIME boundary 结构，优先提取正文分块
+  let text = parseMimeText(body).trim()
+
+  // 2. 全文 Base64 探测与解码
+  const fullDecoded = decodeBase64Chunk(text, charset)
+  if (fullDecoded !== text) {
+    text = fullDecoded
+  } else {
+    // 3. 分段 Base64 探测（如邮件带有部分未分块明文，或带有引用头部）
+    const blocks = text.split(/\r?\n\r?\n/)
+    let changed = false
+    const decodedBlocks = blocks.map(b => {
+      const trimmedBlock = b.trim()
+      const d = decodeBase64Chunk(trimmedBlock, charset)
+      if (d !== trimmedBlock) {
+        changed = true
+        return d
+      }
+      return b
+    })
+    if (changed) {
+      text = decodedBlocks.join('\n\n')
+    }
+  }
+
+  // 4. Quoted-Printable 探测与解码 (支持 UTF-8 与 GB18030)
+  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
+    text = decodeQuotedPrintable(text, charset)
+  }
+
+  // 5. 清理残留的 MIME boundary 标记
   text = text.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, '').trim()
   return text
 }
@@ -191,19 +290,52 @@ export class MailService {
   }
 
   /** 自愈历史收到的 Base64 / QP 未解码邮件 */
-  private healExistingMessages(): void {
+  public healExistingMessages(): number {
+    let healed = 0
     try {
-      const rows = this.store.db.prepare('SELECT id, body FROM mail_messages ORDER BY rowid DESC LIMIT 200;').all() as { id: string; body: string }[]
+      const rows = this.store.db.prepare('SELECT id, body, subject, sender_name FROM mail_messages ORDER BY rowid DESC LIMIT 500;').all() as Array<{
+        id: string
+        body: string
+        subject: string
+        sender_name: string
+      }>
       for (const row of rows) {
-        if (!row.body) continue
-        const decoded = decodeEmailBody(row.body)
-        if (decoded && decoded !== row.body) {
-          this.store.db.prepare('UPDATE mail_messages SET body = ? WHERE id = ?').run(decoded, row.id)
+        let needsUpdate = false
+        let nextBody = row.body
+        let nextSubject = row.subject
+        let nextSenderName = row.sender_name
+
+        if (row.body) {
+          const decoded = decodeEmailBody(row.body)
+          if (decoded && decoded !== row.body) {
+            nextBody = decoded
+            needsUpdate = true
+          }
+        }
+        if (row.subject && row.subject.includes('=?')) {
+          const decodedSub = decodeMimeWords(row.subject)
+          if (decodedSub !== row.subject) {
+            nextSubject = decodedSub
+            needsUpdate = true
+          }
+        }
+        if (row.sender_name && row.sender_name.includes('=?')) {
+          const decodedName = decodeMimeWords(row.sender_name)
+          if (decodedName !== row.sender_name) {
+            nextSenderName = decodedName
+            needsUpdate = true
+          }
+        }
+
+        if (needsUpdate) {
+          this.store.db.prepare('UPDATE mail_messages SET body = ?, subject = ?, sender_name = ? WHERE id = ?').run(nextBody, nextSubject, nextSenderName, row.id)
+          healed++
         }
       }
     } catch {
       // 容错保护
     }
+    return healed
   }
 
   /** 是否配置了真实外网发信服务 (SMTP 或 Resend) */
