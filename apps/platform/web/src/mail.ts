@@ -1518,8 +1518,9 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         `).join('')
       }
 
-      if (cachedSmartReplies[targetMsg.id]) {
-        renderSmartRepliesPills(cachedSmartReplies[targetMsg.id])
+      const cached = cachedSmartReplies[targetMsg.id]
+      if (cached) {
+        renderSmartRepliesPills(cached)
       } else {
         void api<{ replies: string[] }>(`/api/mail/messages/${targetMsg.id}/smart-replies`).then(res => {
           if (res && Array.isArray(res.replies)) {

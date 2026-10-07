@@ -2487,7 +2487,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       bytes = new TextEncoder().encode(textContent)
     }
 
-    return c.body(bytes, 200, {
+    return c.body(Buffer.from(bytes), 200, {
       'Content-Type': att.mime || 'application/octet-stream',
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(att.name)}`,
       'Cache-Control': 'no-store',
