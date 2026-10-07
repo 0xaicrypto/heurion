@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Store } from '../src/store/db.ts'
 import { MailService } from '../src/mail/service.ts'
 import { CalendarService } from '../src/calendar/service.ts'
+import type { Mailer, SendMailOptions } from '../src/auth/mailer.ts'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -397,4 +398,53 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const ev1Data = await checkEv1.json() as any
     expect(ev1Data.status).toBe('completed')
   })
+
+  it('6. 外部发信边界健全性：向个人互联网邮箱 (Gmail/163) 发信，即使该邮箱已绑定站内用户，也必须作为外部邮件调用 mailer.send 真实发送', async () => {
+    const store = new Store(':memory:')
+    const sentExternalMails: Array<{ to: string; subject: string; text: string; senderAddress?: string }> = []
+    const mockMailer: Mailer = {
+      configured: true,
+      available: true,
+      mode: 'resend',
+      async send(to: string, subject: string, text: string, _html?: string, opts?: SendMailOptions) {
+        sentExternalMails.push({ to, subject, text, senderAddress: opts?.senderAddress })
+        return { success: true, mode: 'resend', messageId: 'msg-external-123', info: '通过 Resend 发送成功' }
+      },
+    }
+
+    // 模拟注册医生账户并绑定外部个人邮箱（如 zhaojimmy13@gmail.com）
+    const user = store.createUser({
+      username: 'hz',
+      display_name: 'Dr. HZ',
+      password_hash: 'hash',
+      email: 'zhaojimmy13@gmail.com',
+    })
+
+    const mailService = new MailService(store, mockMailer, { domain: 'heurion.org' })
+
+    // 医生在平台发信给自己的个人 Gmail 邮箱进行测试
+    const result = await mailService.sendAsync({
+      userId: user.id,
+      recipient: 'zhaojimmy13@gmail.com',
+      subject: '临床诊断随访测试',
+      body: '测试正文内容',
+      category: 'general',
+    })
+
+    // 核心验证：
+    // 1. 必须判定为外部邮件 (external: true)
+    expect(result.delivery.external).toBe(true)
+    // 2. 投递状态必须为 external_sent，而非内部协同
+    expect(result.delivery.status).toBe('external_sent')
+    expect(result.delivery.note).toContain('RESEND')
+    // 3. 真实调用了 mockMailer.send 并发送给 zhaojimmy13@gmail.com
+    expect(sentExternalMails.length).toBe(1)
+    expect(sentExternalMails[0]?.to).toBe('zhaojimmy13@gmail.com')
+    // 4. 发件地址规范化为 @heurion.org
+    expect(sentExternalMails[0]?.senderAddress).toBe('hz@heurion.org')
+    // 5. 不会在自己的站内 inbox 里虚假生成一封「院内即时协同送达」邮件
+    const inboxMails = mailService.list(user.id, user.username, { folder: 'inbox' })
+    expect(inboxMails.some(m => m.subject === '临床诊断随访测试')).toBe(false)
+  })
 })
+

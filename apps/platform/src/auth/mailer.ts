@@ -41,8 +41,11 @@ export class MailerError extends Error {}
 
 function makeFrom(baseFrom: string, senderName?: string, senderAddress?: string): string {
   const emailMatch = baseFrom.match(/<([^>]+)>/)
-  const defaultAddr = emailMatch ? emailMatch[1] : baseFrom.trim()
-  const addr = senderAddress || defaultAddr
+  const defaultAddr = (emailMatch ? emailMatch[1] : baseFrom.trim()) || 'no-reply@heurion.org'
+  let addr = senderAddress || defaultAddr
+  if (addr.endsWith('@heurion.com')) {
+    addr = addr.replace(/@heurion\.com$/, '@heurion.org')
+  }
   const defaultName = emailMatch ? baseFrom.replace(/<[^>]+>/, '').trim().replace(/^"|"$/g, '') : 'Heurion'
   const name = senderName || defaultName
   return `"${name}" <${addr}>`
@@ -98,11 +101,12 @@ export function createMailer(opts: {
       available: true,
       mode: 'resend',
       async send(to, subject, text, html, sendOpts) {
+        const fromAddr = makeFrom(from, sendOpts?.senderName, sendOpts?.senderAddress)
         const res = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.resendApiKey}` },
           body: JSON.stringify({
-            from: makeFrom(from, sendOpts?.senderName, sendOpts?.senderAddress),
+            from: fromAddr,
             to: [to],
             subject,
             text,
@@ -110,7 +114,18 @@ export function createMailer(opts: {
             reply_to: sendOpts?.replyTo,
           }),
         })
-        if (!res.ok) throw new MailerError(`Resend 邮件发送失败（${res.status}）`)
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '')
+          console.error(`[resend-error] HTTP ${res.status}:`, errText)
+          let errMsg = `Resend 邮件发送失败（HTTP ${res.status}）`
+          try {
+            const parsed = JSON.parse(errText)
+            if (parsed.message) errMsg += `: ${parsed.message}`
+          } catch {
+            if (errText) errMsg += `: ${errText}`
+          }
+          throw new MailerError(errMsg)
+        }
         const data = await res.json().catch(() => ({})) as { id?: string }
         return { success: true, mode: 'resend', messageId: data.id, info: '通过 Resend 发送成功' }
       },

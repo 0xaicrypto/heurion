@@ -59,6 +59,13 @@ export class MailService {
     return lower.endsWith(`@${this.domain}`) || lower.endsWith('@heurion.org') || lower.endsWith('@heurion.com')
   }
 
+  /** 是否为外部互联网真实邮箱（包含 @ 且不属于平台内部域名，必须通过 SMTP/Resend 发往外网） */
+  isExternalEmail(email: string): boolean {
+    const clean = email.trim().toLowerCase()
+    if (!clean.includes('@')) return false
+    return !this.isPlatformDomain(clean)
+  }
+
   /** 获取邮件列表（若首次访问则自动载入临床与科研示范邮件） */
   list(userId: string, username: string, filterOrCategory?: string | { category?: string; folder?: string; starred?: boolean; unreadOnly?: boolean; search?: string }): MailMessageRow[] {
     this.ensureSeed(userId, username)
@@ -101,9 +108,8 @@ export class MailService {
       })
     }
 
-    const internalUser = this.findInternalUser(recipient)
-    const isDomain = this.isPlatformDomain(recipient)
-    const isExternal = !internalUser && !isDomain
+    const isExternal = this.isExternalEmail(recipient)
+    const internalUser = isExternal ? undefined : this.findInternalUser(recipient)
 
     let deliveryStatus: MailMessageRow['delivery_status'] = 'delivered'
     let deliveryNote = '院内 / 课题组即时协同送达'
@@ -166,9 +172,12 @@ export class MailService {
 
     // 3. 外网邮件异步发送（或本地模拟打印）
     if (isExternal && this.mailer) {
-      const senderAddress = (sender.endsWith(`@${this.domain}`) || sender.endsWith('@heurion.org') || sender.endsWith('@heurion.com'))
+      let senderAddress = (sender.endsWith(`@${this.domain}`) || sender.endsWith('@heurion.org'))
         ? sender
         : this.userEmail(user?.username ?? input.userId)
+      if (senderAddress.endsWith('@heurion.com')) {
+        senderAddress = senderAddress.replace(/@heurion\.com$/, '@heurion.org')
+      }
       const mailOpts = {
         replyTo: user?.email || senderAddress,
         senderName: `${senderName} (Heurion)`,
@@ -197,13 +206,15 @@ export class MailService {
     const senderName = input.senderName || user?.display_name || '主诊医师'
     const recipient = input.recipient.trim()
 
-    const internalUser = this.findInternalUser(recipient)
-    const isDomain = this.isPlatformDomain(recipient)
-    const isExternal = !internalUser && !isDomain
+    const isExternal = this.isExternalEmail(recipient)
+    const internalUser = isExternal ? undefined : this.findInternalUser(recipient)
 
-    const senderAddress = (sender.endsWith(`@${this.domain}`) || sender.endsWith('@heurion.org') || sender.endsWith('@heurion.com'))
+    let senderAddress = (sender.endsWith(`@${this.domain}`) || sender.endsWith('@heurion.org'))
       ? sender
       : this.userEmail(user?.username ?? input.userId)
+    if (senderAddress.endsWith('@heurion.com')) {
+      senderAddress = senderAddress.replace(/@heurion\.com$/, '@heurion.org')
+    }
 
     const mailOpts = {
       replyTo: user?.email || senderAddress,
