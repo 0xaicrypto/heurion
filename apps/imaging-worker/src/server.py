@@ -54,7 +54,9 @@ class BenchmarkRequest(BaseModel):
     bar_cutoff: Optional[float] = 1.10
 
 class SampleRequest(BaseModel):
-    sample_id: str = "spleen_test"
+    sample_id: Optional[str] = "spleen_test"
+    volume_id: Optional[str] = None
+    click_point: Optional[Dict[str, int]] = None
     model_name: Optional[str] = "spleen_segmenter"
     window_preset: Optional[str] = None
     mucus_min_hu: Optional[float] = 10.0
@@ -66,6 +68,7 @@ class FileAnalysisRequest(BaseModel):
     file_path: str
     model_name: Optional[str] = "spleen_segmenter"
     window_preset: Optional[str] = None
+    click_point: Optional[Dict[str, int]] = None
     mucus_min_hu: Optional[float] = 10.0
     mucus_max_hu: Optional[float] = 75.0
     ham_threshold_hu: Optional[float] = 70.0
@@ -566,18 +569,38 @@ def run_bronchiectasis_analysis(req: BenchmarkRequest = Body(...)):
 
 @app.post("/api/v1/analyze/sample")
 def run_sample_analysis(req: SampleRequest = Body(...)):
-    """Runs MONAI inference on a pre-loaded clinical sample."""
-    sample_file = DATA_DIR / f"{req.sample_id}.nii.gz"
+    """Runs MONAI inference on a pre-loaded clinical sample or in-memory cached volume."""
+    vol_id = req.volume_id or req.sample_id
+    if vol_id and engine.has_volume(vol_id):
+        vol, spacing, modality = engine.volume_cache[vol_id]
+        model_name = req.model_name
+        if not model_name:
+            model_name = "lung_nodule_segmenter" if ("lung" in str(vol_id).lower() or "chest" in str(vol_id).lower()) else "spleen_segmenter"
+        with INFERENCE_SEMAPHORE:
+            return engine.analyze_volume(
+                volume=vol,
+                spacing=spacing,
+                model_name=model_name,
+                window_preset=req.window_preset,
+                prompt_point=req.click_point,
+                mucus_min_hu=req.mucus_min_hu,
+                mucus_max_hu=req.mucus_max_hu,
+                ham_threshold_hu=req.ham_threshold_hu,
+                bar_cutoff=req.bar_cutoff
+            )
+
+    sample_id = req.sample_id or "spleen_test"
+    sample_file = DATA_DIR / f"{sample_id}.nii.gz"
     if not sample_file.exists():
-        sample_file = DATA_DIR / f"{req.sample_id}.nii"
+        sample_file = DATA_DIR / f"{sample_id}.nii"
     if not sample_file.exists():
-        raise HTTPException(status_code=404, detail=f"Sample '{req.sample_id}' not found in data directory")
+        raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found in data directory or memory cache")
 
     model_name = req.model_name
     if not model_name:
-        if "lung" in req.sample_id or "chest" in req.sample_id:
-            model_name = "bronchiectasis_mucus_analyzer"
-        elif "spleen" in req.sample_id:
+        if "lung" in sample_id or "chest" in sample_id:
+            model_name = "lung_nodule_segmenter"
+        elif "spleen" in sample_id:
             model_name = "spleen_segmenter"
         else:
             model_name = "liver_lesion_segmenter"
@@ -588,6 +611,7 @@ def run_sample_analysis(req: SampleRequest = Body(...)):
                 file_path=str(sample_file),
                 model_name=model_name,
                 window_preset=req.window_preset,
+                prompt_point=req.click_point,
                 mucus_min_hu=req.mucus_min_hu,
                 mucus_max_hu=req.mucus_max_hu,
                 ham_threshold_hu=req.ham_threshold_hu,
@@ -607,6 +631,7 @@ def run_file_analysis(req: FileAnalysisRequest = Body(...)):
                 file_path=req.file_path,
                 model_name=req.model_name or "spleen_segmenter",
                 window_preset=req.window_preset,
+                prompt_point=req.click_point,
                 mucus_min_hu=req.mucus_min_hu,
                 mucus_max_hu=req.mucus_max_hu,
                 ham_threshold_hu=req.ham_threshold_hu,

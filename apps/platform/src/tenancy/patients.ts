@@ -1392,22 +1392,32 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
 
       const ld = m.longest_diameter_mm !== undefined ? Number(m.longest_diameter_mm) : null
       const vol = m.total_volume_cm3 !== undefined ? Number(m.total_volume_cm3) : null
+      const radsInfo = m.lung_rads
+      const hasNodule = ld !== null && ld > 0 && !(radsInfo && radsInfo.category === '1')
 
       criteriaTable.push({
-        criterion: 'RECIST 1.1 靶病灶解剖学长径',
+        criterion: 'RECIST 1.1 / Fleischner 靶病灶解剖学长径',
         category: 'imaging',
-        status: ld && ld >= 10 ? 'positive' : 'negative',
-        evidence_value: ld ? `最大截面长径 ${ld} mm (短径 ${m.short_axis_mm ?? '--'} mm)` : '未记录具体长径',
-        reference_guideline: 'RECIST 1.1 可测量靶病灶标准 (长径 ≥ 10 mm)',
+        status: hasNodule && ld >= 10 ? 'positive' : 'negative',
+        evidence_value: hasNodule ? `最大截面长径 ${ld} mm (短径 ${m.short_axis_mm ?? '--'} mm)` : '未检出可测量实质结节 (长径 < 3 mm 或无活动性病灶)',
+        reference_guideline: 'RECIST 1.1 / Fleischner 肺结节测量指引',
       })
 
-      if (vol !== null) {
+      if (hasNodule && vol !== null) {
         criteriaTable.push({
           criterion: '3D 肿瘤立体病灶总体积',
           category: 'imaging',
           status: 'positive',
           evidence_value: `${vol} cm³ (关键最大截面位于第 #${m.key_slice_index ?? 0} 层)`,
           reference_guideline: 'MONAI 深度学习体素三维容积分割',
+        })
+      } else if (!hasNodule) {
+        criteriaTable.push({
+          criterion: 'Lung-RADS 临床分级评估',
+          category: 'imaging',
+          status: 'positive',
+          evidence_value: `${radsInfo?.name || 'Lung-RADS 1 类'} (阴性 / 无结节，恶性风险 < 1%)`,
+          reference_guideline: 'ACR Lung-RADS 肺癌筛查临床指南',
         })
       }
 
@@ -1457,9 +1467,16 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         })
       }
 
-      clinicalUrgency = (ld && ld > 20) || (ceaLab?.flag === 'H') ? 'high' : 'medium'
-      diagnosticImpression = `靶病灶三维容积 ${vol ?? '--'} cm³，RECIST 1.1 长径 ${ld ?? '--'} mm。${ceaLab?.flag === 'H' ? '伴随血清肿瘤标志物升高，建议紧密结合多期 CT 随访长径变化率 ΔLD% 综合评定疗效等级。' : '建议在下一随访周期复查 HRCT 计算体积倍增时间 (VDT) 与 RECIST 1.1 疗效评级。'}`
-      suggestedWorkup.push('按 RECIST 1.1 协议在 6~8 周后安排同序列对比复查', '胸部增强 CT / 增强 MRI 评估病灶血供特征')
+      if (!hasNodule) {
+        clinicalUrgency = ceaLab?.flag === 'H' ? 'medium' : 'routine'
+        diagnosticImpression = `胸部 CT 扫描平扫未见确切活动性实质性占位（未检出 ≥ 3 mm 实质性结节），符合 ${radsInfo?.name || 'Lung-RADS 1 类'} 阴性特征。建议按规范指引 12 个月后常规复查。`
+        suggestedWorkup.push('遵照 Lung-RADS 1 类指引建议 12 个月后安排常规低剂量 CT (LDCT) 复查')
+      } else {
+        clinicalUrgency = (ld && ld > 20) || (ceaLab?.flag === 'H') ? 'high' : (ld && ld >= 6 ? 'medium' : 'routine')
+        const radsText = radsInfo ? `，临床评级 ${radsInfo.name} (${radsInfo.description})` : ''
+        diagnosticImpression = `靶病灶三维容积 ${vol ?? '--'} cm³，RECIST 1.1 长径 ${ld ?? '--'} mm${radsText}。${ceaLab?.flag === 'H' ? '伴随血清肿瘤标志物升高，建议紧密结合多期 CT 随访长径变化率 ΔLD% 综合评定疗效等级。' : '建议在下一随访周期复查 HRCT 计算体积倍增时间 (VDT) 与 RECIST 1.1 疗效评级。'}`
+        suggestedWorkup.push('按 RECIST 1.1 / Fleischner 随访协议安排同序列对比复查', '胸部高分辨靶扫描评估病灶微细血供与分叶特征')
+      }
 
     } else {
       syndrome = isAbdominal ? '腹部实质脏器容积与功能代谢因果评估' : '医学影像量化与实验室指标多模态分析'
@@ -1847,6 +1864,9 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const bronchusCaliber = rawMetrics.bronchus_caliber_mm ?? 8.5
     const arteryCaliber = rawMetrics.artery_caliber_mm ?? 5.8
 
+    const radsInfo = recist.lung_rads || rawMetrics.lung_rads
+    const hasLesion = recist.has_lesion !== false && ld !== undefined && ld > 0 && vol !== undefined && vol > 0 && !(radsInfo && radsInfo.category === '1')
+
     // 1. 检查方法与参数
     const techMethod = isCT
       ? `行胸部低剂量/高分辨 CT (HRCT) 轴位连续容积平扫，准直层厚 1.0~1.25mm，螺距 1.0，矩阵 512×512。经软组织与高分辨算法重建，采用标准肺窗 (WW 1500 / WL -600) 及纵隔窗 (WW 350 / WL 40) 双序列综合判读。利用 MONAI 3D 深度学习体素网络完成自动化病灶三维空间重构。`
@@ -1862,10 +1882,18 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         `3. **粘液嵌顿三维立体容积**：MONAI 3D 体素分割测得粘液栓立体总容积为 ${vol ?? 368.29} cm³，最大浸润横截面位于轴位第 #${keySlice} 层。\n` +
         `4. **纵隔与胸膜**：纵隔居中，气管隆突通畅，肺门及纵隔未见明确肿大淋巴结；双侧胸膜光滑无增厚，未见胸腔积液征象。`
     } else if (evidence.syndrome_key === 'lung_neoplasm_recist') {
-      findings = `1. **靶病灶立体量化 (RECIST 1.1)**：右肺实质见一占位性靶病灶，MONAI 3D 模型自动测得最大轴位截面位于第 #${keySlice} 层，最大长径 (Longest Diameter) 约为 ${ld ?? 18.5} mm，垂直短径约为 ${sd ?? 14.2} mm；病灶三维总体积约 ${vol ?? 8.2} cm³。\n` +
-        `2. **病灶内部及边缘特征**：病灶呈分叶状，边缘毛糙可见短毛刺征，内部密度欠均匀，未见确切钙化或空洞形成。\n` +
-        `3. **周围结构与淋巴结**：邻近胸膜未见明显牵拉凹陷；纵隔内及双侧肺门区见数枚淋巴结显影，最大短径均小于 10 mm。\n` +
-        `4. **双肺其他叶段**：左肺野及双肺上叶纹理清晰，透亮度良好，未见新发活动性病变。`
+      if (!hasLesion) {
+        findings = `1. **双肺实质与野间通透度**：双肺野透亮度正常，双肺实质内未见明确确切活动性浸润影或局灶性占位靶病灶（未检出 ≥ 3 mm 之实质性肺结节）；\n` +
+          `2. **气道树与纵隔淋巴结**：气管及各级支气管管腔通畅，纵隔居中，双侧肺门及纵隔未见明确肿大淋巴结（短径均 < 10 mm）；\n` +
+          `3. **胸壁与胸膜腔**：双侧胸膜光滑平整，未见局限性结节样增厚或胸腔积液积气征象；\n` +
+          `4. **Lung-RADS 影像分级**：综合评估符合 \`${radsInfo?.name || 'Lung-RADS 1 类'}\`（阴性 / 无活动性肺结节，恶性风险 < 1%）。`
+      } else {
+        const radsTitle = radsInfo ? `符合 \`${radsInfo.name}\` (${radsInfo.description || ''})` : '局灶性结节改变'
+        findings = `1. **局灶性肺结节/占位立体量化 (RECIST 1.1 / Fleischner)**：右肺实质见一局灶性结节影，经 MONAI 3D 深度学习体素网络测得最大轴位截面位于第 #${keySlice} 层，最大长径 (Longest Diameter) 约为 ${ld} mm，垂直短径约为 ${sd ?? '--'} mm；病灶三维总体积约 ${vol} cm³。\n` +
+          `2. **病灶形态与内部特征**：病灶呈${ld > 15 ? '实性分叶状改变，边缘欠规整可见短毛刺征' : '局灶性实性/亚实性结节形态，边界尚清'}，内部密度欠均匀，未见确切粗大钙化或坏死空洞形成。\n` +
+          `3. **周围结构与淋巴结**：邻近胸膜未见明显牵拉凹陷；纵隔内及双侧肺门区见数枚淋巴结显影，最大短径均小于 10 mm。\n` +
+          `4. **双肺其他叶段与分级**：左肺野及双肺上叶纹理清晰，透亮度良好，未见新发活动性病变；${radsTitle}。`
+      }
     } else {
       findings = `1. **目标器官解剖与形态**：实质脏器轮廓规整，包膜连续完整，实质回声/密度未见明确占位性病变。\n` +
         `2. **三维立体容积重建**：经 MONAI 3D 卷积重建测得目标体积为 ${vol ?? 245.0} cm³，最大径线 ${ld ?? 45.0} mm，位于切片第 #${keySlice} 层。\n` +
@@ -1878,8 +1906,14 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
       impression = `1. **双肺多发支气管扩张伴高密度粘液栓形成 (HAM)**：CT 表现具有高度特征性，结合患者血清总 IgE (${evidence.matched_labs.find((l: any) => l.test_key === 'ige')?.value ?? '1420'} kU/L) 及嗜酸性粒细胞显著升高，**高度符合变应性支气管肺曲霉病 (ABPA, Allergic Bronchopulmonary Aspergillosis)** 临床诊断；\n` +
         `2. **外周气道树芽征与细支气管炎**：双肺见多发外周细支气管炎性嵌顿与树芽征改变，提示合并感染与嗜酸性炎症反应，建议规范抗炎及抗真菌干预后复查。`
     } else if (evidence.syndrome_key === 'lung_neoplasm_recist') {
-      impression = `1. **肺部实性占位病灶 (长径约 ${ld ?? 18.5} mm)**：符合肺部原发性肿瘤/浸润性病变表现，建议结合组织活检病理诊断；\n` +
-        `2. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld ?? 18.5} mm，可作为后续靶向/化疗抗肿瘤疗效评估之标准基线 (Baseline)。`
+      if (!hasLesion) {
+        impression = `1. **胸部 CT 平扫未见确切活动性实质性占位或活动性炎性病变**；\n` +
+          `2. **Lung-RADS 临床分级**：\`${radsInfo?.name || 'Lung-RADS 1 类'}\` (${radsInfo?.description || '阴性无结节，恶性风险 < 1%'})。`
+      } else {
+        impression = `1. **肺部局灶性实性/亚实性结节 (长径约 ${ld} mm，立体体积约 ${vol} cm³)**：影像表现提示局灶性肺结节，综合评级为 \`${radsInfo?.name || 'Lung-RADS 评级'}\`；\n` +
+          `2. **鉴别诊断与客观提示**：需鉴别局灶性炎性假瘤、机化性肺炎、良性错构瘤及早期肺部腺瘤样浸润增生病变，建议专科医师结合既往影像比对或短期薄层靶扫描定性；\n` +
+          `3. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld} mm，可作为后续多学科随访评估之影像学量化基线 (Baseline)。`
+      }
     } else {
       impression = evidence.diagnostic_impression || '实质器官容积量化分析已完成，未见确切占位性恶性征象。'
     }
@@ -1887,13 +1921,20 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     // 4. 临床处置与随访建议 (Recommendations)
     let recommendations = ''
     if (evidence.syndrome_key === 'abpa_bronchiectasis' || isHAM) {
-      recommendations = `1. **抗炎及抗真菌专科干预**：建议呼吸科/变态反应科专科会诊，评估全身口服糖皮质激素联合三唑类抗真菌药（如伊曲康唑）治疗方案；\n` +
-        `2. **随访疗效比对**：建议在规范治疗 8~12 周后安排复查同序列 HRCT，利用系统**双期 3D 体素刚性配准与差分吸收热力图 (Difference Heatmap)** 动态追踪粘液栓吸收退缩比例与靶病灶消长；\n` +
-        `3. **补充送检完善**：建议完善诱导痰曲霉真菌培养及支气管激发/舒张肺功能评估。`
+      recommendations = `1. **呼吸与变态反应专科协同诊治**：建议由呼吸内科及变态反应专科医师全面评估患者全身症状与实验室指标，根据《变应性支气管肺曲霉病诊治专家共识》制定个体化抗炎与抗真菌综合干预策略；\n` +
+        `2. **气道廓清与呼吸康复**：在呼吸康复治疗师指导下开展气道廓清排痰 (Airway Clearance Techniques, ACT)，促进支气管高密度粘液栓引流排除；\n` +
+        `3. **随访疗效比对**：建议在规范专科干预 8~12 周后安排复查同序列 HRCT，利用系统**双期 3D 体素刚性配准与差分吸收热力图 (Difference Heatmap)** 动态追踪粘液栓吸收退缩比例与靶病灶消长；\n` +
+        `4. **补充送检完善**：建议完善深部诱导痰曲霉真菌培养、曲霉特异性 IgG 沉淀抗体及支气管激发/舒张肺功能评估。`
     } else if (evidence.syndrome_key === 'lung_neoplasm_recist') {
-      recommendations = `1. **组织病理确诊**：建议行经皮肺穿刺活检 (CT-guided Biopsy) 或气管镜检查以明确病理亚型与基因突变分型；\n` +
-        `2. **抗肿瘤疗效追踪**：治疗期间按 RECIST 1.1 指南每 6~8 周复查增强 CT，对比测量靶病灶长径变化率 (ΔLD%) 评定疗效等级 (CR / PR / SD / PD)；\n` +
-        `3. **全身分期评估**：建议进一步行颅脑增强 MRI 与骨扫描以除外远处转移。`
+      if (!hasLesion) {
+        recommendations = `1. **常规年度健康体检随访**：遵照中国及国际肺癌筛查指引（Lung-RADS 1），建议 12 个月后常规安排低剂量胸部 CT (LDCT) 复查；\n` +
+          `2. **呼吸道自我健康管理**：避免烟草及职业有害粉尘暴露；若出现持续性咳嗽、咯血或胸痛等呼吸道不适请及时就诊。`
+      } else {
+        const radsFollowup = radsInfo?.recommendation ? `${radsInfo.recommendation}。` : (ld >= 15 ? '建议结合临床指征行薄层高分辨靶扫描、增强 CT 或多学科会诊 (MDT) 综合研判。' : ld >= 8 ? '建议 3~6 个月后复查薄层低剂量 CT (LDCT)，动态比对体积倍增时间 (VDT)。' : '建议 6~12 个月后复查胸部 CT 进行结节随访。')
+        recommendations = `1. **专科随访与影像学复查**：建议呼吸内科或胸外科专科会诊。${radsFollowup}\n` +
+          `2. **多模态纵向对齐比对**：后续随访复查时建议利用系统**双期 3D 体素刚性配准与差分吸收热力图 (Difference Heatmap)**，动态追踪病灶长径变化率 (ΔLD%) 与立体容积消长；\n` +
+          `3. **避免未经指导的盲目处置**：影像学 AI 测值仅供临床辅助参考，请遵专科医师临床处方及处置指导。`
+      }
     } else {
       recommendations = `1. 建议结合患者临床症状与化验指标，定期进行影像学对比随访；\n2. 如有局部不适，可随时复查专科超声或增强序列。`
     }
@@ -1936,7 +1977,10 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     fullReportMd += `${recommendations}\n\n`
 
     fullReportMd += `---\n`
-    fullReportMd += `*本报告由 Heurion 多模态医学影像分析系统辅助生成，融合 MONAI 3D 深度模型客观量化指标与临床实验室因果链，供临床执业医师审阅、签字与病历归档。*\n`
+    fullReportMd += `> ⚠️ **医疗器械软件 (SaMD) 与临床合规声明 (Regulatory & Clinical Disclaimer)**:\n`
+    fullReportMd += `> 1. 本诊断报告及相关三维体素量化测量（包括 RECIST 1.1 径线、Lung-RADS 评级、BAR 支气管伴行动脉比、粘液栓密度 HU 统计）均由 Heurion 医学影像 AI 算法与 MONAI 深度学习推理核心辅助生成；\n`
+    fullReportMd += `> 2. 本报告所载全部影像测量数据、临床评级及随访指引**仅供具备合法资质的执业医师临床决策参考，不单独作为确定性疾病诊断依据，亦不构成任何直接用药处方或医疗干预方案**；\n`
+    fullReportMd += `> 3. 最终临床诊断结论、用药方案与手术治疗决策必须由主管执业医师结合患者现场体征、组织病理金标准及全面临床病史综合审定、签字确认并负专业责任。\n`
 
     let savedRecordId: string | undefined
     if (input.save_to_records !== false) {

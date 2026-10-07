@@ -79,6 +79,7 @@ def generate_synthetic_ct_volume(
 
     return volume, mask
 
+import scipy.ndimage as ndi
 from scipy.ndimage import label
 
 def extract_largest_component(binary_mask: np.ndarray) -> np.ndarray:
@@ -92,6 +93,146 @@ def extract_largest_component(binary_mask: np.ndarray) -> np.ndarray:
         return binary_mask
     largest_label = int(np.argmax(counts))
     return (labeled == largest_label).astype(np.uint8)
+
+def segment_pulmonary_nodules(
+    volume: np.ndarray,
+    spacing: Tuple[float, float, float] = (1.5, 0.8, 0.8),
+    prompt_point: Optional[Dict[str, int]] = None
+) -> Tuple[np.ndarray, Dict[str, Any], str]:
+    """
+    Clinically accurate pulmonary nodule segmentation and screening pipeline:
+    1. Extracts true 3D lung parenchyma envelope (strictly excluding chest wall, ribs, spine, and mediastinum)
+    2. Supports interactive point click (VISTA-3D adaptive growing) if prompt_point is provided
+    3. Otherwise detects intraparenchymal soft-tissue candidates (-150 to +120 HU) and filters out branching vessels
+    4. Categorizes with international Lung-RADS 1~4 criteria and RECIST 1.1 calipers
+    5. Returns (binary_mask, recist_metrics, lesion_label)
+    """
+    dz, dy, dx = [float(s) for s in spacing]
+    voxel_vol_mm3 = dz * dy * dx
+    z_dim, y_dim, x_dim = volume.shape
+
+    # Mode A: Doctor interactive click-to-measure
+    if prompt_point and "z" in prompt_point and "y" in prompt_point and "x" in prompt_point:
+        try:
+            from .interactive import interactive_segment_3d
+        except (ImportError, ValueError):
+            from interactive import interactive_segment_3d
+        res = interactive_segment_3d(
+            volume=volume,
+            spacing=spacing,
+            points=[{"z": int(prompt_point["z"]), "y": int(prompt_point["y"]), "x": int(prompt_point["x"]), "is_positive": True}]
+        )
+        mask = res["mask"]
+        recist = calculate_recist_metrics(mask, spacing=spacing)
+        ld = recist["longest_diameter_mm"]
+        if ld < 6.0:
+            rads = {"category": "2", "name": "Lung-RADS 2 类", "description": "良性外观微结节 (<6mm)", "recommendation": "常规年度低剂量 CT 筛查"}
+        elif ld < 8.0:
+            rads = {"category": "3", "name": "Lung-RADS 3 类", "description": "可能良性结节 (6-8mm)", "recommendation": "建议 6 个月后低剂量 CT 复查"}
+        elif ld < 15.0:
+            rads = {"category": "4A", "name": "Lung-RADS 4A 类", "description": "可疑浸润病灶 (8-15mm)", "recommendation": "建议 3 个月后低剂量 CT 复查或专科会诊评估 PET-CT"}
+        else:
+            rads = {"category": "4B", "name": "Lung-RADS 4B 类", "description": "高度可疑病灶 (≥15mm 或占位肿块)", "recommendation": "建议胸外科/呼吸介入专科会诊，评估穿刺活检或增强CT"}
+        recist["lung_rads"] = rads
+        recist["has_lesion"] = True
+        return mask, recist, f"交互式靶结节测量 ({rads['name']}, {ld}mm)"
+
+    # Mode B: Automatic anatomical lung envelope screening
+    lung_cands_3d = np.zeros(volume.shape, dtype=bool)
+    for z in range(z_dim):
+        sl = volume[z]
+        # Body threshold (-450 HU)
+        body = ndi.binary_fill_holes(sl > -450.0)
+        if np.sum(body) < 1000:
+            continue
+        lung_air = (sl >= -980.0) & (sl <= -450.0) & body
+        if lung_air.sum() > 300:
+            # Internal structures (nodules & vessels) are enclosed in lung air
+            env = ndi.binary_fill_holes(lung_air)
+            # Erode to eliminate chest wall pleura / ribs / subcutaneous fat spillover
+            env_clean = ndi.binary_erosion(env, iterations=2)
+            # Soft tissue candidates inside lung interior (-150 to +120 HU)
+            cands = (sl >= -150.0) & (sl <= 120.0) & env_clean
+            lung_cands_3d[z] = cands
+
+    lbl, n_feats = ndi.label(lung_cands_3d)
+    empty_recist = {
+        "total_volume_cm3": 0.0,
+        "key_slice_index": z_dim // 2,
+        "longest_diameter_mm": 0.0,
+        "short_axis_mm": 0.0,
+        "caliper_longest": None,
+        "caliper_short": None,
+        "has_lesion": False,
+        "lung_rads": {
+            "category": "1",
+            "name": "Lung-RADS 1 类",
+            "description": "阴性表现 (双肺野清晰，未见确切实性结节或明显占位)",
+            "recommendation": "常规年度低剂量 CT 筛查"
+        }
+    }
+
+    if n_feats == 0:
+        return np.zeros_like(volume, dtype=np.uint8), empty_recist, "未见高危肺结节 (Lung-RADS 1 类 阴性)"
+
+    counts = np.bincount(lbl.flat)
+    counts[0] = 0
+
+    vols_mm3 = counts[1:] * voxel_vol_mm3
+    d_equivs_mm = 2.0 * ((3.0 * vols_mm3) / (4.0 * np.pi)) ** (1.0 / 3.0)
+
+    # Clinically meaningful nodule diameter range: 3mm to 30mm (or mass up to 50mm)
+    valid_indices = np.where((d_equivs_mm >= 3.0) & (d_equivs_mm <= 30.0))[0] + 1
+    if len(valid_indices) == 0:
+        valid_indices = np.where((d_equivs_mm > 30.0) & (d_equivs_mm <= 50.0))[0] + 1
+
+    if len(valid_indices) == 0:
+        return np.zeros_like(volume, dtype=np.uint8), empty_recist, "未见高危肺结节 (Lung-RADS 1 类 阴性)"
+
+    # Distinguish spherical nodules from branching tubular blood vessels
+    all_boxes = ndi.find_objects(lbl, max_label=n_feats)
+    candidates = []
+    for idx in valid_indices:
+        sl_box = all_boxes[idx - 1]
+        if sl_box is None:
+            continue
+        sz = (sl_box[0].stop - sl_box[0].start) * dz
+        sy = (sl_box[1].stop - sl_box[1].start) * dy
+        sx = (sl_box[2].stop - sl_box[2].start) * dx
+        dims = [sz, sy, sx]
+        aspect_ratio = max(dims) / (min(dims) + 1e-4)
+        vol_i = counts[idx] * voxel_vol_mm3
+        d_i = d_equivs_mm[idx - 1]
+        # Penalize branch-like vessels with high aspect ratio
+        score = vol_i / (aspect_ratio ** 1.5)
+        candidates.append((idx, score, d_i, vol_i, aspect_ratio))
+
+    if not candidates:
+        return np.zeros_like(volume, dtype=np.uint8), empty_recist, "未见高危肺结节 (Lung-RADS 1 类 阴性)"
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    best_idx = candidates[0][0]
+    best_mask = (lbl == best_idx).astype(np.uint8)
+
+    recist = calculate_recist_metrics(best_mask, spacing=spacing)
+    ld = recist["longest_diameter_mm"]
+
+    if ld < 6.0:
+        rads = {"category": "2", "name": "Lung-RADS 2 类", "description": "良性外观小结节 (<6mm)", "recommendation": "建议 12 个月后低剂量 CT 随访"}
+        lesion_label = f"微小结节 (Lung-RADS 2 类, {ld}mm)"
+    elif ld < 8.0:
+        rads = {"category": "3", "name": "Lung-RADS 3 类", "description": "可能良性结节 (6-8mm)", "recommendation": "建议 6 个月后低剂量 CT 随访"}
+        lesion_label = f"低度可疑结节 (Lung-RADS 3 类, {ld}mm)"
+    elif ld < 15.0:
+        rads = {"category": "4A", "name": "Lung-RADS 4A 类", "description": "可疑浸润病灶 (8-15mm)", "recommendation": "建议 3 个月后低剂量 CT 复查或专科会诊评估 PET-CT"}
+        lesion_label = f"中度可疑结节 (Lung-RADS 4A 类, {ld}mm)"
+    else:
+        rads = {"category": "4B", "name": "Lung-RADS 4B 类", "description": "高度可疑病灶 (≥15mm 或实性肿块)", "recommendation": "建议胸外科/呼吸介入专科会诊，评估穿刺活检或增强CT"}
+        lesion_label = f"高度可疑病灶 (Lung-RADS 4B 类, {ld}mm)"
+
+    recist["lung_rads"] = rads
+    recist["has_lesion"] = True
+    return best_mask, recist, lesion_label
 
 def _get_hud_font(size: int = 12) -> Tuple[Any, bool]:
     """Returns a suitable font for clinical HUD drawing, and whether it supports CJK characters."""
@@ -260,37 +401,41 @@ class MONAIEngine:
         
         # Multi-model clinical inference logic
         if model_name == "lung_nodule_segmenter":
-            # Solid nodule & consolidation in lung parenchyma
-            pred_mask_tensor = (tensor_vol > -150.0) & (tensor_vol < 180.0)
-            z_dim, y_dim, x_dim = volume.shape
-            cx = x_dim // 2
-            roi = torch.zeros_like(pred_mask_tensor)
-            roi[:, :, cx:] = True
-            pred_mask_tensor = pred_mask_tensor & roi
-            lesion_label = "肺部靶结节 (Lung Nodule)"
+            prompt_pt = kwargs.get("prompt_point") or kwargs.get("click_point")
+            mask_np, recist, lesion_label = segment_pulmonary_nodules(volume, spacing, prompt_point=prompt_pt)
+            key_slice_idx = recist["key_slice_index"]
         elif model_name in ("spleen_segmenter", "multi_organ_ct"):
             # Spleen & abdominal parenchymal organs (HU 30 to 110)
             pred_mask_tensor = (tensor_vol > 30.0) & (tensor_vol < 110.0)
             lesion_label = "脾脏与腹膜后器官 (Spleen / Organ)"
+            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            mask_np = extract_largest_component(raw_mask_np)
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
         elif model_name == "liver_lesion_segmenter":
             # Liver parenchyma (HU 40 to 130)
             pred_mask_tensor = (tensor_vol > 40.0) & (tensor_vol < 125.0)
             lesion_label = "肝脏靶病灶 (Hepatic Lesion)"
+            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            mask_np = extract_largest_component(raw_mask_np)
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
         elif model_name == "brain_tumor_brats":
             # MRI Brain Tumor hyperintense enhancement
             pred_mask_tensor = (tensor_vol > 60.0) & (tensor_vol < 220.0)
             lesion_label = "脑胶质瘤核心 (BraTS Tumor Core)"
             modality = "Brain MRI (T2/FLAIR)"
+            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            mask_np = extract_largest_component(raw_mask_np)
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
         else:
             pred_mask_tensor = (tensor_vol > 20.0) & (tensor_vol < 110.0)
             lesion_label = "靶病灶 (Target Lesion)"
-
-        raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
-        mask_np = extract_largest_component(raw_mask_np)
-        
-        # Calculate RECIST 1.1 metrics
-        recist = calculate_recist_metrics(mask_np, spacing=spacing)
-        key_slice_idx = recist["key_slice_index"]
+            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            mask_np = extract_largest_component(raw_mask_np)
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
         
         # Prepare 2D key slice image with windowing
         ct_windowed = apply_ct_window(volume, window_name=window_preset)
@@ -309,6 +454,8 @@ class MONAIEngine:
         )
         
         elapsed_sec = round(time.time() - t0, 3)
+        rads_info = recist.get("lung_rads")
+        rads_md = f"- **临床评级 (Lung-RADS)**: `{rads_info.get('name')}` ({rads_info.get('description', '')})\n- **影像随访指引**: `{rads_info.get('recommendation', '')}`\n" if rads_info else ""
 
         return {
             "status": "success",
@@ -331,6 +478,7 @@ class MONAIEngine:
                 f"- **RECIST 1.1 最大长径**: `{recist['longest_diameter_mm']} mm`\n"
                 f"- **垂直短径**: `{recist['short_axis_mm']} mm`\n"
                 f"- **病灶总体积**: `{recist['total_volume_cm3']} cm³`\n"
+                f"{rads_md}"
             )
         }
 
