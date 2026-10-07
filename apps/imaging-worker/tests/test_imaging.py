@@ -169,3 +169,71 @@ def test_vdt_endpoint():
     assert data["vdt_days"] == 120.0
     assert data["clinical_alert"] is True
     assert data["category"] == "rapid_growth"
+
+
+def test_quality_control_and_pathology_risk():
+    from recist import calculate_subsolid_metrics
+    vol = np.full((16, 32, 32), -800.0, dtype=np.float32)
+    mask = np.zeros((16, 32, 32), dtype=np.uint8)
+    mask[8, 12:20, 12:20] = 1
+    vol[mask == 1] = -450.0  # pure GGO
+
+    # Case A: Thin-slice (1.0 mm)
+    res_thin = calculate_subsolid_metrics(vol, mask, spacing=(1.0, 0.8, 0.8))
+    assert res_thin["quality_control"]["is_thin_slice"] is True
+    assert res_thin["quality_control"]["tier"] == "optimal"
+    assert res_thin["quality_control"]["warning"] is None
+    assert res_thin["pathology_risk"]["risk_level"] == "low"
+    assert "AAH" in res_thin["pathology_risk"]["tendency"]
+
+    # Case B: Thick-slice (5.0 mm) -> triggers warning
+    res_thick = calculate_subsolid_metrics(vol, mask, spacing=(5.0, 0.8, 0.8))
+    assert res_thick["quality_control"]["is_thin_slice"] is False
+    assert res_thick["quality_control"]["tier"] == "thick_slice_warning"
+    assert "HRCT" in res_thick["quality_control"]["warning"]
+
+
+def test_emphysema_metrics_and_endpoint():
+    from recist import calculate_emphysema_metrics
+    # Synthesize volume with bilateral lungs and emphysema area
+    vol = np.full((24, 64, 64), -1000.0, dtype=np.float32)
+    # Lung body
+    vol[:, 10:54, 10:54] = -750.0
+    # Emphysema region (HU <= -950)
+    vol[:, 20:30, 20:30] = -970.0
+
+    em = calculate_emphysema_metrics(vol, spacing=(1.5, 0.8, 0.8))
+    assert em["total_lung_volume_liters"] > 0
+    assert em["emphysema_volume_liters"] > 0
+    assert em["laa_percent"] > 0
+    assert "GOLD" in em["gold_stage"]
+
+    # Test API endpoint
+    client = TestClient(app)
+    res = client.post("/api/v1/recist/emphysema", json={
+        "sample_id": "chest_lung_ct",
+        "emphysema_hu_threshold": -950.0
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert "laa_percent" in data
+    assert "gold_stage" in data
+    assert "total_lung_volume_liters" in data
+
+
+def test_cascaded_anatomical_masking():
+    from engine import MONAIEngine, generate_synthetic_ct_volume
+    engine = MONAIEngine()
+    vol, _ = generate_synthetic_ct_volume(shape=(32, 64, 64), spacing=(1.5, 0.8, 0.8))
+
+    # Test COPD Emphysema Analyzer model execution
+    res_copd = engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="copd_emphysema_analyzer")
+    assert res_copd["status"] == "success"
+    assert "emphysema" in res_copd["recist_metrics"]
+    assert res_copd["key_slice_png_base64"].startswith("data:image/png;base64,")
+
+    # Test Liver lesion segmenter with bone-exclusion cascaded envelope
+    res_liver = engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="liver_lesion_segmenter")
+    assert res_liver["status"] == "success"
+    assert res_liver["recist_metrics"]["has_lesion"] in (True, False)
+

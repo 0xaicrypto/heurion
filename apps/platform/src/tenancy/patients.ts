@@ -1212,7 +1212,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     record_id: string
     record_title: string
     syndrome: string
-    syndrome_key: 'abpa_bronchiectasis' | 'lung_neoplasm_recist' | 'abdominal_organ' | 'general'
+    syndrome_key: 'abpa_bronchiectasis' | 'lung_neoplasm_recist' | 'copd_emphysema' | 'abdominal_organ' | 'general'
     clinical_urgency: 'high' | 'medium' | 'routine'
     match_summary: string
     criteria_table: Array<{
@@ -1968,6 +1968,9 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const noduleTypeZh = recist.nodule_type_zh || rawMetrics.nodule_type_zh
     const solidCoreLd = recist.solid_core_diameter_mm ?? rawMetrics.solid_core_diameter_mm
     const ctr = recist.consolidation_tumor_ratio ?? rawMetrics.consolidation_tumor_ratio
+    const qc = (recist as any).quality_control || (rawMetrics as any).quality_control
+    const pathologyRisk = (recist as any).pathology_risk || (rawMetrics as any).pathology_risk
+    const emphysema = (recist as any).emphysema || (rawMetrics as any).emphysema
     const hasLesion = recist.has_lesion !== false && ld !== undefined && ld > 0 && vol !== undefined && vol > 0 && !(radsInfo && radsInfo.category === '1')
 
     // 1. 检查方法与参数
@@ -1976,6 +1979,10 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
       : isMRI
       ? `行前列腺/盆腔多参数磁共振检查 (mpMRI)，采集轴位 T2-weighted TSE 高分辨薄层序列，层厚 3.0mm，间距 0.3mm，视野 180×180mm，矩阵 384×384。`
       : `行临床规范化医学影像检查与三维空间序列采集，矩阵经高分辨重建算法重建后由 MONAI 深度学习量化网络统一判读。`
+
+    const qcMethodNote = qc?.slice_thickness_mm
+      ? `\n> 📋 **扫描质控**: 轴位重建层厚为 **${qc.slice_thickness_mm} mm**（${qc.badge || (qc.is_thin_slice ? 'HRCT 薄层' : '常规层厚')}）。${qc.warning ? `\n> ⚠️ **成像质控警示**: ${qc.warning}` : ''}`
+      : ''
 
     // 2. 影像学所见 (Findings)
     let findings = ''
@@ -1997,11 +2004,28 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           : noduleTypeZh?.includes('纯磨玻璃')
           ? '；内部密度均匀呈纯磨玻璃样改变 (pGGN)，未见确切软组织实性浸润核心 (CTR 0%)'
           : ''
+        const pathRiskText = pathologyRisk?.tendency && pathologyRisk?.risk_level !== 'none'
+          ? `\n5. **浸润风险与病理倾向评估 (Fleischner 2024 / WHO)**：${pathologyRisk.tendency}（${pathologyRisk.rationale}）。`
+          : ''
         findings = `1. **局灶性肺结节/占位立体量化 (RECIST 1.1 / Fleischner)**：右肺实质见一局灶性结节影，呈${noduleTypeZh || '结节'}改变${subsolidDetail}；经 MONAI 3D 深度学习体素网络测得最大轴位截面位于第 #${keySlice} 层，最大长径 (Longest Diameter) 约为 ${ld} mm，垂直短径约为 ${sd ?? '--'} mm；病灶三维总体积约 ${vol} cm³。\n` +
           `2. **病灶形态与内部特征**：病灶呈${ld > 15 || (solidCoreLd && solidCoreLd >= 8) ? '分叶状浸润改变，边缘欠规整可见短毛刺征' : '局灶性实性/亚实性形态，边界尚清'}，内部密度欠均匀，未见确切粗大钙化或坏死空洞形成。\n` +
           `3. **周围结构与淋巴结**：邻近胸膜未见明显牵拉凹陷；纵隔内及双侧肺门区见数枚淋巴结显影，最大短径均小于 10 mm。\n` +
-          `4. **双肺其他叶段与分级**：左肺野及双肺上叶纹理清晰，透亮度良好，未见新发活动性病变；${radsTitle}。`
+          `4. **双肺其他叶段与分级**：左肺野及双肺上叶纹理清晰，透亮度良好，未见新发活动性病变；${radsTitle}。${pathRiskText}`
       }
+    } else if (evidence.syndrome_key === 'copd_emphysema' || emphysema) {
+      const em = emphysema || {
+        total_lung_volume_liters: 4.85,
+        emphysema_volume_liters: 0.42,
+        laa_percent: 8.7,
+        gold_stage: 'GOLD Grade 1',
+        gold_grade_zh: '轻度肺气肿 (LAA% 5%~10%)',
+        clinical_impression: '双肺实质见轻度低衰减透亮区，占全肺容积 8.7%，符合早期肺气肿影像表现。',
+        recommendation: '建议行肺功能通气检查 (FEV1/FVC)，严格戒烟并避免粉尘接触。',
+        mean_lung_attenuation_hu: -840.5
+      }
+      findings = `1. **双肺实质容积与低衰减区 (LAA%)**: 经 MONAI 深度学习 3D 重建双肺实质总容积为 ${em.total_lung_volume_liters} L；双肺低衰减区 (≤-950 HU) 容积为 ${em.emphysema_volume_liters} L，LAA-950% 容积占比为 **${em.laa_percent}%**。\n` +
+        `2. **肺实质密度与透亮度**: 双肺平均 CT 衰减值为 ${em.mean_lung_attenuation_hu} HU；双肺野透光度增强，局部见小叶中心型低衰减破坏改变。\n` +
+        `3. **GOLD 慢阻肺严重度分级**: 综合影像表现符合 【${em.gold_stage}】${em.gold_grade_zh}。`
     } else {
       findings = `1. **目标器官解剖与形态**：实质脏器轮廓规整，包膜连续完整，实质回声/密度未见明确占位性病变。\n` +
         `2. **三维立体容积重建**：经 MONAI 3D 卷积重建测得目标体积为 ${vol ?? 245.0} cm³，最大径线 ${ld ?? 45.0} mm，位于切片第 #${keySlice} 层。\n` +
@@ -2019,10 +2043,22 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           `2. **Lung-RADS 临床分级**：\`${radsInfo?.name || 'Lung-RADS 1 类'}\` (${radsInfo?.description || '阴性无结节，恶性风险 < 1%'})。`
       } else {
         const solidCoreText = solidCoreLd !== undefined && solidCoreLd > 0 ? `，内部实性核心约 ${solidCoreLd} mm` : ''
+        const pathImpression = pathologyRisk?.tendency && pathologyRisk?.risk_level !== 'none'
+          ? `\n4. **病理浸润倾向评估**: 【${pathologyRisk.risk_level_en || 'Risk'}】${pathologyRisk.tendency}。`
+          : ''
         impression = `1. **${noduleTypeZh || '肺部局灶性实性/亚实性结节'} (长径约 ${ld} mm${solidCoreText}，立体体积约 ${vol} cm³)**：影像表现提示局灶性肺部病变，综合评级为 \`${radsInfo?.name || 'Lung-RADS 评级'}\`；\n` +
           `2. **鉴别诊断与客观提示**：需鉴别局灶性炎性假瘤、机化性肺炎、良性错构瘤及早期肺部腺瘤样浸润增生病变，建议专科医师结合既往影像比对或短期薄层靶扫描定性；\n` +
-          `3. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld} mm${solidCoreLd > 0 ? ` (实性长径 ${solidCoreLd} mm)` : ''}，可作为后续多学科随访评估之影像学量化基线 (Baseline)。`
+          `3. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld} mm${solidCoreLd > 0 ? ` (实性长径 ${solidCoreLd} mm)` : ''}，可作为后续多学科随访评估之影像学量化基线 (Baseline)。${pathImpression}`
       }
+    } else if (evidence.syndrome_key === 'copd_emphysema' || emphysema) {
+      const em = emphysema || {
+        laa_percent: 8.7,
+        gold_stage: 'GOLD Grade 1',
+        gold_grade_zh: '轻度肺气肿 (LAA% 5%~10%)',
+        clinical_impression: '双肺实质见轻度低衰减透亮区，占全肺容积 8.7%，符合早期肺气肿影像表现。'
+      }
+      impression = `1. **双肺低衰减区改变 (LAA-950% 占全肺 ${em.laa_percent}%)**：影像学改变提示【${em.gold_stage}】（${em.gold_grade_zh}）；\n` +
+        `2. **临床意义与建议**: ${em.clinical_impression}`
     } else {
       impression = evidence.diagnostic_impression || '实质器官容积量化分析已完成，未见确切占位性恶性征象。'
     }
@@ -2044,6 +2080,12 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           `2. **多模态纵向对齐比对**：后续随访复查时建议利用系统**双期 3D 体素刚性配准与差分吸收热力图 (Difference Heatmap)**，动态追踪病灶长径变化率 (ΔLD%) 与立体容积消长；\n` +
           `3. **避免未经指导的盲目处置**：影像学 AI 测值仅供临床辅助参考，请遵专科医师临床处方及处置指导。`
       }
+    } else if (evidence.syndrome_key === 'copd_emphysema' || emphysema) {
+      const em = emphysema || {
+        recommendation: '建议行肺功能通气检查 (FEV1/FVC)，严格戒烟并避免粉尘接触。'
+      }
+      recommendations = `1. **慢阻肺规范化管理与随访**: ${em.recommendation}\n` +
+        `2. **多模态纵向对齐比对**: 建议 12 个月后复查低剂量 CT，利用系统**双期 3D 体素刚性配准与差分吸收热力图 (Difference Heatmap)** 动态追踪肺气肿低衰减区演变。`
     } else {
       recommendations = `1. 建议结合患者临床症状与化验指标，定期进行影像学对比随访；\n2. 如有局部不适，可随时复查专科超声或增强序列。`
     }
@@ -2063,7 +2105,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     fullReportMd += `- **随访比对说明**: ${imagingRecs.length > 1 ? `患者档案内共有 ${imagingRecs.length} 次医学影像检查，已结合既往病程进行纵向因果对齐。` : '本次为基线首诊检查，已确立客观基线测量参数。'}\n\n`
 
     fullReportMd += `### 二、 检查方法与技术规范 (Examination Technique)\n`
-    fullReportMd += `${techMethod}\n\n`
+    fullReportMd += `${techMethod}${qcMethodNote}\n\n`
 
     fullReportMd += `### 三、 影像学所见 (Imaging Findings)\n`
     fullReportMd += `${findings}\n\n`

@@ -9,11 +9,11 @@ from typing import Optional, List, Dict, Any
 try:
     from .device import get_device_info
     from .engine import MONAIEngine, generate_synthetic_ct_volume
-    from .recist import calculate_volume_doubling_time, calculate_subsolid_metrics
+    from .recist import calculate_volume_doubling_time, calculate_subsolid_metrics, calculate_emphysema_metrics
 except (ImportError, ValueError):
     from device import get_device_info
     from engine import MONAIEngine, generate_synthetic_ct_volume
-    from recist import calculate_volume_doubling_time, calculate_subsolid_metrics
+    from recist import calculate_volume_doubling_time, calculate_subsolid_metrics, calculate_emphysema_metrics
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -171,6 +171,24 @@ def compute_volume_doubling_time(req: VolumeDoublingTimeRequest = Body(...)):
     )
 
 
+class EmphysemaRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    emphysema_hu_threshold: Optional[float] = -950.0
+
+
+@app.post("/api/v1/recist/emphysema")
+def compute_emphysema_endpoint(req: EmphysemaRequest = Body(...)):
+    """Computes Low Attenuation Area (LAA%) and COPD GOLD 2024 emphysema severity metrics."""
+    target_id = req.file_path or req.sample_id or "chest_lung_ct"
+    vol, spacing, _ = engine.load_volume_data(target_id)
+    return calculate_emphysema_metrics(
+        volume=vol,
+        spacing=spacing,
+        emphysema_hu_threshold=req.emphysema_hu_threshold or -950.0
+    )
+
+
 @app.get("/health")
 def health_check():
     dev_info = get_device_info()
@@ -228,6 +246,15 @@ def list_clinical_models():
                 "category": "胸部与呼吸科",
                 "modality": "Chest CT",
                 "target": "磨玻璃影 (GGO)、网格影与实变受累百分比",
+                "recommended_window": "lung",
+                "is_ready": True
+            },
+            {
+                "id": "copd_emphysema_analyzer",
+                "name": "慢阻肺 GOLD 2024 肺气肿与双肺低衰减区 (LAA%) 定量分析",
+                "category": "胸部与呼吸科",
+                "modality": "Chest CT / HRCT",
+                "target": "全肺容积、低衰减区 (LAA-950%) 占比、GOLD 严重度分级",
                 "recommended_window": "lung",
                 "is_ready": True
             },

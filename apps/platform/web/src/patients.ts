@@ -2812,6 +2812,27 @@ ${recommendations}
           </div>
         </div>
 
+        ${bImgUrl && fImgUrl ? `
+          <!-- 随访切片动态溶解对比 (Alpha Blending Slider) -->
+          <div style="margin-top: 14px; padding: 12px 16px; border-radius: 8px; background: rgba(30, 41, 59, 0.4); border: 1px solid var(--border)">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+              <span style="font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px">
+                ${icon('eye')} 随访切片动态溶解对比 (Alpha Blending Slider)
+              </span>
+              <span id="blendOpacityLabel" class="muted small" style="font-family: monospace">随访透明度: 50% (基线 50%)</span>
+            </div>
+            <div style="position: relative; width: 100%; max-width: 480px; height: 240px; margin: 0 auto; overflow: hidden; border-radius: 6px; background: #000; border: 1px solid rgba(255,255,255,0.08)">
+              <img src="${bImgUrl}" id="blendBaseImg" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain" alt="基线底图">
+              <img src="${fImgUrl}" id="blendFollowImg" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0.5" alt="随访叠图">
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; margin-top: 10px; max-width: 480px; margin-left: auto; margin-right: auto">
+              <span class="small muted" style="white-space: nowrap">基线 (0%)</span>
+              <input type="range" id="blendSlider" min="0" max="100" value="50" style="flex: 1; cursor: pointer; accent-color: var(--blue, #38BDF8)">
+              <span class="small muted" style="white-space: nowrap">随访 (100%)</span>
+            </div>
+          </div>
+        ` : ''}
+
         <!-- 详细演变对比表格 -->
         <table class="pt-recist-table">
           <thead>
@@ -2866,6 +2887,18 @@ ${recommendations}
           notice('RECIST 1.1 对比报告已成功复制到剪贴板！')
         }
       })
+
+      // 绑定随访动态溶解对比滑块
+      const blendSlider = container.querySelector('#blendSlider') as HTMLInputElement | null
+      const blendFollowImg = container.querySelector('#blendFollowImg') as HTMLImageElement | null
+      const blendLabel = container.querySelector('#blendOpacityLabel') as HTMLElement | null
+      if (blendSlider && blendFollowImg && blendLabel) {
+        blendSlider.addEventListener('input', () => {
+          const val = Number(blendSlider.value)
+          blendFollowImg.style.opacity = String(val / 100)
+          blendLabel.textContent = `随访透明度: ${val}% (基线 ${100 - val}%)`
+        })
+      }
 
       // 绑定保存为记录按钮
       const saveRecBtn = container.querySelector('#compareSaveRecBtn') as HTMLButtonElement

@@ -129,6 +129,14 @@ def render_key_slice_png(
     
     if rads and isinstance(rads, dict):
         hud_lines.append(f"ACR Lung-RADS: {rads.get('name', '')}")
+
+    qc = recist.get("quality_control")
+    if qc and isinstance(qc, dict):
+        slice_th = qc.get("slice_thickness_mm")
+        if qc.get("tier") == "thick_slice_warning":
+            hud_lines.append(f"QC ALERT: Slice {slice_th} mm (Thick - Recommend HRCT)")
+        elif slice_th:
+            hud_lines.append(f"Scan QC: Slice {slice_th} mm ({'HRCT' if qc.get('is_thin_slice') else 'Standard'})")
     
     y_offset = 12
     for line in hud_lines:

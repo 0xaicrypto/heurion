@@ -398,35 +398,69 @@ class MONAIEngine:
             prompt_pt = kwargs.get("prompt_point") or kwargs.get("click_point")
             mask_np, recist, lesion_label = segment_pulmonary_nodules(volume, spacing, prompt_point=prompt_pt)
             key_slice_idx = recist["key_slice_index"]
+        elif model_name == "copd_emphysema_analyzer":
+            try:
+                from .recist import calculate_emphysema_metrics
+            except (ImportError, ValueError):
+                from recist import calculate_emphysema_metrics
+            em_res = calculate_emphysema_metrics(volume, spacing=spacing)
+            lung_mask = (volume >= -980.0) & (volume <= -400.0)
+            mask_np = (lung_mask & (volume <= -950.0)).astype(np.uint8)
+            z_dim = volume.shape[0]
+            slice_sums = np.sum(mask_np, axis=(1, 2))
+            key_slice_idx = int(np.argmax(slice_sums)) if np.max(slice_sums) > 0 else z_dim // 2
+            recist = {
+                "longest_diameter_mm": round(em_res["laa_percent"], 1),
+                "short_axis_mm": round(em_res["emphysema_volume_liters"], 2),
+                "total_volume_cm3": round(em_res["total_lung_volume_liters"] * 1000.0, 1),
+                "key_slice_index": key_slice_idx,
+                "has_lesion": em_res["laa_percent"] >= 5.0,
+                "lung_rads": {
+                    "category": em_res["gold_stage"],
+                    "name": f"慢阻肺 {em_res['gold_stage']}",
+                    "description": em_res["gold_grade_zh"],
+                    "recommendation": em_res["recommendation"]
+                },
+                "emphysema": em_res,
+                "quality_control": em_res["quality_control"]
+            }
+            lesion_label = f"肺气肿低衰减区 ({em_res['gold_grade_zh']})"
         elif model_name in ("spleen_segmenter", "multi_organ_ct"):
             # Spleen & abdominal parenchymal organs (HU 30 to 110)
-            pred_mask_tensor = (tensor_vol > 30.0) & (tensor_vol < 110.0)
+            # Bone-exclusion mask (exclude ribs and spine)
+            bone_mask = ndi.binary_dilation(volume > 220.0, iterations=2)
+            pred_mask = (volume > 30.0) & (volume < 110.0) & (~bone_mask)
             lesion_label = "脾脏与腹膜后器官 (Spleen / Organ)"
-            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            raw_mask_np = pred_mask.astype(np.uint8)
             mask_np = extract_largest_component(raw_mask_np)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
         elif model_name == "liver_lesion_segmenter":
-            # Liver parenchyma (HU 40 to 130)
-            pred_mask_tensor = (tensor_vol > 40.0) & (tensor_vol < 125.0)
-            lesion_label = "肝脏靶病灶 (Hepatic Lesion)"
-            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            # Cascaded liver anatomical envelope: exclude ribs, spine and bowel gas
+            bone_mask = ndi.binary_dilation(volume > 200.0, iterations=2)
+            bowel_gas = volume < -50.0
+            # Liver soft tissue parenchyma (+40 to +125 HU)
+            liver_cands = (volume >= 40.0) & (volume <= 125.0) & (~bone_mask) & (~bowel_gas)
+            lesion_label = "肝脏实质病灶 (Hepatic Lesion)"
+            raw_mask_np = liver_cands.astype(np.uint8)
             mask_np = extract_largest_component(raw_mask_np)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
         elif model_name == "brain_tumor_brats":
-            # MRI Brain Tumor hyperintense enhancement
-            pred_mask_tensor = (tensor_vol > 60.0) & (tensor_vol < 220.0)
-            lesion_label = "脑胶质瘤核心 (BraTS Tumor Core)"
-            modality = "Brain MRI (T2/FLAIR)"
-            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            # Cascaded skull-stripping envelope: exclude outer high-density skull (> 200 HU)
+            skull_mask = ndi.binary_dilation(volume > 200.0, iterations=3)
+            brain_parenchyma = (volume > 15.0) & (volume < 180.0) & (~skull_mask)
+            lesion_label = "颅内病灶核心 (Intracranial Lesion Core)"
+            modality = "Brain CT / MRI"
+            raw_mask_np = brain_parenchyma.astype(np.uint8)
             mask_np = extract_largest_component(raw_mask_np)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
         else:
-            pred_mask_tensor = (tensor_vol > 20.0) & (tensor_vol < 110.0)
+            bone_mask = ndi.binary_dilation(volume > 220.0, iterations=2)
+            pred_mask = (volume > 20.0) & (volume < 110.0) & (~bone_mask)
             lesion_label = "靶病灶 (Target Lesion)"
-            raw_mask_np = pred_mask_tensor.cpu().numpy().astype(np.uint8)
+            raw_mask_np = pred_mask.astype(np.uint8)
             mask_np = extract_largest_component(raw_mask_np)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
