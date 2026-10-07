@@ -479,6 +479,40 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(saved.recipient).toBe('dev@heurion.org')
     expect(saved.subject).toBe('Re: 临床诊断随访测试')
   })
+
+  it('8. MIME 编码与 Quoted-Printable 中文乱码自动解码与既有数据归一化 (RFC 2047 & QP)', async () => {
+    const api = makeTestApp()
+
+    // 模拟从 Gmail 客户端发来的真实原始 Base64 MIME 编码主题与 QP 编码正文
+    const rawRes = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: '=?UTF-8?B?6LW15Lyf?= <zhaojimmy13@gmail.com>',
+        to: 'HZ (Heurion) <dev@heurion.org>',
+        subject: '=?UTF-8?B?UmU6IOa1i+ivlQ==?=',
+        body: '=E6=B5=8B=E8=AF=95again 1113\n\nOn Wed, Oct 7, 2026 at 10:40=E2=80=AFAM HZ (Heurion) <hz@heurion.org> wrote=\n:\n\n> =E6=B5=8B=E8=AF=95',
+      }),
+    })
+
+    expect(rawRes.status).toBe(201)
+    const json = await rawRes.json() as any
+    expect(json.ok).toBe(true)
+
+    // 1. 验证入库解码：主题成功解码为 "Re: 测试"，发件人称谓成功解码为 "赵伟"，正文包含中文字符与软换行还原
+    const checkRes = await api.get(`/api/mail/messages/${json.id}`)
+    expect(checkRes.status).toBe(200)
+    const saved = await checkRes.json() as any
+    expect(saved.subject).toBe('Re: 测试')
+    expect(saved.sender_name).toBe('赵伟')
+    expect(saved.body).toContain('测试again 1113')
+    expect(saved.body).toContain('wrote:')
+    expect(saved.body).toContain('> 测试')
+    expect(saved.body).not.toContain('=E6=B5=8B=E8=AF=95')
+  })
 })
+
 
 

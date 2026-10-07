@@ -16,6 +16,65 @@
  *    - 添加 Catch-all 规则：Catch-all address -> Send to a Worker -> 选择本 Worker (heurion-inbound-mail)
  */
 
+function decodeMimeWords(str) {
+  if (!str || !str.includes("=?")) return str;
+  const cleaned = str.replace(/(\?=\s+=\?)/g, "?==?");
+  return cleaned.replace(/=\?([^?]+)\?([BQbq])\?([^?]*)\?=/g, (_, charset, encoding, text) => {
+    try {
+      const enc = encoding.toUpperCase();
+      const cs = (charset || "utf-8").toLowerCase();
+      if (enc === "B") {
+        const bin = atob(text);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new TextDecoder(cs.includes("gb") ? "gb18030" : "utf-8").decode(bytes);
+      } else if (enc === "Q") {
+        const replaced = text.replace(/_/g, " ");
+        const bytes = [];
+        for (let i = 0; i < replaced.length; i++) {
+          if (replaced[i] === "=" && i + 2 < replaced.length && /^[0-9A-Fa-f]{2}$/.test(replaced.slice(i + 1, i + 3))) {
+            bytes.push(parseInt(replaced.slice(i + 1, i + 3), 16));
+            i += 2;
+          } else {
+            bytes.push(replaced.charCodeAt(i));
+          }
+        }
+        return new TextDecoder(cs.includes("gb") ? "gb18030" : "utf-8").decode(new Uint8Array(bytes));
+      }
+    } catch {
+      return text;
+    }
+    return text;
+  });
+}
+
+function decodeQuotedPrintable(str) {
+  if (!str) return "";
+  const s = str.replace(/=\r?\n/g, "");
+  if (!/=[0-9A-Fa-f]{2}/.test(s)) return s;
+
+  const bytes = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "=" && i + 2 < s.length && /^[0-9A-Fa-f]{2}$/.test(s.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(s.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      const code = s.charCodeAt(i);
+      if (code < 128) {
+        bytes.push(code);
+      } else {
+        const enc = new TextEncoder().encode(s[i]);
+        for (const b of enc) bytes.push(b);
+      }
+    }
+  }
+  try {
+    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+  } catch {
+    return s;
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     return new Response("Heurion Inbound Email Worker is active", {
@@ -27,7 +86,8 @@ export default {
   async email(message, env, ctx) {
     const from = message.from;
     const to = message.to;
-    const subject = message.headers.get("subject") || "(无主题)";
+    const rawSubject = message.headers.get("subject") || "(无主题)";
+    const subject = decodeMimeWords(rawSubject);
     
     // 读取原始邮件正文
     let rawText = "";
@@ -60,11 +120,15 @@ export default {
       }
     }
 
+    // 去除 QP 编码及尾部 MIME boundary 标记
+    let finalBody = decodeQuotedPrintable(cleanBody || rawText || "(无正文内容)");
+    finalBody = finalBody.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, "").trim();
+
     const payload = {
       from,
       to,
       subject,
-      body: cleanBody || rawText || "(无正文内容)",
+      body: finalBody,
     };
 
     const targetUrl = env.HEURION_INBOUND_URL || "https://heurion.org/api/mail/inbound";

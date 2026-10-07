@@ -4946,14 +4946,14 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 .mail-briefing-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px 10px;
+  border-radius: 0;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
 }
 
 .mail-briefing-card.empty {
@@ -4964,7 +4964,9 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
 }
 
 .mail-briefing-head-left {
@@ -4974,30 +4976,32 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 .mail-ai-chip {
-  background: linear-gradient(135deg, rgba(0, 229, 153, 0.15), rgba(56, 189, 248, 0.15));
-  border: 1px solid rgba(0, 229, 153, 0.35);
-  color: var(--mint);
-  font-size: 11.5px;
+  background: var(--green-soft);
+  border: 1px solid var(--green-line);
+  color: var(--mint-text);
+  font-size: 11px;
   font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 12px;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
 .mail-ai-sparkle {
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
 }
 
 .mail-time-pill {
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
-  background: var(--teal);
+  background: var(--raised);
   border: 1px solid var(--line);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .mail-refresh-btn {
@@ -5006,18 +5010,18 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   gap: 4px;
   background: transparent;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--muted);
+  border-radius: 0;
+  color: var(--text-2);
   font-size: 11px;
-  padding: 2px 7px;
+  padding: 2px 8px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .mail-refresh-btn:hover {
   color: var(--text);
-  border-color: var(--line-strong);
-  background: var(--teal);
+  border-color: var(--text);
+  background: var(--hover-tint);
 }
 
 .mail-refresh-svg {
@@ -5037,23 +5041,22 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 
 .mail-briefing-stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 5px;
-  margin-top: 2px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
 }
 
 .mail-briefing-stat-pill {
-  background: var(--teal);
+  background: var(--raised);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 4px;
+  border-radius: 0;
+  padding: 6px 8px;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
+  align-items: baseline;
+  justify-content: space-between;
 }
 
 .mail-briefing-stat-pill .stat-v {
+  font-family: var(--mono);
   font-size: 14px;
   font-weight: 700;
   color: var(--text);
@@ -5061,31 +5064,30 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 .mail-briefing-stat-pill .stat-k {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
-  margin-top: 2px;
 }
 
 .mail-briefing-stat-pill.unread .stat-v {
-  color: var(--mint);
+  color: var(--mint-text);
 }
 
 .mail-briefing-stat-pill.followup .stat-v {
-  color: #38bdf8;
+  color: var(--warn);
 }
 
 .mail-briefing-stat-pill.research .stat-v {
-  color: #a78bfa;
+  color: #818cf8;
 }
 
 .mail-briefing-body {
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--text-2);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--raised);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 10px;
+  border-radius: 0;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -5100,17 +5102,19 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   font-size: 12px;
   font-weight: 700;
   color: var(--text);
-  margin-top: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px dashed var(--line);
+  margin-top: 8px;
+  padding: 4px 8px;
+  border-left: 2px solid var(--mint);
+  border-bottom: none;
+  background: var(--hover-tint);
+}
+
+.mail-briefing-sec-bar {
+  display: none;
 }
 
 .mail-briefing-sec-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--mint);
-  flex-shrink: 0;
+  display: none;
 }
 
 .mail-briefing-sec-text {
@@ -5124,24 +5128,26 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   font-size: 11.5px;
   color: var(--text-2);
   margin: 2px 0;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .mail-briefing-bullet-dot {
-  color: var(--mint);
-  font-size: 9px;
+  width: 4px;
+  height: 4px;
+  background: var(--mint);
   flex-shrink: 0;
-  margin-top: 3px;
+  margin-top: 7px;
 }
 
 .mail-briefing-bullet-num {
   background: var(--teal);
-  color: var(--mint);
+  color: var(--mint-text);
+  font-family: var(--mono);
   font-size: 10px;
   font-weight: 700;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5171,50 +5177,52 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 .mail-briefing-pill {
   display: inline-flex;
   align-items: center;
+  font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 600;
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.25);
-  border-radius: 4px;
+  color: var(--mint-text);
+  background: var(--green-soft);
+  border: 1px solid var(--green-line);
+  border-radius: 0;
   padding: 0 4px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .mail-briefing-pill:hover {
-  background: rgba(56, 189, 248, 0.28);
+  background: var(--sel-bg);
   text-decoration: underline;
 }
 
 .mail-briefing-study-pill {
   display: inline-flex;
   align-items: center;
+  font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 600;
-  color: #a78bfa;
-  background: rgba(167, 139, 250, 0.12);
-  border: 1px solid rgba(167, 139, 250, 0.25);
-  border-radius: 4px;
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 0;
   padding: 0 4px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .mail-briefing-study-pill:hover {
-  background: rgba(167, 139, 250, 0.28);
+  background: rgba(99, 102, 241, 0.25);
   text-decoration: underline;
 }
 
 .mail-briefing-metric {
-  font-family: ui-monospace, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   font-weight: 600;
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.25);
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid rgba(245, 181, 68, 0.3);
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 
 /* 来源邮件列表 (Sources) */
@@ -5237,7 +5245,7 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 .mail-sources-all-btn {
   background: transparent;
   border: none;
-  color: var(--mint);
+  color: var(--mint-text);
   font-size: 11px;
   cursor: pointer;
   padding: 0;
@@ -5257,10 +5265,10 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 .mail-briefing-source-item {
-  background: var(--teal);
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px;
+  border-radius: 0;
+  padding: 8px 10px;
   cursor: pointer;
   transition: all 0.15s;
   display: flex;
@@ -5270,12 +5278,12 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 
 .mail-briefing-source-item:hover {
   border-color: var(--line-strong);
-  background: var(--teal-hover);
+  background: var(--hover);
 }
 
 .mail-briefing-source-item.selected {
-  border-left: 3px solid var(--mint);
-  background: var(--teal-hover);
+  border-left: 2px solid var(--mint);
+  background: var(--hover);
 }
 
 .mail-source-top {
@@ -5291,6 +5299,7 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 .mail-source-time {
+  font-family: var(--mono);
   font-size: 10.5px;
   color: var(--muted);
 }
@@ -5322,8 +5331,11 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 .mail-briefing-ai-tag {
+  font-family: var(--mono);
   color: var(--muted);
   font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* 空状态与加载中 */
@@ -5360,9 +5372,9 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
 }
 
 .mail-briefing-spinner {

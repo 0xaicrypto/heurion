@@ -39,10 +39,15 @@ export interface MailSummaryItem {
 
 export interface MailSummaryResult {
   hours: number
+  total: number
   count: number
+  unread: number
+  followup_count: number
+  research_count: number
+  source_mails: MailSummaryItem[]
+  items: MailSummaryItem[]
   generated_at: string
   summary: string
-  items: MailSummaryItem[]
   ai_powered: boolean
 }
 
@@ -50,6 +55,81 @@ function extractEmail(str: string): string {
   if (!str) return ''
   const m = str.match(/<([^>]+)>/)
   return (m && m[1] ? m[1] : str).trim()
+}
+
+/** 解码 RFC 2047 格式的 MIME 头部字段 (如 =?UTF-8?B?...?= 或 =?UTF-8?Q?...?=) */
+export function decodeMimeWords(str: string): string {
+  if (!str || !str.includes('=?')) return str
+  // RFC 2047 规范：相邻 encoded-word 之间的空白符必须被忽略
+  const cleaned = str.replace(/(\?=\s+=\?)/g, '?==?')
+  return cleaned.replace(/=\?([^?]+)\?([BQbq])\?([^?]*)\?=/g, (_, charset, encoding, text) => {
+    try {
+      const enc = encoding.toUpperCase()
+      const cs = (charset || 'utf-8').toLowerCase()
+      if (enc === 'B') {
+        const buf = Buffer.from(text, 'base64')
+        const decoder = new TextDecoder(cs.includes('gb') ? 'gb18030' : 'utf-8')
+        return decoder.decode(buf)
+      } else if (enc === 'Q') {
+        const replaced = text.replace(/_/g, ' ')
+        const bytes: number[] = []
+        for (let i = 0; i < replaced.length; i++) {
+          if (replaced[i] === '=' && i + 2 < replaced.length && /^[0-9A-Fa-f]{2}$/.test(replaced.slice(i + 1, i + 3))) {
+            bytes.push(parseInt(replaced.slice(i + 1, i + 3), 16))
+            i += 2
+          } else {
+            bytes.push(replaced.charCodeAt(i))
+          }
+        }
+        const decoder = new TextDecoder(cs.includes('gb') ? 'gb18030' : 'utf-8')
+        return decoder.decode(new Uint8Array(bytes))
+      }
+    } catch {
+      return text
+    }
+    return text
+  })
+}
+
+/** 解码 Quoted-Printable 格式的正文 */
+export function decodeQuotedPrintable(str: string): string {
+  if (!str) return ''
+  // 1. 去除软换行 (soft line breaks: =\r\n 或 =\n)
+  const s = str.replace(/=\r?\n/g, '')
+  if (!/=[0-9A-Fa-f]{2}/.test(s)) return s
+
+  // 2. 将 =XX 转换为真实字节
+  const bytes: number[] = []
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '=' && i + 2 < s.length && /^[0-9A-Fa-f]{2}$/.test(s.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(s.slice(i + 1, i + 3), 16))
+      i += 2
+    } else {
+      const code = s.charCodeAt(i)
+      if (code < 128) {
+        bytes.push(code)
+      } else {
+        const charBuf = Buffer.from(s[i]!, 'utf-8')
+        for (const b of charBuf) bytes.push(b)
+      }
+    }
+  }
+  try {
+    return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+  } catch {
+    return s
+  }
+}
+
+/** 智能探测并解码邮件正文（兼容 Quoted-Printable 或纯文本） */
+export function decodeEmailBody(body: string): string {
+  if (!body) return ''
+  let text = body
+  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
+    text = decodeQuotedPrintable(text)
+  }
+  text = text.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, '').trim()
+  return text
 }
 
 export class MailService {
@@ -100,15 +180,30 @@ export class MailService {
     return !this.isPlatformDomain(clean)
   }
 
+  /** 标准化并解码邮件，若发现存有未解码的 MIME/QP 内容，异步自动洗白存储 */
+  private normalizeMail(m: MailMessageRow): MailMessageRow {
+    const cleanSub = decodeMimeWords(m.subject)
+    const cleanBody = decodeEmailBody(m.body)
+    const cleanName = m.sender_name ? decodeMimeWords(m.sender_name) : m.sender_name
+    if (cleanSub !== m.subject || cleanBody !== m.body || cleanName !== m.sender_name) {
+      try {
+        this.store.updateMailCleanText(m.id, cleanSub, cleanBody, cleanName)
+      } catch { /* 忽略并发冲突 */ }
+      return { ...m, subject: cleanSub, body: cleanBody, sender_name: cleanName }
+    }
+    return m
+  }
+
   /** 获取邮件列表（若首次访问则自动载入临床与科研示范邮件） */
   list(userId: string, username: string, filterOrCategory?: string | { category?: string; folder?: string; starred?: boolean; unreadOnly?: boolean; search?: string }): MailMessageRow[] {
     this.ensureSeed(userId, username)
-    return this.store.listMailMessages(userId, filterOrCategory)
+    return this.store.listMailMessages(userId, filterOrCategory).map(m => this.normalizeMail(m))
   }
 
   /** 获取单封邮件 */
   get(userId: string, id: string): MailMessageRow | undefined {
-    return this.store.getMailMessage(userId, id)
+    const m = this.store.getMailMessage(userId, id)
+    return m ? this.normalizeMail(m) : undefined
   }
 
   /** 获取最近 N 小时（默认48小时）收件箱邮件的 AI 临床科研动态提要汇总 */
@@ -119,7 +214,7 @@ export class MailService {
 
     const now = Date.now()
     const cutoffIso = new Date(now - hours * 3600000).toISOString()
-    const allInbox = this.store.listMailMessages(userId, { folder: 'inbox' })
+    const allInbox = this.store.listMailMessages(userId, { folder: 'inbox' }).map(m => this.normalizeMail(m))
     const recent = allInbox.filter(m => m.created_at >= cutoffIso)
 
     // 若 48 小时内收到的邮件较少（例如开发环境新账户），则取最近的前 5 封收件箱邮件进行汇总演示
@@ -136,13 +231,23 @@ export class MailService {
       created_at: m.created_at,
     }))
 
+    const total = targetMails.length
+    const unread = targetMails.filter(m => !m.read).length
+    const followup_count = targetMails.filter(m => m.category === 'followup').length
+    const research_count = targetMails.filter(m => m.category === 'research').length
+
     if (items.length === 0) {
       return {
         hours,
+        total: 0,
         count: 0,
+        unread: 0,
+        followup_count: 0,
+        research_count: 0,
+        source_mails: [],
+        items: [],
         generated_at: new Date().toISOString(),
         summary: '近 48 小时收件箱暂无新邮件。您可起草新专邮进行临床随访或科研协同。',
-        items: [],
         ai_powered: false,
       }
     }
@@ -197,10 +302,15 @@ export class MailService {
 
     const result: MailSummaryResult = {
       hours,
-      count: targetMails.length,
+      total,
+      count: total,
+      unread,
+      followup_count,
+      research_count,
+      source_mails: items,
+      items,
       generated_at: new Date().toISOString(),
       summary: summaryText,
-      items,
       ai_powered: aiPowered,
     }
 
@@ -490,14 +600,20 @@ export class MailService {
       return { success: false, reason: `收件地址 ${recipient} 未匹配到站内有效医生/研究员账户` }
     }
 
+    const subject = decodeMimeWords(input.subject || '（无主题）')
+    const body = decodeEmailBody(input.body || '')
+    const rawFromName = input.fromName || input.from.split('<')[0]?.replace(/"/g, '')?.trim() || ''
+    const decodedFromName = decodeMimeWords(rawFromName)
+    const senderName = (decodedFromName && decodedFromName !== sender) ? decodedFromName : (sender.split('@')[0] || '外部来信')
+
     const msg = this.store.createMailMessage({
       user_id: internalUser.id,
       tenant_id: internalUser.tenant_id ?? null,
       sender,
-      sender_name: input.fromName || input.from.split('<')[0]?.replace(/"/g, '')?.trim() || sender.split('@')[0] || '外部来信',
+      sender_name: senderName,
       recipient,
-      subject: input.subject || '（无主题）',
-      body: input.body || '',
+      subject,
+      body,
       category: input.category || 'general',
       patient_id: null,
       patient_code: null,
@@ -516,19 +632,19 @@ export class MailService {
     const personalEmail = internalUser.email?.trim()
     if (personalEmail && personalEmail.toLowerCase() !== recipient.toLowerCase() && this.mailer?.configured) {
       forwardedTo = personalEmail
-      const forwardSubject = `[Heurion 外部来信转交] ${input.subject || '（无主题）'}`
+      const forwardSubject = `[Heurion 外部来信转交] ${subject}`
       const forwardBody = `【Heurion 临床工作站 · 专属邮箱自动转交通知】\n\n`
-        + `发件人: ${input.fromName ? `${input.fromName} <${sender}>` : input.from}\n`
+        + `发件人: ${senderName !== sender ? `${senderName} <${sender}>` : sender}\n`
         + `收件人: ${recipient} (您的 Heurion 专属工作邮箱)\n`
         + `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n`
         + `--------------------------------------------------\n\n`
-        + `${input.body}\n\n`
+        + `${body}\n\n`
         + `--------------------------------------------------\n`
         + `提示：此邮件已同步归档至您的 Heurion 工作台【收件箱】中。直接回复此邮件即可送达外部发件人。`
 
       this.mailer.send(personalEmail, forwardSubject, forwardBody, undefined, {
         replyTo: sender,
-        senderName: `${input.fromName || '外部发件人'} (via Heurion)`,
+        senderName: `${senderName !== sender ? senderName : '外部发件人'} (via Heurion)`,
         senderAddress: recipient,
       }).catch(err => {
         console.error('[inbound-forward-error]', personalEmail, (err as Error).message)

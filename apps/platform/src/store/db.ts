@@ -2017,6 +2017,10 @@ export class Store {
     this.db.prepare('UPDATE mail_messages SET delivery_status = ?, delivery_note = ? WHERE id = ?').run(status, note ?? null, id)
   }
 
+  updateMailCleanText(id: string, subject: string, body: string, senderName?: string | null): void {
+    this.db.prepare('UPDATE mail_messages SET subject = ?, body = ?, sender_name = ? WHERE id = ?').run(subject, body, senderName ?? null, id)
+  }
+
   getMailMessage(userId: string, id: string): MailMessageRow | undefined {
     return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? AND id = ?').get(userId, id) as MailMessageRow | undefined
   }

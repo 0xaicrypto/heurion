@@ -72,10 +72,12 @@ export interface MailSummaryItem {
 export interface MailSummaryResult {
   hours: number
   total: number
+  count?: number
   unread: number
   followup_count: number
   research_count: number
   source_mails: MailSummaryItem[]
+  items?: MailSummaryItem[]
   summary: string
   generated_at: string
 }
@@ -104,12 +106,94 @@ const CATEGORY_NAMES: Record<string, string> = {
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 
+/** 浏览器端 RFC 2047 MIME 头部解码 (如 =?UTF-8?B?...?= 或 =?UTF-8?Q?...?=) */
+export function decodeMimeWords(str: string): string {
+  if (!str || !str.includes('=?')) return str
+  const cleaned = str.replace(/(\?=\s+=\?)/g, '?==?')
+  return cleaned.replace(/=\?([^?]+)\?([BQbq])\?([^?]*)\?=/g, (_, charset, encoding, text) => {
+    try {
+      const enc = encoding.toUpperCase()
+      const cs = (charset || 'utf-8').toLowerCase()
+      if (enc === 'B') {
+        const bin = atob(text)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        return new TextDecoder(cs.includes('gb') ? 'gb18030' : 'utf-8').decode(bytes)
+      } else if (enc === 'Q') {
+        const replaced = text.replace(/_/g, ' ')
+        const bytes: number[] = []
+        for (let i = 0; i < replaced.length; i++) {
+          if (replaced[i] === '=' && i + 2 < replaced.length && /^[0-9A-Fa-f]{2}$/.test(replaced.slice(i + 1, i + 3))) {
+            bytes.push(parseInt(replaced.slice(i + 1, i + 3), 16))
+            i += 2
+          } else {
+            bytes.push(replaced.charCodeAt(i))
+          }
+        }
+        return new TextDecoder(cs.includes('gb') ? 'gb18030' : 'utf-8').decode(new Uint8Array(bytes))
+      }
+    } catch {
+      return text
+    }
+    return text
+  })
+}
+
+/** 浏览器端 Quoted-Printable 正文解码 */
+export function decodeQuotedPrintable(str: string): string {
+  if (!str) return ''
+  const s = str.replace(/=\r?\n/g, '')
+  if (!/=[0-9A-Fa-f]{2}/.test(s)) return s
+
+  const bytes: number[] = []
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '=' && i + 2 < s.length && /^[0-9A-Fa-f]{2}$/.test(s.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(s.slice(i + 1, i + 3), 16))
+      i += 2
+    } else {
+      const code = s.charCodeAt(i)
+      if (code < 128) {
+        bytes.push(code)
+      } else {
+        const enc = new TextEncoder().encode(s[i])
+        for (const b of enc) bytes.push(b)
+      }
+    }
+  }
+  try {
+    return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+  } catch {
+    return s
+  }
+}
+
+export function decodeEmailBody(body: string): string {
+  if (!body) return ''
+  let text = body
+  if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
+    text = decodeQuotedPrintable(text)
+  }
+  text = text.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, '').trim()
+  return text
+}
+
+function formatSenderDisplay(senderName?: string, sender?: string): string {
+  const cleanSender = (sender || '').trim()
+  const rawName = (senderName || '').trim()
+  const decodedName = decodeMimeWords(rawName)
+  if (!decodedName || decodedName.toLowerCase() === cleanSender.toLowerCase()) {
+    return cleanSender
+  }
+  return `${decodedName} <${cleanSender}>`
+}
+
 /**
  * 格式化邮件正文为具有临床科研专业排版的 HTML
  */
 function formatEmailBody(raw: string): string {
   if (!raw) return ''
-  const lines = raw.split('\n')
+  const decoded = decodeEmailBody(raw)
+  const lines = decoded.split('\n')
   const out: string[] = []
 
   for (const line of lines) {
@@ -150,7 +234,8 @@ function formatHighlights(text: string): string {
 
 function formatBriefingMarkdown(raw: string): string {
   if (!raw) return ''
-  const lines = raw.split('\n')
+  const decoded = decodeEmailBody(raw)
+  const lines = decoded.split('\n')
   const out: string[] = []
 
   for (const line of lines) {
@@ -163,13 +248,13 @@ function formatBriefingMarkdown(raw: string): string {
     if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
       const heading = trimmed.replace(/^#+\s*/, '')
       out.push(`<div class="mail-briefing-sec-title">
-        <span class="mail-briefing-sec-dot"></span>
+        <span class="mail-briefing-sec-bar"></span>
         <span class="mail-briefing-sec-text">${esc(heading)}</span>
       </div>`)
     } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
       const content = trimmed.slice(2)
       out.push(`<div class="mail-briefing-bullet">
-        <span class="mail-briefing-bullet-dot">▪</span>
+        <span class="mail-briefing-bullet-dot"></span>
         <div class="mail-briefing-bullet-body">${formatBriefingInline(content)}</div>
       </div>`)
     } else if (/^\d+\.\s+/.test(trimmed)) {
@@ -254,7 +339,13 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       }
       const params = new URLSearchParams()
       params.set('folder', activeFolder)
-      messages = await api<MailMessage[]>(`/api/mail/messages?${params.toString()}`)
+      const loaded = await api<MailMessage[]>(`/api/mail/messages?${params.toString()}`)
+      messages = (loaded || []).map(m => ({
+        ...m,
+        subject: decodeMimeWords(m.subject),
+        body: decodeEmailBody(m.body),
+        sender_name: m.sender_name ? decodeMimeWords(m.sender_name) : m.sender_name,
+      }))
       // 清理已不在列表中的选中项
       const currentIds = new Set(messages.map(m => m.id))
       for (const id of Array.from(selectedIds)) {
@@ -304,13 +395,14 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       return
     }
 
-    if (!summaryResult || summaryResult.total === 0) {
+    const rawTotal = summaryResult ? (summaryResult.total ?? summaryResult.count ?? ((summaryResult as any).items ? (summaryResult as any).items.length : 0)) : 0
+    if (!summaryResult || rawTotal === 0) {
       listEl.innerHTML = `
         <li class="mail-briefing-card empty">
           <div class="mail-briefing-head">
             <div class="mail-briefing-head-left">
-              <span class="mail-ai-chip"><span class="mail-ai-sparkle">✨</span> AI 动态速报</span>
-              <span class="mail-time-pill">近 48 小时</span>
+              <span class="mail-ai-chip">✨ AI 动态速报</span>
+              <span class="mail-time-pill">近 48h</span>
             </div>
             <button class="mail-refresh-btn ${summaryLoading ? 'loading' : ''}" id="mailRefreshSummaryBtn" title="刷新 AI 摘要">
               <svg viewBox="0 0 20 20" class="mail-refresh-svg"><path d="M4 10a6 6 0 1 1 1.76 4.24l-2.12 2.12M4 10V4m0 6H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -327,15 +419,20 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       return
     }
 
-    const { hours, total, unread, followup_count, research_count, source_mails, summary, generated_at } = summaryResult
+    const { hours, total, count, unread, followup_count, research_count, source_mails, items, summary, generated_at } = summaryResult as any
+    const totalCount = total ?? count ?? (items ? items.length : 0)
+    const unreadCount = unread ?? 0
+    const followupCount = followup_count ?? 0
+    const researchCount = research_count ?? 0
+    const sourceMails = source_mails || items || []
 
     listEl.innerHTML = `
       <li class="mail-briefing-card">
         <!-- 头部标题栏与刷新 -->
         <div class="mail-briefing-head">
           <div class="mail-briefing-head-left">
-            <span class="mail-ai-chip"><span class="mail-ai-sparkle">✨</span> AI 邮件速报</span>
-            <span class="mail-time-pill">近 ${hours}h</span>
+            <span class="mail-ai-chip">✨ AI 动态速报</span>
+            <span class="mail-time-pill">近 ${hours || 48}h</span>
           </div>
           <button class="mail-refresh-btn ${summaryLoading ? 'loading' : ''}" id="mailRefreshSummaryBtn" title="点击由 DeepSeek 重新聚合分析">
             <svg viewBox="0 0 20 20" class="mail-refresh-svg"><path d="M4 10a6 6 0 1 1 1.76 4.24l-2.12 2.12M4 10V4m0 6H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -343,30 +440,24 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           </button>
         </div>
 
-        <!-- 核心计数徽章 -->
+        <!-- 核心计数徽章 (2x2 网格，紧凑专业) -->
         <div class="mail-briefing-stats-row">
           <div class="mail-briefing-stat-pill" title="近48小时共收到邮件">
-            <span class="stat-v">${total}</span>
-            <span class="stat-k">总计</span>
+            <span class="stat-k">收件总计</span>
+            <span class="stat-v">${totalCount}</span>
           </div>
-          ${unread > 0 ? `
-            <div class="mail-briefing-stat-pill unread" title="未读待阅邮件">
-              <span class="stat-v">${unread}</span>
-              <span class="stat-k">待阅</span>
-            </div>
-          ` : ''}
-          ${followup_count > 0 ? `
-            <div class="mail-briefing-stat-pill followup" title="重点随访预警">
-              <span class="stat-v">${followup_count}</span>
-              <span class="stat-k">随访</span>
-            </div>
-          ` : ''}
-          ${research_count > 0 ? `
-            <div class="mail-briefing-stat-pill research" title="科研进展通报">
-              <span class="stat-v">${research_count}</span>
-              <span class="stat-k">科研</span>
-            </div>
-          ` : ''}
+          <div class="mail-briefing-stat-pill ${unreadCount > 0 ? 'unread' : ''}" title="未读待阅邮件">
+            <span class="stat-k">待阅邮件</span>
+            <span class="stat-v">${unreadCount}</span>
+          </div>
+          <div class="mail-briefing-stat-pill ${followupCount > 0 ? 'followup' : ''}" title="重点随访预警">
+            <span class="stat-k">重点随访</span>
+            <span class="stat-v">${followupCount}</span>
+          </div>
+          <div class="mail-briefing-stat-pill ${researchCount > 0 ? 'research' : ''}" title="科研进展通报">
+            <span class="stat-k">科研进展</span>
+            <span class="stat-v">${researchCount}</span>
+          </div>
         </div>
 
         <!-- AI 研判正文 -->
@@ -375,26 +466,26 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         </div>
 
         <!-- 来源邮件线索 (最近收到的信件) -->
-        ${source_mails && source_mails.length > 0 ? `
+        ${sourceMails && sourceMails.length > 0 ? `
           <div class="mail-briefing-sources-wrap">
             <div class="mail-briefing-sources-head">
-              <span class="mail-sources-title">48小时来源邮件 (${source_mails.length})</span>
+              <span class="mail-sources-title">48小时来源邮件 (${sourceMails.length})</span>
               <button class="mail-sources-all-btn" id="mailBriefingViewAllBtn" title="在右侧主视窗打开收件箱列表">右侧列表 ➔</button>
             </div>
             <div class="mail-briefing-sources-list">
-              ${source_mails.map(sm => {
+              ${sourceMails.map((sm: any) => {
                 const isSel = sm.id === selectedMailId
                 const catClass = `cat-${sm.category}`
-                const timeShort = sm.created_at.slice(5, 16)
+                const timeShort = sm.created_at ? sm.created_at.slice(5, 16) : ''
                 return `
                   <div class="mail-briefing-source-item ${isSel ? 'selected' : ''}" data-mail-id="${sm.id}" title="点击在右侧查看此邮件详情">
                     <div class="mail-source-top">
                       <span class="mail-badge ${catClass}">${CATEGORY_NAMES[sm.category] || '邮件'}</span>
-                      <span class="mail-source-sender">${esc(sm.sender.split('@')[0])}</span>
+                      <span class="mail-source-sender">${formatSenderDisplay(sm.sender_name, sm.sender)}</span>
                       <span class="grow"></span>
                       <span class="mail-source-time">${timeShort}</span>
                     </div>
-                    <div class="mail-source-sub">${esc(sm.subject)}</div>
+                    <div class="mail-source-sub">${esc(decodeMimeWords(sm.subject))}</div>
                     ${sm.patient_code ? `
                       <div class="mail-source-pt-row">
                         <span class="mail-briefing-pill" data-pt-code="${esc(sm.patient_code)}" title="点击打开患者档案">${esc(sm.patient_code)}</span>
@@ -559,7 +650,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                 const isStarred = Boolean(m.starred)
                 const isChecked = selectedIds.has(m.id)
                 const catClass = `cat-${m.category}`
-                const party = isSent ? `至: ${m.recipient}` : (m.sender_name ? `${m.sender_name} (${m.sender.split('@')[0]})` : m.sender)
+                const party = isSent ? `至: ${m.recipient}` : formatSenderDisplay(m.sender_name, m.sender)
                 const snippet = m.body.slice(0, 64).replace(/\n/g, ' ')
 
                 return `
@@ -807,7 +898,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             <div class="mail-meta-info">
               <div class="mail-meta-row">
                 <span class="mail-meta-k">发件人:</span>
-                <span class="mail-meta-v"><b class="mail-sender-name">${esc(m.sender_name ? `${m.sender_name} <${m.sender}>` : m.sender)}</b></span>
+                <span class="mail-meta-v"><b class="mail-sender-name">${esc(formatSenderDisplay(m.sender_name, m.sender))}</b></span>
               </div>
               <div class="mail-meta-row">
                 <span class="mail-meta-k">收件人:</span>
