@@ -133,6 +133,24 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15"
+          # 部署前强力清理 VPS 磁盘：清理已退出容器、历史镜像缓存、systemd 日志与废弃数据，确保有充足空间解压大层
+          $SSH "$HOST" "
+            echo '== [VPS Pre-deploy] 检查与清理 VPS 磁盘空间 =='
+            df -h /
+            docker container prune -f >/dev/null 2>&1 || true
+            docker image prune -af >/dev/null 2>&1 || true
+            docker builder prune -af >/dev/null 2>&1 || true
+            docker network prune -f >/dev/null 2>&1 || true
+            if command -v journalctl >/dev/null 2>&1; then journalctl --vacuum-size=100M >/dev/null 2>&1 || true; fi
+            apt-get clean >/dev/null 2>&1 || true
+            rm -rf /tmp/docker-* /tmp/extract-* 2>/dev/null || true
+            if [ -f /opt/heurion2/.cutover-done ]; then
+              rm -rf /opt/heurion /opt/nexus-embedding-models /opt/heurion2/backups/v1-final-* 2>/dev/null || true
+              docker volume ls -q 2>/dev/null | grep -E '^heurion_' | xargs -r docker volume rm 2>/dev/null || true
+            fi
+            echo '== [VPS Pre-deploy] 清理后可用空间 =='
+            df -h /
+          "
           $SSH "$HOST" "mkdir -p /opt/heurion2/scripts"
           scp -o StrictHostKeyChecking=no deploy/docker-compose.yml deploy/Caddyfile "$HOST":/opt/heurion2/
           scp -o StrictHostKeyChecking=no deploy/deploy.sh deploy/cutover-v1.sh deploy/backup-to-s3.sh deploy/cleanup-v1.sh "$HOST":/opt/heurion2/scripts/

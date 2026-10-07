@@ -28,6 +28,7 @@ rm -rf /opt/nexus-embedding-models
 echo "== 删除之前留下的 1.0 备份"
 rm -rf "${DIR}"/backups/v1-final-* "${DIR}"/backups/upload-*.log "${DIR}/v1-images.env"
 
-docker image prune -f >/dev/null 2>&1 || true
+docker image prune -af >/dev/null 2>&1 || true
+docker builder prune -af >/dev/null 2>&1 || true
 df -h / | tail -1
 echo "✓ 1.0 已清理"

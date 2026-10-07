@@ -37,13 +37,41 @@ PREV_APP=$(docker inspect --format '{{.Image}}' heurion2 2>/dev/null || true)
 PREV_EMB=$(docker inspect --format '{{.Image}}' heurion2-embedder 2>/dev/null || true)
 PREV_IMG=$(docker inspect --format '{{.Image}}' heurion2-imaging-worker 2>/dev/null || true)
 
-docker image prune -f >/dev/null 2>&1 || true
-docker builder prune -f >/dev/null 2>&1 || true
+# 磁盘空间保障函数：拉取新镜像前/后释放未在运行的旧镜像、历史构建缓存与系统临时数据
+reclaim_disk_space() {
+  echo "== 检查与清理 VPS 磁盘空间..."
+  df -h / | tail -1
+  # 1. 清理已退出/停止的无用容器
+  docker container prune -f >/dev/null 2>&1 || true
+  # 2. 彻底删除没有容器正在使用的旧镜像（-a: 包含所有旧版本 tag 镜像）
+  # 说明：当前正在运行的容器（如当前 heurion2/embedder/imaging-worker）所绑定的镜像不会被删除
+  docker image prune -af >/dev/null 2>&1 || true
+  # 3. 清理构建缓存与孤儿网络
+  docker builder prune -af >/dev/null 2>&1 || true
+  docker network prune -f >/dev/null 2>&1 || true
+  # 4. 清理 systemd journal 日志与 apt 缓存，防止系统日志堆积数 GB
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl --vacuum-size=100M >/dev/null 2>&1 || true
+  fi
+  apt-get clean >/dev/null 2>&1 || true
+  rm -rf /tmp/docker-* /tmp/extract-* 2>/dev/null || true
+  # 5. 如果已经切换到 2.0，彻底清除 1.0 的残留大文件（代码库、旧模型与全量备份）
+  if [ -f .cutover-done ]; then
+    rm -rf /opt/heurion /opt/nexus-embedding-models backups/v1-final-* 2>/dev/null || true
+    docker volume ls -q 2>/dev/null | grep -E '^heurion_' | xargs -r docker volume rm 2>/dev/null || true
+  fi
+  echo "== 清理后磁盘可用空间："
+  df -h / | tail -1
+}
+
+reclaim_disk_space
 
 pulled=0
 for i in 1 2 3; do
   if "${COMPOSE[@]}" pull; then pulled=1; break; fi
-  echo "⚠️  拉取镜像失败（第 $i 次），10 秒后重试"; sleep 10
+  echo "⚠️  拉取镜像失败（第 $i 次），清理磁盘与缓存后 10 秒重试..."
+  reclaim_disk_space
+  sleep 10
 done
 [ "$pulled" -eq 1 ] || { echo "❌ 拉取镜像失败"; exit 1; }
 
@@ -116,7 +144,7 @@ if wait_health; then
   else
     echo "S3 未配置：跳过备份定时任务"
   fi
-  docker image prune -f >/dev/null 2>&1 || true
+  reclaim_disk_space
   exit 0
 fi
 
