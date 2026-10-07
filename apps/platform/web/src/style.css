@@ -4923,6 +4923,470 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   color: var(--muted);
 }
 
+/* ========================================================
+   最近 48 小时 AI 邮件动态研判与速报简报 (Mail AI Briefing)
+   ======================================================== */
+
+#mailList {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 24px;
+  gap: 12px;
+}
+
+#mailList > li {
+  display: block;
+  padding: 0;
+  cursor: default;
+  border-left: none;
+}
+
+#mailList > li:hover:not(.active) {
+  background: transparent;
+}
+
+.mail-briefing-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.mail-briefing-card.empty {
+  padding: 16px 12px;
+}
+
+.mail-briefing-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mail-briefing-head-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mail-ai-chip {
+  background: linear-gradient(135deg, rgba(0, 229, 153, 0.15), rgba(56, 189, 248, 0.15));
+  border: 1px solid rgba(0, 229, 153, 0.35);
+  color: var(--mint);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mail-ai-sparkle {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.mail-time-pill {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--teal);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.mail-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mail-refresh-btn:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--teal);
+}
+
+.mail-refresh-svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s;
+}
+
+.mail-refresh-btn.loading .mail-refresh-svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.mail-briefing-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.mail-briefing-stat-pill {
+  background: var(--teal);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.mail-briefing-stat-pill .stat-v {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.mail-briefing-stat-pill .stat-k {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.mail-briefing-stat-pill.unread .stat-v {
+  color: var(--mint);
+}
+
+.mail-briefing-stat-pill.followup .stat-v {
+  color: #38bdf8;
+}
+
+.mail-briefing-stat-pill.research .stat-v {
+  color: #a78bfa;
+}
+
+.mail-briefing-body {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.mail-briefing-sec-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.mail-briefing-sec-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mint);
+  flex-shrink: 0;
+}
+
+.mail-briefing-sec-text {
+  flex: 1;
+}
+
+.mail-briefing-bullet {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin: 2px 0;
+  line-height: 1.45;
+}
+
+.mail-briefing-bullet-dot {
+  color: var(--mint);
+  font-size: 9px;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.mail-briefing-bullet-num {
+  background: var(--teal);
+  color: var(--mint);
+  font-size: 10px;
+  font-weight: 700;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.mail-briefing-bullet-body {
+  flex: 1;
+}
+
+.mail-briefing-p {
+  margin: 2px 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.mail-briefing-gap {
+  height: 6px;
+}
+
+.mail-briefing-bold {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mail-briefing-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 4px;
+  padding: 0 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mail-briefing-pill:hover {
+  background: rgba(56, 189, 248, 0.28);
+  text-decoration: underline;
+}
+
+.mail-briefing-study-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: 4px;
+  padding: 0 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mail-briefing-study-pill:hover {
+  background: rgba(167, 139, 250, 0.28);
+  text-decoration: underline;
+}
+
+.mail-briefing-metric {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+/* 来源邮件列表 (Sources) */
+.mail-briefing-sources-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.mail-briefing-sources-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 2px;
+}
+
+.mail-sources-all-btn {
+  background: transparent;
+  border: none;
+  color: var(--mint);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.15s;
+}
+
+.mail-sources-all-btn:hover {
+  text-decoration: underline;
+}
+
+.mail-briefing-sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.mail-briefing-source-item {
+  background: var(--teal);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mail-briefing-source-item:hover {
+  border-color: var(--line-strong);
+  background: var(--teal-hover);
+}
+
+.mail-briefing-source-item.selected {
+  border-left: 3px solid var(--mint);
+  background: var(--teal-hover);
+}
+
+.mail-source-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mail-source-sender {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.mail-source-time {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.mail-source-sub {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail-source-pt-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mail-briefing-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--faint);
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.mail-briefing-ai-tag {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* 空状态与加载中 */
+.mail-briefing-empty-body {
+  padding: 24px 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.mail-briefing-empty-icon {
+  color: var(--faint);
+}
+
+.mail-briefing-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.mail-briefing-empty-text {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.4;
+  max-width: 200px;
+}
+
+.mail-briefing-loading-card {
+  padding: 32px 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mail-briefing-spinner {
+  width: 26px;
+  height: 26px;
+  border: 2.5px solid rgba(0, 229, 153, 0.2);
+  border-top-color: var(--mint);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.mail-briefing-loading-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mail-briefing-loading-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  max-width: 210px;
+}
+
 
 
 

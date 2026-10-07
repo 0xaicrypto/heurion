@@ -355,7 +355,7 @@ const spaces = initSpaces({
     }
   },
   mail: {
-    title: '邮箱', label: '邮件列表', actions: 'mailActions', list: 'mailList', placeholder: '按主题、发件人、患者代号筛选',
+    title: '邮箱', label: '近48小时动态摘要', actions: 'mailActions', list: 'mailList', placeholder: '按主题、发件人、患者代号筛选',
     enter: () => {
       patientsUi.leave()
       researchUi.leave()

@@ -200,6 +200,7 @@ const NOT_FOR_AI: Record<string, string> = {
   'POST /api/me/claim-dev-data': '只在开发模式下给管理员本人认领开发数据',
   'GET /api/invites/:code': '邀请链接的公开预览（注册前用）',
   'GET /api/mail/status': '发信服务配置与投递状态查询（前端状态展示）',
+  'GET /api/mail/summary': '医生查阅最近48小时邮件AI动态汇总（AI生成，本人查阅）',
   'GET /api/mail/messages': '医生工作站专属邮箱列表（本人阅览）',
   'GET /api/mail/messages/:id': '医生查阅邮件详情（本人阅览）',
   'POST /api/mail/messages': '医生起草并发送医疗通知专函（医生操作）',

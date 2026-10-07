@@ -58,6 +58,28 @@ export interface MailStatus {
   user_email: string
 }
 
+export interface MailSummaryItem {
+  id: string
+  subject: string
+  sender: string
+  recipient: string
+  created_at: string
+  category: string
+  patient_code?: string
+  study_id?: string
+}
+
+export interface MailSummaryResult {
+  hours: number
+  total: number
+  unread: number
+  followup_count: number
+  research_count: number
+  source_mails: MailSummaryItem[]
+  summary: string
+  generated_at: string
+}
+
 function renderDeliveryPill(status?: string): string {
   switch (status) {
     case 'external_sent':
@@ -126,6 +148,60 @@ function formatHighlights(text: string): string {
   return res
 }
 
+function formatBriefingMarkdown(raw: string): string {
+  if (!raw) return ''
+  const lines = raw.split('\n')
+  const out: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      out.push('<div class="mail-briefing-gap"></div>')
+      continue
+    }
+
+    if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
+      const heading = trimmed.replace(/^#+\s*/, '')
+      out.push(`<div class="mail-briefing-sec-title">
+        <span class="mail-briefing-sec-dot"></span>
+        <span class="mail-briefing-sec-text">${esc(heading)}</span>
+      </div>`)
+    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+      const content = trimmed.slice(2)
+      out.push(`<div class="mail-briefing-bullet">
+        <span class="mail-briefing-bullet-dot">▪</span>
+        <div class="mail-briefing-bullet-body">${formatBriefingInline(content)}</div>
+      </div>`)
+    } else if (/^\d+\.\s+/.test(trimmed)) {
+      const match = trimmed.match(/^(\d+)\.\s+(.*)$/)
+      if (match) {
+        out.push(`<div class="mail-briefing-bullet">
+          <span class="mail-briefing-bullet-num">${match[1]}</span>
+          <div class="mail-briefing-bullet-body">${formatBriefingInline(match[2] || '')}</div>
+        </div>`)
+      } else {
+        out.push(`<p class="mail-briefing-p">${formatBriefingInline(trimmed)}</p>`)
+      }
+    } else {
+      out.push(`<p class="mail-briefing-p">${formatBriefingInline(trimmed)}</p>`)
+    }
+  }
+
+  return out.join('')
+}
+
+function formatBriefingInline(text: string): string {
+  let s = esc(text)
+  s = s.replace(/\*\*(.*?)\*\*/g, '<strong class="mail-briefing-bold">$1</strong>')
+  s = s.replace(/(PT-[A-Z0-9-]+)/g, '<span class="mail-briefing-pill" data-pt-code="$1" title="点击查看患者 $1 全景档案">$1</span>')
+  s = s.replace(/((?:RCT|STUDY)-[A-Z0-9-]+)/g, '<span class="mail-briefing-study-pill" data-study-id="$1" title="点击查看科研项目 $1">$1</span>')
+  s = s.replace(/(HAM\s*=\s*[0-9.]+\s*cm³?)/g, '<span class="mail-briefing-metric">$1</span>')
+  s = s.replace(/(BAR\s*=\s*[0-9.]+)/g, '<span class="mail-briefing-metric">$1</span>')
+  s = s.replace(/(RECIST\s*1\.[01])/g, '<span class="mail-briefing-metric">$1</span>')
+  s = s.replace(/(SMD\s*&lt;\s*0\.05)/g, '<span class="mail-briefing-metric">$1</span>')
+  return s
+}
+
 export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   const $ = (id: string) => document.getElementById(id)!
   let messages: MailMessage[] = []
@@ -134,6 +210,10 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   let selectedMailId: string | null = null
   let currentUserEmail = 'doctor@heurion.org'
   let mailStatus: MailStatus | null = null
+
+  // 最近 48 小时 AI 邮件摘要状态
+  let summaryResult: MailSummaryResult | null = null
+  let summaryLoading = false
 
   // 视图与分页状态
   let mainViewMode: 'list' | 'dashboard' = 'list'
@@ -152,6 +232,19 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     }
   }
 
+  async function loadSummary(force = false): Promise<void> {
+    summaryLoading = true
+    renderNavSummary()
+    try {
+      summaryResult = await api<MailSummaryResult>(`/api/mail/summary?hours=48${force ? '&force=true' : ''}`)
+    } catch (err) {
+      console.error('[mail] failed to load summary', err)
+    } finally {
+      summaryLoading = false
+      renderNavSummary()
+    }
+  }
+
   async function loadMessages(): Promise<void> {
     try {
       if (!mailStatus) {
@@ -165,7 +258,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       for (const id of Array.from(selectedIds)) {
         if (!currentIds.has(id)) selectedIds.delete(id)
       }
-      renderNavList()
+      renderNavSummary()
       renderMain()
     } catch (err) {
       console.error('[mail] failed to load messages', err)
@@ -194,54 +287,136 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     })
   }
 
-  function renderNavList(): void {
+  function renderNavSummary(): void {
     const listEl = $('mailList')
     if (!listEl) return
 
-    const filtered = getFilteredMessages()
-
-    if (filtered.length === 0) {
-      const emptyText = activeFolder === 'sent'
-        ? '已发送邮件箱为空'
-        : activeFolder === 'trash'
-          ? '废纸篓为空'
-          : '收件箱为空'
-      listEl.innerHTML = `<li class="doclist-empty"><div class="muted">${emptyText}</div></li>`
+    if (summaryLoading && !summaryResult) {
+      listEl.innerHTML = `
+        <li class="mail-briefing-loading-card">
+          <div class="mail-briefing-spinner"></div>
+          <div class="mail-briefing-loading-title">AI 正在研判最近 48 小时邮件...</div>
+          <div class="mail-briefing-loading-desc">DeepSeek 临床大模型正在聚合随访预警与科研进展</div>
+        </li>
+      `
       return
     }
 
-    listEl.innerHTML = filtered.map(m => {
-      const isUnread = !m.read && activeFolder === 'inbox'
-      const isStarred = Boolean(m.starred)
-      const isSel = m.id === selectedMailId
-      const catClass = `cat-${m.category}`
-      const dateShort = m.created_at.slice(5, 16)
-      const snippet = m.body.slice(0, 42).replace(/\n/g, ' ')
-      const party = activeFolder === 'sent'
-        ? `至: ${esc(m.recipient.split('@')[0])}`
-        : esc(m.sender.split('@')[0])
-
-      return `<li class="docitem mail-nav-item ${isSel ? 'selected' : ''} ${isUnread ? 'unread' : ''}" data-mail-id="${m.id}">
-        <div class="mail-nav-top">
-          <span class="mail-nav-sender">${party}</span>
-          <div class="mail-nav-top-right">
-            ${isStarred ? '<span class="mail-nav-star" title="已加星标">★</span>' : ''}
-            <span class="mail-nav-time">${dateShort}</span>
+    if (!summaryResult || summaryResult.total === 0) {
+      listEl.innerHTML = `
+        <li class="mail-briefing-card empty">
+          <div class="mail-briefing-head">
+            <div class="mail-briefing-head-left">
+              <span class="mail-ai-chip"><span class="mail-ai-sparkle">✨</span> AI 动态速报</span>
+              <span class="mail-time-pill">近 48 小时</span>
+            </div>
+            <button class="mail-refresh-btn ${summaryLoading ? 'loading' : ''}" id="mailRefreshSummaryBtn" title="刷新 AI 摘要">
+              <svg viewBox="0 0 20 20" class="mail-refresh-svg"><path d="M4 10a6 6 0 1 1 1.76 4.24l-2.12 2.12M4 10V4m0 6H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>${summaryLoading ? '生成中...' : '刷新'}</span>
+            </button>
           </div>
+          <div class="mail-briefing-empty-body">
+            <div class="mail-briefing-empty-icon">${icon('mail', { size: 28 })}</div>
+            <div class="mail-briefing-empty-title">近 48 小时内无新流入邮件</div>
+            <div class="mail-briefing-empty-text">新收到的临床随访复查与科研进展邮件将在此处由 AI 自动聚合研判</div>
+          </div>
+        </li>
+      `
+      return
+    }
+
+    const { hours, total, unread, followup_count, research_count, source_mails, summary, generated_at } = summaryResult
+
+    listEl.innerHTML = `
+      <li class="mail-briefing-card">
+        <!-- 头部标题栏与刷新 -->
+        <div class="mail-briefing-head">
+          <div class="mail-briefing-head-left">
+            <span class="mail-ai-chip"><span class="mail-ai-sparkle">✨</span> AI 邮件速报</span>
+            <span class="mail-time-pill">近 ${hours}h</span>
+          </div>
+          <button class="mail-refresh-btn ${summaryLoading ? 'loading' : ''}" id="mailRefreshSummaryBtn" title="点击由 DeepSeek 重新聚合分析">
+            <svg viewBox="0 0 20 20" class="mail-refresh-svg"><path d="M4 10a6 6 0 1 1 1.76 4.24l-2.12 2.12M4 10V4m0 6H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>${summaryLoading ? '研判中...' : '刷新'}</span>
+          </button>
         </div>
-        <div class="mail-nav-subject">
-          ${isUnread ? '<span class="mail-unread-dot" title="未读"></span>' : ''}
-          <span class="mail-subject-text">${esc(m.subject)}</span>
+
+        <!-- 核心计数徽章 -->
+        <div class="mail-briefing-stats-row">
+          <div class="mail-briefing-stat-pill" title="近48小时共收到邮件">
+            <span class="stat-v">${total}</span>
+            <span class="stat-k">总计</span>
+          </div>
+          ${unread > 0 ? `
+            <div class="mail-briefing-stat-pill unread" title="未读待阅邮件">
+              <span class="stat-v">${unread}</span>
+              <span class="stat-k">待阅</span>
+            </div>
+          ` : ''}
+          ${followup_count > 0 ? `
+            <div class="mail-briefing-stat-pill followup" title="重点随访预警">
+              <span class="stat-v">${followup_count}</span>
+              <span class="stat-k">随访</span>
+            </div>
+          ` : ''}
+          ${research_count > 0 ? `
+            <div class="mail-briefing-stat-pill research" title="科研进展通报">
+              <span class="stat-v">${research_count}</span>
+              <span class="stat-k">科研</span>
+            </div>
+          ` : ''}
         </div>
-        <div class="mail-nav-snippet">${esc(snippet)}…</div>
-        <div class="mail-nav-bottom">
-          <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
-          ${renderDeliveryPill(m.delivery_status)}
-          ${m.patient_code ? `<span class="mail-nav-tag">${esc(m.patient_code)}</span>` : ''}
+
+        <!-- AI 研判正文 -->
+        <div class="mail-briefing-body">
+          ${formatBriefingMarkdown(summary)}
         </div>
-      </li>`
-    }).join('')
+
+        <!-- 来源邮件线索 (最近收到的信件) -->
+        ${source_mails && source_mails.length > 0 ? `
+          <div class="mail-briefing-sources-wrap">
+            <div class="mail-briefing-sources-head">
+              <span class="mail-sources-title">48小时来源邮件 (${source_mails.length})</span>
+              <button class="mail-sources-all-btn" id="mailBriefingViewAllBtn" title="在右侧主视窗打开收件箱列表">右侧列表 ➔</button>
+            </div>
+            <div class="mail-briefing-sources-list">
+              ${source_mails.map(sm => {
+                const isSel = sm.id === selectedMailId
+                const catClass = `cat-${sm.category}`
+                const timeShort = sm.created_at.slice(5, 16)
+                return `
+                  <div class="mail-briefing-source-item ${isSel ? 'selected' : ''}" data-mail-id="${sm.id}" title="点击在右侧查看此邮件详情">
+                    <div class="mail-source-top">
+                      <span class="mail-badge ${catClass}">${CATEGORY_NAMES[sm.category] || '邮件'}</span>
+                      <span class="mail-source-sender">${esc(sm.sender.split('@')[0])}</span>
+                      <span class="grow"></span>
+                      <span class="mail-source-time">${timeShort}</span>
+                    </div>
+                    <div class="mail-source-sub">${esc(sm.subject)}</div>
+                    ${sm.patient_code ? `
+                      <div class="mail-source-pt-row">
+                        <span class="mail-briefing-pill" data-pt-code="${esc(sm.patient_code)}" title="点击打开患者档案">${esc(sm.patient_code)}</span>
+                      </div>
+                    ` : ''}
+                  </div>
+                `
+              }).join('')}
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- 底部生成元数据 -->
+        <div class="mail-briefing-foot">
+          <span>AI 研判 · ${generated_at ? new Date(generated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '刚刚'}</span>
+          <span class="mail-briefing-ai-tag">DeepSeek Engine</span>
+        </div>
+      </li>
+    `
   }
+
+  // 保持兼容性别名
+  const renderNavList = renderNavSummary
+
 
   function renderMain(): void {
     const page = $('page')
@@ -1400,14 +1575,58 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
 
     // 左侧栏条目点击
     $('mailList')?.addEventListener('click', e => {
-      const li = (e.target as HTMLElement).closest<HTMLElement>('.mail-nav-item')
-      if (li) {
-        const id = li.dataset.mailId
+      const target = e.target as HTMLElement
+
+      // 1. 刷新按钮
+      const refreshBtn = target.closest<HTMLElement>('#mailRefreshSummaryBtn')
+      if (refreshBtn) {
+        e.stopPropagation()
+        void loadSummary(true)
+        return
+      }
+
+      // 2. 患者代号标签点击 -> 直达患者档案
+      const ptPill = target.closest<HTMLElement>('.mail-briefing-pill, .mail-source-pt')
+      if (ptPill) {
+        e.stopPropagation()
+        const code = ptPill.dataset.ptCode
+        if (code && hooks.openPatient) {
+          void hooks.openPatient(code)
+        }
+        return
+      }
+
+      // 3. 课题编号标签点击 -> 直达科研项目
+      const stPill = target.closest<HTMLElement>('.mail-briefing-study-pill')
+      if (stPill) {
+        e.stopPropagation()
+        const sid = stPill.dataset.studyId
+        if (sid && hooks.openStudy) {
+          void hooks.openStudy(sid)
+        }
+        return
+      }
+
+      // 4. 查看右侧全部邮件
+      const viewAllBtn = target.closest<HTMLElement>('#mailBriefingViewAllBtn')
+      if (viewAllBtn) {
+        e.stopPropagation()
+        selectedMailId = null
+        mainViewMode = 'list'
+        renderMain()
+        return
+      }
+
+      // 5. 关联邮件来源项点击 -> 在右侧主视窗打开该邮件
+      const sourceItem = target.closest<HTMLElement>('.mail-briefing-source-item')
+      if (sourceItem) {
+        const id = sourceItem.dataset.mailId
         if (id) {
           selectedMailId = id
-          renderNavList()
+          renderNavSummary()
           renderMain()
         }
+        return
       }
     })
   }
@@ -1418,14 +1637,20 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     async enter(): Promise<void> {
       hooks.leaveDoc()
       await loadStatus()
-      await loadMessages()
+      await Promise.all([
+        loadMessages(),
+        loadSummary(),
+      ])
     },
     leave(): void {
       selectedMailId = null
     },
     async openMail(id: string): Promise<void> {
       selectedMailId = id
-      await loadMessages()
+      await Promise.all([
+        loadMessages(),
+        loadSummary(),
+      ])
     },
     async sendMail(mailData: Partial<MailMessage>): Promise<void> {
       await api('/api/mail/messages', {
@@ -1433,7 +1658,10 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mailData),
       })
-      await loadMessages()
+      await Promise.all([
+        loadMessages(),
+        loadSummary(true),
+      ])
     },
   }
 }

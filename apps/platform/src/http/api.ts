@@ -2232,6 +2232,16 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     })
   })
 
+  app.get('/api/mail/summary', async c => {
+    const user = c.get('user')
+    const u = store.getUser(user)
+    if (!u) return c.json({ error: '未登录' }, 401)
+    const hours = Math.max(1, Math.min(168, Number(c.req.query('hours') || '48')))
+    const force = c.req.query('force') === '1' || c.req.query('force') === 'true'
+    const result = await mail.getRecentSummary(user, hours, force)
+    return c.json(result)
+  })
+
   app.get('/api/mail/messages', c => {
     const user = c.get('user')
     const u = store.getUser(user)

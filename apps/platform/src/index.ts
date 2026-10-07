@@ -165,7 +165,10 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const mail = new MailService(store, mailer, { domain: config.mailDomain })
+const mail = new MailService(store, mailer, {
+  domain: config.mailDomain,
+  complete: makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }),
+})
 const calendar = new CalendarService(store, mail)
 const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, shares, studies, cohort, images, access, mail, calendar, workspaceDir: userId => pool.workspaceDir(userId) })
 // MCP 的管理类工具以用户身份进程内调用同一个 HTTP 应用（AI 的权限 = 用户的权限，见 http/invoke.ts）
