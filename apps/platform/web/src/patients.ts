@@ -1056,7 +1056,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <div class="dialog-head">
           <div style="display: flex; align-items: center; gap: 10px">
             <h2>${icon('mpr', { size: 18 })} 3D 多平面重建 (MPR) 互动切片浏览器</h2>
-            <span class="muted small">${esc(d.code)}</span>
+            <span class="muted small">${esc(d.code)}${r?.title ? ` · ${esc(r.title)}` : ''}</span>
           </div>
           <button class="quiet" data-close aria-label="关闭">✕</button>
         </div>
@@ -1070,14 +1070,27 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
     dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
 
-    let sampleId = (r?.imaging_data as any)?.sample_id || 'chest_lung_ct'
-    const rawName = (r?.imaging_data as any)?.raw_file_name || ''
-    if (rawName.includes('spleen')) sampleId = 'spleen_test'
-    else if (rawName.includes('prostate')) sampleId = 'prostate_mri'
+    const imgData = (r?.imaging_data as any) || {}
+    const rawFileId = imgData.raw_file_id || r?.file_id
+    const isPatientRealScan = Boolean(patientId && r && (rawFileId || r.id))
+    let sampleId = imgData.sample_id || 'chest_lung_ct'
+    const rawName = imgData.raw_file_name || r?.title || ''
+    if (!isPatientRealScan) {
+      if (rawName.includes('spleen')) sampleId = 'spleen_test'
+      else if (rawName.includes('prostate')) sampleId = 'prostate_mri'
+    }
 
     let mprInfo: any = null
     try {
-      mprInfo = await api<any>(`/api/imaging/mpr/info?sample_id=${encodeURIComponent(sampleId)}`)
+      const qParams = new URLSearchParams()
+      if (isPatientRealScan) {
+        qParams.set('patient_id', patientId)
+        if (r?.id) qParams.set('record_id', r.id)
+        if (rawFileId) qParams.set('file_id', rawFileId)
+      } else {
+        qParams.set('sample_id', sampleId)
+      }
+      mprInfo = await api<any>(`/api/imaging/mpr/info?${qParams.toString()}`)
     } catch (err: any) {
       const bodyEl = dlg.querySelector('.dialog-body')
       if (bodyEl) {
@@ -1571,8 +1584,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         })
         const canvas = dlg.querySelector('#nvCanvas') as HTMLCanvasElement
         nvInstance.attachToCanvas(canvas)
-        const fileUrl = `/api/imaging/samples/${sampleId}/file?token=${encodeURIComponent(hooks.token())}`
-        await nvInstance.loadVolumes([{ url: fileUrl, name: `${sampleId}.nii.gz`, colormap: 'gray' }])
+        const volumeId = isPatientRealScan && (rawFileId || r?.id) ? `pt_${patientId}_${rawFileId || r?.id}` : sampleId
+        const fileUrl = `/api/imaging/samples/${volumeId}/file?token=${encodeURIComponent(hooks.token())}`
+        await nvInstance.loadVolumes([{ url: fileUrl, name: `${volumeId}.nii.gz`, colormap: 'gray' }])
         if (nvLoading) nvLoading.style.display = 'none'
       } catch (err: any) {
         if (nvLoading) nvLoading.textContent = `NiiVue 引擎启动失败: ${err.message || '环境未支持 WebGL2'}`
@@ -1593,7 +1607,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         saveAssetBtn.innerHTML = `${icon('save')} 保存当前切片为资产`
       }
 
-      const cacheKey = `${sampleId}:${currentPlane}:${currentSlice}:${currentWindow}:${overlayMask}`
+      const cacheVolId = isPatientRealScan ? `pt_${patientId}_${rawFileId || r?.id}` : sampleId
+      const cacheKey = `${cacheVolId}:${currentPlane}:${currentSlice}:${currentWindow}:${overlayMask}`
       if (sliceCache.has(cacheKey)) {
         renderSliceData(sliceCache.get(cacheKey))
         return
@@ -1603,15 +1618,21 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       isFetching = true
 
       try {
+        const payload: Record<string, any> = {
+          sample_id: sampleId,
+          plane: currentPlane,
+          slice_index: currentSlice,
+          window_preset: currentWindow,
+          overlay_mask: overlayMask,
+        }
+        if (isPatientRealScan) {
+          payload.patient_id = patientId
+          if (r?.id) payload.record_id = r.id
+          if (rawFileId) payload.file_id = rawFileId
+        }
         const res = await api<any>('/api/imaging/mpr/slice', {
           method: 'POST',
-          body: JSON.stringify({
-            sample_id: sampleId,
-            plane: currentPlane,
-            slice_index: currentSlice,
-            window_preset: currentWindow,
-            overlay_mask: overlayMask,
-          }),
+          body: JSON.stringify(payload),
         })
 
         sliceCache.set(cacheKey, res)
@@ -2285,6 +2306,12 @@ ${recommendations}
     // 双联 MPR 状态管理
     let bSample = 'chest_lung_ct'
     let fSample = 'chest_lung_ct'
+    let bReal = false
+    let fReal = false
+    let bRec: RecordRow | undefined
+    let fRec: RecordRow | undefined
+    let bData: Record<string, any> = {}
+    let fData: Record<string, any> = {}
     let baseMax = 268
     let followMax = 268
     let baseSlice = 134
@@ -2345,12 +2372,14 @@ ${recommendations}
       dualMprInitialized = true
       const bId = baseSelect.value
       const fId = followSelect.value
-      const bRec = detail.records.find(r => r.id === bId)
-      const fRec = detail.records.find(r => r.id === fId)
+      bRec = detail.records.find(r => r.id === bId)
+      fRec = detail.records.find(r => r.id === fId)
 
       // 解析样本
-      const bData = (bRec?.imaging_data || {}) as Record<string, any>
-      const fData = (fRec?.imaging_data || {}) as Record<string, any>
+      bData = (bRec?.imaging_data || {}) as Record<string, any>
+      fData = (fRec?.imaging_data || {}) as Record<string, any>
+      bReal = Boolean(patientId && bRec && (bData.raw_file_id || bRec.file_id || bRec.id))
+      fReal = Boolean(patientId && fRec && (fData.raw_file_id || fRec.file_id || fRec.id))
       bSample = bData.sample_id || (bData.raw_file_name?.includes('spleen') ? 'spleen_test' : bData.raw_file_name?.includes('prostate') ? 'prostate_mri' : 'chest_lung_ct')
       fSample = fData.sample_id || (fData.raw_file_name?.includes('spleen') ? 'spleen_test' : fData.raw_file_name?.includes('prostate') ? 'prostate_mri' : 'chest_lung_ct')
 
@@ -2366,9 +2395,16 @@ ${recommendations}
 
       // 获取两份 3D 体积元数据
       try {
+        const bUrl = bReal
+          ? `/api/imaging/mpr/info?patient_id=${encodeURIComponent(patientId)}&record_id=${encodeURIComponent(bRec!.id)}&file_id=${encodeURIComponent(bData.raw_file_id || bRec!.file_id || '')}`
+          : `/api/imaging/mpr/info?sample_id=${encodeURIComponent(bSample)}`
+        const fUrl = fReal
+          ? `/api/imaging/mpr/info?patient_id=${encodeURIComponent(patientId)}&record_id=${encodeURIComponent(fRec!.id)}&file_id=${encodeURIComponent(fData.raw_file_id || fRec!.file_id || '')}`
+          : `/api/imaging/mpr/info?sample_id=${encodeURIComponent(fSample)}`
+
         const [bInfo, fInfo] = await Promise.all([
-          api<any>(`/api/imaging/mpr/info?sample_id=${encodeURIComponent(bSample)}`).catch(() => null),
-          api<any>(`/api/imaging/mpr/info?sample_id=${encodeURIComponent(fSample)}`).catch(() => null),
+          api<any>(bUrl).catch(() => null),
+          api<any>(fUrl).catch(() => null),
         ])
 
         if (bInfo?.planes?.[dualPlane]) {
@@ -2404,7 +2440,7 @@ ${recommendations}
       if (slider) slider.value = String(baseSlice)
       if (numEl) numEl.textContent = String(baseSlice)
 
-      const key = `${bSample}_${dualPlane}_${baseSlice}_${dualWindow}_${dualOverlay ? 1 : 0}`
+      const key = `${bReal ? `pt_${bRec!.id}` : bSample}_${dualPlane}_${baseSlice}_${dualWindow}_${dualOverlay ? 1 : 0}`
       if (baseCache.has(key)) {
         const data = baseCache.get(key)
         if (imgEl) { imgEl.src = data.slice_png_base64; imgEl.style.display = 'block' }
@@ -2413,15 +2449,21 @@ ${recommendations}
       }
 
       try {
+        const body: Record<string, any> = {
+          sample_id: bSample,
+          plane: dualPlane,
+          slice_index: baseSlice,
+          window_preset: dualWindow,
+          overlay_mask: dualOverlay,
+        }
+        if (bReal) {
+          body.patient_id = patientId
+          body.record_id = bRec!.id
+          body.file_id = bData.raw_file_id || bRec!.file_id
+        }
         const data = await api<any>('/api/imaging/mpr/slice', {
           method: 'POST',
-          body: JSON.stringify({
-            sample_id: bSample,
-            plane: dualPlane,
-            slice_index: baseSlice,
-            window_preset: dualWindow,
-            overlay_mask: dualOverlay,
-          }),
+          body: JSON.stringify(body),
         })
         baseCache.set(key, data)
         if (imgEl && data.slice_png_base64) {
@@ -2442,7 +2484,7 @@ ${recommendations}
       if (numEl) numEl.textContent = String(followSlice)
 
       if (dualDiffHeatmap) {
-        const diffKey = `diff_${bSample}_${fSample}_${dualPlane}_${followSlice}_${dualWindow}`
+        const diffKey = `diff_${bReal ? `pt_${bRec!.id}` : bSample}_${fReal ? `pt_${fRec!.id}` : fSample}_${dualPlane}_${followSlice}_${dualWindow}`
         if (diffCache.has(diffKey)) {
           const data = diffCache.get(diffKey)
           if (imgEl && data.slice_png_base64) { imgEl.src = data.slice_png_base64; imgEl.style.display = 'block' }
@@ -2451,16 +2493,28 @@ ${recommendations}
           return
         }
         try {
+          const body: Record<string, any> = {
+            baseline_id: bSample,
+            followup_id: fSample,
+            plane: dualPlane,
+            slice_index: followSlice,
+            window_preset: dualWindow,
+            threshold_hu: 50,
+          }
+          if (bReal || fReal) {
+            body.patient_id = patientId
+            if (bReal) {
+              body.baseline_record_id = bRec!.id
+              body.baseline_file_id = bData.raw_file_id || bRec!.file_id
+            }
+            if (fReal) {
+              body.followup_record_id = fRec!.id
+              body.followup_file_id = fData.raw_file_id || fRec!.file_id
+            }
+          }
           const data = await api<any>('/api/imaging/mpr/diff-slice', {
             method: 'POST',
-            body: JSON.stringify({
-              baseline_id: bSample,
-              followup_id: fSample,
-              plane: dualPlane,
-              slice_index: followSlice,
-              window_preset: dualWindow,
-              threshold_hu: 50,
-            }),
+            body: JSON.stringify(body),
           })
           diffCache.set(diffKey, data)
           if (imgEl && data.slice_png_base64) {
@@ -2474,26 +2528,32 @@ ${recommendations}
       }
 
       updateDiffHud(null)
-      const key = `${fSample}_${dualPlane}_${followSlice}_${dualWindow}_${dualOverlay ? 1 : 0}`
-      if (followCache.has(key)) {
-        const data = followCache.get(key)
+      const followKey = `${fReal ? `pt_${fRec!.id}` : fSample}_${dualPlane}_${followSlice}_${dualWindow}_${dualOverlay ? 1 : 0}`
+      if (followCache.has(followKey)) {
+        const data = followCache.get(followKey)
         if (imgEl) { imgEl.src = data.slice_png_base64; imgEl.style.display = 'block' }
         if (loadEl) loadEl.style.display = 'none'
         return
       }
 
       try {
+        const body: Record<string, any> = {
+          sample_id: fSample,
+          plane: dualPlane,
+          slice_index: followSlice,
+          window_preset: dualWindow,
+          overlay_mask: dualOverlay,
+        }
+        if (fReal) {
+          body.patient_id = patientId
+          body.record_id = fRec!.id
+          body.file_id = fData.raw_file_id || fRec!.file_id
+        }
         const data = await api<any>('/api/imaging/mpr/slice', {
           method: 'POST',
-          body: JSON.stringify({
-            sample_id: fSample,
-            plane: dualPlane,
-            slice_index: followSlice,
-            window_preset: dualWindow,
-            overlay_mask: dualOverlay,
-          }),
+          body: JSON.stringify(body),
         })
-        followCache.set(key, data)
+        followCache.set(followKey, data)
         if (imgEl && data.slice_png_base64) {
           imgEl.src = data.slice_png_base64
           imgEl.style.display = 'block'
@@ -2501,6 +2561,7 @@ ${recommendations}
         if (loadEl) loadEl.style.display = 'none'
       } catch {}
     }
+
 
     // 导出标准医学数据
     const exportFhirBtn = dlg.querySelector('#exportFhirBtn') as HTMLButtonElement

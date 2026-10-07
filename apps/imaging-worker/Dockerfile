@@ -19,6 +19,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# 0. 安装系统字体（支持中文医学 HUD 标注与标尺绘制）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fonts-dejavu-core fonts-wqy-microhei && \
+    rm -rf /var/lib/apt/lists/*
+
 # 1. 预先安装 CPU 专用的 PyTorch 轮子（强制剥离无用 CUDA 驱动，缩减镜像体积 4GB 以上）
 RUN uv venv /opt/venv && \
     uv pip install --no-cache --python /opt/venv/bin/python \
@@ -39,9 +44,9 @@ RUN uv pip install --no-cache --python /opt/venv/bin/python \
       "scipy>=1.12.0" \
       "python-multipart>=0.0.32"
 
-# 3. 复制代码与创建数据目录
+# 3. 复制代码与预装基准解剖体素数据
 COPY apps/imaging-worker/src /app/apps/imaging-worker/src
-RUN mkdir -p /app/apps/imaging-worker/data
+COPY apps/imaging-worker/data /app/apps/imaging-worker/data
 
 WORKDIR /app/apps/imaging-worker
 

@@ -531,14 +531,95 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     }
   })
 
+  async function ensureVolumeOnWorker(c: any, patientId: string, recordIdOrFileId?: string | null): Promise<string | null> {
+    if (!patientId) return null
+    try {
+      const user = me(c)
+      const detail = pt(c).read(user, patientId)
+      let fileId: string | null = null
+      let fileName = 'volume.zip'
+
+      if (recordIdOrFileId) {
+        const rec = detail.records.find((r: any) => r.id === recordIdOrFileId)
+        if (rec) {
+          const imgData = (rec.imaging_data || {}) as Record<string, any>
+          fileId = imgData.raw_file_id || rec.file_id || null
+          fileName = imgData.raw_file_name || rec.title || 'volume.zip'
+        } else {
+          fileId = recordIdOrFileId
+        }
+      } else {
+        const imgRec = detail.records.find((r: any) => r.kind === 'imaging')
+        if (imgRec) {
+          const imgData = (imgRec.imaging_data || {}) as Record<string, any>
+          fileId = imgData.raw_file_id || imgRec.file_id || null
+          fileName = imgData.raw_file_name || imgRec.title || 'volume.zip'
+        }
+      }
+
+      if (!fileId) return null
+
+      const volumeId = `pt_${patientId}_${fileId}`
+
+      // 快速检查 Worker 内存中是否已有该体素缓存
+      try {
+        const checkResp = await fetch(`${imagingWorkerUrl}/api/v1/volume/${encodeURIComponent(volumeId)}/status`, {
+          signal: AbortSignal.timeout(3000),
+        })
+        if (checkResp.ok) {
+          const status = await checkResp.json()
+          if (status.ready) return volumeId
+        }
+      } catch {}
+
+      // 从机构租户库解密患者原始扫描序列文件并流式上传至 Worker 预热
+      const f = pt(c).file(user, patientId, fileId)
+      if (!f || !f.bytes || f.bytes.byteLength === 0) return null
+
+      const formData = new FormData()
+      formData.append('volume_id', volumeId)
+      const blob = new Blob([new Uint8Array(f.bytes)], { type: f.mime || 'application/octet-stream' })
+      formData.append('file', blob, f.name || fileName)
+
+      const uploadResp = await fetch(`${imagingWorkerUrl}/api/v1/volume/upload`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(60000),
+      })
+      if (!uploadResp.ok) {
+        const errText = await uploadResp.text()
+        console.error(`[imaging] Failed to upload patient volume to worker: ${errText}`)
+        return null
+      }
+      return volumeId
+    } catch (err) {
+      console.error('[imaging] ensureVolumeOnWorker error:', err)
+      return null
+    }
+  }
+
   app.get('/api/imaging/samples/:id/file', async c => {
     try {
-      const resp = await fetch(`${imagingWorkerUrl}/api/v1/samples/${c.req.param('id')}/file`, { signal: AbortSignal.timeout(20000) })
+      const id = c.req.param('id')
+      if (id.startsWith('pt_')) {
+        const parts = id.split('_')
+        if (parts.length >= 3 && parts[1] && parts[2]) {
+          const ptId = parts[1]
+          const fId = parts[2]
+          const f = pt(c).file(me(c), ptId, fId)
+          return c.body(new Uint8Array(f.bytes), 200, {
+            'Content-Type': f.mime || 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(f.name)}"`,
+          })
+        }
+      }
+
+      const resp = await fetch(`${imagingWorkerUrl}/api/v1/samples/${id}/file`, { signal: AbortSignal.timeout(20000) })
       if (!resp.ok) return c.json({ error: 'sample_not_found' }, 404)
       const mime = resp.headers.get('content-type') || 'application/gzip'
       return c.body(new Uint8Array(await resp.arrayBuffer()), 200, {
         'Content-Type': mime,
-        'Content-Disposition': `attachment; filename="${c.req.param('id')}.nii.gz"`,
+        'Content-Disposition': `attachment; filename="${id}.nii.gz"`,
       })
     } catch (err: any) {
       return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
@@ -547,13 +628,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   app.get('/api/imaging/mpr/info', async c => {
     try {
-      const sampleId = c.req.query('sample_id') || 'chest_lung_ct'
+      const patientId = c.req.query('patient_id')
+      const recordId = c.req.query('record_id') || c.req.query('file_id')
+      let sampleId = c.req.query('sample_id') || 'chest_lung_ct'
       const filePath = c.req.query('file_path') || undefined
+
+      if (patientId) {
+        const volId = await ensureVolumeOnWorker(c, patientId, recordId)
+        if (volId) sampleId = volId
+      }
+
       const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/info`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sample_id: sampleId, file_path: filePath }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(15000),
       })
       if (!resp.ok) return c.json({ error: 'mpr_info_failed' }, resp.status as any)
       return c.json(await resp.json())
@@ -565,11 +654,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/imaging/mpr/info', async c => {
     try {
       const body = await c.req.json().catch(() => ({}))
+      if (body.patient_id) {
+        const volId = await ensureVolumeOnWorker(c, body.patient_id, body.record_id || body.file_id)
+        if (volId) body.sample_id = volId
+      }
       const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/info`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(15000),
       })
       if (!resp.ok) return c.json({ error: 'mpr_info_failed' }, resp.status as any)
       return c.json(await resp.json())
@@ -581,11 +674,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/imaging/mpr/slice', async c => {
     try {
       const body = await c.req.json().catch(() => ({}))
+      if (body.patient_id) {
+        const volId = await ensureVolumeOnWorker(c, body.patient_id, body.record_id || body.file_id)
+        if (volId) body.sample_id = volId
+      }
       const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/slice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(20000),
       })
       if (!resp.ok) return c.json({ error: 'mpr_slice_failed' }, resp.status as any)
       const data = await resp.json()
@@ -617,11 +714,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/imaging/mpr/diff-slice', async c => {
     try {
       const body = await c.req.json().catch(() => ({}))
+      if (body.patient_id) {
+        if (body.baseline_record_id || body.baseline_file_id) {
+          const bVolId = await ensureVolumeOnWorker(c, body.patient_id, body.baseline_record_id || body.baseline_file_id)
+          if (bVolId) body.baseline_id = bVolId
+        }
+        if (body.followup_record_id || body.followup_file_id) {
+          const fVolId = await ensureVolumeOnWorker(c, body.patient_id, body.followup_record_id || body.followup_file_id)
+          if (fVolId) body.followup_id = fVolId
+        }
+      }
       const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/diff-slice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(30000),
       })
       if (!resp.ok) return c.json({ error: 'mpr_diff_failed' }, resp.status as any)
       const data = await resp.json()
@@ -648,6 +755,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.json({ error: 'imaging_worker_offline', message: err.message }, 503)
     }
   })
+
 
   app.post('/api/imaging/radiomics', async c => {
     try {

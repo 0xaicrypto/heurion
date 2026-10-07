@@ -73,10 +73,12 @@ class FileAnalysisRequest(BaseModel):
 
 class MprInfoRequest(BaseModel):
     sample_id: Optional[str] = "chest_lung_ct"
+    volume_id: Optional[str] = None
     file_path: Optional[str] = None
 
 class MprSliceRequest(BaseModel):
     sample_id: Optional[str] = "chest_lung_ct"
+    volume_id: Optional[str] = None
     file_path: Optional[str] = None
     plane: Optional[str] = "axial"  # axial, coronal, sagittal
     slice_index: Optional[int] = None
@@ -87,6 +89,8 @@ class MprSliceRequest(BaseModel):
 class DiffSliceRequest(BaseModel):
     baseline_id: Optional[str] = "chest_lung_ct"
     followup_id: Optional[str] = "chest_lung_ct"
+    baseline_volume_id: Optional[str] = None
+    followup_volume_id: Optional[str] = None
     baseline_path: Optional[str] = None
     followup_path: Optional[str] = None
     plane: Optional[str] = "axial"
@@ -403,10 +407,59 @@ def get_sample_file(sample_id: str):
             )
     raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found in data directory")
 
+@app.post("/api/v1/volume/upload")
+async def upload_volume(
+    volume_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """
+    Receives and parses an encrypted/decrypted patient imaging volume archive (.zip)
+    or NIfTI / DICOM file and caches the 3D voxel array in memory for MPR slicing.
+    """
+    if engine.has_volume(volume_id):
+        vol, spacing, modality = engine.volume_cache[volume_id]
+        return {
+            "volume_id": volume_id,
+            "cached": True,
+            "dimensions": {"z": int(vol.shape[0]), "y": int(vol.shape[1]), "x": int(vol.shape[2])},
+            "voxel_spacing_mm": {"dz": round(float(spacing[0]), 3), "dy": round(float(spacing[1]), 3), "dx": round(float(spacing[2]), 3)},
+            "modality": modality
+        }
+
+    try:
+        from .dicom_io import load_volume
+    except (ImportError, ValueError):
+        from dicom_io import load_volume
+
+    content = await file.read()
+    try:
+        vol, spacing, modality = load_volume(content, filename=file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to decode imaging file '{file.filename}': {str(e)}")
+
+    info = engine.register_volume(volume_id, vol, spacing, modality)
+    info["cached"] = False
+    return info
+
+@app.get("/api/v1/volume/{volume_id}/status")
+def get_volume_status(volume_id: str):
+    """Checks whether a patient volume is actively loaded in the worker's cache."""
+    ready = engine.has_volume(volume_id)
+    if not ready:
+        return {"volume_id": volume_id, "ready": False}
+    vol, spacing, modality = engine.volume_cache[volume_id]
+    return {
+        "volume_id": volume_id,
+        "ready": True,
+        "dimensions": {"z": int(vol.shape[0]), "y": int(vol.shape[1]), "x": int(vol.shape[2])},
+        "voxel_spacing_mm": {"dz": round(float(spacing[0]), 3), "dy": round(float(spacing[1]), 3), "dx": round(float(spacing[2]), 3)},
+        "modality": modality
+    }
+
 @app.post("/api/v1/mpr/info")
 def get_mpr_volume_info(req: MprInfoRequest = Body(...)):
     """Returns 3D volume dimensions, spacing, slice counts and bounding box for a volume."""
-    target = req.file_path if req.file_path else (req.sample_id or "chest_lung_ct")
+    target = req.file_path or req.volume_id or req.sample_id or "chest_lung_ct"
     try:
         return engine.get_mpr_info(target)
     except Exception as e:
@@ -423,7 +476,7 @@ def get_mpr_volume_info_get(sample_id: str = "chest_lung_ct"):
 @app.post("/api/v1/mpr/slice")
 def get_mpr_slice(req: MprSliceRequest = Body(...)):
     """Extracts an arbitrary orthogonal 2D slice (Axial/Coronal/Sagittal) with windowing & overlay."""
-    target = req.file_path if req.file_path else (req.sample_id or "chest_lung_ct")
+    target = req.file_path or req.volume_id or req.sample_id or "chest_lung_ct"
     try:
         return engine.extract_mpr_slice(
             sample_id_or_path=target,
@@ -439,8 +492,8 @@ def get_mpr_slice(req: MprSliceRequest = Body(...)):
 @app.post("/api/v1/mpr/diff-slice")
 def get_diff_slice(req: DiffSliceRequest = Body(...)):
     """Extracts a registered 3D difference slice with regression/progression heatmap."""
-    base_target = req.baseline_path if req.baseline_path and os.path.exists(req.baseline_path) else (req.baseline_id or "chest_lung_ct")
-    follow_target = req.followup_path if req.followup_path and os.path.exists(req.followup_path) else (req.followup_id or "chest_lung_ct")
+    base_target = req.baseline_path if req.baseline_path and os.path.exists(req.baseline_path) else (req.baseline_volume_id or req.baseline_id or "chest_lung_ct")
+    follow_target = req.followup_path if req.followup_path and os.path.exists(req.followup_path) else (req.followup_volume_id or req.followup_id or "chest_lung_ct")
     try:
         return engine.extract_diff_slice(
             baseline_id_or_path=base_target,

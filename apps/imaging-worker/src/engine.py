@@ -3,7 +3,7 @@ import io
 import base64
 import time
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import torch
 from typing import Dict, Any, Tuple, Optional, List
@@ -93,10 +93,58 @@ def extract_largest_component(binary_mask: np.ndarray) -> np.ndarray:
     largest_label = int(np.argmax(counts))
     return (labeled == largest_label).astype(np.uint8)
 
+def _get_hud_font(size: int = 12) -> Tuple[Any, bool]:
+    """Returns a suitable font for clinical HUD drawing, and whether it supports CJK characters."""
+    font_candidates = [
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for p in font_candidates:
+        if os.path.exists(p):
+            try:
+                supports_cjk = any(k in p for k in ("Hiragino", "PingFang", "STHeiti", "wqy", "NotoSansCJK", "Unicode"))
+                return ImageFont.truetype(p, size), supports_cjk
+            except Exception:
+                pass
+    try:
+        return ImageFont.load_default(), False
+    except Exception:
+        return None, False
+
 class MONAIEngine:
     def __init__(self):
         self.device = get_optimal_device()
         self.device_info = get_device_info()
+        self.volume_cache: Dict[str, Tuple[np.ndarray, Tuple[float, float, float], str]] = {}
+
+    def register_volume(
+        self,
+        volume_id: str,
+        volume: np.ndarray,
+        spacing: Tuple[float, float, float],
+        modality: str = "CT"
+    ) -> Dict[str, Any]:
+        """Registers a loaded 3D medical volume into the engine's memory cache."""
+        self.volume_cache[volume_id] = (volume, spacing, modality)
+        z, y, x = volume.shape
+        dz, dy, dx = spacing
+        return {
+            "volume_id": volume_id,
+            "dimensions": {"z": int(z), "y": int(y), "x": int(x)},
+            "voxel_spacing_mm": {"dz": round(float(dz), 3), "dy": round(float(dy), 3), "dx": round(float(dx), 3)},
+            "modality": modality
+        }
+
+    def has_volume(self, volume_id: str) -> bool:
+        """Checks if a volume is loaded in cache."""
+        return hasattr(self, "volume_cache") and volume_id in self.volume_cache
 
     def analyze_file(
         self,
@@ -287,34 +335,31 @@ class MONAIEngine:
         }
 
     def load_volume_data(self, sample_id_or_path: str) -> Tuple[np.ndarray, Tuple[float, float, float], str]:
-        """Loads a volume from a sample_id, benchmark, or file path."""
+        """Loads a volume from memory cache, sample_id, benchmark, or file path."""
+        # 1. In-memory volume cache check
+        if hasattr(self, "volume_cache") and sample_id_or_path in self.volume_cache:
+            return self.volume_cache[sample_id_or_path]
+
         try:
-            from .dicom_io import load_nifti, load_dicom_series
+            from .dicom_io import load_volume
         except (ImportError, ValueError):
-            from dicom_io import load_nifti, load_dicom_series
+            from dicom_io import load_volume
 
         data_dir = Path(__file__).resolve().parent.parent / "data"
-        modality = "CT"
 
-        # Check if sample ID exists in data dir
-        for ext in (".nii.gz", ".nii"):
+        # 2. Check if sample ID exists in data dir (.nii.gz, .nii, .zip)
+        for ext in (".nii.gz", ".nii", ".zip"):
             p = data_dir / f"{sample_id_or_path}{ext}"
             if p.exists():
-                vol, spacing = load_nifti(str(p))
-                if "mri" in sample_id_or_path.lower():
-                    modality = "MRI"
+                vol, spacing, modality = load_volume(str(p), filename=f"{sample_id_or_path}{ext}")
+                self.volume_cache[sample_id_or_path] = (vol, spacing, modality)
                 return vol, spacing, modality
 
-        # Check if direct file/dir path
+        # 3. Check if direct file/dir path
         if os.path.exists(sample_id_or_path):
-            if os.path.isdir(sample_id_or_path):
-                vol, spacing, meta = load_dicom_series(sample_id_or_path)
-                return vol, spacing, meta.get("modality", "CT")
-            elif sample_id_or_path.endswith((".nii", ".nii.gz")):
-                vol, spacing = load_nifti(sample_id_or_path)
-                if "mri" in sample_id_or_path.lower():
-                    modality = "MRI"
-                return vol, spacing, modality
+            vol, spacing, modality = load_volume(sample_id_or_path)
+            self.volume_cache[sample_id_or_path] = (vol, spacing, modality)
+            return vol, spacing, modality
 
         # Fallback to high-fidelity synthetic volume
         vol, _ = generate_synthetic_ct_volume(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
@@ -326,7 +371,7 @@ class MONAIEngine:
         z_dim, y_dim, x_dim = vol.shape
         dz, dy, dx = spacing
 
-        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus"))
+        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus")) or (float(np.min(vol)) < -500 and float(np.mean(vol)) < -150)
         lesion_mask = ((vol > -150.0) & (vol < 180.0)) if is_lung else ((vol > 30.0) & (vol < 110.0))
         z_idx, y_idx, x_idx = np.where(lesion_mask)
 
@@ -356,7 +401,7 @@ class MONAIEngine:
             },
             "center_slice": center,
             "bounding_box": bbox,
-            "recommended_windows": ["lung", "mediastinum"] if is_lung else ["abdomen", "mediastinum", "bone"]
+            "recommended_windows": ["lung", "mediastinum", "bone"] if is_lung else ["abdomen", "mediastinum", "bone"]
         }
 
     def extract_mpr_slice(
@@ -377,7 +422,7 @@ class MONAIEngine:
         if plane not in ("axial", "coronal", "sagittal"):
             plane = "axial"
 
-        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus"))
+        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus")) or (window_preset == "lung") or (float(np.min(vol)) < -500 and float(np.mean(vol)) < -150)
         mask = None
         if overlay:
             if is_lung:
@@ -430,24 +475,40 @@ class MONAIEngine:
                 mask_img = Image.fromarray(mask_rgba, mode="RGBA")
                 base_img = Image.alpha_composite(base_img, mask_img)
 
+        # 物理几何各向同性校正与高分辨率重采样 (Isometric Physical Aspect Ratio Resampling)
+        # 针对冠状位/矢状位切片，层厚 (dz) 与面内像素间距不同，必须按真实解剖毫米比例消除压缩扁平畸变
+        physical_aspect = (h * v_spacing) / max(w * h_spacing, 1e-4)
+        target_w = 512
+        target_h = int(round(target_w * physical_aspect))
+        target_h = max(128, min(1024, target_h))
+        if (target_w, target_h) != (w, h):
+            base_img = base_img.resize((target_w, target_h), resample=Image.Resampling.BILINEAR)
+            h_spacing = (w * h_spacing) / target_w
+            v_spacing = (h * v_spacing) / target_h
+            w, h = target_w, target_h
+
+        font, supports_cjk = _get_hud_font(13)
+        font_sm, _ = _get_hud_font(11)
+
         draw = ImageDraw.Draw(base_img)
         scale_bar_mm = 50.0 if w >= 256 else 20.0
         scale_px = int(scale_bar_mm / max(h_spacing, 0.01))
         margin_x = w - scale_px - 15
         margin_y = h - 20
         draw.line([(margin_x, margin_y), (margin_x + scale_px, margin_y)], fill=(255, 255, 255, 220), width=2)
-        draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220))
+        draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220), font=font_sm)
 
         win = CT_WINDOWS.get(window_preset, {"level": 40, "width": 400})
+        display_plane = plane_label if supports_cjk else plane.upper()
         hud = [
-            f"MPR // {plane_label} #{idx}/{total}",
+            f"MPR // {display_plane} #{idx}/{total}",
             f"{window_preset.title()} Window (W:{win['width']} L:{win['level']})",
             f"Voxel: {round(h_spacing, 2)}x{round(v_spacing, 2)} mm"
         ]
         y_off = 10
         for l in hud:
-            draw.text((12, y_off), l, fill=(230, 235, 245, 230))
-            y_off += 15
+            draw.text((12, y_off), l, fill=(230, 235, 245, 230), font=font)
+            y_off += 16
 
         buf = io.BytesIO()
         base_img.convert("RGB").save(buf, format="PNG", optimize=True)
@@ -571,24 +632,46 @@ class MONAIEngine:
             over_img = Image.fromarray(overlay_rgba, mode="RGBA")
             base_img = Image.alpha_composite(base_img, over_img)
 
+        # 物理几何各向同性校正与高分辨率重采样
+        physical_aspect = (h * v_spacing) / max(w * h_spacing, 1e-4)
+        target_w = 512
+        target_h = int(round(target_w * physical_aspect))
+        target_h = max(128, min(1024, target_h))
+        if (target_w, target_h) != (w, h):
+            base_img = base_img.resize((target_w, target_h), resample=Image.Resampling.BILINEAR)
+            h_spacing = (w * h_spacing) / target_w
+            v_spacing = (h * v_spacing) / target_h
+            w, h = target_w, target_h
+
+        font, supports_cjk = _get_hud_font(13)
+        font_sm, _ = _get_hud_font(11)
+
         draw = ImageDraw.Draw(base_img)
         scale_bar_mm = 50.0 if w >= 256 else 20.0
         scale_px = int(scale_bar_mm / max(h_spacing, 0.01))
         margin_x = w - scale_px - 15
         margin_y = h - 20
         draw.line([(margin_x, margin_y), (margin_x + scale_px, margin_y)], fill=(255, 255, 255, 220), width=2)
-        draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220))
+        draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220), font=font_sm)
 
         win = CT_WINDOWS.get(window_preset, {"level": 40, "width": 400})
-        hud = [
-            f"3D Voxel Diff // {plane_label} #{idx}/{total}",
-            f"{window_preset.title()} (W:{win['width']} L:{win['level']}) · Thresh ±{int(threshold_hu)} HU",
-            f"🟢 吸收: {regressed_vol_cm3}cm³ | 🔴 进展: {progressed_vol_cm3}cm³",
-        ]
+        display_plane = plane_label if supports_cjk else plane.upper()
+        if supports_cjk:
+            hud = [
+                f"3D 体素差分 // {display_plane} #{idx}/{total}",
+                f"{window_preset.title()} (W:{win['width']} L:{win['level']}) · 阈值 ±{int(threshold_hu)} HU",
+                f"吸收改善: {regressed_vol_cm3} cm3 | 进展增大: {progressed_vol_cm3} cm3",
+            ]
+        else:
+            hud = [
+                f"3D Voxel Diff // {display_plane} #{idx}/{total}",
+                f"{window_preset.title()} (W:{win['width']} L:{win['level']}) · Thresh ±{int(threshold_hu)} HU",
+                f"[+] Regr: {regressed_vol_cm3} cm3 | [-] Prog: {progressed_vol_cm3} cm3",
+            ]
         y_off = 10
         for l in hud:
-            draw.text((12, y_off), l, fill=(230, 235, 245, 230))
-            y_off += 15
+            draw.text((12, y_off), l, fill=(230, 235, 245, 230), font=font)
+            y_off += 16
 
         buf = io.BytesIO()
         base_img.convert("RGB").save(buf, format="PNG", optimize=True)
