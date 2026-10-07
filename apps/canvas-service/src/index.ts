@@ -40,6 +40,9 @@ const handler = buildCanvasHandler({
 const server = createServer(handler)
 attachCanvasCollab(server, { docs, secret: SECRET, devMode: DEV_MODE, devUser: DEV_USER })
 
+// 内存优化：空闲文档自动驱逐
+setInterval(() => docs.evictIdle(), 5 * 60_000).unref()
+
 server.listen(PORT, () => {
   console.log(`
 ┌─────────────────────────────────────────────────────────────┐

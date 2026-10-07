@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 import tempfile
 import zipfile
 import shutil
+import threading
 from pathlib import Path
 
 app = FastAPI(
@@ -36,6 +37,10 @@ app.add_middleware(
 
 engine = MONAIEngine()
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# 并发保护：重型 3D 卷积与图像配准属于 GPU/CPU 密集型计算，
+# 限制最大并发执行数为 2（可由 IMAGING_CONCURRENCY 调节），防止突发并发直接打爆 GPU VRAM 或物理内存导致 OOM Kill。
+INFERENCE_SEMAPHORE = threading.Semaphore(int(os.environ.get("IMAGING_CONCURRENCY", "2")))
 
 class BenchmarkRequest(BaseModel):
     model_name: Optional[str] = "lung_nodule_segmenter"
@@ -525,15 +530,16 @@ def run_sample_analysis(req: SampleRequest = Body(...)):
             model_name = "liver_lesion_segmenter"
 
     try:
-        return engine.analyze_file(
-            file_path=str(sample_file),
-            model_name=model_name,
-            window_preset=req.window_preset,
-            mucus_min_hu=req.mucus_min_hu,
-            mucus_max_hu=req.mucus_max_hu,
-            ham_threshold_hu=req.ham_threshold_hu,
-            bar_cutoff=req.bar_cutoff
-        )
+        with INFERENCE_SEMAPHORE:
+            return engine.analyze_file(
+                file_path=str(sample_file),
+                model_name=model_name,
+                window_preset=req.window_preset,
+                mucus_min_hu=req.mucus_min_hu,
+                mucus_max_hu=req.mucus_max_hu,
+                ham_threshold_hu=req.ham_threshold_hu,
+                bar_cutoff=req.bar_cutoff
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
@@ -543,15 +549,16 @@ def run_file_analysis(req: FileAnalysisRequest = Body(...)):
     if not os.path.exists(req.file_path):
         raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
     try:
-        return engine.analyze_file(
-            file_path=req.file_path,
-            model_name=req.model_name or "spleen_segmenter",
-            window_preset=req.window_preset,
-            mucus_min_hu=req.mucus_min_hu,
-            mucus_max_hu=req.mucus_max_hu,
-            ham_threshold_hu=req.ham_threshold_hu,
-            bar_cutoff=req.bar_cutoff
-        )
+        with INFERENCE_SEMAPHORE:
+            return engine.analyze_file(
+                file_path=req.file_path,
+                model_name=req.model_name or "spleen_segmenter",
+                window_preset=req.window_preset,
+                mucus_min_hu=req.mucus_min_hu,
+                mucus_max_hu=req.mucus_max_hu,
+                ham_threshold_hu=req.ham_threshold_hu,
+                bar_cutoff=req.bar_cutoff
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
@@ -560,11 +567,12 @@ def run_radiomics_analysis(req: RadiomicsRequest = Body(...)):
     """Extracts 3D IBSI-compliant radiomics features (Shape, First-order, GLCM, GLRLM)."""
     target = req.file_path or req.sample_id
     try:
-        return engine.extract_radiomics(
-            sample_id_or_path=target,
-            model_name=req.model_name or "lung_nodule_segmenter",
-            num_bins=req.num_bins or 16
-        )
+        with INFERENCE_SEMAPHORE:
+            return engine.extract_radiomics(
+                sample_id_or_path=target,
+                model_name=req.model_name or "lung_nodule_segmenter",
+                num_bins=req.num_bins or 16
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Radiomics extraction failed: {str(e)}")
 
@@ -715,45 +723,58 @@ async def run_upload_analysis(
             with open(zip_path, "wb") as f_out:
                 f_out.write(content)
             with zipfile.ZipFile(zip_path, "r") as zf:
+                total_uncompressed = 0
+                max_uncompressed = 500 * 1024 * 1024  # 500MB
+                resolved_tmp = Path(tmp_dir).resolve()
+                for member in zf.infolist():
+                    target_path = (resolved_tmp / member.filename).resolve()
+                    if not target_path.is_relative_to(resolved_tmp):
+                        raise HTTPException(status_code=400, detail="Zip Slip detected: 非法压缩包路径")
+                    total_uncompressed += member.file_size
+                    if total_uncompressed > max_uncompressed:
+                        raise HTTPException(status_code=400, detail="解压体积超过上限 (Max 500MB)")
                 zf.extractall(tmp_dir)
-            return engine.analyze_file(
-                file_path=tmp_dir,
-                model_name=model_name,
-                window_preset=window_preset,
-                mucus_min_hu=mucus_min_hu,
-                mucus_max_hu=mucus_max_hu,
-                ham_threshold_hu=ham_threshold_hu,
-                bar_cutoff=bar_cutoff
-            )
+            with INFERENCE_SEMAPHORE:
+                return engine.analyze_file(
+                    file_path=tmp_dir,
+                    model_name=model_name,
+                    window_preset=window_preset,
+                    mucus_min_hu=mucus_min_hu,
+                    mucus_max_hu=mucus_max_hu,
+                    ham_threshold_hu=ham_threshold_hu,
+                    bar_cutoff=bar_cutoff
+                )
     elif fn_lower.endswith((".dcm", ".dicom")):
         with tempfile.TemporaryDirectory() as tmp_dir:
             dcm_path = os.path.join(tmp_dir, file.filename or "slice.dcm")
             with open(dcm_path, "wb") as f_out:
                 f_out.write(content)
-            return engine.analyze_file(
-                file_path=tmp_dir,
-                model_name=model_name,
-                window_preset=window_preset,
-                mucus_min_hu=mucus_min_hu,
-                mucus_max_hu=mucus_max_hu,
-                ham_threshold_hu=ham_threshold_hu,
-                bar_cutoff=bar_cutoff
-            )
+            with INFERENCE_SEMAPHORE:
+                return engine.analyze_file(
+                    file_path=tmp_dir,
+                    model_name=model_name,
+                    window_preset=window_preset,
+                    mucus_min_hu=mucus_min_hu,
+                    mucus_max_hu=mucus_max_hu,
+                    ham_threshold_hu=ham_threshold_hu,
+                    bar_cutoff=bar_cutoff
+                )
     else:
         suffix = ".nii.gz" if fn_lower.endswith(".nii.gz") else ".nii"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
         try:
-            return engine.analyze_file(
-                file_path=tmp_path,
-                model_name=model_name,
-                window_preset=window_preset,
-                mucus_min_hu=mucus_min_hu,
-                mucus_max_hu=mucus_max_hu,
-                ham_threshold_hu=ham_threshold_hu,
-                bar_cutoff=bar_cutoff
-            )
+            with INFERENCE_SEMAPHORE:
+                return engine.analyze_file(
+                    file_path=tmp_path,
+                    model_name=model_name,
+                    window_preset=window_preset,
+                    mucus_min_hu=mucus_min_hu,
+                    mucus_max_hu=mucus_max_hu,
+                    ham_threshold_hu=ham_threshold_hu,
+                    bar_cutoff=bar_cutoff
+                )
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)

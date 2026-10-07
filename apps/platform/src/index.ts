@@ -155,6 +155,8 @@ if (indexed) console.log(`全文索引：补齐 ${indexed} 份文档`)
 const purge = () => { for (const id of store.purgeTrash(30)) { docs.unload(id); store.unindexDoc(id) } store.purgeAudit(365); store.purgeMemorySignals(60) }
 purge()
 setInterval(purge, 12 * 3600_000).unref()
+// 内存优化：空闲文档自动驱逐（每 5 分钟检查一次，驱逐无活跃连接且超过 10 分钟未被访问的文档，防长期运行内存泄漏）
+setInterval(() => docs.evictIdle(), 5 * 60_000).unref()
 // 定时整理记忆：每 6 小时看一次，有 3 条以上新信号、且距上次整理超过一天的用户整理一次（MEMORY_AUTO_REVIEW=0 关闭）
 if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
   setInterval(() => void (async () => {

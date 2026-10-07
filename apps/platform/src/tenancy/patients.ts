@@ -116,7 +116,7 @@ class TenantPatientDb {
     mkdirSync(this.files, { recursive: true })
     this.db = new DatabaseSync(join(dir, 'patients.db'))
     this.db.exec(`
-      PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
+      PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 10000; PRAGMA synchronous = NORMAL;
       CREATE TABLE IF NOT EXISTS seq (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS patients (
         id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_enc TEXT, sex TEXT, birth_year INTEGER, tags TEXT NOT NULL DEFAULT '[]', summary_enc TEXT,
