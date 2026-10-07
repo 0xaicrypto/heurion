@@ -89,12 +89,12 @@ h2 .ui-icon, h3 .ui-icon { margin-right: 6px; vertical-align: -0.12em; opacity: 
 .narrow-only { display: none !important; }
 
 /* —— 三栏布局（各自滚动，长文档不撑高整页） —— */
-.app { display: grid; grid-template-columns: 292px minmax(0, 1fr) 400px; grid-template-rows: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
+.app { display: grid; grid-template-columns: var(--nav-width, 292px) minmax(0, 1fr) 400px; grid-template-rows: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
 .app > * { min-height: 0; }
 .scrim { display: none; }
 
 /* —— 左栏：图标栏（工作空间）+ 内容栏（当前空间的操作与列表） —— */
-.nav { flex-direction: row !important; }
+.nav { flex-direction: row !important; position: relative; }
 .rail { width: 60px; flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 12px 6px 10px; border-right: 1px solid var(--line); background: var(--bg-deep); }
 .rail-mark { display: grid; place-items: center; height: 44px; margin-bottom: 10px; }
 .rail-mark .mark { width: 26px; height: 24px; }
@@ -117,8 +117,39 @@ h2 .ui-icon, h3 .ui-icon { margin-right: 6px; vertical-align: -0.12em; opacity: 
 .split.one { grid-template-columns: 1fr; }
 
 /* 没打开文档：AI 栏收起，顶栏只留标题 */
-.app.no-doc { grid-template-columns: 292px minmax(0, 1fr) 0; }
+.app.no-doc { grid-template-columns: var(--nav-width, 292px) minmax(0, 1fr) 0; }
 .app.no-doc .side, .app.no-doc #exportBtn, .app.no-doc #syncStatus, .app.no-doc #sideToggle, .app.no-doc #toolbar, .app.no-doc #deckToolbar { display: none !important; }
+
+/* 左侧边栏宽度可调拖拽手柄 */
+.nav-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 50;
+  touch-action: none;
+  user-select: none;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.nav-resizer:hover,
+.nav-resizer.dragging {
+  background: var(--mint);
+  opacity: 0.85;
+  box-shadow: 0 0 6px rgba(0, 255, 147, 0.4);
+}
+
+body.nav-resizing {
+  user-select: none !important;
+  cursor: col-resize !important;
+}
+
+body.nav-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 
 /* —— 左栏 —— */
 .nav { background: var(--nav-bg); color: var(--nav-text); border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }

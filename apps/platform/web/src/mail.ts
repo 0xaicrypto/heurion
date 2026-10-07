@@ -772,12 +772,6 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         <div class="mail-briefing-body">
           ${formatBriefingMarkdown(summary)}
         </div>
-
-        <!-- 底部生成元数据 -->
-        <div class="mail-briefing-foot">
-          <span>AI 研判 · ${generated_at ? new Date(generated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '刚刚'}</span>
-          <span class="mail-briefing-ai-tag">DeepSeek Engine</span>
-        </div>
       </li>
     `
   }

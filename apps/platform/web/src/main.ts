@@ -2018,3 +2018,75 @@ function friendlyError(message: string): string {
   for (const id of ['newDoc', 'newDeck']) $(id).addEventListener('click', () => setPanel(null))
 }
 
+// —— 左侧边栏宽度手工拖拽调整与记忆 ——
+function initNavResizer(): void {
+  const NAV_WIDTH_KEY = 'heurion.nav-width'
+  const DEFAULT_WIDTH = 292
+  const MIN_WIDTH = 220
+  const MAX_WIDTH = 680
+
+  const applyWidth = (w: number) => {
+    document.documentElement.style.setProperty('--nav-width', `${w}px`)
+  }
+
+  // 初始化时读取已保存的宽度
+  try {
+    const saved = localStorage.getItem(NAV_WIDTH_KEY)
+    if (saved) {
+      const num = parseInt(saved, 10)
+      if (num >= MIN_WIDTH && num <= MAX_WIDTH) {
+        applyWidth(num)
+      }
+    }
+  } catch {}
+
+  const resizer = document.getElementById('navResizer')
+  if (!resizer) return
+
+  let startX = 0
+  let startW = DEFAULT_WIDTH
+
+  const onPointerMove = (e: PointerEvent) => {
+    const dx = e.clientX - startX
+    const newW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startW + dx))
+    applyWidth(newW)
+  }
+
+  const onPointerUp = (e: PointerEvent) => {
+    resizer.classList.remove('dragging')
+    document.body.classList.remove('nav-resizing')
+    window.removeEventListener('pointermove', onPointerMove)
+    window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointercancel', onPointerUp)
+
+    const dx = e.clientX - startX
+    const finalW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startW + dx))
+    try {
+      localStorage.setItem(NAV_WIDTH_KEY, `${finalW}px`)
+    } catch {}
+  }
+
+  resizer.addEventListener('pointerdown', (e: PointerEvent) => {
+    e.preventDefault()
+    startX = e.clientX
+    const nav = document.querySelector<HTMLElement>('aside.nav')
+    startW = nav ? nav.getBoundingClientRect().width : DEFAULT_WIDTH
+    resizer.classList.add('dragging')
+    document.body.classList.add('nav-resizing')
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+  })
+
+  // 双击手柄快速恢复默认 292px 宽度
+  resizer.addEventListener('dblclick', () => {
+    applyWidth(DEFAULT_WIDTH)
+    try {
+      localStorage.removeItem(NAV_WIDTH_KEY)
+    } catch {}
+  })
+}
+
+initNavResizer()
+

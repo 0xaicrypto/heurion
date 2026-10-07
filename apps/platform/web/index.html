@@ -9,6 +9,7 @@
   <script>
     // 首帧前设好主题（与 src/theme.ts 同一规则），避免先闪深色再变浅色
     try { var t = localStorage.getItem('heurion.theme'); if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; if (t === 'light') { document.documentElement.dataset.theme = 'light'; document.querySelector('meta[name="theme-color"]').content = '#F4F7F5' } } catch (e) {}
+    try { var nw = localStorage.getItem('heurion.nav-width'); if (nw) document.documentElement.style.setProperty('--nav-width', nw); } catch (e) {}
   </script>
 </head>
 <body>
@@ -99,6 +100,7 @@
       <ul class="doclist" id="calList" hidden></ul>
       <ul class="doclist" id="mailList" hidden></ul>
     </div>
+    <div class="nav-resizer" id="navResizer" role="separator" aria-orientation="vertical" title="按住拖拽调整左侧栏宽度，双击恢复默认宽度"></div>
   </aside>
 
   <main class="center">
