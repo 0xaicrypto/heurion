@@ -72,7 +72,18 @@ const memory = new MemoryService(store, embedder)
 // 记忆演进：收集用户改写 AI 段落 / 拒绝修订的信号；整理（合并、改写、归档、总结新规律）都是待用户采纳的建议
 new MemorySignals(store, memory, docs)
 const evolution = new MemoryEvolution(store, memory, docs, makeComplete({ upstream: config.llmUpstream, apiKey: config.deepseekApiKey, model: config.model }))
-const mailer = createMailer({ resendApiKey: config.resendApiKey, from: config.emailFrom, production: process.env.NODE_ENV === 'production' })
+const mailer = createMailer({
+  resendApiKey: config.resendApiKey,
+  smtp: config.smtpHost ? {
+    host: config.smtpHost,
+    port: config.smtpPort,
+    secure: config.smtpSecure,
+    user: config.smtpUser,
+    pass: config.smtpPass,
+  } : undefined,
+  from: config.emailFrom,
+  production: process.env.NODE_ENV === 'production',
+})
 // 运维告警：模型服务不可用、回合大量失败时发邮件给管理员
 const alerts = new Alerts(store, mailer)
 // 数据集（实验室数据分析）：上传的表格在该用户的隔离环境里解析（与 AI 代码同一个 uid）
@@ -154,7 +165,7 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const mail = new MailService(store)
+const mail = new MailService(store, mailer, { domain: config.mailDomain })
 const calendar = new CalendarService(store, mail)
 const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, shares, studies, cohort, images, access, mail, calendar, workspaceDir: userId => pool.workspaceDir(userId) })
 // MCP 的管理类工具以用户身份进程内调用同一个 HTTP 应用（AI 的权限 = 用户的权限，见 http/invoke.ts）

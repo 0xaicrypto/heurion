@@ -1,8 +1,9 @@
-import type { Store, MailMessageRow } from '../store/db.ts'
-import { randomUUID } from 'node:crypto'
+import type { Store, MailMessageRow, UserRow } from '../store/db.ts'
+import type { Mailer } from '../auth/mailer.ts'
 
 export interface SendMailInput {
   userId: string
+  recipientUserId?: string | null
   tenantId?: string | null
   sender?: string
   senderName?: string
@@ -15,21 +16,53 @@ export interface SendMailInput {
   studyId?: string | null
   studyTitle?: string | null
   calendarEventId?: string | null
+  folder?: 'inbox' | 'sent'
+}
+
+export interface MailDeliveryInfo {
+  status: 'delivered' | 'external_sent' | 'simulated' | 'failed'
+  note: string
+  external: boolean
+  configured: boolean
 }
 
 export class MailService {
-  constructor(private readonly store: Store) {}
+  readonly domain: string
 
-  /** 用户的工作邮箱地址 (默认使用 heurion.com 域名) */
+  constructor(
+    private readonly store: Store,
+    private readonly mailer?: Mailer,
+    opts: { domain?: string } = {},
+  ) {
+    this.domain = opts.domain || 'heurion.org'
+  }
+
+  /** 是否配置了真实外网发信服务 (SMTP 或 Resend) */
+  isConfigured(): boolean {
+    return this.mailer?.configured ?? false
+  }
+
+  /** 发信服务类型 ('smtp' | 'resend' | 'dev-mock') */
+  mailerMode(): string {
+    return this.mailer?.mode ?? 'dev-mock'
+  }
+
+  /** 用户的工作邮箱地址 (优先根据用户名生成专属邮箱，如 hui@heurion.org) */
   userEmail(username: string): string {
     const cleanUser = username.toLowerCase().replace(/[^a-z0-9_.-]/g, '') || 'doctor'
-    return `dr.${cleanUser}@heurion.com`
+    return `${cleanUser}@${this.domain}`
+  }
+
+  /** 是否属于平台内部域名 */
+  isPlatformDomain(email: string): boolean {
+    const lower = email.toLowerCase()
+    return lower.endsWith(`@${this.domain}`) || lower.endsWith('@heurion.org') || lower.endsWith('@heurion.com')
   }
 
   /** 获取邮件列表（若首次访问则自动载入临床与科研示范邮件） */
-  list(userId: string, username: string, category?: string): MailMessageRow[] {
+  list(userId: string, username: string, filterOrCategory?: string | { category?: string; folder?: string }): MailMessageRow[] {
     this.ensureSeed(userId, username)
-    return this.store.listMailMessages(userId, category)
+    return this.store.listMailMessages(userId, filterOrCategory)
   }
 
   /** 获取单封邮件 */
@@ -37,16 +70,61 @@ export class MailService {
     return this.store.getMailMessage(userId, id)
   }
 
-  /** 发送新邮件 */
+  /** 发送新邮件（同步落库 + 异步外网派发） */
   send(input: SendMailInput): MailMessageRow {
-    const sender = input.sender || 'Heurion 临床工作站 <notify@heurion.com>'
-    const senderName = input.senderName || 'Heurion 协作网络'
-    return this.store.createMailMessage({
+    const user = this.store.getUser(input.userId)
+    const sender = input.sender || this.userEmail(user?.username ?? input.userId)
+    const senderName = input.senderName || user?.display_name || '主诊医师'
+    const recipient = input.recipient.trim()
+
+    // 若明确指定投递至收件箱（如日程创建联动自动下发给本人的随访/科研提醒）
+    if (input.folder === 'inbox') {
+      return this.store.createMailMessage({
+        user_id: input.recipientUserId || input.userId,
+        tenant_id: input.tenantId ?? null,
+        sender,
+        sender_name: senderName,
+        recipient,
+        subject: input.subject,
+        body: input.body,
+        category: input.category,
+        patient_id: input.patientId ?? null,
+        patient_code: input.patientCode ?? null,
+        study_id: input.studyId ?? null,
+        study_title: input.studyTitle ?? null,
+        read: 0,
+        starred: 0,
+        calendar_event_id: input.calendarEventId ?? null,
+        folder: 'inbox',
+        delivery_status: 'delivered',
+        delivery_note: '系统日程提醒即时送达',
+      })
+    }
+
+    const internalUser = this.findInternalUser(recipient)
+    const isDomain = this.isPlatformDomain(recipient)
+    const isExternal = !internalUser && !isDomain
+
+    let deliveryStatus: MailMessageRow['delivery_status'] = 'delivered'
+    let deliveryNote = '院内 / 课题组即时协同送达'
+
+    if (isExternal) {
+      if (this.mailer?.configured) {
+        deliveryStatus = 'external_sent'
+        deliveryNote = `已通过外网发信服务 (${this.mailer.mode.toUpperCase()}) 投递至 ${recipient}`
+      } else {
+        deliveryStatus = 'simulated'
+        deliveryNote = `本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)，外部邮箱 (${recipient}) 暂无法收到真实邮件；若需真实发信请在 .env 中配置 SMTP 服务。`
+      }
+    }
+
+    // 1. 发件人发件箱归档 (folder = 'sent')
+    const sentMsg = this.store.createMailMessage({
       user_id: input.userId,
       tenant_id: input.tenantId ?? null,
       sender,
       sender_name: senderName,
-      recipient: input.recipient,
+      recipient,
       subject: input.subject,
       body: input.body,
       category: input.category,
@@ -54,9 +132,252 @@ export class MailService {
       patient_code: input.patientCode ?? null,
       study_id: input.studyId ?? null,
       study_title: input.studyTitle ?? null,
-      read: 0,
+      read: 1, // 发件人本人视角默认已阅
       starred: 0,
       calendar_event_id: input.calendarEventId ?? null,
+      folder: 'sent',
+      delivery_status: deliveryStatus,
+      delivery_note: deliveryNote,
+    })
+
+    // 2. 若收件人为系统内部用户（或发给自己），投递一封至收件人收件箱 (folder = 'inbox')
+    if (internalUser) {
+      this.store.createMailMessage({
+        user_id: internalUser.id,
+        tenant_id: internalUser.tenant_id ?? null,
+        sender,
+        sender_name: senderName,
+        recipient,
+        subject: input.subject,
+        body: input.body,
+        category: input.category,
+        patient_id: input.patientId ?? null,
+        patient_code: input.patientCode ?? null,
+        study_id: input.studyId ?? null,
+        study_title: input.studyTitle ?? null,
+        read: 0,
+        starred: 0,
+        calendar_event_id: input.calendarEventId ?? null,
+        folder: 'inbox',
+        delivery_status: 'delivered',
+        delivery_note: '院内即时协同送达',
+      })
+    }
+
+    // 3. 外网邮件异步发送（或本地模拟打印）
+    if (isExternal && this.mailer) {
+      const senderAddress = (sender.endsWith(`@${this.domain}`) || sender.endsWith('@heurion.org') || sender.endsWith('@heurion.com'))
+        ? sender
+        : this.userEmail(user?.username ?? input.userId)
+      const mailOpts = {
+        replyTo: user?.email || senderAddress,
+        senderName: `${senderName} (Heurion)`,
+        senderAddress,
+      }
+      this.mailer.send(recipient, input.subject, input.body, undefined, mailOpts)
+        .then(res => {
+          if (res.mode === 'simulated') {
+            this.store.updateMailDelivery(sentMsg.id, 'simulated', `本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)，外部邮箱 (${recipient}) 暂无法收到真实邮件；若需真实发信请在 .env 中配置 SMTP 服务。`)
+          } else {
+            this.store.updateMailDelivery(sentMsg.id, 'external_sent', `已通过 ${res.mode.toUpperCase()} 成功送出至 ${recipient}`)
+          }
+        })
+        .catch(err => {
+          this.store.updateMailDelivery(sentMsg.id, 'failed', `外网发送失败: ${(err as Error).message}`)
+        })
+    }
+
+    return sentMsg
+  }
+
+  /** 发送新邮件（等待外网投递完成并返回详细状态） */
+  async sendAsync(input: SendMailInput): Promise<{ message: MailMessageRow; delivery: MailDeliveryInfo }> {
+    const user = this.store.getUser(input.userId)
+    const sender = input.sender || this.userEmail(user?.username ?? input.userId)
+    const senderName = input.senderName || user?.display_name || '主诊医师'
+    const recipient = input.recipient.trim()
+
+    const internalUser = this.findInternalUser(recipient)
+    const isDomain = this.isPlatformDomain(recipient)
+    const isExternal = !internalUser && !isDomain
+
+    const senderAddress = (sender.endsWith(`@${this.domain}`) || sender.endsWith('@heurion.org') || sender.endsWith('@heurion.com'))
+      ? sender
+      : this.userEmail(user?.username ?? input.userId)
+
+    const mailOpts = {
+      replyTo: user?.email || senderAddress,
+      senderName: `${senderName} (Heurion)`,
+      senderAddress,
+    }
+
+    let deliveryStatus: MailMessageRow['delivery_status'] = 'delivered'
+    let deliveryNote = '院内 / 课题组即时协同送达'
+
+    if (isExternal) {
+      if (this.mailer?.configured) {
+        try {
+          const res = await this.mailer.send(recipient, input.subject, input.body, undefined, mailOpts)
+          deliveryStatus = res.mode === 'simulated' ? 'simulated' : 'external_sent'
+          deliveryNote = res.mode === 'simulated'
+            ? `本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)，外部邮箱 (${recipient}) 暂无法收到真实邮件；若需真实发信请在 .env 中配置 SMTP 服务。`
+            : `已通过 ${res.mode.toUpperCase()} 成功发送至 ${recipient}`
+        } catch (err) {
+          deliveryStatus = 'failed'
+          deliveryNote = `外网发送失败: ${(err as Error).message}`
+        }
+      } else {
+        deliveryStatus = 'simulated'
+        deliveryNote = `本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)，外部邮箱 (${recipient}) 暂无法收到真实邮件；若需真实发信请在 .env 中配置 SMTP 服务。`
+        if (this.mailer) {
+          await this.mailer.send(recipient, input.subject, input.body, undefined, mailOpts).catch(() => {})
+        }
+      }
+    }
+
+    const sentMsg = this.store.createMailMessage({
+      user_id: input.userId,
+      tenant_id: input.tenantId ?? null,
+      sender,
+      sender_name: senderName,
+      recipient,
+      subject: input.subject,
+      body: input.body,
+      category: input.category,
+      patient_id: input.patientId ?? null,
+      patient_code: input.patientCode ?? null,
+      study_id: input.studyId ?? null,
+      study_title: input.studyTitle ?? null,
+      read: 1,
+      starred: 0,
+      calendar_event_id: input.calendarEventId ?? null,
+      folder: 'sent',
+      delivery_status: deliveryStatus,
+      delivery_note: deliveryNote,
+    })
+
+    if (internalUser) {
+      this.store.createMailMessage({
+        user_id: internalUser.id,
+        tenant_id: internalUser.tenant_id ?? null,
+        sender,
+        sender_name: senderName,
+        recipient,
+        subject: input.subject,
+        body: input.body,
+        category: input.category,
+        patient_id: input.patientId ?? null,
+        patient_code: input.patientCode ?? null,
+        study_id: input.studyId ?? null,
+        study_title: input.studyTitle ?? null,
+        read: 0,
+        starred: 0,
+        calendar_event_id: input.calendarEventId ?? null,
+        folder: 'inbox',
+        delivery_status: 'delivered',
+        delivery_note: '院内即时协同送达',
+      })
+    }
+
+    return {
+      message: sentMsg,
+      delivery: {
+        status: deliveryStatus ?? 'delivered',
+        note: deliveryNote,
+        external: isExternal,
+        configured: this.mailer?.configured ?? false,
+      },
+    }
+  }
+
+  /** 接收来自外部 Webhook (Cloudflare Email Routing 或 Resend Inbound) 的外部来信并实现方案 3（站内归档 + 个人邮箱自动转发副本） */
+  async receiveInbound(input: {
+    from: string
+    fromName?: string
+    to: string
+    subject: string
+    body: string
+    category?: 'followup' | 'research' | 'notification' | 'general'
+  }): Promise<{ success: boolean; message?: MailMessageRow; forwardedTo?: string; reason?: string }> {
+    const recipient = input.to.trim()
+    const internalUser = this.findInternalUser(recipient)
+    if (!internalUser) {
+      return { success: false, reason: `收件地址 ${recipient} 未匹配到站内有效医生/研究员账户` }
+    }
+
+    const msg = this.store.createMailMessage({
+      user_id: internalUser.id,
+      tenant_id: internalUser.tenant_id ?? null,
+      sender: input.from.trim(),
+      sender_name: input.fromName || input.from.split('@')[0] || '外部来信',
+      recipient,
+      subject: input.subject || '（无主题）',
+      body: input.body || '',
+      category: input.category || 'general',
+      patient_id: null,
+      patient_code: null,
+      study_id: null,
+      study_title: null,
+      calendar_event_id: null,
+      folder: 'inbox',
+      read: 0,
+      starred: 0,
+      delivery_status: 'delivered',
+      delivery_note: '外部外网来信 (通过 Webhook 接收)',
+    })
+
+    // 方案 3 联动：若医生在平台绑定了外部个人邮箱（如 Gmail / 医院邮箱），自动将副本无缝转交至其个人邮箱
+    let forwardedTo: string | undefined
+    const personalEmail = internalUser.email?.trim()
+    if (personalEmail && personalEmail.toLowerCase() !== recipient.toLowerCase() && this.mailer?.configured) {
+      forwardedTo = personalEmail
+      const forwardSubject = `[Heurion 外部来信转交] ${input.subject || '（无主题）'}`
+      const forwardBody = `【Heurion 临床工作站 · 专属邮箱自动转交通知】\n\n`
+        + `发件人: ${input.fromName ? `${input.fromName} <${input.from}>` : input.from}\n`
+        + `收件人: ${recipient} (您的 Heurion 专属工作邮箱)\n`
+        + `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n`
+        + `--------------------------------------------------\n\n`
+        + `${input.body}\n\n`
+        + `--------------------------------------------------\n`
+        + `提示：此邮件已同步归档至您的 Heurion 工作台【收件箱】中。直接回复此邮件即可送达外部发件人。`
+
+      this.mailer.send(personalEmail, forwardSubject, forwardBody, undefined, {
+        replyTo: input.from,
+        senderName: `${input.fromName || '外部发件人'} (via Heurion)`,
+        senderAddress: recipient,
+      }).catch(err => {
+        console.error('[inbound-forward-error]', personalEmail, (err as Error).message)
+      })
+    }
+
+    return { success: true, message: msg, forwardedTo }
+  }
+
+  /** 查找系统注册的站内收件用户 */
+  findInternalUser(recipientEmail: string): UserRow | undefined {
+    const clean = recipientEmail.trim().toLowerCase()
+    const byEmail = this.store.getUserByEmail(clean)
+    if (byEmail) return byEmail
+
+    const heurionMatch = clean.match(/^(?:dr\.)?([a-z0-9_.-]+)@(heurion\.org|heurion\.com)$/)
+    if (heurionMatch && heurionMatch[1]) {
+      const username = heurionMatch[1]
+      const byName = this.store.getUserByName(username)
+      if (byName) return byName
+    }
+
+    const all = this.store.listUsers()
+    return all.find(u => {
+      const uname = u.username.toLowerCase()
+      if (u.email && u.email.toLowerCase() === clean) return true
+      if (uname === clean) return true
+      if (`${uname}@${this.domain}` === clean) return true
+      if (`dr.${uname}@${this.domain}` === clean) return true
+      if (`${uname}@heurion.org` === clean) return true
+      if (`dr.${uname}@heurion.org` === clean) return true
+      if (`${uname}@heurion.com` === clean) return true
+      if (`dr.${uname}@heurion.com` === clean) return true
+      return false
     })
   }
 
@@ -75,6 +396,7 @@ export class MailService {
     this.store.deleteMailMessage(userId, id)
   }
 
+
   /** 首次访问用户种子数据初始化：涵盖随访计划与科研项目进度两大核心类别 */
   private ensureSeed(userId: string, username: string): void {
     const existing = this.store.listMailMessages(userId)
@@ -84,7 +406,7 @@ export class MailService {
     const now = new Date()
     const isoHoursAgo = (hours: number) => new Date(now.getTime() - hours * 3600000).toISOString()
 
-    const seedMails: Array<Omit<MailMessageRow, 'id'>> = [
+    const seedMails: Array<Omit<MailMessageRow, 'id' | 'folder' | 'delivery_status' | 'delivery_note'>> = [
       {
         user_id: userId,
         tenant_id: null,

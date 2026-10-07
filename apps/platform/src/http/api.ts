@@ -2222,11 +2222,22 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   })
 
   // —— 邮件与随访计划、科研进度信箱 (Mail) ——
+  app.get('/api/mail/status', c => {
+    const user = c.get('user')
+    const u = store.getUser(user)
+    return c.json({
+      configured: mail.isConfigured(),
+      mode: mail.mailerMode(),
+      user_email: mail.userEmail(u?.username ?? user),
+    })
+  })
+
   app.get('/api/mail/messages', c => {
     const user = c.get('user')
     const u = store.getUser(user)
     const category = c.req.query('category') || undefined
-    const list = mail.list(user, u?.username ?? user, category)
+    const folder = c.req.query('folder') || 'inbox'
+    const list = mail.list(user, u?.username ?? user, { category, folder })
     return c.json(list)
   })
 
@@ -2242,7 +2253,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     const u = store.getUser(user)
     const body = await c.req.json()
     if (!body.subject || !body.body) return c.json({ error: '主题与正文不能为空' }, 400)
-    const m = mail.send({
+    const result = await mail.sendAsync({
       userId: user,
       tenantId: u?.tenant_id,
       sender: mail.userEmail(u?.username ?? user),
@@ -2256,8 +2267,9 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       studyId: body.study_id,
       studyTitle: body.study_title,
     })
-    return c.json(m, 201)
+    return c.json({ ...result.message, delivery: result.delivery }, 201)
   })
+
 
   app.patch('/api/mail/messages/:id/read', async c => {
     const user = c.get('user')
@@ -2280,6 +2292,31 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!m) return c.json({ error: '邮件不存在' }, 404)
     mail.delete(user, c.req.param('id'))
     return c.json({ ok: true })
+  })
+
+  // 外部来信 Webhook (支持 Cloudflare Email Routing / Resend Inbound 等投递给各医生专属邮箱，如 hui@heurion.org)
+  app.post('/api/mail/inbound', async c => {
+    const secret = process.env.MAIL_INBOUND_SECRET
+    if (secret && c.req.header('x-inbound-secret') !== secret && c.req.header('authorization') !== `Bearer ${secret}`) {
+      return c.json({ error: 'unauthorized' }, 401)
+    }
+    const body = await c.req.json().catch(() => ({}))
+    const from = body.from || body.sender || ''
+    const to = Array.isArray(body.to) ? body.to[0] : (body.to || body.recipient || '')
+    const subject = body.subject || ''
+    const text = body.text || body.body || body.html || ''
+    if (!to || !from) return c.json({ error: '缺少发件人(from)或收件人(to)' }, 400)
+
+    const res = await mail.receiveInbound({
+      from,
+      fromName: body.from_name || body.name,
+      to,
+      subject,
+      body: text,
+      category: body.category || 'general',
+    })
+    if (!res.success) return c.json({ ok: false, error: res.reason }, 404)
+    return c.json({ ok: true, id: res.message?.id, forwarded_to: res.forwardedTo }, 201)
   })
 
   // —— 日历与随访排期、科研项目进度 (Calendar) ——

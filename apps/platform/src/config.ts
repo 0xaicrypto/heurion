@@ -42,9 +42,15 @@ export const config = {
   /** dsh 调模型走平台代理（真实 key 不进 dsh）：dsh 用的地址与代理转发的上游。 */
   llmProxyUrl: env('HEURION_LLM_URL', `http://127.0.0.1:${port}/llm/v1`),
   llmUpstream: env('DEEPSEEK_UPSTREAM_URL', 'https://api.deepseek.com/anthropic/v1'),
-  /** 验证码邮件（找回密码、绑定邮箱），同 1.0：Resend。未配置时开发环境把验证码打到日志。 */
+  /** 邮件发信服务配置：标准 SMTP (首选) 或 Resend API */
+  smtpHost: process.env.SMTP_HOST || process.env.NEXUS_SMTP_HOST || '',
+  smtpPort: Number(process.env.SMTP_PORT || process.env.NEXUS_SMTP_PORT || '465'),
+  smtpSecure: process.env.SMTP_SECURE === '1' || process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465' || process.env.NEXUS_SMTP_PORT === '465',
+  smtpUser: process.env.SMTP_USER || process.env.NEXUS_SMTP_USER || '',
+  smtpPass: process.env.SMTP_PASS || process.env.NEXUS_SMTP_PASSWORD || process.env.NEXUS_SMTP_PASS || '',
   resendApiKey: process.env.RESEND_API_KEY ?? '',
-  emailFrom: process.env.EMAIL_FROM ?? '',
+  emailFrom: process.env.EMAIL_FROM || process.env.SMTP_FROM || 'Heurion 临床工作站 <no-reply@heurion.org>',
+  mailDomain: process.env.MAIL_DOMAIN || 'heurion.org',
   /** 本地嵌入服务（apps/embedder，bge-m3）；为空时资料库只用关键词检索。 */
   embeddingUrl: env('EMBEDDING_URL', 'http://127.0.0.1:8003'),
   /**

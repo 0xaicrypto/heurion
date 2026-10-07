@@ -64,6 +64,7 @@ export class CalendarService {
       const mailCategory = input.category === 'followup' ? 'followup' : input.category === 'research' ? 'research' : 'notification'
       const mail = this.mailService.send({
         userId: input.userId,
+        recipientUserId: input.userId,
         tenantId: input.tenantId,
         sender: input.category === 'followup' ? 'followup@heurion.com' : 'research@heurion.com',
         senderName: input.category === 'followup' ? 'Heurion 智能随访中心' : 'Heurion 科研协同办公室',
@@ -75,6 +76,7 @@ export class CalendarService {
         studyId: input.studyId,
         studyTitle: input.studyTitle,
         calendarEventId: event.id,
+        folder: 'inbox',
         body: `### 日程排期已确认\n\n- **日程主题**：${input.title}\n- **预约时间**：${input.startTime} ~ ${input.endTime}\n- **地点/形式**：${input.location || '线上 / 专科诊室'}\n${input.patientCode ? `- **关联患者**：\`${input.patientCode}\`\n` : ''}${input.studyTitle ? `- **关联课题**：${input.studyTitle}\n` : ''}\n**日程说明**：\n${input.description || '无具体说明'}\n\n该事项已同步保存在您的个人工作日历中。`,
       })
       this.store.updateCalendarEvent(input.userId, event.id, { mail_id: mail.id })

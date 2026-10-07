@@ -76,7 +76,11 @@
       </div>
       <div class="actions" id="mailActions" hidden>
         <button id="composeMailBtn" class="sky block" title="起草并发送医疗通知或随访科研邮件">＋ 写邮件</button>
-        <div class="split">
+        <div class="split mail-folder-split">
+          <button id="mailFolderInbox" class="ghost-dark on" title="查看收件箱（随访警示、课题通报）">收件箱</button>
+          <button id="mailFolderSent" class="ghost-dark" title="查看已发送邮件（外发通知、外网送达状态）">已发送</button>
+        </div>
+        <div class="split mail-category-split">
           <button id="mailFilterAll" class="ghost-dark on">全部</button>
           <button id="mailFilterFollowup" class="ghost-dark">随访</button>
           <button id="mailFilterResearch" class="ghost-dark">科研</button>

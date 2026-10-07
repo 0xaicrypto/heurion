@@ -76,8 +76,12 @@ export interface MailMessageRow {
   read: number
   starred: number
   calendar_event_id: string | null
+  folder: 'inbox' | 'sent' | 'trash'
+  delivery_status: 'delivered' | 'external_sent' | 'simulated' | 'failed' | null
+  delivery_note: string | null
   created_at: string
 }
+
 
 export interface CalendarEventRow {
   id: string
@@ -700,9 +704,10 @@ export class Store {
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, tenant_id TEXT, sender TEXT NOT NULL, sender_name TEXT NOT NULL,
         recipient TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, category TEXT NOT NULL,
         patient_id TEXT, patient_code TEXT, study_id TEXT, study_title TEXT,
-        read INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, calendar_event_id TEXT, created_at TEXT NOT NULL
+        read INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, calendar_event_id TEXT,
+        folder TEXT NOT NULL DEFAULT 'inbox', delivery_status TEXT, delivery_note TEXT, created_at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS mail_messages_user ON mail_messages (user_id, category, read);
+      CREATE INDEX IF NOT EXISTS mail_messages_user ON mail_messages (user_id, folder, category, read);
 
       CREATE TABLE IF NOT EXISTS calendar_events (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, tenant_id TEXT, title TEXT NOT NULL, description TEXT,
@@ -713,7 +718,21 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS calendar_events_user ON calendar_events (user_id, start_time);
     `)
+
+    const mailCols = (this.db.prepare('PRAGMA table_info(mail_messages)').all() as Array<{ name: string }>).map(c => c.name)
+    if (!mailCols.includes('folder')) {
+      this.db.exec("ALTER TABLE mail_messages ADD COLUMN folder TEXT NOT NULL DEFAULT 'inbox'")
+      this.db.exec("UPDATE mail_messages SET folder = 'sent' WHERE sender LIKE 'dr.%' AND recipient NOT LIKE 'dr.%' AND recipient NOT LIKE '%@heurion.com'")
+    }
+    if (!mailCols.includes('delivery_status')) {
+      this.db.exec('ALTER TABLE mail_messages ADD COLUMN delivery_status TEXT')
+    }
+    if (!mailCols.includes('delivery_note')) {
+      this.db.exec('ALTER TABLE mail_messages ADD COLUMN delivery_note TEXT')
+    }
+    this.db.exec("UPDATE mail_messages SET delivery_status = 'simulated', delivery_note = '本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)' WHERE folder = 'sent' AND delivery_status IS NULL")
   }
+
 
   // —— 文档 ——
 
@@ -733,8 +752,8 @@ export class Store {
 
   /** 用户名比较不区分大小写（username_key）。第一个用户自动成为管理员。 */
   /** 新用户：tenant 给定时加入该租户，否则建一个个人租户（本人为机构管理员）。 */
-  createUser(input: { username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null; email?: string | null; tenant?: { id: string; role: UserRow['tenant_role'] } }): UserRow {
-    const id = 'u' + randomUUID().replace(/-/g, '').slice(0, 15)
+  createUser(input: { id?: string; username: string; display_name: string; password_hash: string; role?: UserRow['role']; status?: UserRow['status']; imported_from?: string | null; email?: string | null; tenant?: { id: string; role: UserRow['tenant_role'] } }): UserRow {
+    const id = input.id ?? ('u' + randomUUID().replace(/-/g, '').slice(0, 15))
     const role = input.role ?? (this.countUsers() === 0 ? 'admin' : 'user')
     const tenant = input.tenant ?? { id: this.createTenant({ name: `${input.display_name}（个人）`, kind: 'personal', created_by: id }).id, role: 'admin' as const }
     // 个人注册：个人空间就是工作空间；经邀请注册进机构的：个人空间等知家用到再建
@@ -1947,31 +1966,50 @@ export class Store {
 
   // —— 邮件 (Mail) ——
 
-  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at'> & { id?: string; created_at?: string }): MailMessageRow {
+  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at' | 'folder' | 'delivery_status' | 'delivery_note'> & { id?: string; created_at?: string; folder?: MailMessageRow['folder']; delivery_status?: MailMessageRow['delivery_status']; delivery_note?: string | null }): MailMessageRow {
     const id = input.id ?? randomUUID()
     const createdAt = input.created_at ?? now()
+    const folder = input.folder ?? 'inbox'
+    const deliveryStatus = input.delivery_status ?? (folder === 'sent' ? 'delivered' : null)
+    const deliveryNote = input.delivery_note ?? null
     this.db.prepare(`
-      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, folder, delivery_status, delivery_note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.user_id, input.tenant_id ?? null, input.sender, input.sender_name,
       input.recipient, input.subject, input.body, input.category,
       input.patient_id ?? null, input.patient_code ?? null, input.study_id ?? null, input.study_title ?? null,
-      input.read ? 1 : 0, input.starred ? 1 : 0, input.calendar_event_id ?? null, createdAt
+      input.read ? 1 : 0, input.starred ? 1 : 0, input.calendar_event_id ?? null,
+      folder, deliveryStatus, deliveryNote, createdAt
     )
     return this.getMailMessage(input.user_id, id)!
   }
 
-  listMailMessages(userId: string, category?: string): MailMessageRow[] {
-    if (category && category !== 'all') {
-      return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? AND category = ? ORDER BY created_at DESC').all(userId, category) as unknown as MailMessageRow[]
+  listMailMessages(userId: string, filterOrCategory?: string | { category?: string; folder?: string }): MailMessageRow[] {
+    const opts = typeof filterOrCategory === 'string' ? { category: filterOrCategory } : filterOrCategory
+    const folder = opts?.folder ?? 'inbox'
+    let sql = 'SELECT * FROM mail_messages WHERE user_id = ?'
+    const params: any[] = [userId]
+    if (folder !== 'all') {
+      sql += ' AND folder = ?'
+      params.push(folder)
     }
-    return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? ORDER BY created_at DESC').all(userId) as unknown as MailMessageRow[]
+    if (opts?.category && opts.category !== 'all') {
+      sql += ' AND category = ?'
+      params.push(opts.category)
+    }
+    sql += ' ORDER BY created_at DESC'
+    return this.db.prepare(sql).all(...params) as unknown as MailMessageRow[]
+  }
+
+  updateMailDelivery(id: string, status: MailMessageRow['delivery_status'], note?: string | null): void {
+    this.db.prepare('UPDATE mail_messages SET delivery_status = ?, delivery_note = ? WHERE id = ?').run(status, note ?? null, id)
   }
 
   getMailMessage(userId: string, id: string): MailMessageRow | undefined {
     return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? AND id = ?').get(userId, id) as MailMessageRow | undefined
   }
+
 
   markMailRead(userId: string, id: string, read = true): void {
     this.db.prepare('UPDATE mail_messages SET read = ? WHERE user_id = ? AND id = ?').run(read ? 1 : 0, userId, id)

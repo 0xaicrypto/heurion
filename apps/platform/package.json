@@ -34,6 +34,7 @@
     "hono": "^4.13.11",
     "lib0": "^0.2.119",
     "markdown-it": "^15.0.2",
+    "nodemailer": "^10.0.15",
     "prosemirror-commands": "^1.7.2",
     "prosemirror-dropcursor": "^1.8.4",
     "prosemirror-gapcursor": "^1.4.1",
@@ -54,6 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
+    "@types/nodemailer": "^8.0.2",
     "@types/ws": "^8.18.2",
     "playwright": "^1.63.0",
     "tsx": "^4.23.15",

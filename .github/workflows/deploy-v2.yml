@@ -122,6 +122,8 @@ jobs:
           S3_BUCKET=${S3_BUCKET}
           S3_ACCESS_KEY=${S3_ACCESS_KEY}
           S3_SECRET_KEY=${S3_SECRET_KEY}
+          MAIL_DOMAIN=heurion.org
+          MAIL_INBOUND_SECRET=${HEURION_SECRET}
           EOF
           sed -i 's/^ *//' /tmp/heurion2.env
       - name: 拷贝部署文件并部署

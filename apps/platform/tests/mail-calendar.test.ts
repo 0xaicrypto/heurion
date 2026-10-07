@@ -19,6 +19,7 @@ import { TurnService } from '../src/turns/service.ts'
 
 function makeTestApp() {
   const store = new Store(':memory:')
+  store.createUser({ id: 'dev', username: 'dev', display_name: '开发者', password_hash: 'x', role: 'admin', email: 'dev@heurion.org' })
   const docs = new Documents(store)
   const pool = { liveSession: () => null, run: () => new Promise(() => {}), cancel: async () => {} } as unknown as HarnessPool
   const accounts = new Accounts(store, { secret: 'test-secret', devMode: true, devToken: 'dev', devUser: 'dev', botGuard: new BotGuard({ secret: 'test-secret', baseMax: 300, minDelayMs: 0 }) })
@@ -47,9 +48,10 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const store = new Store(':memory:')
     const mail = new MailService(store)
 
-    // 域名使用 heurion.com
-    expect(mail.userEmail('wang')).toBe('dr.wang@heurion.com')
-    expect(mail.userEmail('Dr_Zhao')).toBe('dr.dr_zhao@heurion.com')
+    // 域名使用 heurion.org (支持每个医生专属邮箱，如 hui@heurion.org)
+    expect(mail.userEmail('wang')).toBe('wang@heurion.org')
+    expect(mail.userEmail('hui')).toBe('hui@heurion.org')
+    expect(mail.userEmail('Dr_Zhao')).toBe('dr_zhao@heurion.org')
 
     // 首次访问自动载入 5 封高真实度临床随访与科研进展邮件
     const list = mail.list('u1', 'wang')
@@ -68,7 +70,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(abpaMail?.body).toContain('BAR = 1.45')
     expect(abpaMail?.body).toContain('HAM = 12.44 cm³')
     expect(abpaMail?.sender).toBe('followup@heurion.com')
-    expect(abpaMail?.recipient).toBe('dr.wang@heurion.com')
+    expect(abpaMail?.recipient).toBe('wang@heurion.org')
 
     // 科研邮件包含真实 DAPA-HF 课题与 PSM 质控进展
     const dapaMail = list.find(m => m.study_id === 'DAPA-HF-RCT-2019')
@@ -145,7 +147,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const matchedMail = mails.find(m => m.subject.includes('PT-SARCO-003 营养预康复二期访视'))
     expect(matchedMail).toBeDefined()
     expect(matchedMail?.calendar_event_id).toBe(newEvent.id)
-    expect(matchedMail?.recipient).toBe('dr.zhao@heurion.com')
+    expect(matchedMail?.recipient).toBe('zhao@heurion.org')
 
     // 更新日程状态（完成）
     const updated = calendar.update('u2', newEvent.id, { status: 'completed' })
@@ -167,7 +169,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
 
     const firstMail = mails[0]
     expect(firstMail.id).toBeDefined()
-    expect(firstMail.recipient).toContain('@heurion.com')
+    expect(firstMail.recipient).toMatch(/@(heurion\.org|heurion\.com)/)
 
     // 2. 查单封邮件
     const singleRes = await api.get(`/api/mail/messages/${firstMail.id}`)
@@ -190,7 +192,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const composeRes = await api.post('/api/mail/messages', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        recipient: 'test@heurion.com',
+        recipient: 'test@heurion.org',
         subject: 'API 发送测试随访计划',
         body: '这是通过 API 发送的测试邮件正文',
         category: 'followup',
@@ -200,15 +202,40 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(composeRes.status).toBe(201)
     const composed = await composeRes.json() as any
     expect(composed.id).toBeDefined()
-    expect(composed.sender).toContain('@heurion.com')
+    expect(composed.sender).toMatch(/@(heurion\.org|heurion\.com)/)
 
-    // 6. 获取日历事件列表
+    // 6. 外部来信 Inbound Webhook 投递测试 (例如外部患者发往 dev@heurion.org)
+    const inboundRes = await api.post('/api/mail/inbound', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'patient.external@gmail.com',
+        from_name: '外部患者张先生',
+        to: 'dev@heurion.org',
+        subject: '口服吡非尼酮后轻微乏力咨询',
+        body: '李医生您好，最近服药后有些乏力，是否需要调整剂量？',
+      }),
+    })
+    expect(inboundRes.status).toBe(201)
+    const inboundJson = await inboundRes.json() as any
+    expect(inboundJson.ok).toBe(true)
+    expect(inboundJson.id).toBeDefined()
+
+    // 确认该邮件已即时投递到医生 dev 的收件箱
+    const checkMailRes = await api.get(`/api/mail/messages/${inboundJson.id}`)
+    expect(checkMailRes.status).toBe(200)
+    const received = await checkMailRes.json() as any
+    expect(received.sender).toBe('patient.external@gmail.com')
+    expect(received.recipient).toBe('dev@heurion.org')
+    expect(received.subject).toContain('口服吡非尼酮后轻微乏力咨询')
+    expect(received.folder).toBe('inbox')
+
+    // 7. 获取日历事件列表
     const calRes = await api.get('/api/calendar/events')
     expect(calRes.status).toBe(200)
     const events = await calRes.json() as any[]
     expect(events.length).toBeGreaterThanOrEqual(5)
 
-    // 7. 新建日历事件
+    // 8. 新建日历事件
     const createEvRes = await api.post('/api/calendar/events', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -226,7 +253,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const createdEv = await createEvRes.json() as any
     expect(createdEv.id).toBeDefined()
 
-    // 8. 更新日历事件
+    // 9. 更新日历事件
     const updateEvRes = await api.patch(`/api/calendar/events/${createdEv.id}`, {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'completed' }),
@@ -235,8 +262,64 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const updatedEv = await updateEvRes.json() as any
     expect(updatedEv.status).toBe('completed')
 
-    // 9. 删除日历事件
+    // 10. 删除日历事件
     const delEvRes = await api.delete(`/api/calendar/events/${createdEv.id}`)
     expect(delEvRes.status).toBe(200)
+  })
+
+  it('4. 方案3实施验证：外部来信 Webhook 投递入库，并自动向医生个人邮箱转发副本', async () => {
+    const store = new Store(':memory:')
+    // 创建医生用户，并绑定其真实的外部个人邮箱（如 zhaojimmy13@gmail.com）
+    const doctor = store.createUser({
+      id: 'dr_hui',
+      username: 'hui',
+      display_name: '赵辉 主任医师',
+      password_hash: 'x',
+      email: 'zhaojimmy13@gmail.com',
+    })
+
+    const forwardedMails: Array<{ to: string; subject: string; text: string; opts?: any }> = []
+    const mockMailer: any = {
+      configured: true,
+      available: true,
+      mode: 'smtp',
+      send: async (to: string, subject: string, text: string, _html?: string, opts?: any) => {
+        forwardedMails.push({ to, subject, text, opts })
+        return { success: true, mode: 'smtp' }
+      },
+    }
+
+    const mail = new MailService(store, mockMailer, { domain: 'heurion.org' })
+    expect(mail.userEmail('hui')).toBe('hui@heurion.org')
+
+    // 外部患者发信到 hui@heurion.org
+    const res = await mail.receiveInbound({
+      from: 'patient.li@163.com',
+      fromName: '李患者',
+      to: 'hui@heurion.org',
+      subject: '关于术后复查 CT 时间预约咨询',
+      body: '赵主任您好，我刚做完术后第一疗程，请问下周二能预约做薄层 CT 吗？',
+    })
+
+    expect(res.success).toBe(true)
+    expect(res.message).toBeDefined()
+    expect(res.forwardedTo).toBe('zhaojimmy13@gmail.com')
+
+    // 1. 验证工作台【📥 收件箱】已正确归档
+    const inbox = mail.list('dr_hui', 'hui', { folder: 'inbox' })
+    const saved = inbox.find(m => m.id === res.message?.id)
+    expect(saved).toBeDefined()
+    expect(saved?.sender).toBe('patient.li@163.com')
+    expect(saved?.recipient).toBe('hui@heurion.org')
+    expect(saved?.subject).toBe('关于术后复查 CT 时间预约咨询')
+
+    // 2. 验证自动向医生的个人邮箱转发了一份副本
+    expect(forwardedMails.length).toBe(1)
+    const forward = forwardedMails[0]!
+    expect(forward.to).toBe('zhaojimmy13@gmail.com')
+    expect(forward.subject).toContain('关于术后复查 CT 时间预约咨询')
+    expect(forward.text).toContain('赵主任您好')
+    expect(forward.opts?.replyTo).toBe('patient.li@163.com')
+    expect(forward.opts?.senderAddress).toBe('hui@heurion.org')
   })
 })

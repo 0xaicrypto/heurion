@@ -37,6 +37,30 @@ export interface MailMessage {
   study_id?: string | null
   read: number | boolean
   created_at: string
+  folder?: 'inbox' | 'sent' | 'trash'
+  delivery_status?: 'delivered' | 'external_sent' | 'simulated' | 'failed'
+  delivery_note?: string | null
+}
+
+export interface MailStatus {
+  configured: boolean
+  mode: 'smtp' | 'resend' | 'dev-mock'
+  user_email: string
+}
+
+function renderDeliveryPill(status?: string): string {
+  switch (status) {
+    case 'external_sent':
+      return '<span class="mail-delivery-pill ok" title="已成功通过外网 SMTP 发出">✓ 外网已发</span>'
+    case 'delivered':
+      return '<span class="mail-delivery-pill ok" title="已送达院内专邮收件箱">✓ 站内送达</span>'
+    case 'simulated':
+      return '<span class="mail-delivery-pill sim" title="本地开发模拟，未配置外网发信服务">⚡ 本地模拟</span>'
+    case 'failed':
+      return '<span class="mail-delivery-pill fail" title="发信失败">✕ 发送失败</span>'
+    default:
+      return ''
+  }
 }
 
 const CATEGORY_NAMES: Record<string, string> = {
@@ -95,15 +119,33 @@ function formatHighlights(text: string): string {
 export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   const $ = (id: string) => document.getElementById(id)!
   let messages: MailMessage[] = []
+  let activeFolder: 'inbox' | 'sent' = 'inbox'
   let activeFilter: 'all' | 'followup' | 'research' = 'all'
   let selectedMailId: string | null = null
   let currentUserEmail = 'dr.user@heurion.com'
+  let mailStatus: MailStatus | null = null
+
+  async function loadStatus(): Promise<void> {
+    try {
+      mailStatus = await api<MailStatus>('/api/mail/status')
+      if (mailStatus?.user_email) {
+        currentUserEmail = mailStatus.user_email
+      }
+    } catch (err) {
+      console.error('[mail] failed to load status', err)
+    }
+  }
 
   async function loadMessages(): Promise<void> {
     try {
-      const q = activeFilter !== 'all' ? `?category=${activeFilter}` : ''
-      messages = await api<MailMessage[]>(`/api/mail/messages${q}`)
-      if (messages[0]?.recipient) {
+      if (!mailStatus) {
+        await loadStatus()
+      }
+      const params = new URLSearchParams()
+      params.set('folder', activeFolder)
+      if (activeFilter !== 'all') params.set('category', activeFilter)
+      messages = await api<MailMessage[]>(`/api/mail/messages?${params.toString()}`)
+      if (messages[0]?.recipient && activeFolder === 'inbox') {
         currentUserEmail = messages[0].recipient
       }
       renderNavList()
@@ -126,26 +168,31 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       return (
         m.subject.toLowerCase().includes(kw) ||
         m.sender.toLowerCase().includes(kw) ||
+        m.recipient.toLowerCase().includes(kw) ||
         (m.patient_code && m.patient_code.toLowerCase().includes(kw)) ||
         (m.study_id && m.study_id.toLowerCase().includes(kw))
       )
     })
 
     if (filtered.length === 0) {
-      listEl.innerHTML = `<li class="doclist-empty"><div class="muted">收件箱为空</div></li>`
+      const emptyText = activeFolder === 'sent' ? '已发送邮件箱为空' : '收件箱为空'
+      listEl.innerHTML = `<li class="doclist-empty"><div class="muted">${emptyText}</div></li>`
       return
     }
 
     listEl.innerHTML = filtered.map(m => {
-      const isUnread = !m.read
+      const isUnread = !m.read && activeFolder === 'inbox'
       const isSel = m.id === selectedMailId
       const catClass = `cat-${m.category}`
       const dateShort = m.created_at.slice(5, 16)
       const snippet = m.body.slice(0, 48).replace(/\n/g, ' ')
+      const party = activeFolder === 'sent'
+        ? `至: ${esc(m.recipient.split('@')[0])}`
+        : esc(m.sender.split('@')[0])
 
       return `<li class="docitem mail-nav-item ${isSel ? 'selected' : ''} ${isUnread ? 'unread' : ''}" data-mail-id="${m.id}">
         <div class="mail-nav-top">
-          <span class="mail-nav-sender">${esc(m.sender.split('@')[0])}</span>
+          <span class="mail-nav-sender">${party}</span>
           <span class="mail-nav-time">${dateShort}</span>
         </div>
         <div class="mail-nav-subject">
@@ -155,6 +202,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         <div class="mail-nav-snippet">${esc(snippet)}…</div>
         <div class="mail-nav-bottom">
           <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
+          ${renderDeliveryPill(m.delivery_status)}
           ${m.patient_code ? `<span class="mail-nav-tag">${esc(m.patient_code)}</span>` : ''}
         </div>
       </li>`
@@ -180,7 +228,10 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     const unreadCount = messages.filter(m => !m.read).length
     const followupCount = messages.filter(m => m.category === 'followup').length
     const researchCount = messages.filter(m => m.category === 'research').length
+    const deliveredCount = messages.filter(m => m.delivery_status === 'delivered' || m.delivery_status === 'external_sent').length
+    const simulatedCount = messages.filter(m => m.delivery_status === 'simulated').length
 
+    const isSent = activeFolder === 'sent'
     const page = $('page')
     page.innerHTML = `
       <div class="mail-dashboard">
@@ -188,8 +239,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <div class="mail-dash-hero-left">
             <div class="mail-dash-icon-wrap">${icon('mail', { size: 28 })}</div>
             <div>
-              <h1 class="mail-dash-title">Heurion 医疗与科研工作站邮箱</h1>
-              <p class="mail-dash-sub">专属临床随访跟踪通知、真实世界研究 (RWE) 质控与跨中心科研协作专邮</p>
+              <h1 class="mail-dash-title">${isSent ? 'Heurion 邮件工作台 · 已发送 (Outbox / Sent)' : 'Heurion 医疗与科研工作站邮箱'}</h1>
+              <p class="mail-dash-sub">${isSent ? '记录所有外发随访提醒、科研进展通报与外网 SMTP / 本地模拟投递状态' : '专属临床随访跟踪通知、真实世界研究 (RWE) 质控与跨中心科研协作专邮'}</p>
             </div>
           </div>
           <div class="mail-doctor-badge">
@@ -204,20 +255,35 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         <div class="mail-stats-grid">
           <div class="mail-stat-card" data-filter="all">
             <div class="mail-stat-num">${messages.length}</div>
-            <div class="mail-stat-label">全部邮件 (Total)</div>
+            <div class="mail-stat-label">${isSent ? '全部已发送 (Sent)' : '全部邮件 (Total)'}</div>
           </div>
-          <div class="mail-stat-card accent-unread" data-filter="unread">
-            <div class="mail-stat-num">${unreadCount}</div>
-            <div class="mail-stat-label">未读待阅 (Unread)</div>
-          </div>
-          <div class="mail-stat-card accent-followup" data-filter="followup">
-            <div class="mail-stat-num">${followupCount}</div>
-            <div class="mail-stat-label">患者随访计划 (Follow-up)</div>
-          </div>
-          <div class="mail-stat-card accent-research" data-filter="research">
-            <div class="mail-stat-num">${researchCount}</div>
-            <div class="mail-stat-label">科研进度通报 (Research)</div>
-          </div>
+          ${isSent ? `
+            <div class="mail-stat-card accent-followup" data-filter="followup">
+              <div class="mail-stat-num">${deliveredCount}</div>
+              <div class="mail-stat-label">已成功送达 (Delivered)</div>
+            </div>
+            <div class="mail-stat-card accent-unread" data-filter="unread">
+              <div class="mail-stat-num">${simulatedCount}</div>
+              <div class="mail-stat-label">本地模拟记录 (Simulated)</div>
+            </div>
+            <div class="mail-stat-card accent-research" data-filter="research">
+              <div class="mail-stat-num">${followupCount}</div>
+              <div class="mail-stat-label">随访复查预警 (Follow-up)</div>
+            </div>
+          ` : `
+            <div class="mail-stat-card accent-unread" data-filter="unread">
+              <div class="mail-stat-num">${unreadCount}</div>
+              <div class="mail-stat-label">未读待阅 (Unread)</div>
+            </div>
+            <div class="mail-stat-card accent-followup" data-filter="followup">
+              <div class="mail-stat-num">${followupCount}</div>
+              <div class="mail-stat-label">患者随访计划 (Follow-up)</div>
+            </div>
+            <div class="mail-stat-card accent-research" data-filter="research">
+              <div class="mail-stat-num">${researchCount}</div>
+              <div class="mail-stat-label">科研进度通报 (Research)</div>
+            </div>
+          `}
         </div>
 
         <div class="mail-dash-sections">
@@ -231,6 +297,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                 <div class="mail-preview-card" data-mail-id="${m.id}">
                   <div class="mail-preview-top">
                     <span class="mail-badge cat-followup">随访通知</span>
+                    ${renderDeliveryPill(m.delivery_status)}
                     ${m.patient_code ? `<span class="mail-preview-pt">${icon('users', { size: 12 })} ${esc(m.patient_code)}</span>` : ''}
                     <span class="grow"></span>
                     <span class="mail-preview-date">${m.created_at.slice(5, 16)}</span>
@@ -252,6 +319,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                 <div class="mail-preview-card" data-mail-id="${m.id}">
                   <div class="mail-preview-top">
                     <span class="mail-badge cat-research">科研进展</span>
+                    ${renderDeliveryPill(m.delivery_status)}
                     ${m.study_id ? `<span class="mail-preview-st">${icon('microscope', { size: 12 })} ${esc(m.study_id)}</span>` : ''}
                     <span class="grow"></span>
                     <span class="mail-preview-date">${m.created_at.slice(5, 16)}</span>
@@ -272,14 +340,15 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   function renderMailDetail(m: MailMessage): void {
     const page = $('page')
     const catClass = `cat-${m.category}`
-    const isUnread = !m.read
+    const isUnread = !m.read && activeFolder === 'inbox'
+    const isSent = m.folder === 'sent' || activeFolder === 'sent'
 
     page.innerHTML = `
       <div class="mail-detail-wrap">
         <div class="mail-toolbar">
-          <button class="mail-btn ghost" id="mailBackBtn">‹ 返回收件箱</button>
+          <button class="mail-btn ghost" id="mailBackBtn">${isSent ? '‹ 返回已发送' : '‹ 返回收件箱'}</button>
           <span class="grow"></span>
-          <button class="mail-btn ghost" id="mailToggleRead">${isUnread ? '标为已读' : '标为未读'}</button>
+          ${!isSent ? `<button class="mail-btn ghost" id="mailToggleRead">${isUnread ? '标为已读' : '标为未读'}</button>` : ''}
           <button class="mail-btn ghost" id="mailAddToCal" title="将邮件关联的复查或会议添加到日历">
             ${icon('calendar', { size: 14 })} 添加到日历
           </button>
@@ -290,6 +359,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <div class="mail-card-header">
             <div class="mail-header-badge-row">
               <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
+              ${renderDeliveryPill(m.delivery_status)}
               ${m.patient_code ? `<span class="mail-header-tag tag-pt">${icon('users', { size: 13 })} 患者代号: ${esc(m.patient_code)}</span>` : ''}
               ${m.study_id ? `<span class="mail-header-tag tag-st">${icon('microscope', { size: 13 })} 课题代号: ${esc(m.study_id)}</span>` : ''}
               <span class="grow"></span>
@@ -306,6 +376,25 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                 <span class="mail-meta-v">${esc(m.recipient)}</span>
               </div>
             </div>
+
+            ${(m.delivery_status || isSent) ? `
+              <div class="mail-delivery-notice ${m.delivery_status === 'external_sent' || m.delivery_status === 'delivered' ? 'ok' : m.delivery_status === 'simulated' ? 'simulated' : 'fail'}">
+                <div class="mail-delivery-title">
+                  ${m.delivery_status === 'external_sent' ? '✓ 外网邮件投递成功 (SMTP)' :
+                    m.delivery_status === 'delivered' ? '✓ 站内信件投递成功' :
+                    m.delivery_status === 'simulated' ? '⚡ 本地开发模拟（未配置外网发信服务）' :
+                    m.delivery_status === 'failed' ? '✕ 外网发信失败' : '投递状态已记录'}
+                </div>
+                <div class="mail-delivery-text">
+                  ${m.delivery_note ? esc(m.delivery_note) : (
+                    m.delivery_status === 'external_sent' ? `已通过外网 SMTP 服务成功推送给收件人 ${esc(m.recipient)}。` :
+                    m.delivery_status === 'delivered' ? `收件人系院内专邮工作站用户，已投递至其收件箱。` :
+                    m.delivery_status === 'simulated' ? `当前环境未配置 SMTP_HOST / RESEND_API_KEY，系统在本地已模拟记录。如需真正发送至外部邮箱，请在 .env 中设置 SMTP 参数。` :
+                    '外发状态已记录。'
+                  )}
+                </div>
+              </div>
+            ` : ''}
           </div>
 
           ${(m.patient_code || m.study_id) ? `
@@ -487,6 +576,12 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             <h2>＋ 起草并发送医疗通知专邮</h2>
             <button class="mail-modal-close" id="mailComposeClose">✕</button>
           </div>
+          <div class="mail-smtp-status-tip ${mailStatus?.configured ? 'configured' : 'mock'}">
+            ${mailStatus?.configured
+              ? `<span class="smtp-dot ok"></span> <strong>发信服务已连接 (${mailStatus.mode === 'smtp' ? '标准 SMTP' : 'Resend'})</strong>：支持直接向外部真实邮箱（如 Gmail、网易、QQ 邮箱等）真实发信。`
+              : `<span class="smtp-dot warn"></span> <strong>本地开发模拟模式</strong>：当前未配置外网发信服务 (SMTP)。发往外部邮箱时将在本地保留记录并模拟成功。如需真实发送至外部邮箱，请在 <code>.env</code> 中配置 <code>SMTP_HOST</code>。`
+            }
+          </div>
           <form id="mailComposeForm" class="mail-form">
             <div class="form-row">
               <label>收件人邮箱 (Recipient) *</label>
@@ -555,7 +650,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       const body = ($('composeBody') as HTMLTextAreaElement).value.trim()
 
       try {
-        await api('/api/mail/messages', {
+        const res = await api<{ id?: string; delivery?: { status?: string; note?: string } }>('/api/mail/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -567,13 +662,34 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             body,
           }),
         })
-        notice('邮件发送成功！')
+
+        if (res?.delivery?.status === 'external_sent') {
+          notice('邮件已通过外网 SMTP 成功发出！')
+        } else if (res?.delivery?.status === 'simulated') {
+          notice('邮件已保存为已发送（本地模拟记录，未配置外网 SMTP）')
+        } else if (res?.delivery?.status === 'failed') {
+          notice('外网邮件发送失败：' + (res.delivery.note || '请检查 SMTP 配置'), true)
+        } else {
+          notice('邮件已成功投递！')
+        }
+
         close()
+        // Switch to Sent folder and auto select newly sent message
+        activeFolder = 'sent'
+        updateFolderButtons()
+        selectedMailId = res?.id || null
         await loadMessages()
       } catch (err) {
         notice((err as Error).message, true)
       }
     }
+  }
+
+  function updateFolderButtons(): void {
+    const btnInbox = $('mailFolderInbox')
+    const btnSent = $('mailFolderSent')
+    btnInbox?.classList.toggle('on', activeFolder === 'inbox')
+    btnSent?.classList.toggle('on', activeFolder === 'sent')
   }
 
   // Wire action buttons in nav-panel
@@ -582,8 +698,28 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     const fFollowup = $('mailFilterFollowup')
     const fResearch = $('mailFilterResearch')
     const composeBtn = $('composeMailBtn')
+    const btnInbox = $('mailFolderInbox')
+    const btnSent = $('mailFolderSent')
 
     composeBtn?.addEventListener('click', () => showComposeModal())
+
+    btnInbox?.addEventListener('click', () => {
+      if (activeFolder !== 'inbox') {
+        activeFolder = 'inbox'
+        selectedMailId = null
+        updateFolderButtons()
+        void loadMessages()
+      }
+    })
+
+    btnSent?.addEventListener('click', () => {
+      if (activeFolder !== 'sent') {
+        activeFolder = 'sent'
+        selectedMailId = null
+        updateFolderButtons()
+        void loadMessages()
+      }
+    })
 
     const updatePills = (active: 'all' | 'followup' | 'research') => {
       activeFilter = active

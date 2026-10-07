@@ -1,0 +1,6 @@
+name = "heurion-inbound-mail"
+main = "email-worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+HEURION_INBOUND_URL = "https://heurion.org/api/mail/inbound"

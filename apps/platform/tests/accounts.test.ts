@@ -20,7 +20,17 @@ const SECRET = 'test-secret'
 /** 测试用发信器：记下每封邮件（取验证码）。 */
 function fakeMailer() {
   const sent: Array<{ to: string; subject: string; text: string }> = []
-  return { configured: true, available: true, sent, async send(to: string, subject: string, text: string) { sent.push({ to, subject, text }) }, code: () => /(\d{6})/.exec(sent.at(-1)?.text ?? '')?.[1] }
+  return {
+    configured: true,
+    available: true,
+    mode: 'dev-mock' as const,
+    sent,
+    async send(to: string, subject: string, text: string) {
+      sent.push({ to, subject, text })
+      return { success: true, mode: 'simulated' as const, messageId: 'mock-msg-id' }
+    },
+    code: () => /(\d{6})/.exec(sent.at(-1)?.text ?? '')?.[1],
+  }
 }
 
 function env(devMode = true) {

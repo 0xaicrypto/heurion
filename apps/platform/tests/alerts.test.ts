@@ -9,7 +9,15 @@ function env() {
   store.createUser({ username: 'noemail', display_name: '没邮箱的管理员', password_hash: 'x', role: 'admin' })
   store.createUser({ username: 'user', display_name: '普通用户', password_hash: 'x', role: 'user', email: 'u@hosp.cn' })
   const sent: Array<{ to: string; subject: string }> = []
-  const mailer: Mailer = { configured: true, available: true, send: async (to, subject) => { sent.push({ to, subject }) } }
+  const mailer: Mailer = {
+    configured: true,
+    available: true,
+    mode: 'dev-mock',
+    send: async (to, subject) => {
+      sent.push({ to, subject })
+      return { success: true, mode: 'simulated', messageId: 'test-alert-id' }
+    },
+  }
   const alerts = new Alerts(store, mailer, { log: () => {} })
   return { store, admin, sent, alerts }
 }
@@ -41,7 +49,7 @@ describe('运维告警', () => {
     t.alerts.turnFailed('402 Insufficient Balance')
     await flush()
     expect(t.sent.map(s => s.subject)).toEqual(['[Heurion 告警] 模型服务余额不足'])
-    const empty = new Alerts(new Store(':memory:'), { configured: true, available: true, send: async () => { throw new Error('不该发') } }, { log: () => {} })
+    const empty = new Alerts(new Store(':memory:'), { configured: true, available: true, mode: 'dev-mock', send: async () => { throw new Error('不该发') } }, { log: () => {} })
     expect(await empty.notify('model_auth', 'x')).toBe('no_recipient')
   })
 })
