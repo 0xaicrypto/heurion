@@ -43,6 +43,14 @@ jobs:
             console.log(JSON.stringify(rows, null, 2));
           '" || true
 
+          echo "=== 自动清理之前误落入收件箱的外网邮箱记录 ==="
+          $SSH "$HOST" "docker exec heurion2 node --input-type=module -e '
+            import { DatabaseSync } from \"node:sqlite\";
+            const db = new DatabaseSync(\"/app/data/platform/platform.db\");
+            const res = db.prepare(\"DELETE FROM mail_messages WHERE folder = \\\"inbox\\\" AND (recipient LIKE \\\"%@gmail.com\\\" OR recipient LIKE \\\"%@163.com\\\" OR recipient LIKE \\\"%@qq.com\\\")\").run();
+            console.log(\"已清理误投递至收件箱的外部邮件条数:\", res.changes);
+          '" || true
+
           echo "=== 容器中关于 mail 的最近日志 ==="
           $SSH "$HOST" "docker logs --tail 100 heurion2 2>&1 | grep -iE 'mail|resend|smtp' || true"
 

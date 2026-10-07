@@ -179,7 +179,7 @@ export class MailService {
         senderAddress = senderAddress.replace(/@heurion\.com$/, '@heurion.org')
       }
       const mailOpts = {
-        replyTo: user?.email || senderAddress,
+        replyTo: senderAddress,
         senderName: `${senderName} (Heurion)`,
         senderAddress,
       }
@@ -217,7 +217,7 @@ export class MailService {
     }
 
     const mailOpts = {
-      replyTo: user?.email || senderAddress,
+      replyTo: senderAddress,
       senderName: `${senderName} (Heurion)`,
       senderAddress,
     }

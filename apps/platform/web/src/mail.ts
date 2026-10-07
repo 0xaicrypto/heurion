@@ -145,7 +145,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     try {
       mailStatus = await api<MailStatus>('/api/mail/status')
       if (mailStatus?.user_email) {
-        currentUserEmail = mailStatus.user_email
+        currentUserEmail = mailStatus.user_email.replace(/@heurion\.com$/, '@heurion.org')
       }
     } catch (err) {
       console.error('[mail] failed to load status', err)
@@ -160,9 +160,6 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       const params = new URLSearchParams()
       params.set('folder', activeFolder)
       messages = await api<MailMessage[]>(`/api/mail/messages?${params.toString()}`)
-      if (messages[0]?.recipient && activeFolder === 'inbox') {
-        currentUserEmail = messages[0].recipient
-      }
       // 清理已不在列表中的选中项
       const currentIds = new Set(messages.map(m => m.id))
       for (const id of Array.from(selectedIds)) {
@@ -1233,8 +1230,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                 </select>
               </div>
               <div class="form-row">
-                <label>发件人身份</label>
-                <input type="text" disabled value="${esc(currentUserEmail)}" class="disabled-input" />
+                <label>发件人身份（站内专属工作信箱）</label>
+                <input type="text" disabled value="${esc(currentUserEmail)}" class="disabled-input" title="发信将严格以此专属站内信箱对外发出，确保外部回复自动闭环流转入站" />
               </div>
             </div>
 
@@ -1420,6 +1417,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   return {
     async enter(): Promise<void> {
       hooks.leaveDoc()
+      await loadStatus()
       await loadMessages()
     },
     leave(): void {
