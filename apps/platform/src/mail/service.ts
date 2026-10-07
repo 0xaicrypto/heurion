@@ -1008,11 +1008,22 @@ export class MailService {
     this.store.batchDeleteMailMessages(userId, ids)
   }
 
+  /** 清空废纸篓 */
+  emptyTrash(userId: string): number {
+    return this.store.emptyMailTrash(userId)
+  }
 
   /** 首次访问用户种子数据初始化：涵盖随访计划与科研项目进度两大核心类别 */
   private ensureSeed(userId: string, username: string): void {
-    const existing = this.store.listMailMessages(userId)
-    if (existing.length > 0) return
+    const seeded = this.store.getUserSetting(userId, 'mail_seeded')
+    if (seeded === '1') return
+
+    // 检查任何文件夹（收件箱、已发送、废纸篓）中是否已有邮件
+    const existing = this.store.listMailMessages(userId, { folder: 'all' })
+    if (existing.length > 0) {
+      this.store.setUserSetting(userId, 'mail_seeded', '1')
+      return
+    }
 
     const myEmail = this.userEmail(username)
     const now = new Date()
@@ -1217,6 +1228,7 @@ export class MailService {
     for (const item of seedMails) {
       this.store.createMailMessage(item)
     }
+    this.store.setUserSetting(userId, 'mail_seeded', '1')
   }
 
   /** AI 智能建议回复 (Clinical Smart Reply) */

@@ -2521,6 +2521,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.post('/api/mail/batch', async c => {
     const user = c.get('user')
     const body = await c.req.json().catch(() => ({})) as { action?: string; ids?: string[]; folder?: 'inbox' | 'sent' | 'trash' }
+    if (body.action === 'empty_trash') {
+      const count = mail.emptyTrash(user)
+      return c.json({ ok: true, count })
+    }
     const ids = Array.isArray(body.ids) ? body.ids : []
     if (!ids.length) return c.json({ ok: false, error: '未提供邮件 ID 列表' }, 400)
     switch (body.action) {
@@ -2554,6 +2558,12 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         return c.json({ ok: false, error: '未知的邮件批量操作类型' }, 400)
     }
     return c.json({ ok: true, count: ids.length })
+  })
+
+  app.delete('/api/mail/trash', c => {
+    const user = c.get('user')
+    const count = mail.emptyTrash(user)
+    return c.json({ ok: true, count })
   })
 
   app.delete('/api/mail/messages/:id', c => {

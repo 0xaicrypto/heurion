@@ -2144,6 +2144,11 @@ export class Store {
     this.db.prepare(`DELETE FROM mail_messages WHERE user_id = ? AND id IN (${placeholders})`).run(userId, ...ids)
   }
 
+  emptyMailTrash(userId: string): number {
+    const res = this.db.prepare("DELETE FROM mail_messages WHERE user_id = ? AND folder = 'trash'").run(userId)
+    return Number(res.changes ?? 0)
+  }
+
   // —— 日历 (Calendar) ——
 
   createCalendarEvent(input: Omit<CalendarEventRow, 'id' | 'created_at' | 'updated_at'> & { id?: string; created_at?: string; updated_at?: string }): CalendarEventRow {

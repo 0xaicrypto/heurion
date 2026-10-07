@@ -702,6 +702,62 @@ dj4=
     expect(msg.body).toContain('什么情况？ 我打的是中文')
     expect(msg.body).not.toContain('--00000000000078b6630623e1f0e4')
   })
+
+  it('13. 废纸篓全生命周期、彻底删除与防幽灵复活机制 (Trash Lifecycle & Reseed Guard)', async () => {
+    const api = makeTestApp()
+
+    // 1. 获取初始收件箱邮件
+    const initRes = await api.get('/api/mail/messages?folder=inbox')
+    expect(initRes.status).toBe(200)
+    const initMails = await initRes.json() as any[]
+    expect(initMails.length).toBeGreaterThanOrEqual(5)
+    const allIds = initMails.map(m => m.id)
+
+    // 2. 将收件箱全部邮件批量移入废纸篓
+    const trashAllRes = await api.post('/api/mail/batch', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'trash', ids: allIds }),
+    })
+    expect(trashAllRes.status).toBe(200)
+
+    // 3. 验证此时收件箱为空，且绝不会因为为空而重新触发种子填充（防止幽灵复活）
+    const inboxAfterTrash = await (await api.get('/api/mail/messages?folder=inbox')).json() as any[]
+    expect(inboxAfterTrash.length).toBe(0)
+
+    // 4. 验证废纸篓中存在这批邮件
+    const trashList = await (await api.get('/api/mail/messages?folder=trash')).json() as any[]
+    expect(trashList.length).toBe(allIds.length)
+
+    // 5. 从废纸篓恢复一封邮件至收件箱
+    const restoreId = allIds[0]!
+    const restoreRes = await api.post('/api/mail/batch', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restore', ids: [restoreId] }),
+    })
+    expect(restoreRes.status).toBe(200)
+
+    const inboxAfterRestore = await (await api.get('/api/mail/messages?folder=inbox')).json() as any[]
+    expect(inboxAfterRestore.length).toBe(1)
+    expect(inboxAfterRestore[0].id).toBe(restoreId)
+
+    // 6. 单封彻底删除（物理删除）
+    const deleteId = allIds[1]!
+    const singleDelRes = await api.delete(`/api/mail/messages/${deleteId}`)
+    expect(singleDelRes.status).toBe(200)
+
+    const checkDelRes = await api.get(`/api/mail/messages/${deleteId}`)
+    expect(checkDelRes.status).toBe(404)
+
+    // 7. 清空废纸篓 (DELETE /api/mail/trash)
+    const emptyTrashRes = await api.delete('/api/mail/trash')
+    expect(emptyTrashRes.status).toBe(200)
+    const emptyJson = await emptyTrashRes.json() as any
+    expect(emptyJson.ok).toBe(true)
+    expect(emptyJson.count).toBe(allIds.length - 2) // 减去恢复的 1 封和单删的 1 封
+
+    const trashAfterEmpty = await (await api.get('/api/mail/messages?folder=trash')).json() as any[]
+    expect(trashAfterEmpty.length).toBe(0)
+  })
 })
 
 

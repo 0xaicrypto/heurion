@@ -209,6 +209,7 @@ const NOT_FOR_AI: Record<string, string> = {
   'POST /api/mail/read-all': '医生在界面上一键标记全部已读（医生操作）',
   'POST /api/mail/batch': '医生在界面上批量操作邮件（标记已读/未读、星标、移入废纸篓、批量删除）',
   'DELETE /api/mail/messages/:id': '医生在界面上删除邮件（医生操作）',
+  'DELETE /api/mail/trash': '医生在界面上一键清空废纸篓（医生本人管理操作）',
   'GET /api/mail/messages/:id/smart-replies': '医生在回复框查看针对该邮件的临床智能回复建议（AI 生成，医生选用）',
   'POST /api/mail/messages/:id/to-doc': '医生在界面上一键将邮件归档为工作区科研文稿（医生本人操作）',
   'POST /api/mail/messages/:id/to-patient': '医生在界面上一键将邮件归档至指定患者档案并生成就诊记录（医生本人操作）',

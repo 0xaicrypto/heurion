@@ -696,6 +696,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   let currentPage = 1
   let pageSize = 15
   const selectedIds = new Set<string>()
+  let mainEventsBound = false
 
   async function loadStatus(): Promise<void> {
     try {
@@ -724,6 +725,9 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
 
   async function loadSummary(force = false): Promise<void> {
     summaryLoading = true
+    if (force) {
+      summaryResult = null
+    }
     renderNavSummary()
     try {
       summaryResult = await api<MailSummaryResult>(`/api/mail/summary?hours=48${force ? '&force=true' : ''}`)
@@ -790,9 +794,32 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     if (summaryLoading && !summaryResult) {
       listEl.innerHTML = `
         <li class="mail-briefing-loading-card">
-          <div class="mail-briefing-spinner"></div>
-          <div class="mail-briefing-loading-title">AI 正在研判最近 48 小时邮件...</div>
-          <div class="mail-briefing-loading-desc">DeepSeek 临床大模型正在聚合随访预警与科研进展</div>
+          <div class="mail-loading-eyebrow">
+            <span class="mail-pulse-indicator"></span>
+            <span class="mail-loading-tag">AI CLINICAL SYNTHESIS</span>
+            <span class="mail-loading-badge">48H MONITOR</span>
+          </div>
+
+          <div class="mail-loading-radar-container">
+            <div class="mail-loading-radar-ring outer"></div>
+            <div class="mail-loading-radar-ring inner"></div>
+            <div class="mail-loading-radar-scanner"></div>
+            <div class="mail-loading-radar-core">
+              ${icon('sparkles', { size: 16 })}
+            </div>
+          </div>
+
+          <div class="mail-loading-content">
+            <div class="mail-loading-title">正在研判近 48 小时邮件</div>
+            <div class="mail-loading-model-chip">
+              <span class="mail-model-dot"></span>
+              <span>DeepSeek 临床大模型研判中</span>
+            </div>
+            <div class="mail-loading-progress-track">
+              <div class="mail-loading-progress-bar"></div>
+            </div>
+            <div class="mail-loading-desc">聚合多中心随访预警 · 关联科研进展 · 生成速报</div>
+          </div>
         </li>
       `
       return
@@ -934,6 +961,11 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           </div>
 
           <div class="mail-top-actions">
+            ${isTrash && messages.length > 0 ? `
+              <button class="mail-btn ghost danger icon-text" id="mailEmptyTrashBtn" title="永久删除废纸篓中的全部邮件">
+                ${icon('trash', { size: 14 })} 清空废纸篓
+              </button>
+            ` : ''}
             <button class="mail-btn ghost icon-text" id="mailRefreshBtn" title="从服务器重新获取最新邮件与状态">
               ${icon('refresh', { size: 14 })} 刷新收取
             </button>
@@ -1042,14 +1074,21 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                     <div class="mail-row-right">
                       <span class="mail-row-time">${m.created_at.slice(5, 16)}</span>
                       <div class="mail-row-hover-actions" onclick="event.stopPropagation()">
-                        ${!isSent ? `
+                        ${!isSent && !isTrash ? `
                           <button class="mail-hover-btn" data-toggle-read="${m.id}" title="${isUnread ? '标为已读' : '标为未读'}">
                             ${isUnread ? icon('check', { size: 13 }) : icon('mail', { size: 13 })}
                           </button>
                         ` : ''}
-                        <button class="mail-hover-btn" data-add-cal="${m.id}" title="加入日历排期">
-                          ${icon('calendar', { size: 13 })}
-                        </button>
+                        ${!isTrash ? `
+                          <button class="mail-hover-btn" data-add-cal="${m.id}" title="加入日历排期">
+                            ${icon('calendar', { size: 13 })}
+                          </button>
+                        ` : ''}
+                        ${isTrash ? `
+                          <button class="mail-hover-btn ok" data-restore-mail="${m.id}" title="恢复至收件箱">
+                            ${icon('refresh', { size: 13 })}
+                          </button>
+                        ` : ''}
                         <button class="mail-hover-btn danger" data-del-mail="${m.id}" title="${isTrash ? '彻底删除' : '移入废纸篓'}">
                           ${icon('trash', { size: 13 })}
                         </button>
@@ -1968,383 +2007,400 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
   }
 
   function bindMainEvents(): void {
+    if (mainEventsBound) return
+    mainEventsBound = true
+
     const page = $('page')
+    if (!page) return
 
-    // 复制医生邮箱
-    $('copyMailAddress')?.addEventListener('click', () => {
-      navigator.clipboard?.writeText(currentUserEmail)
-      notice('已复制医生工作邮箱地址: ' + currentUserEmail)
+    // 统一委托单选/全选/分页大小变动事件
+    page.addEventListener('change', e => {
+      const target = e.target as HTMLElement
+      if (target.id === 'mailSelectAllPage') {
+        const checked = (target as HTMLInputElement).checked
+        const filtered = getFilteredMessages()
+        const startIdx = (currentPage - 1) * pageSize
+        const pageItems = filtered.slice(startIdx, startIdx + pageSize)
+        if (checked) {
+          pageItems.forEach(m => selectedIds.add(m.id))
+        } else {
+          pageItems.forEach(m => selectedIds.delete(m.id))
+        }
+        renderMain()
+        return
+      }
+
+      if (target.classList.contains('mail-item-checkbox')) {
+        const chk = target as HTMLInputElement
+        const id = chk.dataset.id
+        if (!id) return
+        if (chk.checked) selectedIds.add(id)
+        else selectedIds.delete(id)
+        renderMain()
+        return
+      }
+
+      if (target.id === 'mailPageSizeSelect') {
+        const sel = target as HTMLSelectElement
+        pageSize = parseInt(sel.value, 10) || 15
+        currentPage = 1
+        renderMain()
+        return
+      }
     })
 
-    // 切换到列表 / 看板
-    $('mailViewListBtn')?.addEventListener('click', () => {
-      mainViewMode = 'list'
-      renderMain()
-    })
-    $('mailViewDashBtn')?.addEventListener('click', () => {
-      mainViewMode = 'dashboard'
-      renderMain()
-    })
-    $('mailEnterListBtn')?.addEventListener('click', () => {
-      mainViewMode = 'list'
-      renderMain()
-    })
+    // 统一委托页面所有点击事件（彻底解决重复绑定与内存泄露）
+    page.addEventListener('click', async e => {
+      const target = e.target as HTMLElement
 
-    // 刷新按钮
-    $('mailRefreshBtn')?.addEventListener('click', async () => {
-      notice('正在刷新收件箱...')
-      await loadMessages()
-      notice('收件箱已刷新！')
-    })
+      // 1. 复制医生邮箱
+      if (target.closest('#copyMailAddress')) {
+        navigator.clipboard?.writeText(currentUserEmail)
+        notice('已复制医生工作邮箱地址: ' + currentUserEmail)
+        return
+      }
 
-    // 撰写邮件
-    $('mailComposeActionBtn')?.addEventListener('click', () => showComposeModal())
+      // 2. 切换列表 / 看板
+      if (target.closest('#mailViewListBtn') || target.closest('#mailEnterListBtn')) {
+        mainViewMode = 'list'
+        renderMain()
+        return
+      }
+      if (target.closest('#mailViewDashBtn')) {
+        mainViewMode = 'dashboard'
+        renderMain()
+        return
+      }
 
-    // 文件夹切换
-    page.querySelectorAll<HTMLButtonElement>('.mail-folder-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const folder = btn.dataset.folder as 'inbox' | 'sent' | 'trash'
+      // 3. 刷新收取
+      if (target.closest('#mailRefreshBtn')) {
+        notice('正在刷新收件箱...')
+        await loadMessages()
+        notice('收件箱已刷新！')
+        return
+      }
+
+      // 4. 写邮件
+      if (target.closest('#mailComposeActionBtn')) {
+        showComposeModal()
+        return
+      }
+
+      // 5. 文件夹切换 (收件箱 / 已发送 / 废纸篓)
+      const folderBtn = target.closest<HTMLButtonElement>('.mail-folder-tab')
+      if (folderBtn) {
+        const folder = folderBtn.dataset.folder as 'inbox' | 'sent' | 'trash'
         if (folder && activeFolder !== folder) {
           activeFolder = folder
+          activeFilter = 'all'
           selectedMailId = null
           selectedIds.clear()
           currentPage = 1
           updateFolderButtons()
           void loadMessages()
         }
-      })
-    })
+        return
+      }
 
-    // 过滤药丸点击
-    page.querySelectorAll<HTMLButtonElement>('.mail-filter-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const filter = btn.dataset.filter as any
+      // 6. 过滤筛选药丸 (全部 / 未读 / 星标 / 随访 / 科研)
+      const filterChip = target.closest<HTMLButtonElement>('.mail-filter-chip')
+      if (filterChip) {
+        const filter = filterChip.dataset.filter as any
         if (filter) {
           activeFilter = filter
           currentPage = 1
           renderNavList()
           renderMain()
         }
-      })
-    })
-
-    // 分页数量改变
-    const pageSizeSelect = $('mailPageSizeSelect') as HTMLSelectElement | null
-    pageSizeSelect?.addEventListener('change', () => {
-      pageSize = parseInt(pageSizeSelect.value, 10) || 15
-      currentPage = 1
-      renderMain()
-    })
-
-    // 翻页操作
-    $('mailFirstPage')?.addEventListener('click', () => { currentPage = 1; renderMain() })
-    $('mailPrevPage')?.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderMain() } })
-    $('mailNextPage')?.addEventListener('click', () => { currentPage++; renderMain() })
-    $('mailLastPage')?.addEventListener('click', () => {
-      const filtered = getFilteredMessages()
-      currentPage = Math.max(1, Math.ceil(filtered.length / pageSize))
-      renderMain()
-    })
-
-    // 全选本页复选框
-    $('mailSelectAllPage')?.addEventListener('change', e => {
-      const checked = (e.target as HTMLInputElement).checked
-      const filtered = getFilteredMessages()
-      const startIdx = (currentPage - 1) * pageSize
-      const pageItems = filtered.slice(startIdx, startIdx + pageSize)
-      if (checked) {
-        pageItems.forEach(m => selectedIds.add(m.id))
-      } else {
-        pageItems.forEach(m => selectedIds.delete(m.id))
+        return
       }
-      renderMain()
-    })
 
-    // 单项 Checkbox
-    page.querySelectorAll<HTMLInputElement>('.mail-item-checkbox').forEach(chk => {
-      chk.addEventListener('change', () => {
-        const id = chk.dataset.id
-        if (!id) return
-        if (chk.checked) selectedIds.add(id)
-        else selectedIds.delete(id)
+      // 7. 分页翻页
+      if (target.closest('#mailFirstPage')) { currentPage = 1; renderMain(); return }
+      if (target.closest('#mailPrevPage')) { if (currentPage > 1) { currentPage--; renderMain() }; return }
+      if (target.closest('#mailNextPage')) { currentPage++; renderMain(); return }
+      if (target.closest('#mailLastPage')) {
+        const filtered = getFilteredMessages()
+        currentPage = Math.max(1, Math.ceil(filtered.length / pageSize))
         renderMain()
-      })
-    })
+        return
+      }
 
-    // 清空选择
-    $('batchClearSelection')?.addEventListener('click', () => {
-      selectedIds.clear()
-      renderMain()
-    })
-
-    // 批量标为已读
-    $('batchMarkReadBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'read', ids }),
-      })
-      messages.forEach(m => { if (selectedIds.has(m.id)) m.read = 1 })
-      notice(`已将 ${ids.length} 封邮件标记为已读`)
-      selectedIds.clear()
-      renderNavList()
-      renderMain()
-    })
-
-    // 批量标为未读
-    $('batchMarkUnreadBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'unread', ids }),
-      })
-      messages.forEach(m => { if (selectedIds.has(m.id)) m.read = 0 })
-      notice(`已将 ${ids.length} 封邮件标记为未读`)
-      selectedIds.clear()
-      renderNavList()
-      renderMain()
-    })
-
-    // 批量标星
-    $('batchStarBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'star', ids }),
-      })
-      messages.forEach(m => { if (selectedIds.has(m.id)) m.starred = 1 })
-      notice(`已为 ${ids.length} 封邮件添加星标`)
-      selectedIds.clear()
-      renderNavList()
-      renderMain()
-    })
-
-    // 批量取消星标
-    $('batchUnstarBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'unstar', ids }),
-      })
-      messages.forEach(m => { if (selectedIds.has(m.id)) m.starred = 0 })
-      notice(`已取消 ${ids.length} 封邮件的星标`)
-      selectedIds.clear()
-      renderNavList()
-      renderMain()
-    })
-
-    // 批量移入废纸篓
-    $('batchMoveTrashBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      const ok = await askConfirm({
-        title: '移入废纸篓',
-        message: `确定要将选中的 ${ids.length} 封邮件移入废纸篓吗？`,
-        confirm: '确认移入',
-        danger: true,
-      })
-      if (!ok) return
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'trash', ids }),
-      })
-      notice(`已将 ${ids.length} 封邮件移入废纸篓`)
-      selectedIds.clear()
-      await loadMessages()
-    })
-
-    // 批量恢复
-    $('batchRestoreBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'restore', ids }),
-      })
-      notice(`已恢复 ${ids.length} 封邮件至收件箱`)
-      selectedIds.clear()
-      await loadMessages()
-    })
-
-    // 批量彻底删除
-    $('batchDeletePermanentBtn')?.addEventListener('click', async () => {
-      if (selectedIds.size === 0) return
-      const ids = Array.from(selectedIds)
-      const ok = await askConfirm({
-        title: '彻底永久删除',
-        message: `彻底删除后这 ${ids.length} 封邮件将无法恢复，确定彻底删除吗？`,
-        confirm: '彻底删除',
-        danger: true,
-      })
-      if (!ok) return
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', ids }),
-      })
-      notice(`已彻底删除 ${ids.length} 封邮件`)
-      selectedIds.clear()
-      await loadMessages()
-    })
-
-    // 返回列表
-    $('mailBackBtn')?.addEventListener('click', () => {
-      selectedMailId = null
-      renderNavList()
-      renderMain()
-    })
-
-    // 详情页：上一封/下一封
-    $('mailPrevDetailBtn')?.addEventListener('click', () => {
-      const filtered = getFilteredMessages()
-      const currentIdx = filtered.findIndex(x => x.id === selectedMailId)
-      if (currentIdx > 0 && filtered[currentIdx - 1]) {
-        selectedMailId = filtered[currentIdx - 1]!.id
+      // 8. 批量操作工具条按钮
+      if (target.closest('#batchClearSelection')) {
+        selectedIds.clear()
+        renderMain()
+        return
+      }
+      if (target.closest('#batchMarkReadBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'read', ids }),
+        })
+        messages.forEach(m => { if (selectedIds.has(m.id)) m.read = 1 })
+        notice(`已将 ${ids.length} 封邮件标记为已读`)
+        selectedIds.clear()
         renderNavList()
         renderMain()
+        return
       }
-    })
-    $('mailNextDetailBtn')?.addEventListener('click', () => {
-      const filtered = getFilteredMessages()
-      const currentIdx = filtered.findIndex(x => x.id === selectedMailId)
-      if (currentIdx >= 0 && currentIdx < filtered.length - 1 && filtered[currentIdx + 1]) {
-        selectedMailId = filtered[currentIdx + 1]!.id
+      if (target.closest('#batchMarkUnreadBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unread', ids }),
+        })
+        messages.forEach(m => { if (selectedIds.has(m.id)) m.read = 0 })
+        notice(`已将 ${ids.length} 封邮件标记为未读`)
+        selectedIds.clear()
         renderNavList()
         renderMain()
+        return
       }
-    })
+      if (target.closest('#batchStarBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'star', ids }),
+        })
+        messages.forEach(m => { if (selectedIds.has(m.id)) m.starred = 1 })
+        notice(`已为 ${ids.length} 封邮件添加星标`)
+        selectedIds.clear()
+        renderNavList()
+        renderMain()
+        return
+      }
+      if (target.closest('#batchUnstarBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unstar', ids }),
+        })
+        messages.forEach(m => { if (selectedIds.has(m.id)) m.starred = 0 })
+        notice(`已取消 ${ids.length} 封邮件星标`)
+        selectedIds.clear()
+        renderNavList()
+        renderMain()
+        return
+      }
+      if (target.closest('#batchMoveTrashBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        const ok = await askConfirm({
+          title: '移入废纸篓',
+          message: `确定要将选中的 ${ids.length} 封邮件移入废纸篓吗？`,
+          confirm: '确认移入',
+          danger: true,
+        })
+        if (!ok) return
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'trash', ids }),
+        })
+        notice(`已将 ${ids.length} 封邮件移入废纸篓`)
+        selectedIds.clear()
+        await loadMessages()
+        return
+      }
+      if (target.closest('#batchRestoreBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'restore', ids }),
+        })
+        notice(`已恢复 ${ids.length} 封邮件至收件箱`)
+        selectedIds.clear()
+        await loadMessages()
+        return
+      }
+      if (target.closest('#batchDeletePermanentBtn')) {
+        if (selectedIds.size === 0) return
+        const ids = Array.from(selectedIds)
+        const ok = await askConfirm({
+          title: '彻底永久删除',
+          message: `彻底删除后这 ${ids.length} 封邮件将无法恢复，确定彻底删除吗？`,
+          confirm: '彻底删除',
+          danger: true,
+        })
+        if (!ok) return
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', ids }),
+        })
+        notice(`已彻底删除 ${ids.length} 封邮件`)
+        selectedIds.clear()
+        await loadMessages()
+        return
+      }
 
-    // 详情页：星标切换
-    $('mailToggleStar')?.addEventListener('click', async () => {
-      if (!selectedMailId) return
-      const mail = messages.find(x => x.id === selectedMailId)
-      if (!mail) return
-      const newStar = !mail.starred
-      await api(`/api/mail/messages/${mail.id}/star`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ starred: newStar }),
-      })
-      mail.starred = newStar ? 1 : 0
-      notice(newStar ? '已为邮件添加星标' : '已取消星标')
-      renderNavList()
-      renderMain()
-    })
-
-    // 详情页：恢复到收件箱
-    $('mailRestoreBtn')?.addEventListener('click', async () => {
-      if (!selectedMailId) return
-      await api('/api/mail/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'restore', ids: [selectedMailId] }),
-      })
-      notice('邮件已恢复至收件箱')
-      selectedMailId = null
-      await loadMessages()
-    })
-
-    // 详情页：彻底删除
-    $('mailDeletePermanentBtn')?.addEventListener('click', async () => {
-      if (!selectedMailId) return
-      const ok = await askConfirm({
-        title: '彻底永久删除邮件',
-        message: '彻底删除后此邮件将无法找回，确认永久删除吗？',
-        confirm: '永久删除',
-        danger: true,
-      })
-      if (ok) {
-        await api(`/api/mail/messages/${selectedMailId}`, { method: 'DELETE' })
-        notice('邮件已彻底删除')
+      // 9. 清空废纸篓按钮
+      if (target.closest('#mailEmptyTrashBtn')) {
+        const ok = await askConfirm({
+          title: '清空废纸篓',
+          message: '确定要清空废纸篓中的所有邮件吗？此操作无法撤销。',
+          confirm: '清空废纸篓',
+          danger: true,
+        })
+        if (!ok) return
+        await api('/api/mail/trash', { method: 'DELETE' })
+        notice('废纸篓已清空')
+        selectedIds.clear()
         selectedMailId = null
         await loadMessages()
+        return
       }
-    })
 
-    // 事件委托：行点击、快速操作
-    page.addEventListener('click', async e => {
-      const target = e.target as HTMLElement
-
-      // 点击行进入详情（排除复选框、按钮）
-      const row = target.closest<HTMLElement>('.mail-row')
-      if (row && !target.closest('button') && !target.closest('input')) {
-        const id = row.dataset.mailId
-        if (id) {
-          selectedMailId = id
+      // 10. 详情页顶部操作
+      if (target.closest('#mailBackBtn')) {
+        selectedMailId = null
+        renderNavList()
+        renderMain()
+        return
+      }
+      if (target.closest('#mailPrevDetailBtn')) {
+        const filtered = getFilteredMessages()
+        const currentIdx = filtered.findIndex(x => x.id === selectedMailId)
+        if (currentIdx > 0 && filtered[currentIdx - 1]) {
+          selectedMailId = filtered[currentIdx - 1]!.id
           renderNavList()
           renderMain()
         }
         return
       }
-
-      // 星标切换点击
-      const starBtn = target.closest<HTMLElement>('[data-star-id]')
-      if (starBtn) {
-        const id = starBtn.dataset.starId!
-        const mail = messages.find(x => x.id === id)
-        if (mail) {
-          const nextStar = !mail.starred
-          await api(`/api/mail/messages/${id}/star`, {
-            method: 'PATCH',
+      if (target.closest('#mailNextDetailBtn')) {
+        const filtered = getFilteredMessages()
+        const currentIdx = filtered.findIndex(x => x.id === selectedMailId)
+        if (currentIdx >= 0 && currentIdx < filtered.length - 1 && filtered[currentIdx + 1]) {
+          selectedMailId = filtered[currentIdx + 1]!.id
+          renderNavList()
+          renderMain()
+        }
+        return
+      }
+      if (target.closest('#mailToggleStar')) {
+        if (!selectedMailId) return
+        const mail = messages.find(x => x.id === selectedMailId)
+        if (!mail) return
+        const nextStar = !mail.starred
+        await api(`/api/mail/messages/${mail.id}/star`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ starred: nextStar }),
+        })
+        mail.starred = nextStar ? 1 : 0
+        notice(nextStar ? '已为邮件添加星标' : '已取消星标')
+        renderNavList()
+        renderMain()
+        return
+      }
+      if (target.closest('#mailRestoreBtn')) {
+        if (!selectedMailId) return
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'restore', ids: [selectedMailId] }),
+        })
+        notice('邮件已恢复至收件箱')
+        selectedMailId = null
+        await loadMessages()
+        return
+      }
+      if (target.closest('#mailDeletePermanentBtn')) {
+        if (!selectedMailId) return
+        const ok = await askConfirm({
+          title: '彻底永久删除邮件',
+          message: '彻底删除后此邮件将无法找回，确认永久删除吗？',
+          confirm: '永久删除',
+          danger: true,
+        })
+        if (ok) {
+          await api(`/api/mail/messages/${selectedMailId}`, { method: 'DELETE' })
+          notice('邮件已彻底删除')
+          selectedMailId = null
+          await loadMessages()
+        }
+        return
+      }
+      if (target.closest('#mailDelete')) {
+        if (!selectedMailId) return
+        const ok = await askConfirm({
+          title: '移入废纸篓',
+          message: '确定要将此邮件移入废纸篓吗？',
+          confirm: '移入废纸篓',
+          danger: true,
+        })
+        if (ok) {
+          await api('/api/mail/batch', {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ starred: nextStar }),
+            body: JSON.stringify({ action: 'trash', ids: [selectedMailId] }),
           })
-          mail.starred = nextStar ? 1 : 0
-          renderNavList()
-          renderMain()
+          notice('邮件已移入废纸篓')
+          selectedMailId = null
+          await loadMessages()
         }
         return
       }
-
-      // 行内：已读/未读切换
-      const readToggle = target.closest<HTMLElement>('[data-toggle-read]')
-      if (readToggle) {
-        const id = readToggle.dataset.toggleRead!
-        const mail = messages.find(x => x.id === id)
+      if (target.closest('#mailToggleRead') && selectedMailId) {
+        const mail = messages.find(x => x.id === selectedMailId)
         if (mail) {
           const nextRead = !mail.read
-          await api(`/api/mail/messages/${id}/read`, {
+          await api(`/api/mail/messages/${mail.id}/read`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ read: nextRead }),
           })
           mail.read = nextRead ? 1 : 0
-          notice(nextRead ? '已标为已读' : '已标为未读')
+          notice(nextRead ? '已标记为已读' : '已标记为未读')
           renderNavList()
           renderMain()
         }
         return
       }
-
-      // 行内：添加到日历
-      const addCalBtn = target.closest<HTMLElement>('[data-add-cal]')
-      if (addCalBtn) {
-        const id = addCalBtn.dataset.addCal!
-        const mail = messages.find(x => x.id === id)
+      if (target.closest('#mailAddToCal') && selectedMailId) {
+        const mail = messages.find(x => x.id === selectedMailId)
         if (mail) {
           await addEmailToCalendar(mail)
         }
         return
       }
 
-      // 行内：删除 / 移入废纸篓
+      // 11. 行内悬浮快捷操作
+      const restoreRowBtn = target.closest<HTMLElement>('[data-restore-mail]')
+      if (restoreRowBtn) {
+        e.stopPropagation()
+        const id = restoreRowBtn.dataset.restoreMail!
+        await api('/api/mail/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'restore', ids: [id] }),
+        })
+        notice('已恢复至收件箱')
+        await loadMessages()
+        return
+      }
+
       const delMailBtn = target.closest<HTMLElement>('[data-del-mail]')
       if (delMailBtn) {
+        e.stopPropagation()
         const id = delMailBtn.dataset.delMail!
         if (activeFolder === 'trash') {
           const ok = await askConfirm({
-            title: '永久删除邮件',
-            message: '确定要彻底删除该邮件吗？',
+            title: '彻底永久删除邮件',
+            message: '彻底删除后该邮件将无法找回，确定永久删除吗？',
             confirm: '永久删除',
             danger: true,
           })
@@ -2365,70 +2421,89 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
-      // 患者跳转
-      const ptJump = target.closest<HTMLElement>('#mailJumpPatient')
-      if (ptJump && hooks.openPatient) {
-        const code = ptJump.dataset.code!
-        await hooks.openPatient(code)
-        return
-      }
-
-      // 课题跳转
-      const stJump = target.closest<HTMLElement>('#mailJumpStudy')
-      if (stJump && hooks.openStudy) {
-        const study = stJump.dataset.study!
-        await hooks.openStudy(study)
-        return
-      }
-
-      // 添加到日历（详情页）
-      const calBtn = target.closest<HTMLElement>('#mailAddToCal')
-      if (calBtn && selectedMailId) {
-        const mail = messages.find(x => x.id === selectedMailId)
+      const starRowBtn = target.closest<HTMLElement>('[data-star-id]')
+      if (starRowBtn) {
+        e.stopPropagation()
+        const id = starRowBtn.dataset.starId!
+        const mail = messages.find(x => x.id === id)
         if (mail) {
-          await addEmailToCalendar(mail)
-        }
-        return
-      }
-
-      // 已读切换（详情页）
-      const readBtn = target.closest<HTMLElement>('#mailToggleRead')
-      if (readBtn && selectedMailId) {
-        const mail = messages.find(x => x.id === selectedMailId)
-        if (mail) {
-          const newRead = !mail.read
-          await api(`/api/mail/messages/${mail.id}/read`, {
+          const nextStar = !mail.starred
+          await api(`/api/mail/messages/${id}/star`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ read: newRead }),
+            body: JSON.stringify({ starred: nextStar }),
           })
-          mail.read = newRead ? 1 : 0
-          notice(newRead ? '已标记为已读' : '已标记为未读')
+          mail.starred = nextStar ? 1 : 0
           renderNavList()
           renderMain()
         }
         return
       }
 
-      // 详情页：移入废纸篓
-      const delBtn = target.closest<HTMLElement>('#mailDelete')
-      if (delBtn && selectedMailId) {
-        const ok = await askConfirm({
-          title: '移入废纸篓',
-          message: '确定要将此邮件移入废纸篓吗？',
-          confirm: '移入废纸篓',
-          danger: true,
-        })
-        if (ok) {
-          await api('/api/mail/batch', {
-            method: 'POST',
+      const readToggle = target.closest<HTMLElement>('[data-toggle-read]')
+      if (readToggle) {
+        e.stopPropagation()
+        const id = readToggle.dataset.toggleRead!
+        const mail = messages.find(x => x.id === id)
+        if (mail) {
+          const nextRead = !mail.read
+          await api(`/api/mail/messages/${id}/read`, {
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'trash', ids: [selectedMailId] }),
+            body: JSON.stringify({ read: nextRead }),
           })
-          notice('邮件已移入废纸篓')
-          selectedMailId = null
-          await loadMessages()
+          mail.read = nextRead ? 1 : 0
+          notice(nextRead ? '已标为已读' : '已标为未读')
+          renderNavList()
+          renderMain()
         }
+        return
+      }
+
+      const addCalRowBtn = target.closest<HTMLElement>('[data-add-cal]')
+      if (addCalRowBtn) {
+        e.stopPropagation()
+        const id = addCalRowBtn.dataset.addCal!
+        const mail = messages.find(x => x.id === id)
+        if (mail) {
+          await addEmailToCalendar(mail)
+        }
+        return
+      }
+
+      // 12. 点击邮件行进入详情（排除复选框、按钮）
+      const row = target.closest<HTMLElement>('.mail-row')
+      if (row && !target.closest('button') && !target.closest('input')) {
+        const id = row.dataset.mailId
+        if (id) {
+          selectedMailId = id
+          const targetMail = messages.find(x => x.id === id)
+          if (targetMail && !targetMail.read) {
+            targetMail.read = 1
+            void api(`/api/mail/messages/${id}/read`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ read: true }),
+            })
+          }
+          renderNavList()
+          renderMain()
+        }
+        return
+      }
+
+      // 13. 患者 / 课题跳转
+      const ptJump = target.closest<HTMLElement>('#mailJumpPatient')
+      if (ptJump && hooks.openPatient) {
+        const code = ptJump.dataset.code!
+        await hooks.openPatient(code)
+        return
+      }
+      const stJump = target.closest<HTMLElement>('#mailJumpStudy')
+      if (stJump && hooks.openStudy) {
+        const study = stJump.dataset.study!
+        await hooks.openStudy(study)
+        return
       }
     })
   }
@@ -2828,10 +2903,12 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     btnInbox?.addEventListener('click', () => {
       if (activeFolder !== 'inbox') {
         activeFolder = 'inbox'
+        activeFilter = 'all'
         selectedMailId = null
         selectedIds.clear()
         currentPage = 1
         updateFolderButtons()
+        updatePills('all')
         void loadMessages()
       }
     })
@@ -2839,10 +2916,12 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     btnSent?.addEventListener('click', () => {
       if (activeFolder !== 'sent') {
         activeFolder = 'sent'
+        activeFilter = 'all'
         selectedMailId = null
         selectedIds.clear()
         currentPage = 1
         updateFolderButtons()
+        updatePills('all')
         void loadMessages()
       }
     })
@@ -2850,10 +2929,12 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     btnTrash?.addEventListener('click', () => {
       if (activeFolder !== 'trash') {
         activeFolder = 'trash'
+        activeFilter = 'all'
         selectedMailId = null
         selectedIds.clear()
         currentPage = 1
         updateFolderButtons()
+        updatePills('all')
         void loadMessages()
       }
     })
