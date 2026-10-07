@@ -293,6 +293,11 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
 
   // 鉴权：账户令牌（开发模式下也接受开发令牌，见 auth/accounts.ts）。EventSource / <img> 用 ?token=。
   app.use('/api/*', async (c, next) => {
+    // 外部来信 Webhook 无需用户 Session（由 /api/mail/inbound 独立验证 X-Inbound-Secret 通信密钥）
+    if (c.req.path === '/api/mail/inbound') {
+      return next()
+    }
+
     // AI 以用户身份的进程内调用（MCP 管理类工具、确认后执行的操作）：鉴权与权限判定和界面完全一致
     const internal = internalVia(n => c.req.header(n))
     if (internal === 'forged') return c.json({ error: '请先登录', code: 'unauthorized' }, 401)
@@ -2291,7 +2296,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       tenantId: u?.tenant_id,
       sender: mail.userEmail(u?.username ?? user),
       senderName: u?.display_name ?? '主诊医师',
-      recipient: body.recipient || body.to || 'colleague@heurion.com',
+      recipient: body.recipient || body.to || 'colleague@heurion.org',
       subject: body.subject,
       body: body.body,
       category: body.category || 'general',

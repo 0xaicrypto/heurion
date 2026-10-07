@@ -37,6 +37,7 @@ function makeTestApp() {
     return app.request(path, { ...init, method, headers })
   }
   return {
+    rawApp: app,
     get: (path: string, init?: RequestInit) => call('GET', path, init),
     post: (path: string, init?: RequestInit) => call('POST', path, init),
     patch: (path: string, init?: RequestInit) => call('PATCH', path, init),
@@ -52,7 +53,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     // 域名使用 heurion.org (支持每个医生专属邮箱，如 hui@heurion.org)
     expect(mail.userEmail('wang')).toBe('wang@heurion.org')
     expect(mail.userEmail('hui')).toBe('hui@heurion.org')
-    expect(mail.userEmail('Dr_Zhao')).toBe('dr_zhao@heurion.org')
+    expect(mail.userEmail('Dr_Zhao')).toBe('zhao@heurion.org')
 
     // 首次访问自动载入 5 封高真实度临床随访与科研进展邮件
     const list = mail.list('u1', 'wang')
@@ -70,7 +71,7 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(abpaMail?.subject).toContain('PT-BRONCHO-001')
     expect(abpaMail?.body).toContain('BAR = 1.45')
     expect(abpaMail?.body).toContain('HAM = 12.44 cm³')
-    expect(abpaMail?.sender).toBe('followup@heurion.com')
+    expect(abpaMail?.sender).toBe('followup@heurion.org')
     expect(abpaMail?.recipient).toBe('wang@heurion.org')
 
     // 科研邮件包含真实 DAPA-HF 课题与 PSM 质控进展
@@ -446,5 +447,38 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     const inboxMails = mailService.list(user.id, user.username, { folder: 'inbox' })
     expect(inboxMails.some(m => m.subject === '临床诊断随访测试')).toBe(false)
   })
+
+  it('7. 外部来信 Webhook 鉴权与 RFC 5322 地址解析 (无需 Session 登录凭证，支持带称谓地址)', async () => {
+    const api = makeTestApp()
+
+    // 模拟 Cloudflare Email Worker 发来的 Webhook，完全不带 Authorization Session Header
+    const rawRes = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Jimmy Zhao <zhaojimmy13@gmail.com>',
+        to: 'HZ (Heurion) <dev@heurion.org>',
+        subject: 'Re: 临床诊断随访测试',
+        body: '这是外部 Gmail 客户端直接回复的邮件正文',
+      }),
+    })
+
+    expect(rawRes.status).toBe(201)
+    const json = await rawRes.json() as any
+    expect(json.ok).toBe(true)
+    expect(json.id).toBeDefined()
+
+    // 确认入库信息已将 RFC 5322 尖括号地址干净提取，成功匹配给医生 dev 账户
+    const checkRes = await api.get(`/api/mail/messages/${json.id}`)
+    expect(checkRes.status).toBe(200)
+    const saved = await checkRes.json() as any
+    expect(saved.sender).toBe('zhaojimmy13@gmail.com')
+    expect(saved.sender_name).toBe('Jimmy Zhao')
+    expect(saved.recipient).toBe('dev@heurion.org')
+    expect(saved.subject).toBe('Re: 临床诊断随访测试')
+  })
 })
+
 

@@ -225,7 +225,9 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     try {
       mailStatus = await api<MailStatus>('/api/mail/status')
       if (mailStatus?.user_email) {
-        currentUserEmail = mailStatus.user_email.replace(/@heurion\.com$/, '@heurion.org')
+        let email = mailStatus.user_email.replace(/@heurion\.com$/, '@heurion.org')
+        email = email.replace(/^dr[._-]/i, '')
+        currentUserEmail = email
       }
     } catch (err) {
       console.error('[mail] failed to load status', err)
@@ -1392,7 +1394,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <form id="mailComposeForm" class="mail-form">
             <div class="form-row">
               <label>收件人邮箱 (Recipient) *</label>
-              <input type="email" id="composeTo" required placeholder="如：patient@gmail.com 或 dr.wang@heurion.org" />
+              <input type="email" id="composeTo" required placeholder="如：patient@gmail.com 或 wang@heurion.org" />
             </div>
 
             <div class="form-grid">

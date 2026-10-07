@@ -66,7 +66,7 @@ export class CalendarService {
         userId: input.userId,
         recipientUserId: input.userId,
         tenantId: input.tenantId,
-        sender: input.category === 'followup' ? 'followup@heurion.com' : 'research@heurion.com',
+        sender: input.category === 'followup' ? 'followup@heurion.org' : 'research@heurion.org',
         senderName: input.category === 'followup' ? 'Heurion 智能随访中心' : 'Heurion 科研协同办公室',
         recipient: email,
         subject: `【日程提醒】${input.title}`,

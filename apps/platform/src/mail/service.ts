@@ -46,6 +46,12 @@ export interface MailSummaryResult {
   ai_powered: boolean
 }
 
+function extractEmail(str: string): string {
+  if (!str) return ''
+  const m = str.match(/<([^>]+)>/)
+  return (m && m[1] ? m[1] : str).trim()
+}
+
 export class MailService {
   readonly domain: string
   private readonly complete?: ((system: string, user: string) => Promise<string>) | null
@@ -59,7 +65,7 @@ export class MailService {
       complete?: ((system: string, user: string) => Promise<string>) | null
     } = {},
   ) {
-    this.domain = opts.domain || 'heurion.org'
+    this.domain = (opts.domain || 'heurion.org').replace(/heurion\.com$/, 'heurion.org')
     this.complete = opts.complete
   }
 
@@ -73,10 +79,12 @@ export class MailService {
     return this.mailer?.mode ?? 'dev-mock'
   }
 
-  /** 用户的工作邮箱地址 (优先根据用户名生成专属邮箱，如 hui@heurion.org) */
+  /** 用户的工作邮箱地址 (优先根据用户名生成专属邮箱，如 hz@heurion.org) */
   userEmail(username: string): string {
-    const cleanUser = username.toLowerCase().replace(/[^a-z0-9_.-]/g, '') || 'doctor'
-    return `${cleanUser}@${this.domain}`
+    let cleanUser = username.toLowerCase().replace(/[^a-z0-9_.-]/g, '') || 'doctor'
+    cleanUser = cleanUser.replace(/^dr[._-]/, '') || cleanUser
+    const domain = (this.domain || 'heurion.org').replace(/heurion\.com$/, 'heurion.org')
+    return `${cleanUser}@${domain}`
   }
 
   /** 是否属于平台内部域名 */
@@ -475,7 +483,8 @@ export class MailService {
     body: string
     category?: 'followup' | 'research' | 'notification' | 'general'
   }): Promise<{ success: boolean; message?: MailMessageRow; forwardedTo?: string; reason?: string }> {
-    const recipient = input.to.trim()
+    const recipient = extractEmail(input.to)
+    const sender = extractEmail(input.from)
     const internalUser = this.findInternalUser(recipient)
     if (!internalUser) {
       return { success: false, reason: `收件地址 ${recipient} 未匹配到站内有效医生/研究员账户` }
@@ -484,8 +493,8 @@ export class MailService {
     const msg = this.store.createMailMessage({
       user_id: internalUser.id,
       tenant_id: internalUser.tenant_id ?? null,
-      sender: input.from.trim(),
-      sender_name: input.fromName || input.from.split('@')[0] || '外部来信',
+      sender,
+      sender_name: input.fromName || input.from.split('<')[0]?.replace(/"/g, '')?.trim() || sender.split('@')[0] || '外部来信',
       recipient,
       subject: input.subject || '（无主题）',
       body: input.body || '',
@@ -509,7 +518,7 @@ export class MailService {
       forwardedTo = personalEmail
       const forwardSubject = `[Heurion 外部来信转交] ${input.subject || '（无主题）'}`
       const forwardBody = `【Heurion 临床工作站 · 专属邮箱自动转交通知】\n\n`
-        + `发件人: ${input.fromName ? `${input.fromName} <${input.from}>` : input.from}\n`
+        + `发件人: ${input.fromName ? `${input.fromName} <${sender}>` : input.from}\n`
         + `收件人: ${recipient} (您的 Heurion 专属工作邮箱)\n`
         + `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n`
         + `--------------------------------------------------\n\n`
@@ -518,7 +527,7 @@ export class MailService {
         + `提示：此邮件已同步归档至您的 Heurion 工作台【收件箱】中。直接回复此邮件即可送达外部发件人。`
 
       this.mailer.send(personalEmail, forwardSubject, forwardBody, undefined, {
-        replyTo: input.from,
+        replyTo: sender,
         senderName: `${input.fromName || '外部发件人'} (via Heurion)`,
         senderAddress: recipient,
       }).catch(err => {
@@ -531,31 +540,35 @@ export class MailService {
 
   /** 查找系统注册的站内收件用户 */
   findInternalUser(recipientEmail: string): UserRow | undefined {
-    const clean = recipientEmail.trim().toLowerCase()
+    const clean = extractEmail(recipientEmail).trim().toLowerCase()
     const byEmail = this.store.getUserByEmail(clean)
     if (byEmail) return byEmail
 
-    const heurionMatch = clean.match(/^(?:dr\.)?([a-z0-9_.-]+)@(heurion\.org|heurion\.com)$/)
+    const heurionMatch = clean.match(/^(?:dr[._-])?([a-z0-9_.-]+)@(heurion\.org|heurion\.com)$/)
     if (heurionMatch && heurionMatch[1]) {
       const username = heurionMatch[1]
       const byName = this.store.getUserByName(username)
       if (byName) return byName
     }
 
+    const cleanUser = clean.split('@')[0]?.replace(/^dr[._-]/, '') || clean
+
     const all = this.store.listUsers()
     return all.find(u => {
       const uname = u.username.toLowerCase()
+      const unameStripped = uname.replace(/^dr[._-]/, '')
       if (u.email && u.email.toLowerCase() === clean) return true
-      if (uname === clean) return true
-      if (`${uname}@${this.domain}` === clean) return true
+      if (uname === clean || unameStripped === cleanUser) return true
+      if (`${uname}@${this.domain}` === clean || `${unameStripped}@${this.domain}` === clean) return true
       if (`dr.${uname}@${this.domain}` === clean) return true
-      if (`${uname}@heurion.org` === clean) return true
+      if (`${uname}@heurion.org` === clean || `${unameStripped}@heurion.org` === clean) return true
       if (`dr.${uname}@heurion.org` === clean) return true
-      if (`${uname}@heurion.com` === clean) return true
+      if (`${uname}@heurion.com` === clean || `${unameStripped}@heurion.com` === clean) return true
       if (`dr.${uname}@heurion.com` === clean) return true
       return false
     })
   }
+
 
   /** 标为已读/未读 */
   markRead(userId: string, id: string, read = true): void {
@@ -616,7 +629,7 @@ export class MailService {
       {
         user_id: userId,
         tenant_id: null,
-        sender: 'followup@heurion.com',
+        sender: 'followup@heurion.org',
         sender_name: 'Heurion 智能随访中心',
         recipient: myEmail,
         subject: '【随访计划】PT-BRONCHO-001 气道高密度粘液栓 (HAM) 与支气管扩张 3 个月影像复查与肺功能随访',
@@ -652,7 +665,7 @@ export class MailService {
       {
         user_id: userId,
         tenant_id: null,
-        sender: 'research.dapa-hf@heurion.com',
+        sender: 'research.dapa-hf@heurion.org',
         sender_name: 'DAPA-HF 国际多中心课题组',
         recipient: myEmail,
         subject: '【科研进度周报】DAPA-HF 里程碑前瞻性队列研究 · 第 3 阶段入组达标与倾向评分匹配 (PSM) 质控完成',
@@ -689,7 +702,7 @@ export class MailService {
       {
         user_id: userId,
         tenant_id: null,
-        sender: 'oncology.followup@heurion.com',
+        sender: 'oncology.followup@heurion.org',
         sender_name: '胸部肿瘤随访监护组',
         recipient: myEmail,
         subject: '【随访提醒】PT-NSCLC-002 奥希替尼靶向治疗第 8 周 RECIST 1.1 疗效评估与耐药监测',
@@ -715,7 +728,7 @@ export class MailService {
       {
         user_id: userId,
         tenant_id: null,
-        sender: 'irb.research@heurion.com',
+        sender: 'irb.research@heurion.org',
         sender_name: '临床医学伦理与科研办公室',
         recipient: myEmail,
         subject: '【科研日程】国际多中心临床试验 DSMB 独立数据监查委员会中期审查会日程',
@@ -744,7 +757,7 @@ export class MailService {
       {
         user_id: userId,
         tenant_id: null,
-        sender: 'nutrition.prehab@heurion.com',
+        sender: 'nutrition.prehab@heurion.org',
         sender_name: '临床营养与药学监护组',
         recipient: myEmail,
         subject: '【营养随访】PT-SARCO-003 恶液质重度肌少症全肠内营养支持 (ONS) 与首剂化疗耐受随访',
@@ -757,6 +770,7 @@ export class MailService {
         starred: 0,
         calendar_event_id: null,
         created_at: isoHoursAgo(48),
+
         body: `### 恶性肿瘤重度肌少症多学科随访 · PT-SARCO-003
 
 - **患者信息**：64岁男性，胰腺癌局部进展期，L3 骨骼肌质量指数 **SMI = 29.92 cm²/m²**，肌肉辐射衰减 **MA = 26.4 HU**，实测握力 19 kg；

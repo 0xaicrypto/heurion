@@ -722,7 +722,7 @@ export class Store {
     const mailCols = (this.db.prepare('PRAGMA table_info(mail_messages)').all() as Array<{ name: string }>).map(c => c.name)
     if (!mailCols.includes('folder')) {
       this.db.exec("ALTER TABLE mail_messages ADD COLUMN folder TEXT NOT NULL DEFAULT 'inbox'")
-      this.db.exec("UPDATE mail_messages SET folder = 'sent' WHERE sender LIKE 'dr.%' AND recipient NOT LIKE 'dr.%' AND recipient NOT LIKE '%@heurion.com'")
+      this.db.exec("UPDATE mail_messages SET folder = 'sent' WHERE (sender LIKE 'dr.%' OR sender LIKE '%@heurion.org') AND recipient NOT LIKE 'dr.%' AND recipient NOT LIKE '%@heurion.org' AND recipient NOT LIKE '%@heurion.com'")
     }
     if (!mailCols.includes('delivery_status')) {
       this.db.exec('ALTER TABLE mail_messages ADD COLUMN delivery_status TEXT')
