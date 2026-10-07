@@ -99,13 +99,13 @@ export interface MailSummaryResult {
 function renderDeliveryPill(status?: string): string {
   switch (status) {
     case 'external_sent':
-      return '<span class="mail-delivery-pill ok" title="已成功通过外网 SMTP 发出">✓ 外网已发</span>'
+      return `<span class="mail-delivery-pill ok" title="已成功通过外网 SMTP 发出">${icon('check', { size: 10, class: 'mail-pill-icon' })} 外网已发</span>`
     case 'delivered':
-      return '<span class="mail-delivery-pill ok" title="已送达院内专邮收件箱">✓ 站内送达</span>'
+      return `<span class="mail-delivery-pill ok" title="已送达院内专邮收件箱">${icon('check', { size: 10, class: 'mail-pill-icon' })} 站内送达</span>`
     case 'simulated':
-      return '<span class="mail-delivery-pill sim" title="本地开发模拟，未配置外网发信服务">⚡ 本地模拟</span>'
+      return `<span class="mail-delivery-pill sim" title="本地开发模拟，未配置外网发信服务">${icon('info', { size: 10, class: 'mail-pill-icon' })} 本地模拟</span>`
     case 'failed':
-      return '<span class="mail-delivery-pill fail" title="发信失败">✕ 发送失败</span>'
+      return `<span class="mail-delivery-pill fail" title="发信失败">${icon('close', { size: 10, class: 'mail-pill-icon' })} 发送失败</span>`
     default:
       return ''
   }
@@ -189,6 +189,15 @@ export function decodeEmailBody(body: string): string {
   }
   text = text.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, '').trim()
   return text
+}
+
+/** 移除字符串中的所有 Emoji 彩色表情符号，保证临床科研工作站专业严谨的视觉体系 */
+export function stripEmojis(str: string): string {
+  if (!str) return ''
+  return str
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u{2600}-\u{27BF}\u{2B50}-\u{2B55}\u{FE00}-\u{FE0F}]/gu, '')
+    .trim()
 }
 
 function formatSenderDisplay(senderName?: string, sender?: string): string {
@@ -298,13 +307,28 @@ function formatBriefingMarkdown(raw: string): string {
     }
 
     if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
-      const heading = trimmed.replace(/^#+\s*/, '')
-      out.push(`<div class="mail-briefing-sec-title">
-        <span class="mail-briefing-sec-bar"></span>
-        <span class="mail-briefing-sec-text">${esc(heading)}</span>
+      const headingRaw = trimmed.replace(/^#+\s*/, '')
+      const cleanHeading = stripEmojis(headingRaw)
+
+      let headingIcon = icon('sparkles', { size: 13, class: 'briefing-sec-icon info' })
+      let secClass = ''
+      if (cleanHeading.includes('随访') || cleanHeading.includes('预警') || cleanHeading.includes('风险') || cleanHeading.includes('急需') || cleanHeading.includes('警示')) {
+        headingIcon = icon('warning', { size: 13, class: 'briefing-sec-icon warn' })
+        secClass = 'warn'
+      } else if (cleanHeading.includes('科研') || cleanHeading.includes('试验') || cleanHeading.includes('课题') || cleanHeading.includes('方案') || cleanHeading.includes('入组')) {
+        headingIcon = icon('microscope', { size: 13, class: 'briefing-sec-icon research' })
+        secClass = 'research'
+      } else if (cleanHeading.includes('行动') || cleanHeading.includes('待办') || cleanHeading.includes('建议') || cleanHeading.includes('处置') || cleanHeading.includes('总结')) {
+        headingIcon = icon('report', { size: 13, class: 'briefing-sec-icon action' })
+        secClass = 'action'
+      }
+
+      out.push(`<div class="mail-briefing-sec-title ${secClass}">
+        ${headingIcon}
+        <span class="mail-briefing-sec-text">${esc(cleanHeading)}</span>
       </div>`)
     } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      const content = trimmed.slice(2)
+      const content = stripEmojis(trimmed.slice(2))
       out.push(`<div class="mail-briefing-bullet">
         <span class="mail-briefing-bullet-dot"></span>
         <div class="mail-briefing-bullet-body">${formatBriefingInline(content)}</div>
@@ -312,15 +336,16 @@ function formatBriefingMarkdown(raw: string): string {
     } else if (/^\d+\.\s+/.test(trimmed)) {
       const match = trimmed.match(/^(\d+)\.\s+(.*)$/)
       if (match) {
+        const content = stripEmojis(match[2] || '')
         out.push(`<div class="mail-briefing-bullet">
           <span class="mail-briefing-bullet-num">${match[1]}</span>
-          <div class="mail-briefing-bullet-body">${formatBriefingInline(match[2] || '')}</div>
+          <div class="mail-briefing-bullet-body">${formatBriefingInline(content)}</div>
         </div>`)
       } else {
-        out.push(`<p class="mail-briefing-p">${formatBriefingInline(trimmed)}</p>`)
+        out.push(`<p class="mail-briefing-p">${formatBriefingInline(stripEmojis(trimmed))}</p>`)
       }
     } else {
-      out.push(`<p class="mail-briefing-p">${formatBriefingInline(trimmed)}</p>`)
+      out.push(`<p class="mail-briefing-p">${formatBriefingInline(stripEmojis(trimmed))}</p>`)
     }
   }
 
@@ -328,7 +353,7 @@ function formatBriefingMarkdown(raw: string): string {
 }
 
 function formatBriefingInline(text: string): string {
-  let s = esc(text)
+  let s = esc(stripEmojis(text))
   s = s.replace(/\*\*(.*?)\*\*/g, '<strong class="mail-briefing-bold">$1</strong>')
   s = s.replace(/(PT-[A-Z0-9-]+)/g, '<span class="mail-briefing-pill" data-pt-code="$1" title="点击查看患者 $1 全景档案">$1</span>')
   s = s.replace(/((?:RCT|STUDY)-[A-Z0-9-]+)/g, '<span class="mail-briefing-study-pill" data-study-id="$1" title="点击查看科研项目 $1">$1</span>')
@@ -465,11 +490,11 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         <li class="mail-briefing-card empty">
           <div class="mail-briefing-head">
             <div class="mail-briefing-head-left">
-              <span class="mail-ai-chip">✨ AI 动态速报</span>
+              <span class="mail-ai-chip">${icon('sparkles', { size: 12 })} AI 动态速报</span>
               <span class="mail-time-pill">近 48h</span>
             </div>
             <button class="mail-refresh-btn ${summaryLoading ? 'loading' : ''}" id="mailRefreshSummaryBtn" title="刷新 AI 摘要">
-              <svg viewBox="0 0 20 20" class="mail-refresh-svg"><path d="M4 10a6 6 0 1 1 1.76 4.24l-2.12 2.12M4 10V4m0 6H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              ${icon('refresh', { size: 12, class: 'mail-refresh-svg' })}
               <span>${summaryLoading ? '生成中...' : '刷新'}</span>
             </button>
           </div>
@@ -495,11 +520,11 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         <!-- 头部标题栏与刷新 -->
         <div class="mail-briefing-head">
           <div class="mail-briefing-head-left">
-            <span class="mail-ai-chip">✨ AI 动态速报</span>
+            <span class="mail-ai-chip">${icon('sparkles', { size: 12 })} AI 动态速报</span>
             <span class="mail-time-pill">近 ${hours || 48}h</span>
           </div>
           <button class="mail-refresh-btn ${summaryLoading ? 'loading' : ''}" id="mailRefreshSummaryBtn" title="点击由 DeepSeek 重新聚合分析">
-            <svg viewBox="0 0 20 20" class="mail-refresh-svg"><path d="M4 10a6 6 0 1 1 1.76 4.24l-2.12 2.12M4 10V4m0 6H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            ${icon('refresh', { size: 12, class: 'mail-refresh-svg' })}
             <span>${summaryLoading ? '研判中...' : '刷新'}</span>
           </button>
         </div>
@@ -608,7 +633,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
               <button class="cal-btn ${mainViewMode === 'list' ? 'active' : ''}" id="mailViewListBtn">邮件列表</button>
               <button class="cal-btn ${mainViewMode === 'dashboard' ? 'active' : ''}" id="mailViewDashBtn">统计看板</button>
             </div>
-            <button class="mail-btn primary" id="mailComposeActionBtn">＋ 写邮件</button>
+            <button class="mail-btn primary" id="mailComposeActionBtn">${icon('write', { size: 14 })} 写邮件</button>
           </div>
         </div>
 
@@ -630,7 +655,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <div class="mail-filter-pills">
             <button class="mail-filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-filter="all">全部</button>
             ${!isSent && !isTrash ? `<button class="mail-filter-chip ${activeFilter === 'unread' ? 'active' : ''}" data-filter="unread">未读 (${unreadCount})</button>` : ''}
-            <button class="mail-filter-chip ${activeFilter === 'starred' ? 'active' : ''}" data-filter="starred">★ 星标 (${starredCount})</button>
+            <button class="mail-filter-chip ${activeFilter === 'starred' ? 'active' : ''}" data-filter="starred">${icon('star', { size: 12, class: 'mail-star-icon-filled' })} 星标 (${starredCount})</button>
             <button class="mail-filter-chip ${activeFilter === 'followup' ? 'active' : ''}" data-filter="followup">随访通知</button>
             <button class="mail-filter-chip ${activeFilter === 'research' ? 'active' : ''}" data-filter="research">科研进展</button>
           </div>
@@ -650,13 +675,13 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
               <button class="mail-btn ghost sm" id="batchMarkReadBtn">
                 ${icon('check', { size: 13 })} 标为已读
               </button>
-              <button class="mail-btn ghost sm" id="batchMarkUnreadBtn">标为未读</button>
+              <button class="mail-btn ghost sm" id="batchMarkUnreadBtn">${icon('mail', { size: 13 })} 标为未读</button>
             ` : ''}
-            <button class="mail-btn ghost sm" id="batchStarBtn">★ 标星</button>
-            <button class="mail-btn ghost sm" id="batchUnstarBtn">☆ 取消星标</button>
+            <button class="mail-btn ghost sm" id="batchStarBtn">${icon('star', { size: 13, class: 'mail-star-icon-filled' })} 标星</button>
+            <button class="mail-btn ghost sm" id="batchUnstarBtn">${icon('star', { size: 13 })} 取消星标</button>
             ${isTrash ? `
-              <button class="mail-btn ghost sm ok" id="batchRestoreBtn">恢复至收件箱</button>
-              <button class="mail-btn ghost sm danger" id="batchDeletePermanentBtn">彻底删除</button>
+              <button class="mail-btn ghost sm ok" id="batchRestoreBtn">${icon('refresh', { size: 13 })} 恢复至收件箱</button>
+              <button class="mail-btn ghost sm danger" id="batchDeletePermanentBtn">${icon('trash', { size: 13 })} 彻底删除</button>
             ` : `
               <button class="mail-btn ghost sm danger" id="batchMoveTrashBtn">
                 ${icon('trash', { size: 13 })} 移入废纸篓
@@ -690,7 +715,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
                       <input type="checkbox" class="mail-item-checkbox" data-id="${m.id}" ${isChecked ? 'checked' : ''} />
                     </div>
                     <button class="mail-row-star ${isStarred ? 'starred' : ''}" data-star-id="${m.id}" title="${isStarred ? '取消星标' : '标记星标'}" onclick="event.stopPropagation()">
-                      ${isStarred ? '★' : '☆'}
+                      ${icon('star', { size: 14, class: isStarred ? 'mail-star-icon-filled' : 'mail-star-icon-outline' })}
                     </button>
                     <div class="mail-row-sender" title="${esc(party)}">${esc(party)}</div>
                     <div class="mail-row-body-info">
@@ -927,17 +952,17 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           </button>
 
           <button class="mail-btn ghost" id="mailToggleStar" title="${isStarred ? '取消星标' : '标记星标'}">
-            ${isStarred ? '★ 已标星' : '☆ 标星'}
+            ${icon('star', { size: 14, class: isStarred ? 'mail-star-icon-filled' : '' })} ${isStarred ? '已标星' : '标星'}
           </button>
-          ${!isSent && !isTrash ? `<button class="mail-btn ghost" id="mailToggleRead">${isUnread ? '标为已读' : '标为未读'}</button>` : ''}
+          ${!isSent && !isTrash ? `<button class="mail-btn ghost" id="mailToggleRead">${isUnread ? icon('check', { size: 14 }) + ' 标为已读' : icon('mail', { size: 14 }) + ' 标为未读'}</button>` : ''}
           <button class="mail-btn ghost" id="mailAddToCal" title="将邮件关联的复查或会议添加到日历">
             ${icon('calendar', { size: 14 })} 添加到日历
           </button>
           ${isTrash ? `
-            <button class="mail-btn ghost ok" id="mailRestoreBtn">恢复到收件箱</button>
-            <button class="mail-btn ghost danger" id="mailDeletePermanentBtn">彻底删除</button>
+            <button class="mail-btn ghost ok" id="mailRestoreBtn">${icon('refresh', { size: 14 })} 恢复到收件箱</button>
+            <button class="mail-btn ghost danger" id="mailDeletePermanentBtn">${icon('trash', { size: 14 })} 彻底删除</button>
           ` : `
-            <button class="mail-btn ghost danger" id="mailDelete">移入废纸篓</button>
+            <button class="mail-btn ghost danger" id="mailDelete">${icon('trash', { size: 14 })} 移入废纸篓</button>
           `}
         </div>
 
@@ -946,7 +971,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           <div class="mail-header-badge-row">
             <span class="mail-badge ${catClass}">${CATEGORY_NAMES[m.category] || '邮件'}</span>
             ${renderDeliveryPill(m.delivery_status)}
-            ${isStarred ? '<span class="mail-badge cat-general">★ 星标收藏</span>' : ''}
+            ${isStarred ? `<span class="mail-badge cat-general">${icon('star', { size: 11, class: 'mail-star-icon-filled' })} 星标收藏</span>` : ''}
             ${m.patient_code ? `<span class="mail-header-tag tag-pt">${icon('users', { size: 13 })} 患者: ${esc(m.patient_code)}</span>` : ''}
             ${m.study_id ? `<span class="mail-header-tag tag-st">${icon('microscope', { size: 13 })} 课题: ${esc(m.study_id)}</span>` : ''}
             <span class="grow"></span>
@@ -1050,10 +1075,10 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             ${(msg.delivery_status || msg.folder === 'sent') ? `
               <div class="mail-delivery-notice ${msg.delivery_status === 'external_sent' || msg.delivery_status === 'delivered' ? 'ok' : msg.delivery_status === 'simulated' ? 'simulated' : 'fail'}">
                 <div class="mail-delivery-title">
-                  ${msg.delivery_status === 'external_sent' ? '✓ 外网邮件投递成功 (SMTP)' :
-                    msg.delivery_status === 'delivered' ? '✓ 站内信件投递成功' :
-                    msg.delivery_status === 'simulated' ? '⚡ 本地开发模拟（未配置外网发信服务）' :
-                    msg.delivery_status === 'failed' ? '✕ 外网发信失败' : '投递状态已记录'}
+                  ${msg.delivery_status === 'external_sent' ? `${icon('check', { size: 13, class: 'mail-pill-icon' })} 外网邮件投递成功 (SMTP)` :
+                    msg.delivery_status === 'delivered' ? `${icon('check', { size: 13, class: 'mail-pill-icon' })} 站内信件投递成功` :
+                    msg.delivery_status === 'simulated' ? `${icon('info', { size: 13, class: 'mail-pill-icon' })} 本地开发模拟（未配置外网发信服务）` :
+                    msg.delivery_status === 'failed' ? `${icon('close', { size: 13, class: 'mail-pill-icon' })} 外网发信失败` : '投递状态已记录'}
                 </div>
                 <div class="mail-delivery-text">
                   ${msg.delivery_note ? esc(msg.delivery_note) : (
@@ -1107,7 +1132,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
               <span class="inline-subject-preview">主题：${esc(replySubject)}</span>
             </div>
             <button class="mail-btn ghost sm" id="btnPopoutModal" title="在弹窗中进行全屏编辑">
-              ⤢ 弹窗全屏编辑
+              ${icon('write', { size: 13 })} 弹窗全屏编辑
             </button>
           </div>
 
@@ -1946,8 +1971,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       <div class="mail-modal-scrim" id="mailComposeScrim">
         <div class="mail-modal-card compose-card" role="dialog" aria-modal="true">
           <div class="mail-modal-head">
-            <h2>${initial?.in_reply_to ? '↩ 回复专邮' : initial?.subject?.startsWith('Fwd:') ? '↪ 转发专邮' : '＋ 起草并发送医疗通知专邮'}</h2>
-            <button class="mail-modal-close" id="mailComposeClose">✕</button>
+            <h2>${initial?.in_reply_to ? icon('reply', { size: 16 }) + ' 回复专邮' : initial?.subject?.startsWith('Fwd:') ? icon('forward', { size: 16 }) + ' 转发专邮' : icon('write', { size: 16 }) + ' 起草并发送医疗通知专邮'}</h2>
+            <button class="mail-modal-close" id="mailComposeClose" aria-label="关闭">${icon('close', { size: 16 })}</button>
           </div>
           <div class="mail-smtp-status-tip ${mailStatus?.configured ? 'configured' : 'mock'}">
             ${mailStatus?.configured

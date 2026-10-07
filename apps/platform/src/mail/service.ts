@@ -59,6 +59,15 @@ function extractEmail(str: string): string {
   return (m && m[1] ? m[1] : str).trim()
 }
 
+/** 移除字符串中的所有 Emoji 彩色表情符号，保证临床科研工作站专业严谨的视觉体系 */
+export function stripEmojis(str: string): string {
+  if (!str) return ''
+  return str
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u{2600}-\u{27BF}\u{2B50}-\u{2B55}\u{FE00}-\u{FE0F}]/gu, '')
+    .trim()
+}
+
 /** 解码 RFC 2047 格式的 MIME 头部字段 (如 =?UTF-8?B?...?= 或 =?UTF-8?Q?...?=) */
 export function decodeMimeWords(str: string): string {
   if (!str || !str.includes('=?')) return str
@@ -286,16 +295,16 @@ export class MailService {
 请使用结构化 Markdown 输出，要求：
 1. 语言极其凝练专业，直接切入核心临床与科研指标（如 BAR、HAM容积、RECIST评估、PSM倾向评分、DSMB审查）；
 2. 必须包含三个小节：
-   - 🚨 **重点随访与复查预警**（标出患者代号，如 PT-BRONCHO-001，附指标与建议门诊时间）
-   - 🔬 **科研课题与试验进展**（标出课题代号，如 DAPA-HF，附入组进度与会议日程）
-   - 📋 **行动要点与待办**（医师近期必须跟进确认的事项清单）
-3. 篇幅适中（约 200~350 字），排版美观紧凑，不要废话和礼貌用语。`
+   - ### 重点随访与复查预警（标出患者代号，如 PT-BRONCHO-001，附指标与建议门诊时间）
+   - ### 科研课题与试验进展（标出课题代号，如 DAPA-HF，附入组进度与会议日程）
+   - ### 行动要点与待办（医师近期必须跟进确认的事项清单）
+3. 篇幅适中（约 200~350 字），排版美观紧凑。严禁在输出中包含任何 Emoji 表情符号或装饰图标，所有小节标题只输出纯文本（如 ### 重点随访与复查预警），不要带任何表情或符号前缀。所有视觉标志均由系统专业单色矢量图标渲染。不要废话和礼貌用语。`
 
         const userPrompt = `以下是主诊医师近 48 小时收到的 ${targetMails.length} 封重要邮件，请生成摘要报告：\n\n${mailContext}`
 
         const res = await this.complete(system, userPrompt)
         if (res && res.trim().length > 30) {
-          summaryText = res.trim()
+          summaryText = stripEmojis(res.trim())
           aiPowered = true
         }
       } catch (err) {
@@ -304,7 +313,7 @@ export class MailService {
     }
 
     if (!summaryText) {
-      summaryText = this.generateFallbackSummary(targetMails)
+      summaryText = stripEmojis(this.generateFallbackSummary(targetMails))
       aiPowered = false
     }
 
@@ -334,7 +343,7 @@ export class MailService {
     const parts: string[] = []
 
     if (followups.length > 0) {
-      parts.push('#### 🚨 重点随访与复查预警')
+      parts.push('### 重点随访与复查预警')
       for (const m of followups) {
         const pt = m.patient_code ? `\`${m.patient_code}\`` : ''
         let hint = ''
@@ -347,7 +356,7 @@ export class MailService {
     }
 
     if (research.length > 0) {
-      parts.push('#### 🔬 科研课题与试验进展')
+      parts.push('### 科研课题与试验进展')
       for (const m of research) {
         const st = m.study_id ? `\`${m.study_id}\`` : ''
         let hint = ''
@@ -359,7 +368,7 @@ export class MailService {
     }
 
     if (others.length > 0) {
-      parts.push('#### 📋 待办事项与综合通报')
+      parts.push('### 待办事项与综合通报')
       for (const m of others) {
         parts.push(`- **来信**：${m.subject.slice(0, 35)}（发自 ${m.sender_name || m.sender.split('@')[0]}）`)
       }
