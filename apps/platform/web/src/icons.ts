@@ -61,6 +61,9 @@ export type IconName =
   | 'trash'
   | 'reply'
   | 'forward'
+  | 'paperclip'
+  | 'archive'
+  | 'bot'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -221,6 +224,15 @@ const ICONS: Record<IconName, string> = {
 
   // 往来转发
   forward: '<polyline points="13 14 18 9 13 4"/><path d="M2 17v-4a4 4 0 0 1 4-4h12"/>',
+
+  // 邮件附件曲别针
+  paperclip: '<path d="M15.5 8.5l-6.8 6.8a4 4 0 0 1-5.7-5.7l7.5-7.5a2.8 2.8 0 0 1 4 4l-7.5 7.5a1.4 1.4 0 0 1-2-2l6.5-6.5"/>',
+
+  // 归档、档案箱
+  archive: '<rect x="2.5" y="3.5" width="15" height="4" rx="1"/><path d="M4 7.5v9a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-9M8.5 11.5h3"/>',
+
+  // 智能助手、AI 机器人
+  bot: '<rect x="3.5" y="6" width="13" height="10" rx="2.5"/><path d="M10 2v4M2 11h1.5M16.5 11H18"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="12.5" cy="11" r="1" fill="currentColor"/>',
 }
 
 export interface IconOptions {

@@ -61,6 +61,15 @@ export interface TenantRow {
   created_at: string; created_by: string | null
 }
 
+export interface MailAttachment {
+  id: string
+  name: string
+  size: number
+  mime: string
+  data_base64?: string
+  url?: string
+}
+
 export interface MailMessageRow {
   id: string
   user_id: string
@@ -83,6 +92,7 @@ export interface MailMessageRow {
   delivery_note: string | null
   thread_id?: string | null
   in_reply_to?: string | null
+  attachments?: string | null
   created_at: string
 }
 
@@ -713,7 +723,7 @@ export class Store {
         recipient TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, category TEXT NOT NULL,
         patient_id TEXT, patient_code TEXT, study_id TEXT, study_title TEXT,
         read INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, calendar_event_id TEXT,
-        folder TEXT NOT NULL DEFAULT 'inbox', delivery_status TEXT, delivery_note TEXT, created_at TEXT NOT NULL
+        folder TEXT NOT NULL DEFAULT 'inbox', delivery_status TEXT, delivery_note TEXT, thread_id TEXT, in_reply_to TEXT, attachments TEXT, created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS mail_messages_user ON mail_messages (user_id, folder, category, read);
 
@@ -743,6 +753,9 @@ export class Store {
     }
     if (!mailCols.includes('in_reply_to')) {
       this.db.exec('ALTER TABLE mail_messages ADD COLUMN in_reply_to TEXT')
+    }
+    if (!mailCols.includes('attachments')) {
+      this.db.exec('ALTER TABLE mail_messages ADD COLUMN attachments TEXT')
     }
     this.db.exec("UPDATE mail_messages SET delivery_status = 'simulated', delivery_note = '本地开发模拟：未配置外网发信服务 (SMTP/RESEND_API_KEY)' WHERE folder = 'sent' AND delivery_status IS NULL")
   }
@@ -1986,7 +1999,7 @@ export class Store {
 
   // —— 邮件 (Mail) ——
 
-  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at' | 'folder' | 'delivery_status' | 'delivery_note'> & { id?: string; created_at?: string; folder?: MailMessageRow['folder']; delivery_status?: MailMessageRow['delivery_status']; delivery_note?: string | null; thread_id?: string | null; in_reply_to?: string | null }): MailMessageRow {
+  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at' | 'folder' | 'delivery_status' | 'delivery_note'> & { id?: string; created_at?: string; folder?: MailMessageRow['folder']; delivery_status?: MailMessageRow['delivery_status']; delivery_note?: string | null; thread_id?: string | null; in_reply_to?: string | null; attachments?: string | null }): MailMessageRow {
     const id = input.id ?? randomUUID()
     const createdAt = input.created_at ?? now()
     const folder = input.folder ?? 'inbox'
@@ -1994,17 +2007,30 @@ export class Store {
     const deliveryNote = input.delivery_note ?? null
     const threadId = input.thread_id ?? null
     const inReplyTo = input.in_reply_to ?? null
+    const attachments = input.attachments ?? null
     this.db.prepare(`
-      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, folder, delivery_status, delivery_note, thread_id, in_reply_to, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, folder, delivery_status, delivery_note, thread_id, in_reply_to, attachments, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.user_id, input.tenant_id ?? null, input.sender, input.sender_name,
       input.recipient, input.subject, input.body, input.category,
       input.patient_id ?? null, input.patient_code ?? null, input.study_id ?? null, input.study_title ?? null,
       input.read ? 1 : 0, input.starred ? 1 : 0, input.calendar_event_id ?? null,
-      folder, deliveryStatus, deliveryNote, threadId, inReplyTo, createdAt
+      folder, deliveryStatus, deliveryNote, threadId, inReplyTo, attachments, createdAt
     )
     return this.getMailMessage(input.user_id, id)!
+  }
+
+  updateMailPatient(userId: string, id: string, patientId: string, patientCode: string): void {
+    this.db.prepare('UPDATE mail_messages SET patient_id = ?, patient_code = ? WHERE user_id = ? AND id = ?').run(patientId, patientCode, userId, id)
+  }
+
+  updateMailStudy(userId: string, id: string, studyId: string, studyTitle?: string | null): void {
+    this.db.prepare('UPDATE mail_messages SET study_id = ?, study_title = ? WHERE user_id = ? AND id = ?').run(studyId, studyTitle ?? null, userId, id)
+  }
+
+  updateMailAttachments(userId: string, id: string, attachmentsJson: string): void {
+    this.db.prepare('UPDATE mail_messages SET attachments = ? WHERE user_id = ? AND id = ?').run(attachmentsJson, userId, id)
   }
 
   listThreadMessages(userId: string, targetId: string): MailMessageRow[] {

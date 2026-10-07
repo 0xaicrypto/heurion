@@ -1,4 +1,4 @@
-import type { Store, MailMessageRow, UserRow } from '../store/db.ts'
+import type { Store, MailMessageRow, UserRow, MailAttachment } from '../store/db.ts'
 import type { Mailer } from '../auth/mailer.ts'
 
 export interface SendMailInput {
@@ -19,6 +19,7 @@ export interface SendMailInput {
   folder?: 'inbox' | 'sent'
   threadId?: string | null
   inReplyTo?: string | null
+  attachments?: MailAttachment[] | string | null
 }
 
 export interface MailDeliveryInfo {
@@ -289,21 +290,23 @@ export class MailService {
     this.healExistingMessages()
   }
 
-  /** 自愈历史收到的 Base64 / QP 未解码邮件 */
+  /** 自愈历史收到的 Base64 / QP 未解码邮件与补全内置种子邮件的医学附件 */
   public healExistingMessages(): number {
     let healed = 0
     try {
-      const rows = this.store.db.prepare('SELECT id, body, subject, sender_name FROM mail_messages ORDER BY rowid DESC LIMIT 500;').all() as Array<{
+      const rows = this.store.db.prepare('SELECT id, body, subject, sender_name, attachments FROM mail_messages ORDER BY rowid DESC LIMIT 500;').all() as Array<{
         id: string
         body: string
         subject: string
         sender_name: string
+        attachments?: string | null
       }>
       for (const row of rows) {
         let needsUpdate = false
         let nextBody = row.body
         let nextSubject = row.subject
         let nextSenderName = row.sender_name
+        let nextAttachments = row.attachments
 
         if (row.body) {
           const decoded = decodeEmailBody(row.body)
@@ -327,8 +330,61 @@ export class MailService {
           }
         }
 
+        // 补全内置医学随访与科研课题附件
+        if (!row.attachments || row.attachments === '[]') {
+          if (row.subject && row.subject.includes('PT-BRONCHO-001')) {
+            nextAttachments = JSON.stringify([
+              {
+                id: 'att-broncho-hrct',
+                name: 'PT-BRONCHO-001_HRCT_3D_Mucus_Volumetry.pdf',
+                size: 1845120,
+                mime: 'application/pdf',
+                data_base64: Buffer.from(`%PDF-1.4\n%PT-BRONCHO-001 HRCT 3D Mucus Volumetry Report\nAirway Mucus Segmenter BAR=1.45 HAM=12.44cm3\n`).toString('base64'),
+              },
+              {
+                id: 'att-broncho-pft',
+                name: 'PFT_Spirometry_Report_2026Q3.pdf',
+                size: 839680,
+                mime: 'application/pdf',
+                data_base64: Buffer.from(`%PDF-1.4\n%Pulmonary Function Laboratory Report\nFEV1 1.82L (62% pred), FVC 2.95L, FEV1/FVC 61.7%\n`).toString('base64'),
+              }
+            ])
+            needsUpdate = true
+          } else if (row.subject && row.subject.includes('DAPA-HF')) {
+            nextAttachments = JSON.stringify([
+              {
+                id: 'att-dapa-psm-table1',
+                name: 'DAPA-HF_PSM_Balance_Diagnostics_Table1.csv',
+                size: 148480,
+                mime: 'text/csv',
+                data_base64: Buffer.from(`Covariate,Dapagliflozin (N=710),Standard_Care (N=710),SMD\nAge (years),66.2 (10.8),66.5 (11.1),0.027\nFemale (%),23.4%,23.8%,0.009\nLVEF (%),31.2 (6.8),31.0 (6.7),0.030\nNT-proBNP (pg/mL),1437 (850-2800),1442 (860-2780),0.012\neGFR (mL/min/1.73m2),65.8 (19.4),66.1 (19.2),0.015\nL3_SMI (cm2/m2),41.5 (7.2),41.3 (7.1),0.028\n`).toString('base64'),
+              },
+              {
+                id: 'att-dapa-dsmb-charter',
+                name: 'DSMB_Interim_Charter_v3.pdf',
+                size: 2457600,
+                mime: 'application/pdf',
+                data_base64: Buffer.from(`%PDF-1.4\n%DSMB Interim Charter v3.0\nDAPA-HF Clinical Trial NCT03036124 Interim Analysis Plan\n`).toString('base64'),
+              }
+            ])
+            needsUpdate = true
+          } else if (row.subject && row.subject.includes('PT-NSCLC-002')) {
+            nextAttachments = JSON.stringify([
+              {
+                id: 'att-nsclc-recist',
+                name: 'RECIST_1.1_Tumor_Response_Chart.pdf',
+                size: 1228800,
+                mime: 'application/pdf',
+                data_base64: Buffer.from(`%PDF-1.4\n%RECIST 1.1 Tumor Response Longitudinal Evaluation\nPT-NSCLC-002 Osimertinib 80mg Week 8 Target Lesion Sum: -32.4% (Partial Response PR)\n`).toString('base64'),
+              }
+            ])
+            needsUpdate = true
+          }
+        }
+
         if (needsUpdate) {
-          this.store.db.prepare('UPDATE mail_messages SET body = ?, subject = ?, sender_name = ? WHERE id = ?').run(nextBody, nextSubject, nextSenderName, row.id)
+          this.store.db.prepare('UPDATE mail_messages SET body = ?, subject = ?, sender_name = ?, attachments = ? WHERE id = ?')
+            .run(nextBody, nextSubject, nextSenderName, nextAttachments ?? null, row.id)
           healed++
         }
       }
@@ -564,6 +620,10 @@ export class MailService {
     const senderName = input.senderName || user?.display_name || '主诊医师'
     const recipient = input.recipient.trim()
 
+    const attachmentsJson = Array.isArray(input.attachments)
+      ? JSON.stringify(input.attachments)
+      : (typeof input.attachments === 'string' ? input.attachments : null)
+
     // 若明确指定投递至收件箱（如日程创建联动自动下发给本人的随访/科研提醒）
     if (input.folder === 'inbox') {
       return this.store.createMailMessage({
@@ -585,6 +645,7 @@ export class MailService {
         folder: 'inbox',
         delivery_status: 'delivered',
         delivery_note: '系统日程提醒即时送达',
+        attachments: attachmentsJson,
       })
     }
 
@@ -626,6 +687,7 @@ export class MailService {
       delivery_note: deliveryNote,
       thread_id: input.threadId ?? null,
       in_reply_to: input.inReplyTo ?? null,
+      attachments: attachmentsJson,
     })
 
     // 2. 若收件人为系统内部用户（或发给自己），投递一封至收件人收件箱 (folder = 'inbox')
@@ -651,6 +713,7 @@ export class MailService {
         delivery_note: '院内即时协同送达',
         thread_id: input.threadId ?? null,
         in_reply_to: input.inReplyTo ?? null,
+        attachments: attachmentsJson,
       })
     }
 
@@ -730,6 +793,10 @@ export class MailService {
       }
     }
 
+    const attachmentsJson = Array.isArray(input.attachments)
+      ? JSON.stringify(input.attachments)
+      : (typeof input.attachments === 'string' ? input.attachments : null)
+
     const sentMsg = this.store.createMailMessage({
       user_id: input.userId,
       tenant_id: input.tenantId ?? null,
@@ -749,6 +816,9 @@ export class MailService {
       folder: 'sent',
       delivery_status: deliveryStatus,
       delivery_note: deliveryNote,
+      thread_id: input.threadId ?? null,
+      in_reply_to: input.inReplyTo ?? null,
+      attachments: attachmentsJson,
     })
 
     if (internalUser) {
@@ -771,6 +841,9 @@ export class MailService {
         folder: 'inbox',
         delivery_status: 'delivered',
         delivery_note: '院内即时协同送达',
+        thread_id: input.threadId ?? null,
+        in_reply_to: input.inReplyTo ?? null,
+        attachments: attachmentsJson,
       })
     }
 
@@ -981,6 +1054,22 @@ export class MailService {
 - **检查地点**：门诊综合二区呼吸专科诊室 / 影像中心 CT 3 号机房
 
 您可直接在下方点击**「添加到日历」**以锁定门诊日程，或点击**「查看患者档案」**查阅基线 3D 影像切片与化验趋势。`,
+        attachments: JSON.stringify([
+          {
+            id: 'att-broncho-hrct',
+            name: 'PT-BRONCHO-001_HRCT_3D_Mucus_Volumetry.pdf',
+            size: 1845120,
+            mime: 'application/pdf',
+            data_base64: Buffer.from(`%PDF-1.4\n%PT-BRONCHO-001 HRCT 3D Mucus Volumetry Report\nAirway Mucus Segmenter BAR=1.45 HAM=12.44cm3\n`).toString('base64'),
+          },
+          {
+            id: 'att-broncho-pft',
+            name: 'PFT_Spirometry_Report_2026Q3.pdf',
+            size: 839680,
+            mime: 'application/pdf',
+            data_base64: Buffer.from(`%PDF-1.4\n%Pulmonary Function Laboratory Report\nFEV1 1.82L (62% pred), FVC 2.95L, FEV1/FVC 61.7%\n`).toString('base64'),
+          }
+        ]),
       },
       {
         user_id: userId,
@@ -1018,6 +1107,22 @@ export class MailService {
    - **论文稿件撰写与图表联动**：在写作工作区绑定 \`{{research.table1}}\` 与 \`{{research.km_curve}}\`，准备投稿手稿排版。
 
 请查收随附附件，并点击下方**「同步到日历」**记录下周四统计评审会日程。`,
+        attachments: JSON.stringify([
+          {
+            id: 'att-dapa-psm-table1',
+            name: 'DAPA-HF_PSM_Balance_Diagnostics_Table1.csv',
+            size: 148480,
+            mime: 'text/csv',
+            data_base64: Buffer.from(`Covariate,Dapagliflozin (N=710),Standard_Care (N=710),SMD\nAge (years),66.2 (10.8),66.5 (11.1),0.027\nFemale (%),23.4%,23.8%,0.009\nLVEF (%),31.2 (6.8),31.0 (6.7),0.030\nNT-proBNP (pg/mL),1437 (850-2800),1442 (860-2780),0.012\neGFR (mL/min/1.73m2),65.8 (19.4),66.1 (19.2),0.015\nL3_SMI (cm2/m2),41.5 (7.2),41.3 (7.1),0.028\n`).toString('base64'),
+          },
+          {
+            id: 'att-dapa-dsmb-charter',
+            name: 'DSMB_Interim_Charter_v3.pdf',
+            size: 2457600,
+            mime: 'application/pdf',
+            data_base64: Buffer.from(`%PDF-1.4\n%DSMB Interim Charter v3.0\nDAPA-HF Clinical Trial NCT03036124 Interim Analysis Plan\n`).toString('base64'),
+          }
+        ]),
       },
       {
         user_id: userId,
@@ -1044,6 +1149,15 @@ export class MailService {
   2. 外周血 ctDNA 游离肿瘤 DNA 液体活检（重点监测 C797S / MET 扩增等继发耐药突变）；
   3. 间质性肺炎 (ILD) 罕见毒副反应筛查。
 - **推荐门诊随访时间**：**2026年10月13日 (周二) 下午 14:00 - 15:00**。`,
+        attachments: JSON.stringify([
+          {
+            id: 'att-nsclc-recist',
+            name: 'RECIST_1.1_Tumor_Response_Chart.pdf',
+            size: 1228800,
+            mime: 'application/pdf',
+            data_base64: Buffer.from(`%PDF-1.4\n%RECIST 1.1 Tumor Response Longitudinal Evaluation\nPT-NSCLC-002 Osimertinib 80mg Week 8 Target Lesion Sum: -32.4% (Partial Response PR)\n`).toString('base64'),
+          }
+        ]),
       },
       {
         user_id: userId,
@@ -1103,5 +1217,114 @@ export class MailService {
     for (const item of seedMails) {
       this.store.createMailMessage(item)
     }
+  }
+
+  /** AI 智能建议回复 (Clinical Smart Reply) */
+  async suggestSmartReplies(userId: string, messageId: string): Promise<string[]> {
+    const msg = this.store.getMailMessage(userId, messageId)
+    if (!msg) return []
+
+    // 1. 若配置了大模型 (DeepSeek)，尝试调用 AI 生成 3 条精简专业的临床回复建议
+    if (this.complete) {
+      try {
+        const system = `你是一位高年资临床主任与多中心医学试验学术顾问。请针对主诊医师收到的这封临床/科研邮件，生成 3 条精简、专业、果断且符合诊疗/试验伦理规范的快捷回复建议（Smart Replies）。
+要求：
+1. 每条建议 1~2 句话（约 15~40 字），语气得体、专业直接；
+2. 针对邮件的具体指标或议题（如随访复查安排、影像/肺功能对比、PSM平衡性确认、DSMB审查出席、病历确认）；
+3. 严格禁止任何 Emoji 表情符号；
+4. 必须且仅输出严格的 JSON 字符串数组格式，例如：
+["已阅随访方案，已锁定下周一门诊与薄层 HRCT 复查日程。", "随访指标已复核，建议在门诊前先行完成肺功能与血常规化验。", "收到患者复查通知，请呼吸科随访护士跟进患者用药依从性。"]
+严禁输出任何 markdown 代码块（如 \`\`\`json）、前缀或解释。`
+
+        const userPrompt = `【来信信息】
+- 发件人：${msg.sender_name ? `${msg.sender_name} <${msg.sender}>` : msg.sender}
+- 主题：${msg.subject}
+- 类别：${msg.category}
+- 关联患者：${msg.patient_code || '无'}
+- 关联课题：${msg.study_id || '无'}
+- 正文摘录：
+${msg.body.slice(0, 1000)}`
+
+        const res = await this.complete(system, userPrompt)
+        if (res) {
+          const cleaned = stripEmojis(res.trim()).replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+          const parsed = JSON.parse(cleaned)
+          if (Array.isArray(parsed) && parsed.length >= 2) {
+            const replies = parsed
+              .map(s => stripEmojis(String(s).trim()))
+              .filter(s => s.length >= 6 && s.length <= 80)
+            if (replies.length >= 2) {
+              return replies.slice(0, 3)
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[smart-reply] LLM call failed, fallback to clinical rules', (err as Error).message)
+      }
+    }
+
+    // 2. 备选：智能临床规则引擎（毫秒级响应）
+    return this.fallbackSmartReplies(msg)
+  }
+
+  private fallbackSmartReplies(msg: MailMessageRow): string[] {
+    const text = `${msg.subject} ${msg.body}`.toLowerCase()
+
+    if (msg.category === 'followup' || msg.patient_code || text.includes('随访') || text.includes('ham') || text.includes('recist')) {
+      if (text.includes('ham') || text.includes('粘液栓') || text.includes('支气管')) {
+        return [
+          '已阅随访方案。已为您锁定下周一门诊与吸气相薄层 HRCT 影像对比。',
+          '随访指标已复核。已同步安排肺功能 (PFT) 与总 IgE 复查，重点评估小气道通气。',
+          '收到患者随访通知。建议门诊前先行复核伏立康唑谷浓度与肝功能指标。',
+        ]
+      }
+      if (text.includes('recist') || text.includes('奥希替尼') || text.includes('靶向') || text.includes('肿瘤')) {
+        return [
+          '已收悉随访提醒。已为您锁定下周二门诊与胸部增强 CT RECIST 1.1 自动对比。',
+          '收到患者耐药监测报告。建议本次门诊同步抽取外网 ctDNA 进行继发耐药突变筛查。',
+          '已确认靶向随访日程。请主管护士先行完成 ECOG 评分与 ILD 毒副反应初筛。',
+        ]
+      }
+      if (text.includes('肌少症') || text.includes('营养') || text.includes('ons') || text.includes('smi')) {
+        return [
+          '已阅恶液质随访记录。同意化疗首剂下调 20% 并继续高蛋白全肠内营养支持。',
+          '收到患者营养随访提醒。门诊时将复测 L3 SMI 骨骼肌质量指数与握力恢复情况。',
+          '方案已确认。请营养科会诊医师协助监测患者口服耐受性及前白蛋白指标。',
+        ]
+      }
+      return [
+        '已确认患者随访计划，已锁定门诊与必要辅助检查日程。',
+        '指标已复核。请患者按既定方案准时来院复查，有异常指标即刻汇报。',
+        '随访通知已收悉，已将复查重点标注至该患者全景档案中。',
+      ]
+    }
+
+    if (msg.category === 'research' || msg.study_id || text.includes('psm') || text.includes('dsmb') || text.includes('课题') || text.includes('队列')) {
+      if (text.includes('psm') || text.includes('倾向评分') || text.includes('dapa-hf')) {
+        return [
+          '质控简报已收悉。18 项协变量 PSM 匹配收敛达标 (SMD < 0.05)，同意启动统计评审会。',
+          '已审阅队列入组数据。请统计工作组将 Table 1 三线表及 KM 生存分析初稿发至文稿区。',
+          '收到课题进展周报。建议按计划于周四召开多中心统计评审研讨会。',
+        ]
+      }
+      if (text.includes('dsmb') || text.includes('审查') || text.includes('伦理')) {
+        return [
+          '已确认 DSMB 闭门审查会日程。我方中心将准时连线并提交盲态复合终点事件清单。',
+          '伦理与监查通知已收悉。相关严重不良事件 (SAE) 独立监查报告已归档备查。',
+          '收到会议通知。我方参研团队已准备好亚组同质性检验与数据核对材料。',
+        ]
+      }
+      return [
+        '课题进展报告已收悉，数据质控与里程碑进度符合方案设计。',
+        '已审阅科研简报。相关统计分析结果已同步至研究工作台，请按计划推进。',
+        '收到通知，我方参研团队将准时参加课题组协同讨论会。',
+      ]
+    }
+
+    return [
+      '邮件已收悉。已记录相关要点，稍后向您详细答复。',
+      '已审阅来信内容，方案无异议，可按计划执行。',
+      '收到，已转交临床研究工作组协同复核，有新进展即刻与您同步。',
+    ]
   }
 }

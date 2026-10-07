@@ -29,6 +29,15 @@ export interface MailHooks {
   openCalendar?(eventId?: string): Promise<void>
 }
 
+export interface MailAttachment {
+  id: string
+  name: string
+  size: number
+  mime: string
+  data_base64?: string
+  url?: string
+}
+
 export interface MailMessage {
   id: string
   owner?: string
@@ -52,6 +61,7 @@ export interface MailMessage {
   calendar_event_id?: string | null
   thread_id?: string | null
   in_reply_to?: string | null
+  attachments?: MailAttachment[] | string | null
   thread?: MailMessage[]
 }
 
@@ -64,6 +74,26 @@ export interface ComposeInitial {
   study_id?: string
   thread_id?: string
   in_reply_to?: string
+  attachments?: MailAttachment[]
+}
+
+export function formatAttachmentSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function parseAttachments(raw: unknown): MailAttachment[] {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw as MailAttachment[]
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed as MailAttachment[]
+    } catch {}
+  }
+  return []
 }
 
 export interface MailStatus {
@@ -119,6 +149,71 @@ const CATEGORY_NAMES: Record<string, string> = {
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+
+export function renderMessageAttachments(msg: MailMessage): string {
+  const atts = parseAttachments(msg.attachments)
+  if (!atts || atts.length === 0) return ''
+  return `
+    <div class="mail-attachments-wrap">
+      <div class="mail-attachments-header">
+        ${icon('paperclip', { size: 13 })} 包含 ${atts.length} 个医学附件 / 质控数据文件
+      </div>
+      <div class="mail-attachment-grid">
+        ${atts.map(att => {
+          const ext = att.name.includes('.') ? att.name.split('.').pop() || 'FILE' : 'FILE'
+          return `
+            <div class="mail-attachment-card" data-att-id="${esc(att.id)}">
+              <div class="attachment-icon-col">
+                ${icon('file', { size: 20 })}
+              </div>
+              <div class="attachment-info-col">
+                <div class="attachment-name" title="${esc(att.name)}">${esc(att.name)}</div>
+                <div class="attachment-meta">
+                  <span class="attachment-ext-tag">${esc(ext.toUpperCase())}</span>
+                  <span>${formatAttachmentSize(att.size)}</span>
+                </div>
+              </div>
+              <div class="attachment-actions-col">
+                <a href="/api/mail/messages/${esc(msg.id)}/attachments/${esc(att.id)}/download" target="_blank" download="${esc(att.name)}" class="mail-btn ghost sm" title="下载附件">
+                  ${icon('download', { size: 12 })} 下载
+                </a>
+                <button type="button" class="mail-btn ghost sm btn-import-kb" data-msg-id="${esc(msg.id)}" data-att-id="${esc(att.id)}" data-att-name="${esc(att.name)}" title="一键导入到个人资料库进行向量化检索">
+                  ${icon('sparkles', { size: 12 })} 导入知识库
+                </button>
+              </div>
+            </div>
+          `
+        }).join('')}
+      </div>
+    </div>
+  `
+}
+
+export function renderAttachmentChips(atts: MailAttachment[], prefix: 'inline' | 'compose'): string {
+  if (!atts || atts.length === 0) return ''
+  return atts.map((a, idx) => `
+    <span class="attached-chip">
+      ${icon('file', { size: 12 })}
+      <span>${esc(a.name)} (${formatAttachmentSize(a.size)})</span>
+      <button type="button" class="attached-chip-remove" data-remove-${prefix}="${idx}" title="移除附件">
+        ${icon('close', { size: 11 })}
+      </button>
+    </span>
+  `).join('')
+}
+
+export function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const res = reader.result as string
+      const commaIdx = res.indexOf(',')
+      resolve(commaIdx >= 0 ? res.slice(commaIdx + 1) : res)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
 
 /** 浏览器端 RFC 2047 MIME 头部解码 (如 =?UTF-8?B?...?= 或 =?UTF-8?Q?...?=) */
 export function decodeMimeWords(str: string): string {
@@ -1139,6 +1234,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     let inlineComposerActive = false
     let currentReplyTargetId: string = threadMessages[threadMessages.length - 1]!.id
     let quoteExpanded = false
+    let inlineAttachments: MailAttachment[] = []
+    const cachedSmartReplies: Record<string, string[]> = {}
 
     const cleanSubject = normalizeSubject(m.subject) || '邮件'
     const displaySubject = decodeMimeWords(m.subject)
@@ -1162,6 +1259,14 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           </button>
           <button class="mail-btn ghost" id="mailForwardTopBtn" title="转发此会话">
             ${icon('forward', { size: 14 })} 转发
+          </button>
+
+          <!-- 邮件归档流转通道 -->
+          <button class="mail-btn ghost" id="mailArchiveDocBtn" title="将本邮件及往来会话归档为新的科研文稿">
+            ${icon('file', { size: 14 })} 归档为文稿
+          </button>
+          <button class="mail-btn ghost" id="mailArchivePatientBtn" title="将本邮件归档到患者全景健康档案">
+            ${icon('archive', { size: 14 })} 归档到患者档案
           </button>
 
           <button class="mail-btn ghost" id="mailToggleStar" title="${isStarred ? '取消星标' : '标记星标'}">
@@ -1307,6 +1412,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             <div class="mail-body-render">
               ${formatEmailBody(msg.body)}
             </div>
+            ${renderMessageAttachments(msg)}
           </div>
         `
       }).join('')
@@ -1349,7 +1455,30 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             </button>
           </div>
 
+          <!-- AI 智能建议回复 (Clinical Smart Reply) -->
+          <div class="mail-smart-replies-wrap" id="inlineSmartRepliesWrap">
+            <div class="smart-reply-header">
+              <span class="smart-reply-title">${icon('bot', { size: 13 })} AI 临床建议回复</span>
+              <span class="smart-reply-hint">基于往来语境实时生成，点击一键填入回复框</span>
+            </div>
+            <div class="smart-reply-chips-row" id="inlineSmartRepliesRow">
+              <span class="smart-reply-placeholder">智能建议生成中...</span>
+            </div>
+          </div>
+
           <textarea id="inlineReplyTextarea" class="inline-reply-textarea" rows="4" placeholder="在此键入回复内容… 支持按 ⌘ + Enter 或 Ctrl + Enter 快捷发送"></textarea>
+
+          <!-- 内联附件上传与预览 (Attachments) -->
+          <div class="inline-attach-bar">
+            <input type="file" id="inlineFileInput" multiple style="display:none;" />
+            <button type="button" class="mail-btn ghost sm" id="btnInlineAddAttach">
+              ${icon('paperclip', { size: 13 })} 添加附件
+            </button>
+            <span class="inline-attach-hint">支持医学报告、PDF、CSV、DICOM 说明</span>
+          </div>
+          <div class="inline-attachments-preview" id="inlineAttachPreview">
+            ${renderAttachmentChips(inlineAttachments, 'inline')}
+          </div>
 
           <div class="inline-quote-container">
             <button type="button" class="inline-quote-toggle" id="btnToggleQuote">
@@ -1373,6 +1502,36 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           </div>
         </div>
       `
+
+      // 异步加载并渲染 AI 智能回复药丸 (Smart Replies)
+      const renderSmartRepliesPills = (replies: string[]) => {
+        const row = $('inlineSmartRepliesRow')
+        if (!row) return
+        if (!replies || replies.length === 0) {
+          row.innerHTML = `<span class="smart-reply-empty">暂无可用的临床建议回复</span>`
+          return
+        }
+        row.innerHTML = replies.map(r => `
+          <button type="button" class="smart-reply-pill-btn" data-reply-text="${esc(r)}">
+            ${esc(r)}
+          </button>
+        `).join('')
+      }
+
+      if (cachedSmartReplies[targetMsg.id]) {
+        renderSmartRepliesPills(cachedSmartReplies[targetMsg.id])
+      } else {
+        void api<{ replies: string[] }>(`/api/mail/messages/${targetMsg.id}/smart-replies`).then(res => {
+          if (res && Array.isArray(res.replies)) {
+            cachedSmartReplies[targetMsg.id] = res.replies
+            renderSmartRepliesPills(res.replies)
+          } else {
+            renderSmartRepliesPills([])
+          }
+        }).catch(() => {
+          renderSmartRepliesPills([])
+        })
+      }
     }
 
     // 初始渲染
@@ -1447,6 +1606,8 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       const fullBody = `${content}\n${quoteText}`
 
       try {
+        const sentAtts = inlineAttachments.length > 0 ? [...inlineAttachments] : undefined
+
         const res = await api<{ id?: string; delivery?: { status?: string; note?: string } }>('/api/mail/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1459,6 +1620,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             thread_id: m.thread_id || m.id,
             in_reply_to: targetMsg.id,
             body: fullBody,
+            attachments: sentAtts,
           }),
         })
 
@@ -1489,7 +1651,10 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           delivery_note: res?.delivery?.note,
           thread_id: m.thread_id || m.id,
           in_reply_to: targetMsg.id,
+          attachments: sentAtts,
         }
+
+        inlineAttachments = []
 
         threadMessages.push(newMsg)
         if (!m.thread) m.thread = [m]
@@ -1525,7 +1690,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     }
 
     // 绑定当前会话详情页内的交互事件
-    wrap?.addEventListener('click', e => {
+    wrap?.addEventListener('click', async e => {
       const target = e.target as HTMLElement
 
       // 点击折叠消息卡展开
@@ -1586,6 +1751,62 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
         return
       }
 
+      // 顶部操作：归档为文稿
+      const archiveDocBtn = target.closest<HTMLElement>('#mailArchiveDocBtn')
+      if (archiveDocBtn) {
+        archiveDocBtn.setAttribute('disabled', 'true')
+        archiveDocBtn.innerHTML = `${icon('file', { size: 14 })} 归档中...`
+        try {
+          const res = await api<{ ok: boolean; doc_id: string; title: string }>(`/api/mail/messages/${m.id}/to-doc`, {
+            method: 'POST',
+          })
+          notice(`已成功将邮件归档为新文稿《${res.title}》！`)
+        } catch (err) {
+          notice(`归档失败: ${(err as Error).message}`, true)
+        } finally {
+          archiveDocBtn.removeAttribute('disabled')
+          archiveDocBtn.innerHTML = `${icon('file', { size: 14 })} 归档为文稿`
+        }
+        return
+      }
+
+      // 顶部操作：归档到患者档案
+      const archivePtBtn = target.closest<HTMLElement>('#mailArchivePatientBtn')
+      if (archivePtBtn) {
+        showArchivePatientModal(m)
+        return
+      }
+
+      // 附件一键导入到个人资料库 / RAG 知识库
+      const importKbBtn = target.closest<HTMLElement>('.btn-import-kb')
+      if (importKbBtn) {
+        const msgId = importKbBtn.dataset.msgId
+        const attId = importKbBtn.dataset.attId
+        const attName = importKbBtn.dataset.attName || '附件'
+        if (msgId && attId) {
+          importKbBtn.setAttribute('disabled', 'true')
+          importKbBtn.innerHTML = `${icon('sparkles', { size: 12 })} 导入中...`
+          try {
+            const res = await api<{ ok: boolean; duplicate?: boolean; file?: { name: string } }>(`/api/mail/messages/${msgId}/attachments/${attId}/to-kb`, {
+              method: 'POST',
+            })
+            if (res?.ok) {
+              notice(`已成功将附件 "${attName}" 导入到个人资料库并建立向量索引！`)
+              importKbBtn.innerHTML = `${icon('check', { size: 12 })} 已导入资料库`
+            } else {
+              notice(`导入失败: ${(res as any)?.error || '未知错误'}`, true)
+              importKbBtn.removeAttribute('disabled')
+              importKbBtn.innerHTML = `${icon('sparkles', { size: 12 })} 导入知识库`
+            }
+          } catch (err) {
+            notice(`导入失败: ${(err as Error).message}`, true)
+            importKbBtn.removeAttribute('disabled')
+            importKbBtn.innerHTML = `${icon('sparkles', { size: 12 })} 导入知识库`
+          }
+        }
+        return
+      }
+
       // 底部折叠条激活回复
       if (target.closest('#inlineReplyCollapsedBar') || target.closest('#btnActivateReply')) {
         inlineComposerActive = true
@@ -1598,6 +1819,40 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       if (target.closest('#btnActivateForward')) {
         const lastMsg = threadMessages[threadMessages.length - 1] || m
         triggerForward(lastMsg)
+        return
+      }
+
+      // 点击 AI 建议回复药丸 -> 填入输入框
+      const replyPill = target.closest<HTMLElement>('.smart-reply-pill-btn')
+      if (replyPill) {
+        const text = replyPill.dataset.replyText
+        const textarea = $('inlineReplyTextarea') as HTMLTextAreaElement | null
+        if (textarea && text) {
+          textarea.value = text
+          textarea.focus()
+          notice('已自动填入 AI 建议回复，可按 ⌘+Enter 或点击发送')
+        }
+        return
+      }
+
+      // 内联回复添加附件按钮
+      const addAttachBtn = target.closest<HTMLElement>('#btnInlineAddAttach')
+      if (addAttachBtn) {
+        ($('inlineFileInput') as HTMLInputElement | null)?.click()
+        return
+      }
+
+      // 移除已选内联附件
+      const removeInlineAtt = target.closest<HTMLElement>('[data-remove-inline]')
+      if (removeInlineAtt) {
+        const idx = parseInt(removeInlineAtt.dataset.removeInline!, 10)
+        if (!isNaN(idx) && idx >= 0 && idx < inlineAttachments.length) {
+          inlineAttachments.splice(idx, 1)
+          const preview = $('inlineAttachPreview')
+          if (preview) {
+            preview.innerHTML = renderAttachmentChips(inlineAttachments, 'inline')
+          }
+        }
         return
       }
 
@@ -1619,6 +1874,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
           study_id: m.study_id || undefined,
           thread_id: m.thread_id || m.id,
           in_reply_to: targetMsg.id,
+          attachments: inlineAttachments.length > 0 ? [...inlineAttachments] : undefined,
         })
         return
       }
@@ -1644,6 +1900,33 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
       if (target.closest('#btnSubmitInlineReply')) {
         void handleInlineReply()
         return
+      }
+    })
+
+    // 监听内联附件文件选取
+    wrap?.addEventListener('change', async e => {
+      const input = e.target as HTMLInputElement
+      if (input.id === 'inlineFileInput' && input.files && input.files.length > 0) {
+        const files = Array.from(input.files)
+        for (const file of files) {
+          try {
+            const base64 = await readFileAsBase64(file)
+            inlineAttachments.push({
+              id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              name: file.name,
+              size: file.size,
+              mime: file.type || 'application/octet-stream',
+              data_base64: base64,
+            })
+          } catch (err) {
+            notice(`读取附件失败: ${file.name}`, true)
+          }
+        }
+        input.value = ''
+        const preview = $('inlineAttachPreview')
+        if (preview) {
+          preview.innerHTML = renderAttachmentChips(inlineAttachments, 'inline')
+        }
       }
     })
 
@@ -2180,11 +2463,165 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     }
   }
 
+  function showArchivePatientModal(msg: MailMessage): void {
+    const anchor = $('mailModalAnchor')
+    if (!anchor) return
+
+    anchor.innerHTML = `
+      <div class="mail-modal-scrim" id="mailArchivePatientScrim">
+        <div class="mail-modal-card archive-patient-modal" role="dialog" aria-modal="true">
+          <div class="mail-modal-head">
+            <h2>${icon('archive', { size: 16 })} 归档到患者档案 (Link to Patient EHR)</h2>
+            <button class="mail-modal-close" id="mailArchivePatientClose" aria-label="关闭">${icon('close', { size: 16 })}</button>
+          </div>
+          <div class="archive-patient-body">
+            <div class="archive-patient-meta">
+              <div><strong>邮件主题：</strong>${esc(decodeMimeWords(msg.subject))}</div>
+              <div><strong>发件人：</strong>${esc(formatSenderDisplay(msg.sender_name, msg.sender))} · <strong>时间：</strong>${msg.created_at}</div>
+              ${msg.patient_code ? `<div style="margin-top:4px;color:var(--mint);"><strong>当前关联患者：</strong>${esc(msg.patient_code)}</div>` : ''}
+            </div>
+
+            <div class="form-row">
+              <label>选择目标患者档案 (Select Target Patient) *</label>
+              <input type="text" id="patientSearchInput" placeholder="输入患者姓名、代号或首字母筛选..." />
+              <div class="patient-select-list" id="patientSelectList">
+                <div class="patient-select-item" style="color:var(--muted); justify-content:center;">正在加载患者档案列表...</div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label>归档临床批注与随访备忘 (Clinical Notes)</label>
+              <textarea id="archivePatientNote" rows="3" placeholder="填写本次随访沟通纪要、处置建议或病程摘要...">${esc(`由邮件《${msg.subject}》归档的临床往来沟通记录`)}</textarea>
+            </div>
+
+            <div class="mail-modal-foot">
+              <button type="button" class="mail-btn ghost" id="mailArchivePatientCancel">取消</button>
+              <button type="button" class="mail-btn primary" id="mailArchivePatientSubmit" disabled>
+                ${icon('archive', { size: 14 })} 确认归档到此患者档案
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+
+    const scrim = $('mailArchivePatientScrim')
+    const close = () => { scrim?.remove() }
+    $('mailArchivePatientClose')?.addEventListener('click', close)
+    $('mailArchivePatientCancel')?.addEventListener('click', close)
+    scrim?.addEventListener('click', e => { if (e.target === scrim) close() })
+
+    let patientsList: any[] = []
+    let selectedPatient: any = null
+
+    const renderList = (filter = '') => {
+      const listEl = $('patientSelectList')
+      if (!listEl) return
+
+      const q = filter.trim().toLowerCase()
+      const filtered = patientsList.filter(p => {
+        if (!q) return true
+        const code = (p.code || '').toLowerCase()
+        const name = (p.name || '').toLowerCase()
+        const diag = (p.diagnosis || p.primary_diagnosis || '').toLowerCase()
+        return code.includes(q) || name.includes(q) || diag.includes(q)
+      })
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = `<div class="patient-select-item" style="color:var(--muted); justify-content:center;">未找到匹配的患者档案</div>`
+        return
+      }
+
+      listEl.innerHTML = filtered.map(p => {
+        const isSelected = selectedPatient && selectedPatient.id === p.id
+        const code = p.code || p.id
+        const name = p.name ? ` · ${esc(p.name)}` : ''
+        const sex = p.sex || p.gender ? ` (${esc(p.sex || p.gender)})` : ''
+        const diag = p.diagnosis || p.primary_diagnosis ? ` · ${esc(p.diagnosis || p.primary_diagnosis)}` : ''
+        return `
+          <div class="patient-select-item ${isSelected ? 'selected' : ''}" data-pt-id="${esc(p.id)}">
+            <span style="font-weight:600; color:var(--text);">${esc(code)}</span>
+            <span style="color:var(--muted);">${name}${sex}${diag}</span>
+          </div>
+        `
+      }).join('')
+    }
+
+    $('patientSearchInput')?.addEventListener('input', e => {
+      renderList((e.target as HTMLInputElement).value)
+    })
+
+    $('patientSelectList')?.addEventListener('click', e => {
+      const item = (e.target as HTMLElement).closest<HTMLElement>('.patient-select-item[data-pt-id]')
+      if (!item) return
+      const ptId = item.dataset.ptId
+      selectedPatient = patientsList.find(p => p.id === ptId) || null
+      renderList(($('patientSearchInput') as HTMLInputElement)?.value || '')
+
+      const submitBtn = $('mailArchivePatientSubmit') as HTMLButtonElement | null
+      if (submitBtn) {
+        submitBtn.disabled = !selectedPatient
+      }
+    })
+
+    // 异步加载患者列表
+    void api<any[]>('/api/patients').then(pts => {
+      patientsList = Array.isArray(pts) ? pts : []
+      if (msg.patient_id) {
+        selectedPatient = patientsList.find(p => p.id === msg.patient_id)
+      } else if (msg.patient_code) {
+        selectedPatient = patientsList.find(p => p.code === msg.patient_code)
+      }
+      renderList()
+      const submitBtn = $('mailArchivePatientSubmit') as HTMLButtonElement | null
+      if (submitBtn) {
+        submitBtn.disabled = !selectedPatient
+      }
+    }).catch(err => {
+      const listEl = $('patientSelectList')
+      if (listEl) {
+        listEl.innerHTML = `<div class="patient-select-item" style="color:var(--danger); justify-content:center;">加载患者列表失败: ${esc((err as Error).message)}</div>`
+      }
+    })
+
+    $('mailArchivePatientSubmit')?.addEventListener('click', async () => {
+      if (!selectedPatient) return
+      const submitBtn = $('mailArchivePatientSubmit') as HTMLButtonElement
+      submitBtn.disabled = true
+      submitBtn.innerHTML = `${icon('archive', { size: 14 })} 归档中...`
+
+      const note = ($('archivePatientNote') as HTMLTextAreaElement)?.value.trim()
+      try {
+        const res = await api<{ ok: boolean; patient_id: string; patient_code: string; title: string }>(`/api/mail/messages/${msg.id}/to-patient`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patient_id: selectedPatient.id,
+            patient_code: selectedPatient.code,
+            note,
+          }),
+        })
+
+        msg.patient_id = res.patient_id
+        msg.patient_code = res.patient_code
+        notice(`已成功将邮件归档至患者 [${res.patient_code}] 的档案，并生成问诊记录！`)
+        close()
+
+        renderMailDetail(msg)
+      } catch (err) {
+        notice(`归档失败: ${(err as Error).message}`, true)
+        submitBtn.disabled = false
+        submitBtn.innerHTML = `${icon('archive', { size: 14 })} 确认归档到此患者档案`
+      }
+    })
+  }
+
   function showComposeModal(initial?: ComposeInitial): void {
     const anchor = $('mailModalAnchor')
     if (!anchor) return
 
     const initialCat = initial?.category || 'followup'
+    const composeAttachments: MailAttachment[] = initial?.attachments ? [...initial.attachments] : []
 
     anchor.innerHTML = `
       <div class="mail-modal-scrim" id="mailComposeScrim">
@@ -2241,6 +2678,21 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
               <textarea id="composeBody" rows="8" required placeholder="输入详细随访计划、影像复查指引、临床指标预警或科研推进通知…">${esc(initial?.body || '')}</textarea>
             </div>
 
+            <!-- 附件管理与上传 -->
+            <div class="form-row">
+              <label>附件 (Attachments)</label>
+              <div class="compose-attachments-bar">
+                <input type="file" id="composeFileInput" multiple style="display:none;" />
+                <button type="button" class="mail-btn ghost sm" id="btnComposeAddAttach">
+                  ${icon('paperclip', { size: 13 })} 添加附件
+                </button>
+                <span class="compose-attach-hint">支持医学报告、PDF、CSV、DICOM 说明</span>
+              </div>
+              <div class="compose-attachments-preview" id="composeAttachPreview">
+                ${renderAttachmentChips(composeAttachments, 'compose')}
+              </div>
+            </div>
+
             <div class="mail-modal-foot">
               <button type="button" class="mail-btn ghost" id="mailComposeCancel">取消</button>
               <button type="submit" class="mail-btn primary" id="mailComposeSubmit">发送邮件</button>
@@ -2255,6 +2707,51 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
     $('mailComposeClose')?.addEventListener('click', close)
     $('mailComposeCancel')?.addEventListener('click', close)
     scrim?.addEventListener('click', e => { if (e.target === scrim) close() })
+
+    // 附件添加与移除
+    $('btnComposeAddAttach')?.addEventListener('click', () => {
+      ($('composeFileInput') as HTMLInputElement | null)?.click()
+    })
+
+    $('composeFileInput')?.addEventListener('change', async (e: Event) => {
+      const input = e.target as HTMLInputElement
+      if (input.files && input.files.length > 0) {
+        for (const file of Array.from(input.files)) {
+          try {
+            const base64 = await readFileAsBase64(file)
+            composeAttachments.push({
+              id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              name: file.name,
+              size: file.size,
+              mime: file.type || 'application/octet-stream',
+              data_base64: base64,
+            })
+          } catch (err) {
+            notice(`读取附件失败: ${file.name}`, true)
+          }
+        }
+        input.value = ''
+        const preview = $('composeAttachPreview')
+        if (preview) {
+          preview.innerHTML = renderAttachmentChips(composeAttachments, 'compose')
+        }
+      }
+    })
+
+    $('composeAttachPreview')?.addEventListener('click', (e: Event) => {
+      const target = e.target as HTMLElement
+      const removeBtn = target.closest<HTMLElement>('[data-remove-compose]')
+      if (removeBtn) {
+        const idx = parseInt(removeBtn.dataset.removeCompose!, 10)
+        if (!isNaN(idx) && idx >= 0 && idx < composeAttachments.length) {
+          composeAttachments.splice(idx, 1)
+          const preview = $('composeAttachPreview')
+          if (preview) {
+            preview.innerHTML = renderAttachmentChips(composeAttachments, 'compose')
+          }
+        }
+      }
+    })
 
     const form = $('mailComposeForm') as HTMLFormElement
     form.onsubmit = async e => {
@@ -2279,6 +2776,7 @@ export function initMail(api: Api, notice: Notice, hooks: MailHooks) {
             thread_id: initial?.thread_id,
             in_reply_to: initial?.in_reply_to,
             body,
+            attachments: composeAttachments.length > 0 ? composeAttachments : undefined,
           }),
         })
 

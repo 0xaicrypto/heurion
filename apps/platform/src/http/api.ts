@@ -2308,8 +2308,190 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       studyTitle: body.study_title,
       threadId: body.thread_id,
       inReplyTo: body.in_reply_to,
+      attachments: body.attachments,
     })
     return c.json({ ...result.message, delivery: result.delivery }, 201)
+  })
+
+  // AI 智能建议回复 (Clinical Smart Reply)
+  app.get('/api/mail/messages/:id/smart-replies', async c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+    const replies = await mail.suggestSmartReplies(user, c.req.param('id'))
+    return c.json({ replies })
+  })
+
+  // 邮件一键转为科研文稿 (Filing to Document)
+  app.post('/api/mail/messages/:id/to-doc', async c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+
+    const thread = mail.getThread(user, m.id)
+    const allMails = thread.length > 0 ? thread : [m]
+
+    const bodyJson = await c.req.json().catch(() => ({})) as { project_id?: string | null }
+    const project = projectOf(c, bodyJson.project_id)
+    if (project === false) return c.json({ error: '项目不存在' }, 404)
+
+    const cleanSubject = m.subject.replace(/^(?:(?:\s*(?:re|fwd|fw|回复|转发)[：:]\s*)+)/i, '').trim() || '邮件'
+    const docTitle = `[邮件归档] ${cleanSubject}`
+
+    let md = `# ${docTitle}\n\n`
+    md += `> **临床专邮会话归档**\n`
+    md += `> - 主题：${m.subject}\n`
+    md += `> - 类别：${m.category}\n`
+    md += `> - 归档时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n`
+    if (m.patient_code) md += `> - 关联患者：\`${m.patient_code}\`\n`
+    if (m.study_id) md += `> - 关联课题：\`${m.study_id}\`\n`
+    md += `\n---\n\n`
+
+    allMails.forEach((msg, idx) => {
+      md += `## 会话 ${idx + 1} · 发件人：${msg.sender_name || msg.sender} (${msg.created_at})\n\n`
+      md += `- **发件人**：${msg.sender_name ? `${msg.sender_name} &lt;${msg.sender}&gt;` : msg.sender}\n`
+      md += `- **收件人**：${msg.recipient}\n`
+      md += `- **发送时间**：${msg.created_at}\n\n`
+      md += `### 邮件正文\n\n${msg.body}\n\n`
+
+      if (msg.attachments) {
+        try {
+          const atts = JSON.parse(msg.attachments) as Array<{ name: string; size: number; mime: string }>
+          if (Array.isArray(atts) && atts.length > 0) {
+            md += `### 随附医学附件\n\n`
+            atts.forEach((a, aIdx) => {
+              md += `${aIdx + 1}. **${a.name}** (${(a.size / 1024).toFixed(1)} KB, \`${a.mime}\`)\n`
+            })
+            md += `\n`
+          }
+        } catch {}
+      }
+      md += `---\n\n`
+    })
+
+    const content = schema.node('doc', null, parseBlocks(md))
+    const row = docs.create({ owner: user, title: docTitle, content })
+    if (project) store.setDocProject(row.id, project)
+
+    return c.json({ ok: true, doc_id: row.id, title: row.title }, 201)
+  })
+
+  // 邮件一键归档到患者档案 (Filing to Patient EHR)
+  app.post('/api/mail/messages/:id/to-patient', async c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+
+    const bodyJson = await c.req.json().catch(() => ({})) as { patient_id?: string; patient_code?: string; note?: string }
+    const patientKey = bodyJson.patient_id || m.patient_id || bodyJson.patient_code || m.patient_code
+    if (!patientKey) return c.json({ error: '请指定目标患者' }, 400)
+
+    let ptRow: any
+    try {
+      ptRow = pt(c).read(me(c), patientKey)
+    } catch {
+      try {
+        const allPts = pt(c).list(me(c))
+        ptRow = allPts.find(p => p.id === patientKey || p.code === patientKey)
+      } catch {}
+    }
+    if (!ptRow) return c.json({ error: `未找到患者档案 [${patientKey}]` }, 404)
+
+    const docTitle = `${ptRow.code} 随访专邮记录 · ${m.subject.slice(0, 30)}`
+    let md = `# ${docTitle}\n\n`
+    md += `> **患者随访专邮归档**\n`
+    md += `> - 患者编号：\`${ptRow.code}\`\n`
+    md += `> - 邮件主题：${m.subject}\n`
+    md += `> - 发件人：${m.sender_name ? `${m.sender_name} (${m.sender})` : m.sender}\n`
+    md += `> - 收件人：${m.recipient}\n`
+    md += `> - 邮件日期：${m.created_at}\n`
+    if (bodyJson.note) md += `> - 医生批注：${bodyJson.note}\n`
+    md += `\n---\n\n### 邮件正文记录\n\n${m.body}\n`
+
+    const content = schema.node('doc', null, parseBlocks(md))
+    const docRow = docs.create({ owner: user, title: docTitle, content })
+
+    pt(c).linkDoc(me(c), ptRow.id, docRow.id, 'consultation')
+    store.updateMailPatient(user, m.id, ptRow.id, ptRow.code)
+
+    return c.json({
+      ok: true,
+      patient_id: ptRow.id,
+      patient_code: ptRow.code,
+      doc_id: docRow.id,
+      title: docTitle,
+    }, 201)
+  })
+
+  // 邮件附件导入到资料库 (Import Attachment to KB / RAG)
+  app.post('/api/mail/messages/:id/attachments/:attId/to-kb', async c => {
+    if (!deps.kb) return c.json({ error: '资料库未启用' }, 503)
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+
+    const attId = c.req.param('attId')
+    let attachments: Array<{ id: string; name: string; size: number; mime: string; data_base64?: string }> = []
+    if (m.attachments) {
+      try {
+        attachments = JSON.parse(m.attachments)
+      } catch {}
+    }
+    const att = attachments.find(a => a.id === attId || a.name === attId)
+    if (!att) return c.json({ error: '附件不存在' }, 404)
+
+    let bytes: Uint8Array
+    if (att.data_base64) {
+      bytes = new Uint8Array(Buffer.from(att.data_base64, 'base64'))
+    } else {
+      const textContent = `【邮件附件资料】${att.name}\n来源邮件：${m.subject}\n发件人：${m.sender_name || m.sender}\n时间：${m.created_at}\n\n${m.body}`
+      bytes = new TextEncoder().encode(textContent)
+    }
+
+    try {
+      const r = await deps.kb.upload(user, {
+        name: att.name,
+        bytes,
+        project_id: null,
+      })
+      return c.json({ ok: true, file: r.file, duplicate: r.duplicate }, 201)
+    } catch (err) {
+      if (err instanceof ExtractError) {
+        return c.json({ ok: false, error: err.message }, 400)
+      }
+      throw err
+    }
+  })
+
+  // 邮件附件直接下载 (Download Attachment)
+  app.get('/api/mail/messages/:id/attachments/:attId/download', c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+
+    const attId = c.req.param('attId')
+    let attachments: Array<{ id: string; name: string; size: number; mime: string; data_base64?: string }> = []
+    if (m.attachments) {
+      try {
+        attachments = JSON.parse(m.attachments)
+      } catch {}
+    }
+    const att = attachments.find(a => a.id === attId || a.name === attId)
+    if (!att) return c.json({ error: '附件不存在' }, 404)
+
+    let bytes: Uint8Array
+    if (att.data_base64) {
+      bytes = new Uint8Array(Buffer.from(att.data_base64, 'base64'))
+    } else {
+      const textContent = `【Heurion 专邮附件】${att.name}\n主题：${m.subject}\n发件人：${m.sender}\n时间：${m.created_at}\n\n${m.body}`
+      bytes = new TextEncoder().encode(textContent)
+    }
+
+    return c.body(bytes, 200, {
+      'Content-Type': att.mime || 'application/octet-stream',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(att.name)}`,
+      'Cache-Control': 'no-store',
+    })
   })
 
   app.patch('/api/mail/messages/:id/read', async c => {

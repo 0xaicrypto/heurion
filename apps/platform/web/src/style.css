@@ -4454,6 +4454,236 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   box-shadow: 0 0 6px var(--warn);
 }
 
+/* AI 智能建议回复 (Clinical Smart Reply) */
+.mail-smart-replies-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.smart-reply-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+.smart-reply-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--mint);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.smart-reply-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+.smart-reply-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.smart-reply-pill-btn {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-radius: 0;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+.smart-reply-pill-btn:hover {
+  border-color: var(--mint);
+  background: var(--hover);
+  color: var(--mint-text);
+  box-shadow: 0 1px 4px rgba(0, 229, 153, 0.12);
+}
+.smart-reply-placeholder, .smart-reply-empty {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 2px 4px;
+}
+
+/* 邮件医学附件展示 (Mail Attachments & Import to KB) */
+.mail-attachments-wrap {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mail-attachments-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mail-attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.mail-attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  transition: border-color 0.15s ease;
+}
+.mail-attachment-card:hover {
+  border-color: var(--line-strong);
+}
+.attachment-icon-col {
+  color: var(--mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.attachment-info-col {
+  flex: 1;
+  min-width: 0;
+}
+.attachment-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attachment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.attachment-ext-tag {
+  font-size: 9.5px;
+  font-family: var(--mono);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1px 4px;
+  color: var(--muted-2);
+}
+.attachment-actions-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 邮件起草/内联附件上传 (Compose & Inline Attachments) */
+.compose-attachments-bar, .inline-attach-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.compose-attach-hint, .inline-attach-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.compose-attachments-preview, .inline-attachments-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.attached-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--teal);
+  border: 1px solid var(--mint);
+  color: var(--mint-text);
+  font-size: 11.5px;
+  border-radius: 0;
+}
+.attached-chip-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.7;
+}
+.attached-chip-remove:hover {
+  opacity: 1;
+}
+
+/* 归档到患者档案弹窗 (Archive to Patient EHR Modal) */
+.archive-patient-modal {
+  max-width: 540px;
+}
+.archive-patient-body {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.archive-patient-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 10px 14px;
+  line-height: 1.5;
+}
+.archive-patient-meta strong {
+  color: var(--text);
+}
+.patient-select-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.patient-select-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  transition: background 0.1s ease;
+}
+.patient-select-item:hover {
+  background: var(--hover);
+}
+.patient-select-item.selected {
+  background: var(--hover);
+  border-left: 3px solid var(--mint);
+  font-weight: 600;
+}
+
 /* —— 弹窗通用样式 (Calendar & Mail Modals) —— */
 .cal-modal-scrim, .mail-modal-scrim {
   position: fixed;
