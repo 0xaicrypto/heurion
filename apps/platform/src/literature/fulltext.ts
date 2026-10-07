@@ -43,14 +43,33 @@ export class FullTextClient {
     const pmcid = conv?.records?.[0]?.pmcid
     if (!pmcid) return null
     // 开放数据按版本存放：取最新的一版
-    type Meta = { is_pmc_openaccess?: boolean; license_code?: string; text_url?: string }
+    type Meta = { is_pmc_openaccess?: boolean; license_code?: string; text_url?: string; xml_url?: string }
     let meta: Meta | null = null
     for (let v = 1; v <= 5; v++) {
       const m: Meta | null = await this.json<Meta>(`${PMC_OPENDATA}/metadata/${pmcid}.${v}.json`)
       if (!m) break
       meta = m
     }
-    if (!meta?.is_pmc_openaccess || !meta.text_url) return null
+    if (!meta?.is_pmc_openaccess) return null
+
+    // 优先尝试从 xml_url 提取结构化全文（段落、表格 table-wrap 与图注 fig），表格能解决 RCT 数字证据缺失的核心瓶颈
+    if (meta.xml_url) {
+      try {
+        const xmlUrl = `${PMC_OPENDATA}/${meta.xml_url.replace(/^s3:\/\/pmc-oa-opendata\//, '').split('?')[0]}`
+        const res = await this.fetchImpl(xmlUrl, { signal: AbortSignal.timeout(35_000) })
+        if (res.ok) {
+          const xmlRaw = await res.text()
+          const parsed = extractFromPmcXml(xmlRaw)
+          if (parsed && parsed.length > 200) {
+            return { source: 'pmc', url: `https://pmc.ncbi.nlm.nih.gov/articles/${pmcid}/`, license: meta.license_code ?? null, text: parsed }
+          }
+        }
+      } catch {
+        // XML 解析失败时平滑降级到下方 text_url
+      }
+    }
+
+    if (!meta.text_url) return null
     const url = `${PMC_OPENDATA}/${meta.text_url.replace(/^s3:\/\/pmc-oa-opendata\//, '').split('?')[0]}`
     const res = await this.fetchImpl(url, { signal: AbortSignal.timeout(30_000) })
     if (!res.ok) return null
@@ -71,6 +90,81 @@ export class FullTextClient {
   }
 }
 
+/** 从 PMC 开放 XML 提取正文、表格（带表头切片）与图注，解决临床试验数值大多藏在表格中的证据缺失瓶颈。 */
+export function extractFromPmcXml(xmlRaw: string): string {
+  const parts: string[] = []
+
+  // 1. 标题与摘要
+  const titleM = /<article-title\b[^>]*>([\s\S]*?)<\/article-title>/i.exec(xmlRaw)
+  if (titleM) {
+    const title = titleM[1]!.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    if (title) parts.push(title)
+  }
+  const absM = /<abstract\b[^>]*>([\s\S]*?)<\/abstract>/i.exec(xmlRaw)
+  if (absM) {
+    const absText = absM[1]!.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    if (absText) parts.push(`Abstract: ${absText}`)
+  }
+
+  // 2. 正文段落（排除表格与图注，避免重复）
+  const bodyM = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(xmlRaw)
+  const body = bodyM ? bodyM[1]! : xmlRaw
+  const cleanBody = body.replace(/<table-wrap[\s\S]*?<\/table-wrap>/gi, '').replace(/<fig[\s\S]*?<\/fig>/gi, '')
+  const pRegex = /<p\b[^>]*>([\s\S]*?)<\/p>/gi
+  let pM: RegExpExecArray | null
+  while ((pM = pRegex.exec(cleanBody)) !== null) {
+    const pt = pM[1]!.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    if (pt.length >= 40) parts.push(pt)
+  }
+
+  // 3. 表格抽取（保留表名、Caption、表头，并对多行数据分块）
+  const twRegex = /<table-wrap\b[^>]*>([\s\S]*?)<\/table-wrap>/gi
+  let twM: RegExpExecArray | null
+  while ((twM = twRegex.exec(xmlRaw)) !== null) {
+    const tw = twM[1]!
+    const label = (/<label>([\s\S]*?)<\/label>/i.exec(tw)?.[1] || 'Table').replace(/<[^>]+>/g, '').trim()
+    const caption = (/<caption>([\s\S]*?)<\/caption>/i.exec(tw)?.[1] || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    const rows: string[] = []
+    const trRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi
+    let trM: RegExpExecArray | null
+    while ((trM = trRegex.exec(tw)) !== null) {
+      const cells: string[] = []
+      const cellRegex = /<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi
+      let cellM: RegExpExecArray | null
+      while ((cellM = cellRegex.exec(trM[1]!)) !== null) {
+        cells.push(cellM[1]!.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+      }
+      if (cells.length > 0) rows.push(cells.join(' | '))
+    }
+    if (rows.length > 0) {
+      const headerRows = Math.min(2, rows.length)
+      const header = rows.slice(0, headerRows).join('\n')
+      const dataRows = rows.slice(headerRows)
+      if (dataRows.length <= 6) {
+        parts.push(`[${label}: ${caption}]\n${rows.join('\n')}`)
+      } else {
+        for (let i = 0; i < dataRows.length; i += 5) {
+          const partNum = Math.floor(i / 5) + 1
+          const batch = dataRows.slice(i, i + 5)
+          parts.push(`[${label} (Part ${partNum}): ${caption}]\n${header}\n${batch.join('\n')}`)
+        }
+      }
+    }
+  }
+
+  // 4. 图注抽取
+  const figRegex = /<fig\b[^>]*>([\s\S]*?)<\/fig>/gi
+  let figM: RegExpExecArray | null
+  while ((figM = figRegex.exec(xmlRaw)) !== null) {
+    const fig = figM[1]!
+    const label = (/<label>([\s\S]*?)<\/label>/i.exec(fig)?.[1] || 'Figure').replace(/<[^>]+>/g, '').trim()
+    const caption = (/<caption>([\s\S]*?)<\/caption>/i.exec(fig)?.[1] || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    if (caption) parts.push(`[${label}: ${caption}]`)
+  }
+
+  return parts.join('\n\n')
+}
+
 const STOP = new Set('about above after again also among and are been before being both but can could did does during each even from further had has have having here into its itself just like many more most much must not only other over same should since some such than that their them then there these they this those through thus under until very was were what when where which while who whom will with within without would study studies patients participants trial trials data showed shown found reported results compared group groups treatment'.split(' '))
 const words = (s: string) => new Set((s.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []).filter(w => !STOP.has(w)).map(w => w.slice(0, 6)))
 const numbers = (s: string) => new Set((s.replace(/(\d)·(\d)/g, '$1.$2').match(/\d+(?:\.\d+)?/g) ?? []).filter(n => !/^(19|20)\d\d$/.test(n)))
@@ -81,7 +175,15 @@ const numbers = (s: string) => new Set((s.replace(/(\d)·(\d)/g, '$1.$2').match(
  */
 export function relevantPassages(text: string, sentence: string, maxChars = 1800, maxPassages = 3): string[] {
   const body = text.split(/\n\s*(?:REFERENCES|References|Bibliography)\s*\n/)[0] ?? text
-  const paras = body.split(/\n\s*\n|\n(?=[A-Z][^\n]{0,80}\n)/).map(p => p.replace(/\s+/g, ' ').trim()).filter(p => p.length >= 80)
+  const paras = body
+    .split(/\n\s*\n|\n(?=[A-Z][^|\n]{0,80}\n)/)
+    .map(p => {
+      if (p.includes(' | ') && p.includes('\n')) {
+        return p.split('\n').map(l => l.trim()).filter(Boolean).join('\n')
+      }
+      return p.replace(/\s+/g, ' ').trim()
+    })
+    .filter(p => p.length >= 50)
   const sw = words(sentence)
   const sn = numbers(sentence)
   if (sw.size === 0 && sn.size === 0) return []

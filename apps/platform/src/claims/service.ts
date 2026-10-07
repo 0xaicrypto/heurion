@@ -32,12 +32,12 @@ export function fitAbstract(abstract: string, max = ABSTRACT_MAX): string {
  * v3（2026-10-03，按 C2 评测）：理由里指出不符就必须判不支持；没有可核对的证据单独标出，不逐句挂评论；理由用中文。
  */
 export const CLAIM_CRITERIA =
-  '逐条只依据所引文献的摘要（以及给出的开放获取全文片段）判断，不凭记忆补充：' +
-  'supported = 摘要支持该句的说法与数字；' +
-  'unsupported = 摘要与该句矛盾，或数字、结论、人群、药物 / 干预、效应方向任何一处对不上——只要你的理由里指出了某处不符，结论就必须是 unsupported，不能是 unclear；' +
-  'unclear = 摘要涉及该句的内容，但信息不足以确认或否定。' +
+  '逐条只依据所引文献的摘要（以及给出的开放获取全文与表格片段）判断，不凭记忆补充：' +
+  'supported = 摘要或全文/表格支持该句的说法与数字；' +
+  'unsupported = 摘要或全文/表格与该句矛盾，或数字、结论、人群、药物 / 干预、效应方向任何一处对不上——只要你的理由里指出了某处不符，结论就必须是 unsupported，不能是 unclear；若为特定亚组/分层，请对照对应表格列核对；' +
+  'unclear = 证据涉及该句的内容，但信息不足以确认或否定。' +
   '没有摘要和全文片段，或它们根本没涉及该句说的内容时，判 unclear 并标 no_evidence=true（这类不会逐句挂评论，只在总结里汇总）。' +
-  'reason 用中文，一两句话写明依据（引用摘要里的关键数字或结论）。'
+  'reason 用中文，一两句话写明依据（引用摘要或表格里的关键数字或结论）；若判 unsupported 且文献有明确相反或正确数字，请在末尾加上【建议修改为】：<简明纠正文本>。'
 
 export interface ClaimEvidence {
   claim_id: string
@@ -126,13 +126,17 @@ export class ClaimService {
       const claim = byId.get(r.claim_id)
       if (!claim) { out.push({ claim_id: r.claim_id, status: 'stale' }); continue }
       const prev = store.getClaimCheck(docId, r.claim_id)
+      if (prev && prev.verdict === 'exempted' && r.verdict !== 'supported') {
+        out.push({ claim_id: r.claim_id, status: 'unchanged' })
+        continue
+      }
       if (prev && prev.verdict === r.verdict && (r.verdict === 'supported' || prev.comment_id)) {
         out.push({ claim_id: r.claim_id, status: 'unchanged', ...(prev.comment_id ? { comment_id: prev.comment_id } : {}) })
         continue
       }
       const noEvidence = r.verdict === 'unclear' && (r.no_evidence === true || !hasAbstract(claim))
       let commentId: string | null = null
-      if (r.verdict !== 'supported' && !noEvidence) commentId = this.comment(docId, claim, r.verdict, r.reason)
+      if (r.verdict !== 'supported' && r.verdict !== 'exempted' && !noEvidence) commentId = this.comment(docId, claim, r.verdict, r.reason)
       store.putClaimCheck({ doc_id: docId, claim_id: r.claim_id, node_id: claim.node_id, sentence: claim.sentence, verdict: r.verdict, reason: noEvidence ? `（没有可核对的证据）${r.reason}` : r.reason, comment_id: commentId, rev: this.docs.rev(docId) })
       out.push({ claim_id: r.claim_id, status: noEvidence ? 'no_evidence' : commentId ? 'commented' : 'recorded', ...(commentId ? { comment_id: commentId } : {}) })
     }
@@ -141,7 +145,7 @@ export class ClaimService {
 
   private comment(docId: string, claim: Claim, verdict: ClaimVerdict, reason: string): string | null {
     const store = this.docs.store
-    const label = { unsupported: '所引文献不支持该论断', unclear: '无法从所引文献判断', missing_citation: '数值型论断缺少出处', supported: '' }[verdict]
+    const label = { unsupported: '所引文献不支持该论断', unclear: '无法从所引文献判断', missing_citation: '数值型论断缺少出处', supported: '', exempted: '' }[verdict]
     const row = store.addComment({ doc_id: docId, node_id: claim.node_id, snippet: claim.snippet })
     try {
       const anchored = attachComment(this.docs.get(docId), claim.node_id, claim.snippet, row.id)

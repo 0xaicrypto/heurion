@@ -222,6 +222,8 @@ const NOT_FOR_AI: Record<string, string> = {
   'PATCH /api/calendar/events/:id': '医生更新排期或标记完成（医生操作）',
   'POST /api/calendar/batch': '医生在界面上批量操作排期日程（批量标记完成、恢复待办、批量删除）',
   'DELETE /api/calendar/events/:id': '医生删除排期日程（医生操作）',
+  'POST /api/docs/:id/comments/:cid/exempt-claim': '医生在界面上将某论断标记为临床经验豁免（医生主观判定）',
+  'POST /api/docs/:id/comments/:cid/apply-claim-fix': '医生在界面上一键采纳论断修改建议并替换正文（医生确认操作）',
 }
 
 describe('人机对等：每个接口（AI 的权限 = 用户的权限）', () => {

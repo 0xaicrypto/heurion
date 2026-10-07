@@ -1659,16 +1659,30 @@ function renderComments(): void {
   const list: any[] = detail?.comments ?? []
   $('comments').innerHTML = list.length === 0
     ? '<div class="muted">在正文中选中文字即可评论；写上 @heurion 由 AI 自动处理</div>'
-    : list.map(c => `
-    <div class="card ${c.status}" data-cid="${c.id}">
+    : list.map(c => {
+      const isClaim = c.replies.some((r: any) => r.role === 'ai' && r.text.includes('论断核对：'))
+      let suggestion: string | null = null
+      for (const r of c.replies) {
+        const m = /【建议修改为】：([^\n]+)/.exec(r.text) || /建议修改为：([^\n]+)/.exec(r.text)
+        if (m) { suggestion = m[1]?.trim() ?? null; break }
+      }
+      return `
+    <div class="card ${c.status}${isClaim ? ' claim-comment-card' : ''}" data-cid="${c.id}">
       <div class="quote ${c.anchor.located ? '' : 'lost'}">${esc(c.anchor.text || c.snippet || '（整块）')}${c.anchor.located ? '' : ' · 锚点已移除'}</div>
-      ${c.replies.map((r: any) => `<div class="reply ${r.role}"><b>${r.role === 'ai' ? 'Heurion' : '我'}</b>：${r.role === 'ai' ? lightMarkdown(r.text) : esc(r.text)}</div>`).join('')}
+      ${c.replies.map((r: any) => `<div class="reply ${r.role}"><b>${r.role === 'ai' ? (isClaim ? 'Heurion 论断核验' : 'Heurion') : '我'}</b>：${r.role === 'ai' ? lightMarkdown(r.text) : esc(r.text)}</div>`).join('')}
+      ${isClaim && suggestion && c.status === 'open' ? `
+        <div class="claim-suggestion-box">
+          <div class="claim-suggestion-title">AI 纠正建议</div>
+          <div class="claim-suggestion-text">${esc(suggestion)}</div>
+          <button type="button" class="small-btn quiet claim-fix-btn" data-act="apply-claim-fix" data-fix="${esc(suggestion)}" title="一键采纳文献真实数值并纠正正文">一键替换正文</button>
+        </div>` : ''}
       <div class="row">
         ${c.status === 'open'
-          ? `<input type="text" placeholder="追问或补充（含 @heurion 自动处理）" data-reply><button data-act="reply">回复</button><button data-act="ask" class="ai">让 AI 处理</button><button data-act="resolve">关闭</button><button data-act="delete" title="删除评论">删除</button>`
+          ? `<input type="text" placeholder="追问或补充（含 @heurion 自动处理）" data-reply><button data-act="reply">回复</button><button data-act="ask" class="ai">让 AI 处理</button>${isClaim ? `<button data-act="exempt-claim" class="quiet" title="将该论断标记为临床经验/未发表观察，豁免文献核对并关闭评论">标为临床经验</button>` : ''}<button data-act="resolve">关闭</button><button data-act="delete" title="删除评论">删除</button>`
           : `<span class="muted">已关闭（${c.resolved_by === 'ai' ? 'AI' : '我'}）</span><button data-act="reopen">重新打开</button><button data-act="delete" title="删除评论">删除</button>`}
       </div>
-    </div>`).join('')
+    </div>`
+    }).join('')
 }
 
 $('comments').onclick = async e => {
@@ -1679,7 +1693,17 @@ $('comments').onclick = async e => {
   const input = card.querySelector<HTMLInputElement>('[data-reply]')
   const text = input?.value.trim() ?? ''
   try {
-    if (btn.dataset.act === 'reply') {
+    if (btn.dataset.act === 'apply-claim-fix') {
+      const fix = btn.dataset.fix ?? ''
+      await api(`/api/docs/${session.docId}/comments/${cid}/apply-claim-fix`, {
+        method: 'POST',
+        body: JSON.stringify({ replace: fix }),
+      })
+      showNotice('已采纳建议并更新正文')
+    } else if (btn.dataset.act === 'exempt-claim') {
+      await api(`/api/docs/${session.docId}/comments/${cid}/exempt-claim`, { method: 'POST' })
+      showNotice('已标记为临床经验并关闭评论')
+    } else if (btn.dataset.act === 'reply') {
       if (!text) return
       await api(`/api/docs/${session.docId}/comments/${cid}/replies`, { method: 'POST', body: JSON.stringify({ text }) })
     } else if (btn.dataset.act === 'ask') {

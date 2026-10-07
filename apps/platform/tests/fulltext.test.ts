@@ -47,4 +47,59 @@ describe('开放获取全文', () => {
     expect(await ft.get('10.1/closed')).toBeNull()
     expect(calls.length).toBe(m) // 没有全文也缓存
   })
+
+  it('PMC XML：优先解析 xml_url 中的表格 (table-wrap) 与图注，保留结构化证据', async () => {
+    const XML = `<?xml version="1.0"?>
+    <article>
+      <front>
+        <article-meta>
+          <article-title>SELECT Trial Extended Analysis</article-title>
+          <abstract><p>Semaglutide reduced CV death in overweight adults.</p></abstract>
+        </article-meta>
+      </front>
+      <body>
+        <p>A total of 17,604 patients were enrolled across 41 countries.</p>
+        <table-wrap id="T1">
+          <label>Table 1</label>
+          <caption><p>Primary and Secondary Cardiovascular Endpoints at 3 Years</p></caption>
+          <table>
+            <thead>
+              <tr><th>Endpoint</th><th>Semaglutide (N=8803)</th><th>Placebo (N=8801)</th><th>Hazard Ratio (95% CI)</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Major adverse cardiovascular events</td><td>569 (6.5%)</td><td>701 (8.0%)</td><td>0.80 (0.72-0.90)</td></tr>
+              <tr><td>Cardiovascular death</td><td>223 (2.5%)</td><td>262 (3.0%)</td><td>0.85 (0.71-1.01)</td></tr>
+            </tbody>
+          </table>
+        </table-wrap>
+        <fig id="F1">
+          <label>Figure 1</label>
+          <caption><p>Cumulative incidence of composite cardiovascular endpoints over 48 months.</p></caption>
+        </fig>
+      </body>
+    </article>`
+
+    const fake = async (url: string) => {
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (url.includes('idconv')) return json({ records: [{ pmcid: 'PMC999' }] })
+      if (url.endsWith('/metadata/PMC999.1.json')) {
+        return json({ is_pmc_openaccess: true, license_code: 'CC BY', xml_url: 's3://pmc-oa-opendata/PMC999.1/PMC999.1.xml?md5=z', text_url: 's3://pmc-oa-opendata/PMC999.1/PMC999.1.txt?md5=w' })
+      }
+      if (url.endsWith('/PMC999.1/PMC999.1.xml')) return new Response(XML)
+      return new Response('', { status: 404 })
+    }
+    const store = new Store(':memory:')
+    const ft = new FullTextClient(store, fake as never, '')
+    const got = await ft.get('10.1056/nejm.select')
+    expect(got).not.toBeNull()
+    expect(got!.text).toContain('[Table 1: Primary and Secondary Cardiovascular Endpoints at 3 Years]')
+    expect(got!.text).toContain('0.80 (0.72-0.90)')
+    expect(got!.text).toContain('[Figure 1: Cumulative incidence of composite cardiovascular endpoints')
+
+    // 验证相关切片抓取：针对具体表格数值论断，精准命中 Table 1 证据块
+    const passages = relevantPassages(got!.text, '司美格鲁肽显著降低主要心血管不良事件发生率（HR 0.80，95% CI 0.72-0.90）')
+    expect(passages.length).toBeGreaterThan(0)
+    expect(passages[0]).toContain('Table 1')
+    expect(passages[0]).toContain('0.80 (0.72-0.90)')
+  })
 })

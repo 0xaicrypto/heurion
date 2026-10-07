@@ -1425,7 +1425,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
    * 文档路由的访问级别（研究共享文档：只读成员能看、评论、导出、和 AI 对话（AI 同样只读），不能改）。
    * GET 与下列 POST 只要读权限；其余写操作要「可编辑」；删除另由 canDelete 判断。不是成员的一律当不存在（路由里 owned 返回 null → 404）。
    */
-  const READ_POSTS = [/^\/comments$/, /^\/comments\/[^/]+\/replies$/, /^\/comments\/[^/]+\/(resolve|reopen)$/, /^\/chat$/, /^\/duplicate$/]
+  const READ_POSTS = [/^\/comments$/, /^\/comments\/[^/]+\/replies$/, /^\/comments\/[^/]+\/(resolve|reopen|exempt-claim)$/, /^\/chat$/, /^\/duplicate$/]
   const docLevel = (method: string, rest: string): Level => method === 'GET' || (method === 'POST' && READ_POSTS.some(r => r.test(rest))) ? 'read' : 'write'
   for (const path of ['/api/docs/:id', '/api/docs/:id/*']) {
     app.use(path, async (c, next) => {
@@ -1920,6 +1920,59 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     if (!row) return c.json({ error: 'not found' }, 404)
     const resolve = c.req.param('action') === 'resolve'
     return c.json({ ok: store.setCommentStatus(row.id, c.req.param('cid'), resolve ? 'resolved' : 'open', resolve ? 'user' : null) })
+  })
+
+  /** 将某条论断标记为临床经验豁免并关闭关联评论。 */
+  app.post('/api/docs/:id/comments/:cid/exempt-claim', c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const cid = c.req.param('cid')
+    const check = store.db.prepare('SELECT claim_id FROM claim_checks WHERE doc_id = ? AND comment_id = ?').get(row.id, cid) as { claim_id: string } | undefined
+    if (check) {
+      store.exemptClaim(row.id, check.claim_id)
+    } else {
+      store.addReply(cid, 'user', '【临床经验豁免】：已标记为临床经验/无需出处，豁免文献核对。')
+      store.setCommentStatus(row.id, cid, 'resolved', 'user')
+    }
+    return c.json({ ok: true, comment_id: cid, status: 'resolved' })
+  })
+
+  /** 采纳 AI 论断修改建议并一键纠正正文。 */
+  app.post('/api/docs/:id/comments/:cid/apply-claim-fix', async c => {
+    const row = owned(c)
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const cid = c.req.param('cid')
+    const body = await c.req.json<{ replace?: string; find?: string }>().catch(() => ({} as { replace?: string; find?: string }))
+    const target = store.getComment(row.id, cid)
+    if (!target) return c.json({ error: 'comment not found' }, 404)
+
+    let replace = body.replace?.trim()
+    if (!replace) {
+      for (const r of target.replies) {
+        const m = /【建议修改为】：([^\n]+)/.exec(r.text) || /建议修改为：([^\n]+)/.exec(r.text)
+        if (m) { replace = m[1]?.trim(); break }
+      }
+    }
+    if (!replace) return c.json({ error: 'no replacement suggestion found' }, 400)
+
+    const doc = docs.get(row.id)
+    const marks = threadMarks(doc)
+    const loc = locate(doc, target, marks)
+    const nodeId = loc.node_ids[0] || target.node_id
+    const find = body.find?.trim() || loc.text || target.snippet
+    if (!find || !nodeId) return c.json({ error: 'anchor not found' }, 400)
+
+    const editRes = deps.ops.edit({
+      doc_id: row.id,
+      base_rev: docs.rev(row.id),
+      mode: 'apply',
+      ack_comments: [cid],
+      ops: [{ op: 'replace_text', id: nodeId, find, replace }],
+    }, { actor: 'user', turnId: null, user: c.get('user') })
+
+    store.addReply(cid, 'user', `【一键采纳建议】：已将「${find}」替换为「${replace}」`)
+    store.setCommentStatus(row.id, cid, 'resolved', 'user')
+    return c.json({ ok: true, comment_id: cid, replaced: { find, replace }, rev: editRes.rev })
   })
 
   /** 删除评论：去掉正文里的锚点标记与线程。 */

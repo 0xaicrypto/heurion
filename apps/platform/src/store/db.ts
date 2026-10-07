@@ -369,7 +369,7 @@ export interface PersonLinkRow {
   created_at: string
 }
 
-export type ClaimVerdict = 'supported' | 'unsupported' | 'unclear' | 'missing_citation'
+export type ClaimVerdict = 'supported' | 'unsupported' | 'unclear' | 'missing_citation' | 'exempted'
 
 export interface ClaimCheckRow {
   doc_id: string
@@ -1800,6 +1800,30 @@ export class Store {
 
   listClaimChecks(docId: string): ClaimCheckRow[] {
     return this.db.prepare('SELECT * FROM claim_checks WHERE doc_id = ? ORDER BY created_at DESC').all(docId) as unknown as ClaimCheckRow[]
+  }
+
+  /** 将某条论断标记为临床经验豁免（关闭关联评论并豁免后续文献比对）。 */
+  exemptClaim(docId: string, claimId: string, reason = '已标记为临床经验/无需出处，豁免文献核对'): void {
+    const existing = this.getClaimCheck(docId, claimId)
+    if (existing) {
+      this.db.prepare('UPDATE claim_checks SET verdict = ?, reason = ? WHERE doc_id = ? AND claim_id = ?')
+        .run('exempted', reason, docId, claimId)
+      if (existing.comment_id) {
+        this.addReply(existing.comment_id, 'user', `【临床经验豁免】：${reason}`)
+        this.setCommentStatus(docId, existing.comment_id, 'resolved', 'user')
+      }
+    } else {
+      this.putClaimCheck({
+        doc_id: docId,
+        claim_id: claimId,
+        node_id: '',
+        sentence: '',
+        verdict: 'exempted',
+        reason,
+        comment_id: null,
+        rev: 0,
+      })
+    }
   }
 
   // —— AI 回合开始前的状态（撤销本轮的持久化依据） ——

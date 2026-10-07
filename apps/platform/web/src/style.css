@@ -584,6 +584,52 @@ button.ghost-dark:hover:not(:disabled) { border-color: var(--text); background: 
 .verdict.supported { color: var(--green); border-color: var(--green-line); }
 .verdict.unsupported { color: var(--danger); border-color: rgba(255, 107, 107, .45); }
 .verdict.unclear, .verdict.missing_citation { color: var(--warn); border-color: rgba(245, 181, 68, .4); }
+.verdict.exempted { color: var(--mint-text); border-color: rgba(0, 255, 147, .4); }
+
+.card.claim-comment-card {
+  border-left: 2px solid var(--warn);
+}
+.card.claim-comment-card.resolved {
+  border-left-color: var(--line);
+}
+.claim-suggestion-box {
+  background: var(--raised, #0d1d17);
+  border: 1px solid rgba(0, 255, 147, 0.25);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.claim-suggestion-title {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--mint-text, #00ff93);
+}
+.claim-suggestion-text {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text, #e2e8f0);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px 8px;
+  border-radius: 2px;
+  border-left: 2px solid var(--mint-text, #00ff93);
+}
+.claim-fix-btn {
+  align-self: flex-start;
+  font-size: 11px;
+  background: rgba(0, 255, 147, 0.12) !important;
+  color: var(--mint-text, #00ff93) !important;
+  border: 1px solid rgba(0, 255, 147, 0.35) !important;
+  cursor: pointer;
+  padding: 3px 8px;
+}
+.claim-fix-btn:hover {
+  background: rgba(0, 255, 147, 0.22) !important;
+}
 .claim { font-size: 13px; margin-top: 10px; color: var(--text-2); }
 .pill { display: inline-block; font-size: 11px; padding: 1px 8px; border: 1px solid var(--line-strong); }
 .pill.ok { color: var(--green); border-color: var(--green-line); }
