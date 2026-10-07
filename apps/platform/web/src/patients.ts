@@ -490,6 +490,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                       <span class="pt-imaging-badge" style="background: rgba(16,185,129,0.18); color: #34D399; font-weight: 700">${icon('compare')} 随访疗效评定 (${esc(m.recist_category || 'RECIST')})</span>
                       <span class="pt-imaging-pill ${m.recist_category === 'PR' || m.recist_category === 'CR' ? 'ok' : m.recist_category === 'PD' ? 'alert' : ''}">长径变化: ${m.percent_change_ld > 0 ? `+${m.percent_change_ld}%` : `${m.percent_change_ld}%`}</span>
                       <span class="pt-imaging-pill">体积变化: ${m.percent_change_volume > 0 ? `+${m.percent_change_volume}%` : `${m.percent_change_volume}%`}</span>
+                      ${m.vdt ? `<span class="pt-imaging-pill ${m.vdt.clinical_alert ? 'alert' : 'ok'}">VDT: ${m.vdt.days !== null ? `${m.vdt.days} 天` : esc(m.vdt.label)}</span>` : ''}
                     ` : isBronchiectasis ? `
                       ${m.bar_ratio ? `<span class="pt-imaging-pill ${m.signet_ring_sign ? 'alert' : 'ok'}">BAR 印戒征: ${m.bar_ratio}${m.signet_ring_sign ? ' (阳性)' : ''}</span>` : ''}
                       ${m.total_mucus_volume_cm3 !== undefined ? `<span class="pt-imaging-pill">粘液栓体积: ${m.total_mucus_volume_cm3} cm³</span>` : ''}
@@ -509,8 +510,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                       ${m.has_lesion === false || (m.longest_diameter_mm === 0) ? `
                         <span class="pt-imaging-pill ok">Lung-RADS 1 类 (阴性/无活动性结节)</span>
                       ` : `
+                        ${m.nodule_type_zh ? `<span class="pt-imaging-badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.3)">${esc(m.nodule_type_zh)}</span>` : ''}
                         ${m.lung_rads ? `<span class="pt-imaging-pill ${m.lung_rads.category === '4B' || m.lung_rads.category === '4A' ? 'alert' : 'ok'}">${esc(m.lung_rads.name)}</span>` : ''}
                         ${m.longest_diameter_mm ? `<span class="pt-imaging-pill alert">RECIST 1.1 长径: ${m.longest_diameter_mm} mm</span>` : ''}
+                        ${m.solid_core_diameter_mm ? `<span class="pt-imaging-pill" style="border-color: rgba(251, 146, 60, 0.4); color: #fb923c">实性核心: ${m.solid_core_diameter_mm} mm${m.consolidation_tumor_ratio ? ` (CTR ${Math.round(m.consolidation_tumor_ratio * 100)}%)` : ''}</span>` : ''}
                         ${m.short_axis_mm ? `<span class="pt-imaging-pill">短径: ${m.short_axis_mm} mm</span>` : ''}
                         ${m.total_volume_cm3 ? `<span class="pt-imaging-pill">3D 体积: ${m.total_volume_cm3} cm³</span>` : ''}
                         ${m.key_slice_index !== undefined ? `<span class="pt-imaging-pill">最大截面: #${m.key_slice_index} 层</span>` : ''}
@@ -2754,6 +2757,18 @@ ${recommendations}
           </div>
         </div>
 
+        ${rec.vdt ? `
+          <div style="margin-top: 10px; padding: 10px 14px; border-radius: 6px; background: ${rec.vdt.clinical_alert ? 'rgba(239,68,68,0.12)' : 'rgba(56,189,248,0.08)'}; border: 1px solid ${rec.vdt.clinical_alert ? 'rgba(239,68,68,0.3)' : 'rgba(56,189,248,0.2)'}; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px">
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span style="font-weight: 700; color: ${rec.vdt.clinical_alert ? '#F87171' : 'var(--blue)'}">${icon('chart')} 肿瘤动力学体积倍增时间 (Schwartz VDT):</span>
+              <span class="pt-recist-badge ${rec.vdt.clinical_alert ? 'pd' : 'sd'}">${esc(rec.vdt.label)}</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-2)">
+              ${esc(rec.vdt.description)}
+            </div>
+          </div>
+        ` : ''}
+
         <!-- 双期图像与指标对照 -->
         <div class="pt-recist-dual-grid">
           <div class="pt-recist-card">
@@ -2826,6 +2841,14 @@ ${recommendations}
               <td><b style="color: ${cat === 'pr' || cat === 'cr' ? '#34D399' : cat === 'pd' ? '#F87171' : 'var(--text)'}">${signVol}</b></td>
               <td>MONAI 深度学习测量</td>
             </tr>
+            ${rec.vdt ? `
+              <tr>
+                <td><b>体积倍增时间 (Schwartz VDT)</b></td>
+                <td colspan="2" style="color: ${rec.vdt.clinical_alert ? '#F87171' : 'var(--blue)'}; font-weight: 600">${rec.vdt.days !== null ? `${rec.vdt.days} 天` : '--'}</td>
+                <td colspan="2"><span class="pt-recist-badge ${rec.vdt.clinical_alert ? 'pd' : 'sd'}">${esc(rec.vdt.label)}</span></td>
+                <td>Schwartz 动力学标准 (&lt;400天高危)</td>
+              </tr>
+            ` : ''}
           </tbody>
         </table>
 

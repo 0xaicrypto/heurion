@@ -9,9 +9,11 @@ from typing import Optional, List, Dict, Any
 try:
     from .device import get_device_info
     from .engine import MONAIEngine, generate_synthetic_ct_volume
+    from .recist import calculate_volume_doubling_time, calculate_subsolid_metrics
 except (ImportError, ValueError):
     from device import get_device_info
     from engine import MONAIEngine, generate_synthetic_ct_volume
+    from recist import calculate_volume_doubling_time, calculate_subsolid_metrics
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -152,6 +154,21 @@ class RtStructRequest(BaseModel):
     ctv_margin_mm: Optional[float] = 6.0
     ptv_margin_mm: Optional[float] = 4.0
     key_slice_index: Optional[int] = None
+
+class VolumeDoublingTimeRequest(BaseModel):
+    baseline_volume_cm3: float
+    followup_volume_cm3: float
+    days_interval: float
+
+
+@app.post("/api/v1/recist/volume-doubling-time")
+def compute_volume_doubling_time(req: VolumeDoublingTimeRequest = Body(...)):
+    """Computes Schwartz Volume Doubling Time (VDT) and clinical proliferation risk."""
+    return calculate_volume_doubling_time(
+        baseline_vol_cm3=req.baseline_volume_cm3,
+        followup_vol_cm3=req.followup_volume_cm3,
+        days_interval=req.days_interval
+    )
 
 
 @app.get("/health")

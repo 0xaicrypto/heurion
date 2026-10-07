@@ -793,6 +793,7 @@ export class PatientService {
       followup_volume_cm3?: number
       diff_volume_cm3?: number
       percent_change_volume?: number
+      vdt?: any
       category: 'CR' | 'PR' | 'SD' | 'PD'
       category_name: string
       interpretation: string
@@ -953,9 +954,88 @@ export class PatientService {
 
     const signLd = pctLd > 0 ? `+${pctLd}%` : `${pctLd}%`
     const signVol = pctVol > 0 ? `+${pctVol}%` : `${pctVol}%`
+
+    // 计算肿瘤体积倍增时间 (Schwartz VDT 动力学评估)
+    let vdt: {
+      days: number | null
+      category: 'rapid_growth' | 'intermediate_growth' | 'indolent_growth' | 'stable' | 'regressed' | 'indeterminate'
+      risk_level: 'critical_high' | 'medium_warning' | 'low_indolent' | 'low' | 'none'
+      label: string
+      description: string
+      clinical_alert: boolean
+      recommendation: string
+    } = {
+      days: null,
+      category: 'indeterminate',
+      risk_level: 'none',
+      label: '无法计算 (数据不足)',
+      description: '需至少两次有效体积测定且随访间隔大于0天',
+      clinical_alert: false,
+      recommendation: '维持常规影像随访',
+    }
+
+    if (bVol > 0 && fVol > 0 && intervalDays > 0) {
+      if (fVol <= bVol) {
+        if (fVol <= bVol * 0.75) {
+          vdt = {
+            days: null,
+            category: 'regressed',
+            risk_level: 'low',
+            label: `体积显著缩小 (缩小 ${Math.abs(pctVol)}%)`,
+            description: '病灶体积较基线缩小 >25%，符合治疗有效或炎性吸收表现。',
+            clinical_alert: false,
+            recommendation: '建议维持原治疗方案并定期影像随访',
+          }
+        } else {
+          vdt = {
+            days: null,
+            category: 'stable',
+            risk_level: 'low',
+            label: '体积相对稳定',
+            description: `病灶体积变化在标准测量误差范围内 (${pctVol > 0 ? '+' : ''}${pctVol}%)，未见明确增大。`,
+            clinical_alert: false,
+            recommendation: '按既定随访方案维持常规低剂量 CT 复查',
+          }
+        }
+      } else {
+        const vdtDays = round((intervalDays * Math.LN2) / Math.log(fVol / bVol), 1)
+        if (vdtDays < 400.0) {
+          vdt = {
+            days: vdtDays,
+            category: 'rapid_growth',
+            risk_level: 'critical_high',
+            label: `急速倍增 (${vdtDays} 天, 恶性高危)`,
+            description: `体积倍增时间仅 ${vdtDays} 天 (<400天，体积增大 +${pctVol}%)，符合恶性实体肿瘤快速增殖动力学特征。`,
+            clinical_alert: true,
+            recommendation: '强烈建议立即提交肺部肿瘤 MDT 疑难病案会诊，并由胸外科评估穿刺活检或胸腔镜切除手术',
+          }
+        } else if (vdtDays <= 600.0) {
+          vdt = {
+            days: vdtDays,
+            category: 'intermediate_growth',
+            risk_level: 'medium_warning',
+            label: `中度增殖 (${vdtDays} 天, 需警惕)`,
+            description: `体积倍增时间为 ${vdtDays} 天 (400-600天区间，体积增大 +${pctVol}%)，提示病灶持续缓慢增殖，不能排除浸润性病变。`,
+            clinical_alert: false,
+            recommendation: '建议 3 个月后低剂量高分辨 CT 严密随访，若实性成分继续增大建议穿刺介入',
+          }
+        } else {
+          vdt = {
+            days: vdtDays,
+            category: 'indolent_growth',
+            risk_level: 'low_indolent',
+            label: `惰性/缓慢增殖 (${vdtDays} 天, 良性倾向)`,
+            description: `体积倍增时间长达 ${vdtDays} 天 (>600天，体积增大 +${pctVol}%)，多见于良性错构瘤/硬化性血管瘤或惰性原位癌。`,
+            clinical_alert: false,
+            recommendation: '建议维持 6-12 个月常规年度低剂量 CT 随访',
+          }
+        }
+      }
+    }
+
     const academicStatement = targetType === 'bronchiectasis_mucus'
       ? `依据气道与粘液栓容积量化标准，患者 ${p.code} 随访对比（${intervalDays === 0 ? '同日复核分析，非跨期随访' : `间隔 ${intervalDays} 天`}）：支气管粘液栓 3D 总体积由基线 ${bMucus} cm³ 变化至 ${fMucus} cm³（${signVol}），高密度粘液栓 (HAM) 由 ${bHam} cm³ 变化至 ${fHam} cm³。总体疗效评估为：【${category} - ${categoryName}】。`
-      : `依据实体瘤疗效评价标准 (RECIST 1.1)，患者 ${p.code} 随访对比（间隔 ${intervalDays} 天）：靶病灶最大长径由基线 ${bLd} mm 变化至 ${fLd} mm（${signLd}），3D 总体积由 ${bVol} cm³ 变化至 ${fVol} cm³（${signVol}）。总体疗效评估为：【${category} - ${categoryName}】。`
+      : `依据实体瘤疗效评价标准 (RECIST 1.1) 与 Schwartz 动力学生长模型，患者 ${p.code} 随访对比（间隔 ${intervalDays} 天）：靶病灶最大长径由基线 ${bLd} mm 变化至 ${fLd} mm（${signLd}），3D 总体积由 ${bVol} cm³ 变化至 ${fVol} cm³（${signVol}），体积倍增时间 (VDT): ${vdt.days !== null ? `${vdt.days} 天 (${vdt.label})` : vdt.label}。总体疗效评估为：【${category} - ${categoryName}】。`
 
     const baseAssetId = baseline.imaging_data?.asset_id
     const followAssetId = followup.imaging_data?.asset_id
@@ -984,16 +1064,25 @@ export class PatientService {
 ${bBar !== undefined || fBar !== undefined ? `| **支气管伴行动脉比 (BAR)** | ${bBar ?? '--'} | ${fBar ?? '--'} | ${fBar !== undefined && bBar !== undefined ? round(fBar - bBar, 2) : '--'} | -- | 印戒征 (>1.10) |` : ''}
 ${bMucus > 0 || fMucus > 0 ? `| **粘液栓体积** | ${bMucus} cm³ | ${fMucus} cm³ | ${round(fMucus - bMucus, 2)} cm³ | ${bMucus > 0 ? round(((fMucus - bMucus) / bMucus) * 100, 1) + '%' : '--'} | 气道嵌顿负荷 |` : ''}
 ${bHam > 0 || fHam > 0 ? `| **高密度粘液栓 (HAM)** | ${bHam} cm³ | ${fHam} cm³ | ${round(fHam - bHam, 2)} cm³ | -- | 提示 ABPA 活动性 |` : ''}
+| **体积倍增时间 (VDT)** | -- | -- | ${vdt.days !== null ? `${vdt.days} 天` : '--'} | **${vdt.label}** | Schwartz 动力学 (<400天高危) |
 
 ---
 
-### 三、 双期关键截面影像对照
+### 三、 肿瘤动力学生长速度 (Schwartz VDT 动力学评估)
+> **倍增指标**: **${vdt.days !== null ? `${vdt.days} 天` : '未触发倍增'}**（${vdt.label}）  
+> **动力学解读**: ${vdt.description}  
+> **临床建议**: ${vdt.recommendation}
+${vdt.clinical_alert ? `\n> ⚠️ **高危增殖预警**: 本病灶体积倍增时间 < 400 天，提示侵袭性恶性病灶快速增殖，强烈建议尽快提交胸部肿瘤 MDT 专科会诊评估手术指征。` : ''}
+
+---
+
+### 四、 双期关键截面影像对照
 ${baseAssetId ? `- **基线关键切片**: ![基线关键切片](asset:${baseAssetId} "基线影像 (${baseDateStr})")` : ''}
 ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${followAssetId} "随访影像 (${followDateStr})")` : ''}
 
 ---
 
-### 四、 临床处置与随访建议
+### 五、 临床处置与随访建议
 1. **${category === 'CR' || category === 'PR' ? '疗效显著' : category === 'PD' ? '疾病进展预警' : '疗效稳定'}**: 结合当前影像 RECIST 1.1 评估结果（${category}），建议临床维持或调整现有治疗方案。
 2. **随访周期**: 建议于 8–12 周后再次安排胸腹部 CT 随访，继续监测靶病灶长径与体积演变曲线。
 `
@@ -1016,6 +1105,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           percent_change_ld: pctLd,
           diff_volume_cm3: diffVol,
           percent_change_volume: pctVol,
+          vdt,
           interpretation,
           academic_statement: academicStatement,
         },
@@ -1023,13 +1113,22 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           longest_diameter_mm: fLd,
           total_volume_cm3: fVol,
           recist_category: category,
+          recist_category_name: categoryName,
           percent_change_ld: pctLd,
           percent_change_volume: pctVol,
+          baseline_ld_mm: bLd,
+          followup_ld_mm: fLd,
+          diff_ld_mm: diffLd,
+          baseline_volume_cm3: bVol,
+          followup_volume_cm3: fVol,
+          diff_volume_cm3: diffVol,
+          vdt,
         },
         findings: [
           `RECIST 1.1 疗效评估: 【${category}】${categoryName}`,
           `长径变化: ${signLd} (${bLd} mm → ${fLd} mm)`,
           `体积变化: ${signVol} (${bVol} cm³ → ${fVol} cm³)`,
+          `体积倍增时间 (VDT): ${vdt.days !== null ? `${vdt.days} 天` : vdt.label}`,
         ],
         asset_id: followAssetId || baseAssetId,
         slice_file_id: followup.imaging_data?.file_id || baseline.imaging_data?.file_id || null,
@@ -1085,6 +1184,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         followup_volume_cm3: fVol,
         diff_volume_cm3: diffVol,
         percent_change_volume: pctVol,
+        vdt,
         category,
         category_name: categoryName,
         interpretation,
@@ -1865,6 +1965,9 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const arteryCaliber = rawMetrics.artery_caliber_mm ?? 5.8
 
     const radsInfo = recist.lung_rads || rawMetrics.lung_rads
+    const noduleTypeZh = recist.nodule_type_zh || rawMetrics.nodule_type_zh
+    const solidCoreLd = recist.solid_core_diameter_mm ?? rawMetrics.solid_core_diameter_mm
+    const ctr = recist.consolidation_tumor_ratio ?? rawMetrics.consolidation_tumor_ratio
     const hasLesion = recist.has_lesion !== false && ld !== undefined && ld > 0 && vol !== undefined && vol > 0 && !(radsInfo && radsInfo.category === '1')
 
     // 1. 检查方法与参数
@@ -1889,8 +1992,13 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
           `4. **Lung-RADS 影像分级**：综合评估符合 \`${radsInfo?.name || 'Lung-RADS 1 类'}\`（阴性 / 无活动性肺结节，恶性风险 < 1%）。`
       } else {
         const radsTitle = radsInfo ? `符合 \`${radsInfo.name}\` (${radsInfo.description || ''})` : '局灶性结节改变'
-        findings = `1. **局灶性肺结节/占位立体量化 (RECIST 1.1 / Fleischner)**：右肺实质见一局灶性结节影，经 MONAI 3D 深度学习体素网络测得最大轴位截面位于第 #${keySlice} 层，最大长径 (Longest Diameter) 约为 ${ld} mm，垂直短径约为 ${sd ?? '--'} mm；病灶三维总体积约 ${vol} cm³。\n` +
-          `2. **病灶形态与内部特征**：病灶呈${ld > 15 ? '实性分叶状改变，边缘欠规整可见短毛刺征' : '局灶性实性/亚实性结节形态，边界尚清'}，内部密度欠均匀，未见确切粗大钙化或坏死空洞形成。\n` +
+        const subsolidDetail = solidCoreLd !== undefined && solidCoreLd > 0
+          ? `；其中内部实性浸润核心 (Solid Core) 最大长径约为 ${solidCoreLd} mm，实性成分占比 (CTR, Consolidation-to-Tumor Ratio) 约为 ${Math.round(ctr * 100)}%`
+          : noduleTypeZh?.includes('纯磨玻璃')
+          ? '；内部密度均匀呈纯磨玻璃样改变 (pGGN)，未见确切软组织实性浸润核心 (CTR 0%)'
+          : ''
+        findings = `1. **局灶性肺结节/占位立体量化 (RECIST 1.1 / Fleischner)**：右肺实质见一局灶性结节影，呈${noduleTypeZh || '结节'}改变${subsolidDetail}；经 MONAI 3D 深度学习体素网络测得最大轴位截面位于第 #${keySlice} 层，最大长径 (Longest Diameter) 约为 ${ld} mm，垂直短径约为 ${sd ?? '--'} mm；病灶三维总体积约 ${vol} cm³。\n` +
+          `2. **病灶形态与内部特征**：病灶呈${ld > 15 || (solidCoreLd && solidCoreLd >= 8) ? '分叶状浸润改变，边缘欠规整可见短毛刺征' : '局灶性实性/亚实性形态，边界尚清'}，内部密度欠均匀，未见确切粗大钙化或坏死空洞形成。\n` +
           `3. **周围结构与淋巴结**：邻近胸膜未见明显牵拉凹陷；纵隔内及双侧肺门区见数枚淋巴结显影，最大短径均小于 10 mm。\n` +
           `4. **双肺其他叶段与分级**：左肺野及双肺上叶纹理清晰，透亮度良好，未见新发活动性病变；${radsTitle}。`
       }
@@ -1910,9 +2018,10 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         impression = `1. **胸部 CT 平扫未见确切活动性实质性占位或活动性炎性病变**；\n` +
           `2. **Lung-RADS 临床分级**：\`${radsInfo?.name || 'Lung-RADS 1 类'}\` (${radsInfo?.description || '阴性无结节，恶性风险 < 1%'})。`
       } else {
-        impression = `1. **肺部局灶性实性/亚实性结节 (长径约 ${ld} mm，立体体积约 ${vol} cm³)**：影像表现提示局灶性肺结节，综合评级为 \`${radsInfo?.name || 'Lung-RADS 评级'}\`；\n` +
+        const solidCoreText = solidCoreLd !== undefined && solidCoreLd > 0 ? `，内部实性核心约 ${solidCoreLd} mm` : ''
+        impression = `1. **${noduleTypeZh || '肺部局灶性实性/亚实性结节'} (长径约 ${ld} mm${solidCoreText}，立体体积约 ${vol} cm³)**：影像表现提示局灶性肺部病变，综合评级为 \`${radsInfo?.name || 'Lung-RADS 评级'}\`；\n` +
           `2. **鉴别诊断与客观提示**：需鉴别局灶性炎性假瘤、机化性肺炎、良性错构瘤及早期肺部腺瘤样浸润增生病变，建议专科医师结合既往影像比对或短期薄层靶扫描定性；\n` +
-          `3. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld} mm，可作为后续多学科随访评估之影像学量化基线 (Baseline)。`
+          `3. **RECIST 1.1 基线测值确立**：靶病灶最大长径 ${ld} mm${solidCoreLd > 0 ? ` (实性长径 ${solidCoreLd} mm)` : ''}，可作为后续多学科随访评估之影像学量化基线 (Baseline)。`
       }
     } else {
       impression = evidence.diagnostic_impression || '实质器官容积量化分析已完成，未见确切占位性恶性征象。'

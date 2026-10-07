@@ -80,8 +80,28 @@ def render_key_slice_png(
             # Midpoint text
             mx = int((p1[0] + p2[0]) / 2)
             my = int((p1[1] + p2[1]) / 2) - 15
-            label = f"LD: {length_mm} mm"
+            label = f"Total LD: {length_mm} mm"
             draw.text((mx, my), label, fill=(0, 240, 255, 255))
+
+    # Inner solid core caliper if subsolid nodule
+    solid_caliper = recist.get("solid_core_caliper")
+    solid_ld = recist.get("solid_core_diameter_mm", 0.0)
+    if solid_caliper and "p1" in solid_caliper and "p2" in solid_caliper and solid_ld > 0:
+        sp1 = tuple(solid_caliper["p1"])
+        sp2 = tuple(solid_caliper["p2"])
+        # High-visibility Amber / Orange line
+        draw.line([sp1, sp2], fill=(251, 146, 60, 255), width=2)
+        sdx = sp2[0] - sp1[0]
+        sdy = sp2[1] - sp1[1]
+        sdist = np.hypot(sdx, sdy)
+        if sdist > 0:
+            snx = -sdy / sdist * 4
+            sny = sdx / sdist * 4
+            draw.line([(sp1[0] - snx, sp1[1] - sny), (sp1[0] + snx, sp1[1] + sny)], fill=(251, 146, 60, 255), width=2)
+            draw.line([(sp2[0] - snx, sp2[1] - sny), (sp2[0] + snx, sp2[1] + sny)], fill=(251, 146, 60, 255), width=2)
+            smx = int((sp1[0] + sp2[0]) / 2)
+            smy = int((sp1[1] + sp2[1]) / 2) + 6
+            draw.text((smx, smy), f"Solid: {solid_ld} mm", fill=(253, 186, 116, 255))
 
     # 4. Scale bar (lower right corner)
     scale_px = int(scale_bar_mm / pixel_spacing_mm)
@@ -94,13 +114,21 @@ def render_key_slice_png(
     key_slice = recist.get("key_slice_index", 0)
     vol = recist.get("total_volume_cm3", 0.0)
     ld = recist.get("longest_diameter_mm", 0.0)
+    ctr = recist.get("consolidation_tumor_ratio")
+    rads = recist.get("lung_rads")
     
     hud_lines = [
         f"HEURION IMAGING // MONAI 3D",
         f"Modality: {modality} | Slice: #{key_slice}",
         f"Target: {lesion_name}",
-        f"RECIST LD: {ld} mm | Vol: {vol} cm³"
     ]
+    if ctr is not None and solid_ld > 0:
+        hud_lines.append(f"RECIST LD: {ld} mm | Solid: {solid_ld} mm (CTR: {int(ctr*100)}%)")
+    else:
+        hud_lines.append(f"RECIST LD: {ld} mm | Vol: {vol} cm³")
+    
+    if rads and isinstance(rads, dict):
+        hud_lines.append(f"ACR Lung-RADS: {rads.get('name', '')}")
     
     y_offset = 12
     for line in hud_lines:

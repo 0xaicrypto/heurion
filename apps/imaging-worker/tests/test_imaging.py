@@ -106,3 +106,66 @@ def test_bronchiectasis_and_mucus_analysis():
     assert data["metrics"]["total_mucus_volume_cm3"] > 0
     assert "印戒征" in str(data["metrics"]["signs_detected"])
     assert data["key_slice_png_base64"].startswith("data:image/png;base64,")
+
+
+def test_subsolid_metrics_calculations():
+    from recist import calculate_subsolid_metrics, calculate_volume_doubling_time
+    # 1. Pure GGO: HU values around -450 HU (< -150 HU)
+    vol_ggo = np.full((16, 32, 32), -800.0, dtype=np.float32)
+    mask_ggo = np.zeros((16, 32, 32), dtype=np.uint8)
+    mask_ggo[8, 12:20, 12:20] = 1
+    vol_ggo[mask_ggo == 1] = -450.0
+
+    res_ggo = calculate_subsolid_metrics(vol_ggo, mask_ggo, spacing=(1.0, 1.0, 1.0))
+    assert res_ggo["nodule_type"] == "pure_ggo"
+    assert res_ggo["solid_core_diameter_mm"] == 0.0
+    assert res_ggo["consolidation_tumor_ratio"] == 0.0
+    assert res_ggo["lung_rads"]["category"] == "2"
+
+    # 2. Part-solid / subsolid: outer rim -450 HU, central core +40 HU (> -150 HU)
+    vol_part = np.full((16, 32, 32), -800.0, dtype=np.float32)
+    mask_part = np.zeros((16, 32, 32), dtype=np.uint8)
+    mask_part[8, 10:22, 10:22] = 1 # 12x12 total nodule
+    vol_part[mask_part == 1] = -450.0
+    # Center 6x6 core is solid
+    mask_solid = np.zeros((16, 32, 32), dtype=bool)
+    mask_solid[8, 13:19, 13:19] = True
+    vol_part[mask_solid] = 40.0
+
+    res_part = calculate_subsolid_metrics(vol_part, mask_part, spacing=(1.0, 1.0, 1.0))
+    assert res_part["nodule_type"] == "part_solid"
+    assert res_part["solid_core_diameter_mm"] > 0.0
+    assert 0.0 < res_part["consolidation_tumor_ratio"] < 0.8
+    assert res_part["lung_rads"]["category"] in ["3", "4A", "4B"]
+
+    # 3. Schwartz Volume Doubling Time (VDT)
+    # Rapid growth: doubling in 180 days (<400)
+    vdt_rapid = calculate_volume_doubling_time(baseline_vol_cm3=1.0, followup_vol_cm3=2.0, days_interval=180.0)
+    assert vdt_rapid["vdt_days"] == 180.0
+    assert vdt_rapid["category"] == "rapid_growth"
+    assert vdt_rapid["clinical_alert"] is True
+
+    # Indolent growth: doubling in 800 days (>600)
+    vdt_slow = calculate_volume_doubling_time(baseline_vol_cm3=1.0, followup_vol_cm3=2.0, days_interval=800.0)
+    assert vdt_slow["vdt_days"] == 800.0
+    assert vdt_slow["category"] == "indolent_growth"
+    assert vdt_slow["clinical_alert"] is False
+
+    # Regressed / stable
+    vdt_regr = calculate_volume_doubling_time(baseline_vol_cm3=2.0, followup_vol_cm3=1.0, days_interval=100.0)
+    assert vdt_regr["category"] == "regressed"
+    assert vdt_regr["vdt_days"] is None
+
+
+def test_vdt_endpoint():
+    client = TestClient(app)
+    res = client.post("/api/v1/recist/volume-doubling-time", json={
+        "baseline_volume_cm3": 1.2,
+        "followup_volume_cm3": 2.4,
+        "days_interval": 120.0
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["vdt_days"] == 120.0
+    assert data["clinical_alert"] is True
+    assert data["category"] == "rapid_growth"

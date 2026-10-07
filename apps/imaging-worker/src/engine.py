@@ -10,7 +10,7 @@ from typing import Dict, Any, Tuple, Optional, List
 try:
     from .device import get_optimal_device, get_device_info
     from .dicom_io import apply_ct_window, CT_WINDOWS
-    from .recist import calculate_recist_metrics
+    from .recist import calculate_recist_metrics, calculate_subsolid_metrics, calculate_volume_doubling_time
     from .renderer import render_key_slice_png, png_to_base64
     from .radiomics import extract_radiomics_features
     from .interactive import interactive_segment_3d
@@ -18,7 +18,7 @@ try:
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window, CT_WINDOWS
-    from recist import calculate_recist_metrics
+    from recist import calculate_recist_metrics, calculate_subsolid_metrics, calculate_volume_doubling_time
     from renderer import render_key_slice_png, png_to_base64
     from radiomics import extract_radiomics_features
     from interactive import interactive_segment_3d
@@ -123,19 +123,13 @@ def segment_pulmonary_nodules(
             points=[{"z": int(prompt_point["z"]), "y": int(prompt_point["y"]), "x": int(prompt_point["x"]), "is_positive": True}]
         )
         mask = res["mask"]
-        recist = calculate_recist_metrics(mask, spacing=spacing)
+        recist = calculate_subsolid_metrics(volume, mask, spacing=spacing)
         ld = recist["longest_diameter_mm"]
-        if ld < 6.0:
-            rads = {"category": "2", "name": "Lung-RADS 2 类", "description": "良性外观微结节 (<6mm)", "recommendation": "常规年度低剂量 CT 筛查"}
-        elif ld < 8.0:
-            rads = {"category": "3", "name": "Lung-RADS 3 类", "description": "可能良性结节 (6-8mm)", "recommendation": "建议 6 个月后低剂量 CT 复查"}
-        elif ld < 15.0:
-            rads = {"category": "4A", "name": "Lung-RADS 4A 类", "description": "可疑浸润病灶 (8-15mm)", "recommendation": "建议 3 个月后低剂量 CT 复查或专科会诊评估 PET-CT"}
-        else:
-            rads = {"category": "4B", "name": "Lung-RADS 4B 类", "description": "高度可疑病灶 (≥15mm 或占位肿块)", "recommendation": "建议胸外科/呼吸介入专科会诊，评估穿刺活检或增强CT"}
-        recist["lung_rads"] = rads
-        recist["has_lesion"] = True
-        return mask, recist, f"交互式靶结节测量 ({rads['name']}, {ld}mm)"
+        solid_d = recist.get("solid_core_diameter_mm", 0.0)
+        nodule_type_zh = recist.get("nodule_type_zh", "靶结节")
+        rads = recist.get("lung_rads", {})
+        solid_desc = f", 实性核心 {solid_d}mm" if solid_d > 0 else ""
+        return mask, recist, f"交互式靶结节测量 ({nodule_type_zh}, {rads.get('name', '')}, {ld}mm{solid_desc})"
 
     # Mode B: Automatic anatomical lung envelope screening
     lung_cands_3d = np.zeros(volume.shape, dtype=bool)
@@ -214,24 +208,14 @@ def segment_pulmonary_nodules(
     best_idx = candidates[0][0]
     best_mask = (lbl == best_idx).astype(np.uint8)
 
-    recist = calculate_recist_metrics(best_mask, spacing=spacing)
+    recist = calculate_subsolid_metrics(volume, best_mask, spacing=spacing)
     ld = recist["longest_diameter_mm"]
+    solid_d = recist.get("solid_core_diameter_mm", 0.0)
+    nodule_type_zh = recist.get("nodule_type_zh", "肺结节")
+    rads = recist.get("lung_rads", {})
+    solid_desc = f", 实性核心 {solid_d}mm" if solid_d > 0 else ""
+    lesion_label = f"{nodule_type_zh} ({rads.get('name', '')}, {ld}mm{solid_desc})"
 
-    if ld < 6.0:
-        rads = {"category": "2", "name": "Lung-RADS 2 类", "description": "良性外观小结节 (<6mm)", "recommendation": "建议 12 个月后低剂量 CT 随访"}
-        lesion_label = f"微小结节 (Lung-RADS 2 类, {ld}mm)"
-    elif ld < 8.0:
-        rads = {"category": "3", "name": "Lung-RADS 3 类", "description": "可能良性结节 (6-8mm)", "recommendation": "建议 6 个月后低剂量 CT 随访"}
-        lesion_label = f"低度可疑结节 (Lung-RADS 3 类, {ld}mm)"
-    elif ld < 15.0:
-        rads = {"category": "4A", "name": "Lung-RADS 4A 类", "description": "可疑浸润病灶 (8-15mm)", "recommendation": "建议 3 个月后低剂量 CT 复查或专科会诊评估 PET-CT"}
-        lesion_label = f"中度可疑结节 (Lung-RADS 4A 类, {ld}mm)"
-    else:
-        rads = {"category": "4B", "name": "Lung-RADS 4B 类", "description": "高度可疑病灶 (≥15mm 或实性肿块)", "recommendation": "建议胸外科/呼吸介入专科会诊，评估穿刺活检或增强CT"}
-        lesion_label = f"高度可疑病灶 (Lung-RADS 4B 类, {ld}mm)"
-
-    recist["lung_rads"] = rads
-    recist["has_lesion"] = True
     return best_mask, recist, lesion_label
 
 def _get_hud_font(size: int = 12) -> Tuple[Any, bool]:
@@ -344,6 +328,16 @@ class MONAIEngine:
         3. RECIST 1.1 / Broncho-Arterial Ratio & Mucus quantification
         4. Key-slice PNG generation with clinical overlay HUD
         """
+        if not window_preset:
+            if "lung" in (model_name or ""):
+                window_preset = "lung"
+            elif "brain" in (model_name or ""):
+                window_preset = "brain"
+            elif "liver" in (model_name or "") or "spleen" in (model_name or ""):
+                window_preset = "abdomen"
+            else:
+                window_preset = "abdomen"
+
         if model_name in ("bronchiectasis_mucus_analyzer", "bronchiectasis"):
             try:
                 from .bronchiectasis import analyze_bronchiectasis_and_mucus
@@ -456,6 +450,15 @@ class MONAIEngine:
         elapsed_sec = round(time.time() - t0, 3)
         rads_info = recist.get("lung_rads")
         rads_md = f"- **临床评级 (Lung-RADS)**: `{rads_info.get('name')}` ({rads_info.get('description', '')})\n- **影像随访指引**: `{rads_info.get('recommendation', '')}`\n" if rads_info else ""
+        subsolid_md = ""
+        if recist.get("solid_core_diameter_mm", 0.0) > 0:
+            ctr_pct = int(recist.get("consolidation_tumor_ratio", 0.0) * 100)
+            subsolid_md = (
+                f"- **结节亚型分类**: `{recist.get('nodule_type_zh', '混合磨玻璃/亚实性结节')}`\n"
+                f"- **实性核心长径 (d_solid)**: `{recist.get('solid_core_diameter_mm')} mm` (实性占比 CTR: `{ctr_pct}%`)\n"
+            )
+        elif recist.get("nodule_type") == "pure_ggo":
+            subsolid_md = f"- **结节亚型分类**: `{recist.get('nodule_type_zh', '纯磨玻璃结节')}` (无实性浸润核心，CTR 0%)\n"
 
         return {
             "status": "success",
@@ -475,6 +478,7 @@ class MONAIEngine:
                 f"- **分析模型**: `{model_name}` ({lesion_label})\n"
                 f"- **体素扫描维度**: `{volume.shape[0]} 层 × {volume.shape[1]} × {volume.shape[2]}` (层厚: {spacing[0]}mm)\n"
                 f"- **最大横截面 (Key Slice)**: 第 `#{key_slice_idx}` 层\n"
+                f"{subsolid_md}"
                 f"- **RECIST 1.1 最大长径**: `{recist['longest_diameter_mm']} mm`\n"
                 f"- **垂直短径**: `{recist['short_axis_mm']} mm`\n"
                 f"- **病灶总体积**: `{recist['total_volume_cm3']} cm³`\n"

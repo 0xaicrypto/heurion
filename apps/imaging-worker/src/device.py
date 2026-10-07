@@ -9,6 +9,14 @@ def get_optimal_device() -> torch.device:
     2. NVIDIA CUDA (Linux / Windows with GPU)
     3. CPU (Multi-core with AVX acceleration)
     """
+    force = os.environ.get("IMAGING_DEVICE", "").strip().lower()
+    if force == "cpu":
+        return torch.device("cpu")
+    if force == "mps" and torch.backends.mps.is_available():
+        return torch.device("mps")
+    if force == "cuda" and torch.cuda.is_available():
+        return torch.device("cuda")
+
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
         return torch.device("mps")
     if torch.cuda.is_available():
