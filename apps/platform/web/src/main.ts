@@ -12,6 +12,8 @@ import { Editor, type SelectionAnchor } from './editor.ts'
 import { initDatasets } from './datasets.ts'
 import { initPatients } from './patients.ts'
 import { initResearch } from './research.ts'
+import { initCalendar } from './calendar.ts'
+import { initMail } from './mail.ts'
 import { initSpaces } from './spaces.ts'
 import { initLibrary } from './library.ts'
 import { initMemory } from './memory.ts'
@@ -93,6 +95,7 @@ async function loadDocs(): Promise<void> {
 
 let searchTimer: number | undefined
 async function runSearch(): Promise<void> {
+  if ($('docList').hidden) return
   const q = $<HTMLInputElement>('docSearch').value.trim()
   if (!q) { void loadDocs(); return }
   const hits = await api<any[]>(`/api/search?q=${encodeURIComponent(q)}`)
@@ -240,6 +243,61 @@ const researchUi = initResearch(api, (m, e) => showNotice(m, e), {
   datasets: { upload: files => datasets.upload(files), openDetail: id => { researchUi.leave(); return datasets.openDetail(id) }, showProvenance: id => datasets.showProvenance(id) },
   openPatient: id => patientsUi.open(id),
 })
+
+const calendarUi = initCalendar(api, (m, e) => showNotice(m, e), {
+  leaveDoc: () => leaveDoc(),
+  openPatient: async code => {
+    try {
+      const list = await api<any[]>('/api/patients')
+      const target = list.find(p => p.code === code || p.id === code)
+      if (target) await patientsUi.open(target.id)
+      else showNotice(`未找到患者 ${code}`, true)
+    } catch {
+      showNotice(`无法打开患者 ${code}`, true)
+    }
+  },
+  openStudy: async idOrTitle => {
+    try {
+      const list = await api<any[]>('/api/studies')
+      const target = list.find(s => s.id === idOrTitle || s.title?.includes(idOrTitle))
+      if (target) await researchUi.open(target.id)
+      else await researchUi.open(idOrTitle)
+    } catch {
+      await researchUi.open(idOrTitle)
+    }
+  },
+  openMail: async () => {
+    spaces.set('mail')
+  },
+})
+
+const mailUi = initMail(api, (m, e) => showNotice(m, e), {
+  leaveDoc: () => leaveDoc(),
+  openPatient: async code => {
+    try {
+      const list = await api<any[]>('/api/patients')
+      const target = list.find(p => p.code === code || p.id === code)
+      if (target) await patientsUi.open(target.id)
+      else showNotice(`未找到患者 ${code}`, true)
+    } catch {
+      showNotice(`无法打开患者 ${code}`, true)
+    }
+  },
+  openStudy: async idOrTitle => {
+    try {
+      const list = await api<any[]>('/api/studies')
+      const target = list.find(s => s.id === idOrTitle || s.title?.includes(idOrTitle))
+      if (target) await researchUi.open(target.id)
+      else await researchUi.open(idOrTitle)
+    } catch {
+      await researchUi.open(idOrTitle)
+    }
+  },
+  openCalendar: async () => {
+    spaces.set('calendar')
+  },
+})
+
 // 资料库页打开时，图标栏高亮「资料库」而不是当前空间
 new MutationObserver(() => {
   const lib = $('page').classList.contains('library-page')
@@ -248,12 +306,14 @@ new MutationObserver(() => {
   if (!lib) library.leave()
   if (!$('page').classList.contains('datasets-page')) datasets.leave()
 }).observe($('page'), { attributes: true, attributeFilter: ['class'] })
-// 左侧图标栏：患者 / 临床研究 / 写作
+// 左侧图标栏：患者 / 临床研究 / 写作 / 日历 / 邮箱
 const spaces = initSpaces({
   patients: {
     title: '患者', label: '患者', actions: 'ptActions', list: 'patientList', placeholder: '按代号、本机备注、标签筛选',
     enter: () => {
       researchUi.leave()
+      calendarUi.leave()
+      mailUi.leave()
       leaveDoc()
       return patientsUi.enter()
     }
@@ -262,6 +322,8 @@ const spaces = initSpaces({
     title: '临床研究', label: '研究项目', actions: 'rsActions', list: 'studyList', placeholder: '按研究名称筛选',
     enter: () => {
       patientsUi.leave()
+      calendarUi.leave()
+      mailUi.leave()
       leaveDoc()
       return researchUi.enter()
     }
@@ -271,13 +333,35 @@ const spaces = initSpaces({
     enter: () => {
       patientsUi.leave()
       researchUi.leave()
+      calendarUi.leave()
+      mailUi.leave()
       const page = $('page')
-      // 如果当前正开着文档（非患者页、非研究页），保留当前文档
-      if (session && !page.classList.contains('patient-page') && !page.classList.contains('study-page') && !page.classList.contains('welcome-page')) {
+      // 如果当前正开着文档（非患者页、非研究页、非日历页、非邮箱页），保留当前文档
+      if (session && !page.classList.contains('patient-page') && !page.classList.contains('study-page') && !page.classList.contains('calendar-page') && !page.classList.contains('mail-page') && !page.classList.contains('welcome-page')) {
         return
       }
       leaveDoc()
       showWelcome()
+    }
+  },
+  calendar: {
+    title: '日历', label: '排期日程', actions: 'calActions', list: 'calList', placeholder: '按标题、患者代号、课题筛选',
+    enter: () => {
+      patientsUi.leave()
+      researchUi.leave()
+      mailUi.leave()
+      leaveDoc()
+      return calendarUi.enter()
+    }
+  },
+  mail: {
+    title: '邮箱', label: '邮件列表', actions: 'mailActions', list: 'mailList', placeholder: '按主题、发件人、患者代号筛选',
+    enter: () => {
+      patientsUi.leave()
+      researchUi.leave()
+      calendarUi.leave()
+      leaveDoc()
+      return mailUi.enter()
     }
   },
 })

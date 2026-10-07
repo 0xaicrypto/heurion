@@ -2425,6 +2425,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         <li>患者在微信或移动端浏览器打开，仅能查阅经过去标识化的通俗化报告与趋势图，无法看到医生内部工作流与其他患者数据。</li>
         <li>支持随时一键作废已发放的分享链接。</li>
       </ul>
+
+      <h4>10.4 临床排期日历与医疗科研邮箱一体化系统 (Clinical Calendar & Medical Mailbox)</h4>
+      <p>为彻底解决临床随访脱落率高、科研节点繁琐割裂的痛点，Heurion 深度集成了<b>原生医疗日历</b>与 <b>@heurion.com 专属科研邮箱</b>：</p>
+      <ul>
+        <li><b>统一医生专属工作邮箱 (@heurion.com)</b>：每位注册医生拥有专属身份标识（如 <code>dr.wang@heurion.com</code>）；随访高危复查专函 (<code>followup@heurion.com</code>) 自动推送；真实世界研究 1:1 PSM 质控专报与 DSMB 盲态会议由 <code>research@heurion.com</code> 准时送达。</li>
+        <li><b>患者随访复查智能排期 (Follow-up Scheduling)</b>：支持将随访方案按指南转化为精确排期（奥希替尼 8~12 周 CT 与 ctDNA 液体活检监测、ABPA 气道 3D 容积三维重建扫描评估等）。</li>
+        <li><b>跨空间闭环联动通道</b>：邮件一键「添加到日历」、随访专函直达「患者 3D 影像全景档案」、科研邮件一键直通「科研课题数据集与统计分析沙箱」、日程新建支持一键勾选同步向 @heurion.com 邮箱发送通知。</li>
+      </ul>
     `
   },
   {
@@ -2476,13 +2484,23 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '记录 Heurion 从 v2.0 到 v2.4 核心版本演进、临床影像量化、生物统计、零 PHI 隐私与交互设计里程碑。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>12. 版本发布更新日志 (Release Notes & Milestones)</h3>
+        <h3>13. 版本发布更新日志 (Release Notes & Milestones)</h3>
         <span class="help-tag ok">持续演进 · 循证创新</span>
       </div>
       <p class="help-lead">Heurion 始终秉承「临床医生与科研人员的专业辅助伙伴」定位，每个版本均历经三甲临床专家严苛验证与医学数据安全审查。</p>
 
       <div class="help-release-card">
-        <div class="help-release-badge current">v2.4 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-badge current">v2.5 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-title">临床随访排期日历、@heurion.com 专属科研邮箱与跨空间闭环联动</div>
+        <ul class="help-release-list">
+          <li><b>原生排期日历工作空间 (Calendar Space)</b>：支持月历网格、周视图与议程列表，直观规划靶向药耐药监测、气道三维容积复查及多中心科研评审节点。</li>
+          <li><b>专属医疗科研邮箱系统 (Mail Space)</b>：开箱即用 <code>dr.&lt;username&gt;@heurion.com</code> 医生专属邮箱，支持随访高危提醒、真实世界研究 1:1 PSM 质控专函与 DSMB 盲态会议通知。</li>
+          <li><b>跨空间两翼协同通道</b>：邮件一键「添加到日历」、随访专函直达「患者 3D 影像全景档案」、科研邮件一键直通「科研课题数据集与统计分析沙箱」。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.4 Pro (2026年10月)</div>
         <div class="help-release-title">3D 影像全栈量化、肌少症体素分析、IBSI 影像组学与 1.5px 发丝级矢量设计</div>
         <ul class="help-release-list">
           <li><b>TotalSegmentator L3 椎体机体成分分析</b>：自动定位 L3 椎体层面，分割腰大肌、竖脊肌及腹壁肌群，测算骨骼肌指数 (SMI = SMA / 身高² cm²/m²)，基于 Prado 国际共识提供肌少症衰弱风险预警；自动计算内脏脂肪 (VAT) 与皮下脂肪 (SAT) 面积及 VAT/SAT 肥胖比。</li>
@@ -2545,9 +2563,9 @@ export const HELP_SECTIONS: HelpSection[] = [
 export function buildHelpMarkdown(): string {
   return `# Heurion 临床智能工作站 · 全流程使用手册与操作指南
 
-> **版本**：v2.4 Pro  
+> **版本**：v2.5 Pro  
 > **适用人群**：呼吸科、胸外科、放射影像科、泌尿外科、肿瘤科临床医师与医学科研人员  
-> **核心架构**：零 PHI 医学隐私 · MONAI 3D 深度量化 · 双模无损写作 · 自动化生物统计
+> **核心架构**：零 PHI 医学隐私 · MONAI 3D 深度量化 · 临床随访排期日历 · 专属科研邮箱 · 自动化生物统计
 
 ---
 
@@ -2559,6 +2577,8 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - **患者 (Patients · 临床一线)**：以纯虚拟代号建档，3D 影像深度量化、三正交 MPR 浏览器、双期配准与随访对比；
    - **研究 (Research · 科研转化)**：临床课题立项、多中心数据集质控、Table 1 与生存分析、IBSI 影像组学预后建模；
    - **写作 (Write · 成果输出)**：文档与学术汇报幻灯片、PubMed 引用、红绿 Diff 修订模式与 Word/PPTX 双模态无损导出；
+   - **日历 (Calendar · 临床排期)**：门诊随访复查规划、科研课题里程碑审查、学术研讨会，支持月/周/列表多视图与状态跟进；
+   - **邮箱 (Mail · 医疗专邮)**：医生专属 \`dr.<username>@heurion.com\` 邮箱，随访高危提醒、科研质控通报，一键直达患者与课题；
    - **资料库 (Library)**：上传医学指南与学术论文，自动向量化供 AI 检索溯源；
    - **回收站与账户中心**：个人设置、机构管理及知家 (PHR) 个人专属家庭健康空间。
 2. **中间主工作画布 (Center)**：
@@ -3078,6 +3098,10 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 1. **科室诊疗组 (Care Team)**：主诊医师与组员权限矩阵，敏感病历访问审计留痕；
 2. **知家个人空间 (PHR)**：医生专属家庭健康空间，与医院工作台物理隔离，终身保留家人健康档案；
 3. **安全分享与患者沟通**：生成临时有效期的只读脱敏链接，供患者扫码查阅通俗化随访建议。
+4. **临床排期日历与医疗科研邮箱一体化系统 (Clinical Calendar & Medical Mailbox)**：
+   - **专属医生工作邮箱 (@heurion.com)**：每位注册医生拥有专属身份标识（如 \`dr.<username>@heurion.com\`）；随访专函 (\`followup@heurion.com\`) 自动推送影像量化高危复查提醒；科研专报 (\`research@heurion.com\`) 定期通报真实世界研究 1:1 PSM 倾向评分匹配质控报告、DSMB 独立数据监察委员会盲态会议等。
+   - **患者随访复查智能排期 (Follow-up Scheduling)**：支持将随访方案按临床指南推荐时间窗转化为精确排期（奥希替尼 8~12 周 CT 与 ctDNA 液体活检监测、ABPA 气道 3D 容积三维重建扫描评估等）。
+   - **闭环联动通道 (Cross-Space Synergy)**：邮件一键「添加到日历」、随访专函直达「患者 3D 影像全景档案」、科研邮件一键直通「科研课题数据集与统计分析沙箱」、日程新建同步邮件提醒。
 
 ---
 
@@ -3094,7 +3118,12 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ## 十二、 版本更新日志 (Release Notes)
 
-### v2.4 Pro (当前最新版本 · 2026年10月)
+### v2.5 Pro (当前最新版本 · 2026年10月)
+- **原生排期日历工作空间 (Calendar Space)**：支持月历网格、周视图与议程列表，直观规划靶向药耐药监测、气道三维容积复查及多中心科研评审节点。
+- **专属医疗科研邮箱系统 (Mail Space)**：开箱即用 \`dr.<username>@heurion.com\` 医生专属邮箱，支持随访高危提醒、真实世界研究 1:1 PSM 质控专函与 DSMB 盲态会议通知。
+- **跨空间两翼协同通道**：邮件一键「添加到日历」、随访专函直达「患者 3D 影像全景档案」、科研邮件一键直通「科研课题数据集与统计分析沙箱」。
+
+### v2.4 Pro (2026年10月)
 - **TotalSegmentator L3 椎体机体成分分析**：自动定位 L3 椎体层面，分割腰大肌、竖脊肌及腹壁肌群，测算骨骼肌指数 (SMI = SMA / 身高² cm²/m²)，基于 Prado 国际共识提供肌少症衰弱风险预警；自动计算内脏脂肪 (VAT) 与皮下脂肪 (SAT) 面积及 VAT/SAT 肥胖比。
 - **IBSI 107 项标准影像组学高维特征提取**：完全遵循国际影像生物标志物标准化倡议 (IBSI) 规范，支持提取形态学、一阶强度统计、灰度共生矩阵 (GLCM)、游程矩阵 (GLRLM)、区域大小矩阵 (GLSZM)、相关度矩阵 (GLDM) 及邻域差矩阵 (NGTDM) 等 107 项组学特征，可一键导入研究数据集。
 - **纵向多期 3D 非刚性弹性形变配准 (DIR) 与差分吸收热力图**：在刚性旋转平移对齐基础上引入高阶弹性形变场，消除呼吸运动伪影；差分吸收热力图（绿色吸收好转 PR/CR、红色进展恶化 PD、黄色稳定 SD）精准直观展现抗炎或抗肿瘤治疗疗效。

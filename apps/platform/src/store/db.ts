@@ -59,6 +59,47 @@ export interface TenantRow {
   created_at: string; created_by: string | null
 }
 
+export interface MailMessageRow {
+  id: string
+  user_id: string
+  tenant_id: string | null
+  sender: string
+  sender_name: string
+  recipient: string
+  subject: string
+  body: string
+  category: 'followup' | 'research' | 'notification' | 'general'
+  patient_id: string | null
+  patient_code: string | null
+  study_id: string | null
+  study_title: string | null
+  read: number
+  starred: number
+  calendar_event_id: string | null
+  created_at: string
+}
+
+export interface CalendarEventRow {
+  id: string
+  user_id: string
+  tenant_id: string | null
+  title: string
+  description: string | null
+  start_time: string
+  end_time: string
+  all_day: number
+  category: 'followup' | 'research' | 'meeting' | 'general'
+  status: 'scheduled' | 'completed' | 'cancelled'
+  patient_id: string | null
+  patient_code: string | null
+  study_id: string | null
+  study_title: string | null
+  location: string | null
+  mail_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface TenantInviteRow {
   code: string; tenant_id: string; role: 'admin' | 'member'; email: string | null; created_by: string
   /** 按用户名邀请的已有账户（只有这个人能接受）；链接邀请为 null */
@@ -652,6 +693,26 @@ export class Store {
     if (!memCols.includes('use_count')) this.db.exec('ALTER TABLE memories ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0')
     if (!memCols.includes('last_used_at')) this.db.exec('ALTER TABLE memories ADD COLUMN last_used_at TEXT')
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users (email) WHERE email IS NOT NULL')
+
+    // 邮件与日历（随访计划、科研项目进度与排期）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mail_messages (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, tenant_id TEXT, sender TEXT NOT NULL, sender_name TEXT NOT NULL,
+        recipient TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, category TEXT NOT NULL,
+        patient_id TEXT, patient_code TEXT, study_id TEXT, study_title TEXT,
+        read INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, calendar_event_id TEXT, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS mail_messages_user ON mail_messages (user_id, category, read);
+
+      CREATE TABLE IF NOT EXISTS calendar_events (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, tenant_id TEXT, title TEXT NOT NULL, description TEXT,
+        start_time TEXT NOT NULL, end_time TEXT NOT NULL, all_day INTEGER NOT NULL DEFAULT 0,
+        category TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'scheduled',
+        patient_id TEXT, patient_code TEXT, study_id TEXT, study_title TEXT,
+        location TEXT, mail_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS calendar_events_user ON calendar_events (user_id, start_time);
+    `)
   }
 
   // —— 文档 ——
@@ -1882,6 +1943,107 @@ export class Store {
 
   listMessages(docId: string): MessageRow[] {
     return this.db.prepare('SELECT * FROM messages WHERE doc_id = ? ORDER BY created_at, rowid').all(docId) as unknown as MessageRow[]
+  }
+
+  // —— 邮件 (Mail) ——
+
+  createMailMessage(input: Omit<MailMessageRow, 'id' | 'created_at'> & { id?: string; created_at?: string }): MailMessageRow {
+    const id = input.id ?? randomUUID()
+    const createdAt = input.created_at ?? now()
+    this.db.prepare(`
+      INSERT INTO mail_messages (id, user_id, tenant_id, sender, sender_name, recipient, subject, body, category, patient_id, patient_code, study_id, study_title, read, starred, calendar_event_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, input.user_id, input.tenant_id ?? null, input.sender, input.sender_name,
+      input.recipient, input.subject, input.body, input.category,
+      input.patient_id ?? null, input.patient_code ?? null, input.study_id ?? null, input.study_title ?? null,
+      input.read ? 1 : 0, input.starred ? 1 : 0, input.calendar_event_id ?? null, createdAt
+    )
+    return this.getMailMessage(input.user_id, id)!
+  }
+
+  listMailMessages(userId: string, category?: string): MailMessageRow[] {
+    if (category && category !== 'all') {
+      return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? AND category = ? ORDER BY created_at DESC').all(userId, category) as unknown as MailMessageRow[]
+    }
+    return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? ORDER BY created_at DESC').all(userId) as unknown as MailMessageRow[]
+  }
+
+  getMailMessage(userId: string, id: string): MailMessageRow | undefined {
+    return this.db.prepare('SELECT * FROM mail_messages WHERE user_id = ? AND id = ?').get(userId, id) as MailMessageRow | undefined
+  }
+
+  markMailRead(userId: string, id: string, read = true): void {
+    this.db.prepare('UPDATE mail_messages SET read = ? WHERE user_id = ? AND id = ?').run(read ? 1 : 0, userId, id)
+  }
+
+  markAllMailsRead(userId: string): void {
+    this.db.prepare('UPDATE mail_messages SET read = 1 WHERE user_id = ?').run(userId)
+  }
+
+  deleteMailMessage(userId: string, id: string): void {
+    this.db.prepare('DELETE FROM mail_messages WHERE user_id = ? AND id = ?').run(userId, id)
+  }
+
+  // —— 日历 (Calendar) ——
+
+  createCalendarEvent(input: Omit<CalendarEventRow, 'id' | 'created_at' | 'updated_at'> & { id?: string; created_at?: string; updated_at?: string }): CalendarEventRow {
+    const id = input.id ?? randomUUID()
+    const t = now()
+    this.db.prepare(`
+      INSERT INTO calendar_events (id, user_id, tenant_id, title, description, start_time, end_time, all_day, category, status, patient_id, patient_code, study_id, study_title, location, mail_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, input.user_id, input.tenant_id ?? null, input.title, input.description ?? null,
+      input.start_time, input.end_time, input.all_day ? 1 : 0, input.category, input.status ?? 'scheduled',
+      input.patient_id ?? null, input.patient_code ?? null, input.study_id ?? null, input.study_title ?? null,
+      input.location ?? null, input.mail_id ?? null, input.created_at ?? t, input.updated_at ?? t
+    )
+    return this.getCalendarEvent(input.user_id, id)!
+  }
+
+  listCalendarEvents(userId: string, opts?: { from?: string; to?: string; category?: string }): CalendarEventRow[] {
+    let sql = 'SELECT * FROM calendar_events WHERE user_id = ?'
+    const params: any[] = [userId]
+    if (opts?.category && opts.category !== 'all') {
+      sql += ' AND category = ?'
+      params.push(opts.category)
+    }
+    if (opts?.from) {
+      sql += ' AND end_time >= ?'
+      params.push(opts.from)
+    }
+    if (opts?.to) {
+      sql += ' AND start_time <= ?'
+      params.push(opts.to)
+    }
+    sql += ' ORDER BY start_time ASC'
+    return this.db.prepare(sql).all(...params) as unknown as CalendarEventRow[]
+  }
+
+  getCalendarEvent(userId: string, id: string): CalendarEventRow | undefined {
+    return this.db.prepare('SELECT * FROM calendar_events WHERE user_id = ? AND id = ?').get(userId, id) as CalendarEventRow | undefined
+  }
+
+  updateCalendarEvent(userId: string, id: string, patch: Partial<CalendarEventRow>): CalendarEventRow | undefined {
+    const existing = this.getCalendarEvent(userId, id)
+    if (!existing) return undefined
+    const fields: string[] = []
+    const values: any[] = []
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === 'id' || k === 'user_id' || k === 'created_at') continue
+      fields.push(`${k} = ?`)
+      values.push(v)
+    }
+    fields.push('updated_at = ?')
+    values.push(now())
+    values.push(userId, id)
+    this.db.prepare(`UPDATE calendar_events SET ${fields.join(', ')} WHERE user_id = ? AND id = ?`).run(...values)
+    return this.getCalendarEvent(userId, id)
+  }
+
+  deleteCalendarEvent(userId: string, id: string): void {
+    this.db.prepare('DELETE FROM calendar_events WHERE user_id = ? AND id = ?').run(userId, id)
   }
 }
 

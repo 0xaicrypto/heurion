@@ -3130,4 +3130,1144 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   color: #ea580c;
 }
 
+/* ==========================================================================
+   日历排期与邮件工作空间样式 (Calendar & Mail Workspaces)
+   ========================================================================== */
+
+/* 容器全高扩展 */
+.scroller:has(> .page.calendar-page), .scroller:has(> .page.mail-page) {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page.calendar-page, .page.mail-page {
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+  min-height: 100%;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 24px 20px 80px;
+  box-sizing: border-box;
+}
+
+/* 统一分类角标 */
+.cal-badge, .mail-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+}
+.cat-followup {
+  background: rgba(0, 229, 153, 0.12);
+  color: #00e599;
+  border: 1px solid rgba(0, 229, 153, 0.3);
+}
+:root[data-theme="light"] .cat-followup {
+  background: #e6fcf4;
+  color: #059669;
+  border-color: #a7f3d0;
+}
+.cat-research {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+:root[data-theme="light"] .cat-research {
+  background: #f0f9ff;
+  color: #0284c7;
+  border-color: #bae6fd;
+}
+.cat-meeting {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+:root[data-theme="light"] .cat-meeting {
+  background: #fefce8;
+  color: #d97706;
+  border-color: #fde68a;
+}
+.cat-general {
+  background: var(--teal);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+/* 左侧栏列表条目 (Nav Items) */
+.cal-nav-item, .mail-nav-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.cal-nav-item:hover, .mail-nav-item:hover {
+  background: var(--teal);
+}
+.cal-nav-item.selected, .mail-nav-item.selected {
+  background: var(--teal-hover);
+  border-left: 3px solid var(--mint);
+}
+.cal-nav-line, .mail-nav-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.cal-nav-time, .mail-nav-time {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.cal-nav-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-nav-title.strikethrough {
+  text-decoration: line-through;
+  color: var(--faint);
+}
+.cal-nav-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cal-nav-tag.tag-pt { color: #38bdf8; }
+.cal-nav-tag.tag-st { color: #a78bfa; }
+
+/* 邮件未读与列表样式 */
+.mail-nav-item.unread {
+  background: rgba(0, 229, 153, 0.04);
+}
+.mail-nav-item.unread .mail-subject-text {
+  font-weight: 600;
+  color: var(--text);
+}
+.mail-nav-subject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.mail-unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mint);
+  flex-shrink: 0;
+}
+.mail-nav-sender {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.mail-nav-snippet {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail-nav-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.mail-nav-tag {
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--teal);
+  color: var(--muted);
+}
+
+/* —— 日历主界面 (Calendar Main View) —— */
+.cal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.cal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.cal-icon {
+  color: var(--mint);
+}
+.cal-main-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+.cal-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+.cal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.cal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cal-btn:hover {
+  background: var(--teal);
+  border-color: var(--line-strong);
+}
+.cal-btn.active {
+  background: var(--teal-hover);
+  border-color: var(--mint);
+  color: var(--mint);
+}
+.cal-btn.primary {
+  background: var(--mint);
+  color: #06110D;
+  border-color: var(--mint);
+  font-weight: 600;
+}
+.cal-btn.primary:hover {
+  filter: brightness(1.08);
+}
+.cal-btn.ghost {
+  background: transparent;
+}
+.cal-btn.ghost.danger {
+  color: #f87171;
+}
+.cal-btn.ghost.danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+.cal-btn.icon-only {
+  width: 32px;
+  padding: 0;
+  font-size: 16px;
+}
+.cal-btn-group {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cal-btn-group .cal-btn {
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+}
+.cal-btn-group .cal-btn:last-child {
+  border-right: 0;
+}
+.cal-current-label {
+  padding: 0 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* 月历网格 (Month Grid) */
+.cal-grid {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.cal-grid-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: var(--teal);
+  border-bottom: 1px solid var(--line);
+}
+.cal-grid-col-title {
+  padding: 9px 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.cal-grid-cells {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(115px, 1fr);
+}
+.cal-day-cell {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  position: relative;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  transition: background 0.15s ease;
+}
+.cal-day-cell:nth-child(7n) {
+  border-right: 0;
+}
+.cal-day-cell.other-month {
+  background: rgba(0, 0, 0, 0.08);
+  opacity: 0.45;
+}
+:root[data-theme="light"] .cal-day-cell.other-month {
+  background: #f8fafc;
+}
+.cal-day-cell.today {
+  background: rgba(0, 229, 153, 0.03);
+}
+.cal-day-cell-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cal-day-num {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.cal-day-num.today-badge {
+  background: var(--mint);
+  color: #06110D;
+  font-weight: 700;
+}
+.cal-day-add {
+  opacity: 0;
+  background: transparent;
+  border: 0;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.cal-day-cell:hover .cal-day-add {
+  opacity: 1;
+}
+.cal-day-add:hover {
+  background: var(--teal);
+  color: var(--mint);
+}
+.cal-day-events {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  max-height: 90px;
+}
+.cal-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: transform 0.1s ease, filter 0.1s ease;
+}
+.cal-chip:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+.cal-chip.done {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+.cal-chip-time {
+  font-weight: 600;
+  opacity: 0.85;
+}
+.cal-chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 列表视图 (Agenda View) */
+.cal-agenda-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cal-agenda-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 16px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  border-left: 4px solid var(--mint);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+.cal-agenda-card.cat-research {
+  border-left-color: #38bdf8;
+}
+.cal-agenda-card.cat-meeting {
+  border-left-color: #fbbf24;
+}
+.cal-agenda-card.done {
+  opacity: 0.65;
+}
+.cal-agenda-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 110px;
+}
+.cal-agenda-date {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.cal-agenda-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+.cal-agenda-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cal-agenda-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.cal-agenda-title.strikethrough {
+  text-decoration: line-through;
+  color: var(--faint);
+}
+.cal-agenda-loc {
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cal-agenda-notes {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.45;
+  background: var(--teal);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+.cal-agenda-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.cal-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cal-link-btn.pt-btn {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+.cal-link-btn.st-btn {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.3);
+}
+.cal-link-btn:hover {
+  background: var(--teal);
+}
+.cal-agenda-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cal-action-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.cal-action-btn:hover {
+  background: var(--teal);
+  color: var(--text);
+}
+.cal-action-btn.danger {
+  color: #f87171;
+}
+.cal-action-btn.danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+/* —— 邮箱工作空间样式 (Mail Dashboard & Reader) —— */
+.mail-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.mail-dash-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(0, 229, 153, 0.08) 0%, rgba(56, 189, 248, 0.05) 100%);
+  border: 1px solid rgba(0, 229, 153, 0.2);
+}
+.mail-dash-hero-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.mail-dash-icon-wrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(0, 229, 153, 0.15);
+  color: var(--mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.mail-dash-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+.mail-dash-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+.mail-doctor-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.mail-doc-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.mail-doc-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--mint);
+  background: var(--panel);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.mail-doc-address:hover {
+  background: var(--teal);
+  border-color: var(--mint);
+}
+
+/* 统计卡片网格 */
+.mail-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.mail-stat-card {
+  padding: 18px 20px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.mail-stat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+}
+.mail-stat-num {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  margin-bottom: 8px;
+}
+.mail-stat-card.accent-unread .mail-stat-num { color: var(--mint); }
+.mail-stat-card.accent-followup .mail-stat-num { color: #38bdf8; }
+.mail-stat-card.accent-research .mail-stat-num { color: #fbbf24; }
+.mail-stat-label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* 左右分栏面板 */
+.mail-dash-sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.mail-dash-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mail-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mail-panel-head h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+.mail-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mail-preview-card {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--teal);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.mail-preview-card:hover {
+  background: var(--teal-hover);
+}
+.mail-preview-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mail-preview-pt {
+  font-size: 11px;
+  color: #38bdf8;
+  font-weight: 600;
+}
+.mail-preview-st {
+  font-size: 11px;
+  color: #a78bfa;
+  font-weight: 600;
+}
+.mail-preview-date {
+  font-size: 11px;
+  color: var(--muted);
+}
+.mail-preview-sub {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.mail-preview-snippet {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+/* 邮件详情阅读页 (Mail Detail Reader) */
+.mail-detail-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.mail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mail-content-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 32px 36px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+.mail-card-header {
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 24px;
+}
+.mail-header-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.mail-header-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.mail-header-tag.tag-pt {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+.mail-header-tag.tag-st {
+  background: rgba(167, 139, 250, 0.12);
+  color: #a78bfa;
+}
+.mail-header-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+.mail-subject-display {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  color: var(--text);
+  line-height: 1.35;
+}
+.mail-meta-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--teal);
+  padding: 10px 14px;
+  border-radius: 6px;
+}
+.mail-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.mail-meta-k {
+  color: var(--muted);
+  width: 56px;
+}
+.mail-meta-v {
+  color: var(--text);
+}
+.mail-sender-name {
+  color: var(--mint);
+}
+
+/* 快速跳转栏 */
+.mail-fast-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(0, 229, 153, 0.05);
+  border: 1px dashed rgba(0, 229, 153, 0.3);
+  border-radius: 6px;
+  margin-bottom: 24px;
+}
+.fast-action-hint {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.fast-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.fast-action-btn.pt-action {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+.fast-action-btn.st-action {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.4);
+}
+.fast-action-btn:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
+/* 邮件排版 */
+.mail-body-render {
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.mail-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mint);
+  margin: 18px 0 8px;
+}
+.mail-h1 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 20px 0 10px;
+}
+.mail-h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+}
+.mail-p {
+  margin: 0 0 10px;
+  color: var(--text-2);
+}
+.mail-p-gap {
+  height: 12px;
+}
+.mail-bullet {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.mail-bullet-dot {
+  color: var(--mint);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.mail-hl-code {
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.mail-hl-metric {
+  font-weight: 700;
+  color: var(--mint);
+  background: rgba(0, 229, 153, 0.1);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.mail-footer-signature {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mail-sig-line {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.mail-sig-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* —— 弹窗通用样式 (Calendar & Mail Modals) —— */
+.cal-modal-scrim, .mail-modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.cal-modal-card, .mail-modal-card {
+  width: 100%;
+  max-width: 580px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: 90vh;
+}
+.cal-modal-card.form-card, .mail-modal-card.compose-card {
+  max-width: 640px;
+}
+.cal-modal-head, .mail-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--teal);
+}
+.cal-modal-head h2, .mail-modal-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+.cal-modal-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cal-modal-status {
+  font-size: 11.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.cal-modal-status.scheduled {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+}
+.cal-modal-status.done {
+  background: rgba(0, 229, 153, 0.15);
+  color: #00e599;
+}
+.cal-modal-close, .mail-modal-close {
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.cal-modal-close:hover, .mail-modal-close:hover {
+  color: var(--text);
+}
+.cal-modal-body {
+  padding: 22px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cal-detail-title {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text);
+  line-height: 1.35;
+}
+.cal-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+.cal-detail-icon {
+  color: var(--mint);
+}
+.cal-detail-box {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--teal);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cal-box-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.cal-box-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cal-box-code {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal-detail-box.pt-box .cal-box-code { color: #38bdf8; }
+.cal-detail-box.st-box .cal-box-code { color: #a78bfa; }
+.cal-box-jump-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--text);
+}
+.cal-box-jump-btn:hover {
+  background: var(--teal-hover);
+  border-color: var(--mint);
+}
+.cal-detail-notes {
+  background: var(--teal);
+  padding: 12px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cal-notes-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.cal-notes-body {
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+.cal-mail-synced-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 6px;
+}
+.cal-modal-foot, .mail-modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--teal);
+}
+
+/* 表单样式 */
+.cal-form, .mail-form {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-row label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.form-row input, .form-row select, .form-row textarea {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--teal);
+  color: var(--text);
+  box-sizing: border-box;
+}
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+  outline: none;
+  border-color: var(--mint);
+  box-shadow: 0 0 0 2px rgba(0, 229, 153, 0.15);
+}
+.form-row input.disabled-input {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.form-checkbox-row {
+  margin: 4px 0;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.checkbox-label input {
+  accent-color: var(--mint);
+}
+.brand-domain {
+  color: var(--mint);
+}
+
+
 

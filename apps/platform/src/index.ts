@@ -23,6 +23,8 @@ import { ShareService } from './tenancy/shares.ts'
 import { MemoryEvolution } from './memory/evolve.ts'
 import { MemoryService } from './memory/service.ts'
 import { MemorySignals } from './memory/signals.ts'
+import { MailService } from './mail/service.ts'
+import { CalendarService } from './calendar/service.ts'
 import { makeComplete } from './harness/complete.ts'
 import { ClaimService } from './claims/service.ts'
 import { SlideRenderer } from './render/slides.ts'
@@ -152,7 +154,9 @@ if (evolution.available() && process.env.MEMORY_AUTO_REVIEW !== '0') {
     }
   })(), 6 * 3600_000).unref()
 }
-const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, shares, studies, cohort, images, access, workspaceDir: userId => pool.workspaceDir(userId) })
+const mail = new MailService(store)
+const calendar = new CalendarService(store, mail)
+const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, accounts, devMode: config.devMode, devUser: config.devUser, search, kb, memory, evolution, datasets, patients, shares, studies, cohort, images, access, mail, calendar, workspaceDir: userId => pool.workspaceDir(userId) })
 // MCP 的管理类工具以用户身份进程内调用同一个 HTTP 应用（AI 的权限 = 用户的权限，见 http/invoke.ts）
 ;(mcpDeps as { invoke?: Invoke }).invoke = makeInvoker(app)
 

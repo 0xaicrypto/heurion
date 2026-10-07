@@ -53,6 +53,8 @@ import { themePhoto } from '../model/theme-photos.ts'
 import { Access, allows, type Level } from '../research/access.ts'
 import type { ImageService } from '../images/service.ts'
 import { UnsplashError } from '../images/unsplash.ts'
+import { MailService } from '../mail/service.ts'
+import { CalendarService } from '../calendar/service.ts'
 
 export interface ApiDeps {
   docs: Documents
@@ -91,6 +93,10 @@ export interface ApiDeps {
   claims_patient?: PatientClaimService
   /** 访问判定（研究团队协作）；不给时按 store 新建一个。 */
   access?: Access
+  /** 邮件工作流服务。 */
+  mail?: MailService
+  /** 日历与排期服务。 */
+  calendar?: CalendarService
   devUser: string
 }
 
@@ -115,6 +121,8 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   const orgTemplates = new OrgTemplateService(store, tenants)
   setOrgTenantResolver(uid => tenants.of(uid).id)
   orgTemplates.loadAll()
+  const mail = deps.mail ?? new MailService(store)
+  const calendar = deps.calendar ?? new CalendarService(store, mail)
   const app = new Hono<{ Variables: { user: string } }>()
   /** 进程内 AI 调用的来源（审计写 via / confirmed_by；患者操作按来源走审核门） */
   const viaByReq = new WeakMap<Request, ViaInfo>()
@@ -2211,6 +2219,128 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     store.setPendingActionStatus(a.id, 'running', r.ok ? 'done' : 'failed', { result: JSON.stringify(result), decided_by: user })
     audit(c, 'ai.action_confirm', { detail: `${a.tool}.${a.action}：${a.summary}（${r.status}）`, status: r.status })
     return c.json(actionView(store.getPendingAction(a.id)!), r.ok ? 200 : 422)
+  })
+
+  // —— 邮件与随访计划、科研进度信箱 (Mail) ——
+  app.get('/api/mail/messages', c => {
+    const user = c.get('user')
+    const u = store.getUser(user)
+    const category = c.req.query('category') || undefined
+    const list = mail.list(user, u?.username ?? user, category)
+    return c.json(list)
+  })
+
+  app.get('/api/mail/messages/:id', c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+    return c.json(m)
+  })
+
+  app.post('/api/mail/messages', async c => {
+    const user = c.get('user')
+    const u = store.getUser(user)
+    const body = await c.req.json()
+    if (!body.subject || !body.body) return c.json({ error: '主题与正文不能为空' }, 400)
+    const m = mail.send({
+      userId: user,
+      tenantId: u?.tenant_id,
+      sender: mail.userEmail(u?.username ?? user),
+      senderName: u?.display_name ?? '主诊医师',
+      recipient: body.recipient || body.to || 'colleague@heurion.com',
+      subject: body.subject,
+      body: body.body,
+      category: body.category || 'general',
+      patientId: body.patient_id,
+      patientCode: body.patient_code,
+      studyId: body.study_id,
+      studyTitle: body.study_title,
+    })
+    return c.json(m, 201)
+  })
+
+  app.patch('/api/mail/messages/:id/read', async c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+    const body = (await c.req.json().catch(() => ({ read: true }))) as { read?: boolean }
+    mail.markRead(user, c.req.param('id'), body.read !== false)
+    return c.json({ ok: true })
+  })
+
+  app.post('/api/mail/read-all', c => {
+    const user = c.get('user')
+    mail.markAllRead(user)
+    return c.json({ ok: true })
+  })
+
+  app.delete('/api/mail/messages/:id', c => {
+    const user = c.get('user')
+    const m = mail.get(user, c.req.param('id'))
+    if (!m) return c.json({ error: '邮件不存在' }, 404)
+    mail.delete(user, c.req.param('id'))
+    return c.json({ ok: true })
+  })
+
+  // —— 日历与随访排期、科研项目进度 (Calendar) ——
+  app.get('/api/calendar/events', c => {
+    const user = c.get('user')
+    const u = store.getUser(user)
+    const from = c.req.query('from') || undefined
+    const to = c.req.query('to') || undefined
+    const category = c.req.query('category') || undefined
+    const list = calendar.list(user, { from, to, category, username: u?.username ?? user })
+    return c.json(list)
+  })
+
+  app.get('/api/calendar/events/:id', c => {
+    const user = c.get('user')
+    const e = calendar.get(user, c.req.param('id'))
+    if (!e) return c.json({ error: '日程不存在' }, 404)
+    return c.json(e)
+  })
+
+  app.post('/api/calendar/events', async c => {
+    const user = c.get('user')
+    const u = store.getUser(user)
+    const body = await c.req.json()
+    if (!body.title || !body.start_time || !body.end_time) {
+      return c.json({ error: '标题、开始时间与结束时间为必填项' }, 400)
+    }
+    const e = calendar.create({
+      userId: user,
+      tenantId: u?.tenant_id,
+      title: body.title,
+      description: body.description,
+      startTime: body.start_time,
+      endTime: body.end_time,
+      allDay: Boolean(body.all_day),
+      category: body.category || 'general',
+      patientId: body.patient_id,
+      patientCode: body.patient_code,
+      studyId: body.study_id,
+      studyTitle: body.study_title,
+      location: body.location,
+      sendEmail: Boolean(body.send_email),
+      username: u?.username ?? user,
+    })
+    return c.json(e, 201)
+  })
+
+  app.patch('/api/calendar/events/:id', async c => {
+    const user = c.get('user')
+    const body = await c.req.json()
+    const updated = calendar.update(user, c.req.param('id'), body)
+    if (!updated) return c.json({ error: '日程不存在' }, 404)
+    return c.json(updated)
+  })
+
+  app.delete('/api/calendar/events/:id', c => {
+    const user = c.get('user')
+    const e = calendar.get(user, c.req.param('id'))
+    if (!e) return c.json({ error: '日程不存在' }, 404)
+    calendar.delete(user, c.req.param('id'))
+    return c.json({ ok: true })
   })
 
   return app

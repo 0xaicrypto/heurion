@@ -199,6 +199,17 @@ const NOT_FOR_AI: Record<string, string> = {
   'POST /api/me/email': '绑定邮箱要本人收验证码', 'POST /api/me/email-code': '绑定邮箱要本人收验证码',
   'POST /api/me/claim-dev-data': '只在开发模式下给管理员本人认领开发数据',
   'GET /api/invites/:code': '邀请链接的公开预览（注册前用）',
+  'GET /api/mail/messages': '医生工作站专属邮箱列表（本人阅览）',
+  'GET /api/mail/messages/:id': '医生查阅邮件详情（本人阅览）',
+  'POST /api/mail/messages': '医生起草并发送医疗通知专函（医生操作）',
+  'PATCH /api/mail/messages/:id/read': '医生在界面上标记已读或未读（医生操作）',
+  'POST /api/mail/read-all': '医生在界面上一键标记全部已读（医生操作）',
+  'DELETE /api/mail/messages/:id': '医生在界面上删除邮件（医生操作）',
+  'GET /api/calendar/events': '医生排期日历事件列表（本人查阅）',
+  'GET /api/calendar/events/:id': '医生查阅排期事件详情（本人查阅）',
+  'POST /api/calendar/events': '医生安排随访与科研日程（医生操作）',
+  'PATCH /api/calendar/events/:id': '医生更新排期或标记完成（医生操作）',
+  'DELETE /api/calendar/events/:id': '医生删除排期日程（医生操作）',
 }
 
 describe('人机对等：每个接口（AI 的权限 = 用户的权限）', () => {

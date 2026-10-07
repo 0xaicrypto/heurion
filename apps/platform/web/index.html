@@ -20,6 +20,8 @@
         <button class="rail-btn on" id="navPatients" data-space="patients" role="tab" aria-selected="true" title="患者：上传化验单、看趋势、写病例报告（只用代号）"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6.5" r="3.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.75 17.25c.7-3.4 3.2-5.25 6.25-5.25s5.55 1.85 6.25 5.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>患者</span></button>
         <button class="rail-btn" id="navResearch" data-space="research" role="tab" aria-selected="false" title="临床研究：方案、数据集、分析、稿件"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.75 2.75h4.5 M8.5 2.75v5L4 15.5c-.6 1.05.15 1.75 1.1 1.75h9.8c.95 0 1.7-.7 1.1-1.75L11.5 7.75v-5 M6 12.5h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg><span>研究</span></button>
         <button class="rail-btn" id="navDocs" data-space="write" role="tab" aria-selected="false" title="写作：文档与幻灯片"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.75h6.75L15.25 6.25v11H5z M11.75 2.75v3.5h3.5 M7.5 10h5 M7.5 13h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg><span>写作</span></button>
+        <button class="rail-btn" id="navCalendar" data-space="calendar" role="tab" aria-selected="false" title="日历：随访门诊排期、科研项目进度与学术会议"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M15 2v4M5 2v4M3 8h14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="11.5" r="0.75" fill="currentColor"/><circle cx="10" cy="11.5" r="0.75" fill="currentColor"/><circle cx="13" cy="11.5" r="0.75" fill="currentColor"/><circle cx="7" cy="14" r="0.75" fill="currentColor"/><circle cx="10" cy="14" r="0.75" fill="currentColor"/></svg><span>日历</span></button>
+        <button class="rail-btn" id="navMail" data-space="mail" role="tab" aria-selected="false" title="邮箱：随访提醒通知、科研项目进展与协作沟通"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.5 6l7.5 5.5 7.5-5.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>邮箱</span></button>
       </div>
       <div class="rail-sep"></div>
       <button class="rail-btn" id="libraryBtn" title="参考资料库：上传论文、指南，AI 写作时检索"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.75 3.25h3.5v13.5h-3.5z M8.25 3.25h3.5v13.5h-3.5z M12.9 4.1l3.3-.9 3.3 12.6-3.3.9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>资料库</span></button>
@@ -64,12 +66,30 @@
         <button id="newStudy" class="sky block" title="新建一个研究项目：方案、数据集、分析、稿件放在一起">＋ 新建研究</button>
         <div class="split one"><button id="datasetsBtn" class="ghost-dark" title="全部数据集：上传研究数据表（CSV、Excel、SAS、SPSS、Stata）">数据集</button></div>
       </div>
+      <div class="actions" id="calActions" hidden>
+        <button id="newCalEvent" class="sky block" title="安排新的随访复查或科研会议日程">＋ 新建日程</button>
+        <div class="split">
+          <button id="calFilterAll" class="ghost-dark on">全部</button>
+          <button id="calFilterFollowup" class="ghost-dark">随访</button>
+          <button id="calFilterResearch" class="ghost-dark">科研</button>
+        </div>
+      </div>
+      <div class="actions" id="mailActions" hidden>
+        <button id="composeMailBtn" class="sky block" title="起草并发送医疗通知或随访科研邮件">＋ 写邮件</button>
+        <div class="split">
+          <button id="mailFilterAll" class="ghost-dark on">全部</button>
+          <button id="mailFilterFollowup" class="ghost-dark">随访</button>
+          <button id="mailFilterResearch" class="ghost-dark">科研</button>
+        </div>
+      </div>
       <div class="nav-search"><input type="search" id="docSearch" placeholder="按代号、本机备注、标签筛选" autocomplete="off"></div>
       <div class="nav-label"><span id="navLabel">患者</span>
         <button class="nav-add" id="newProject" hidden title="新建项目（文件夹）">＋项目</button></div>
       <ul class="doclist" id="patientList"></ul>
       <ul class="doclist" id="studyList" hidden></ul>
       <ul class="doclist" id="docList" hidden></ul>
+      <ul class="doclist" id="calList" hidden></ul>
+      <ul class="doclist" id="mailList" hidden></ul>
     </div>
   </aside>
 

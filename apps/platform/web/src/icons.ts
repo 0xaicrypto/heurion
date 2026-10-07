@@ -53,6 +53,10 @@ export type IconName =
   | 'caliper'
   | 'ruler'
   | 'nsclc'
+  | 'calendar'
+  | 'mail'
+  | 'clock'
+  | 'send'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -189,6 +193,18 @@ const ICONS: Record<IconName, string> = {
 
   // 非小细胞肺癌 (NSCLC) / 胸部肿瘤靶向评估标志
   nsclc: '<path d="M10 2.5v15M10 7c-2.5-3-7-3-7 3.5 0 4.5 3 6.5 6 7M10 7c2.5-3 7-3 7 3.5 0 4.5-3 6.5-6 7"/><circle cx="13.5" cy="8" r="2.2" stroke-dasharray="1.5 1"/><path d="M13.5 5v1.5M13.5 9.5v1.5M10.5 8h1.5M15 8h1.5"/>',
+
+  // 日历、排期
+  calendar: '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M15 2v4M5 2v4M3 8h14"/><circle cx="7" cy="11.5" r="0.75" fill="currentColor"/><circle cx="10" cy="11.5" r="0.75" fill="currentColor"/><circle cx="13" cy="11.5" r="0.75" fill="currentColor"/><circle cx="7" cy="14" r="0.75" fill="currentColor"/><circle cx="10" cy="14" r="0.75" fill="currentColor"/>',
+
+  // 邮件、邮箱
+  mail: '<rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M2.5 6l7.5 5.5 7.5-5.5"/>',
+
+  // 时间、时钟
+  clock: '<circle cx="10" cy="10" r="7.5"/><path d="M10 5.5v4.5l3 2"/>',
+
+  // 发送
+  send: '<path d="M17.5 2.5L8.5 11.5M17.5 2.5l-6 15-3-6-6-3 15-6z"/>',
 }
 
 export interface IconOptions {
