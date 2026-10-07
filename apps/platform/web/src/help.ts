@@ -2436,6 +2436,132 @@ export const HELP_SECTIONS: HelpSection[] = [
     `
   },
   {
+    id: 'citations',
+    title: '引用文献真伪校验与学术论断核验',
+    badge: '循证质控 · 独家机制',
+    icon: icon('sparkles', { size: 16 }),
+    summary: '权威官方 API 检索与写屏障拦截、PMC 开放获取全文与结构化表格 (RCT Tables) 抽取、命题级论断核查、一键采纳正文纠错建议与专家临床经验豁免。',
+    contentHtml: `
+      <div class="help-section-head">
+        <h3>11. 引用文献真伪校验与学术论断核验 (Reference Verification & Claims Validation)</h3>
+        <span class="help-tag ok">全链路保真 · PMC 表格抽取 · 一键纠错 · 经验豁免</span>
+      </div>
+      <p class="help-lead">解决传统大模型医学写作中普遍存在的「虚假引用」、「张冠李戴」与「数据脱节」致命痛点，构建从权威数据库检索、PMC 开放获取全文与结构化表格抽取、命题级因果核对、智能纠错一键采纳到临床经验豁免的全链路闭环。</p>
+
+      <h4>11.1 为什么需要严苛的引用文献与论断核查机制？</h4>
+      <div class="help-grid-3">
+        <div class="help-feature-card">
+          <div class="hfc-title">① 杜绝大模型「虚构文献」</div>
+          <div class="hfc-desc">通用大模型常凭空捏造论文标题、虚构作者与编造不存在的 DOI（所谓 Hallucinated Citations）。在医学科研中，虚构引用属于严重学术不端，必须在物理层面彻底杜绝。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">② 解决「张冠李戴」断言脱节</div>
+          <div class="hfc-desc">AI 引用的文献虽然真实存在，但正文陈述与文献实际结论相反（如将未提前终止的临床试验写为提前终止），或正文引用的统计数字（HR、OR、95% CI、不良反应率）在文献中无据可查。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">③ 破除「摘要信息茧房」与盲区</div>
+          <div class="hfc-desc">传统文献检索仅能抓取数百字的摘要（Abstract），而 RCT 关键的亚组分析、主要终点与安全性数据均深藏在全文结构化表格与图注中。核验引擎必须能“看懂表格”。</div>
+        </div>
+      </div>
+
+      <h4>11.2 第一道防线：全链路权威文献登记与操作层写屏障 (Ground-Truth Registry & Write Barrier)</h4>
+      <p>Heurion 杜绝在正文中自由手写伪造引用标记，所有引用均受到平台底层的强制保护：</p>
+      <ul class="help-list-steps">
+        <li>
+          <span class="step-num">1</span>
+          <div>
+            <b>权威数据库实时检索校验</b>：在文档或对话中引用文献时，系统通过 NCBI E-utilities (PubMed)、Crossref 及 Europe PMC 官方权威 API 进行实名比对，仅当标题、DOI、发表年份及期刊匹配成功后，方在数据库中登记并下发受信任的平台唯一代币 <code>[@c:citation_id]</code>。
+          </div>
+        </li>
+        <li>
+          <span class="step-num">2</span>
+          <div>
+            <b>操作层核心写屏障 (guardCitations)</b>：当 AI 或外部 Agent 尝试对文档写入内容时，底层统一操作层会拦截并逐一检查文本中的所有代币。<b>严禁注入任何未经注册登记的非法代币或裸文本假引用</b>。未登记代币将直接触发拒绝写入并提示医生重新检索，从源头切断虚构文献的滋生土壤。
+          </div>
+        </li>
+      </ul>
+
+      <h4>11.3 第二道防线：PMC XML 开放获取全文与结构化表格/图注深度提取 (PMC XML Mining)</h4>
+      <p>当引用的文献属于 PubMed Central (PMC) 或 Europe PMC 开源开放获取 (Open Access) 范围时，Heurion 自动下载并解析其完整的原始 XML 树状结构：</p>
+      <div class="help-grid-3">
+        <div class="help-feature-card">
+          <div class="hfc-title">&lt;table-wrap&gt; 表格深度解析</div>
+          <div class="hfc-desc">自动将 XML 中的复杂医学表格（如 Table 1 基线人口学表、终点亚组分析 Hazard Ratios 表、AEs 不良事件统计表）转换为结构化 Markdown 表格，保留行列对齐与表头层级。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">&lt;fig&gt; 图注与因果证据图解</div>
+          <div class="hfc-desc">抽取 Kaplan-Meier 生存曲线、森林图、ROC 曲线等图表标题与详细图注 (Caption)，捕获图表中关于在险人数、P 值与分界点的精细描述。</div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">多级语义证据切片匹配</div>
+          <div class="hfc-desc">在比对特定临床主张时，优先检索正文对应的小节段落、关联表格行与图注，确保核验比对基于最详实的一手数据，而非粗略的摘要推测。</div>
+        </div>
+      </div>
+
+      <h4>11.4 第三道防线：命题级断言核验与五大裁定标准 (Proposition-level Claims Validation)</h4>
+      <p>点击顶部或侧边的<b>「核对论断 (Verify Claims)」</b>或在 AI 对话中触发审查时，系统启动命题级核验引擎：</p>
+      <table class="help-table">
+        <thead>
+          <tr>
+            <th>核验判定状态</th>
+            <th>判定标识</th>
+            <th>临床判定依据与场景说明</th>
+            <th>系统处置动作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>支持 (Supported)</b></td>
+            <td><span class="help-tag ok">支持 · 绿标</span></td>
+            <td>正文陈述的数值、研究设计或结论与所引文献原文/表格完全自洽吻合。</td>
+            <td>核验通过，正文保留绿色微标，不生成警示批注。</td>
+          </tr>
+          <tr>
+            <td><b>不支持 (Unsupported)</b></td>
+            <td><span class="help-tag danger">矛盾 · 红标警示</span></td>
+            <td>正文陈述与文献实测数据存在显著矛盾（例如：正文写 HR=0.68 但文献实为 0.74，或正文称“试验提前终止”但文献明确“按设计完成全部随访”）。</td>
+            <td>在正文对应语句下方渲染红色虚线，右侧自动悬挂「论断核对」批注卡，并输出具体的修改建议。</td>
+          </tr>
+          <tr>
+            <td><b>无法判断 (Unclear)</b></td>
+            <td><span class="help-tag warn">存疑 · 黄标提示</span></td>
+            <td>文献未开源全文且摘要中未提及该具体细节，或两方陈述存在概念交叠但证据不足以确证。</td>
+            <td>生成黄色关注标记，提示医师复核原始文献纸质版或专著。</td>
+          </tr>
+          <tr>
+            <td><b>缺少出处 (Missing Citation)</b></td>
+            <td><span class="help-tag warn">缺出处 · 橙标</span></td>
+            <td>正文包含明确的临床统计数值主张（如 HR、OR、不良事件率、样本量等），但该句未标注任何引用代币。</td>
+            <td>提示该数值主张孤立无援，引导医生补充引用或标为经验。</td>
+          </tr>
+          <tr>
+            <td><b>临床经验豁免 (Exempted)</b></td>
+            <td><span class="help-tag">豁免 · 灰绿标</span></td>
+            <td>临床医师确认该句为科室临床经验、病房实务观察或指南共识未涵盖的经验性总结，已主动执行豁免。</td>
+            <td>永久归档豁免，消除红黄警示，后续核查不再打扰。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>11.5 第四道防线：AI 智能纠错建议与「一键替换正文」 (One-Click Quick Patch)</h4>
+      <p>当判定为 <code>unsupported</code> 时，系统不只抛出报错，而是依据权威文献原文自动生成规范修正文句：</p>
+      <ul>
+        <li><b>自动提炼修正句</b>：核验引擎在批注中格式化输出 <code>【建议修改为】：&lt;准确文句&gt;</code>（如：将“试验因显著疗效提前终止”精准提炼为“试验按事件驱动设计完成全部随访”）。</li>
+        <li><b>一键采纳修复</b>：临床医生无需在长篇大论中手动寻找段落与光标，直接在右侧批注卡片上点击<b>「一键替换正文」</b>按钮，系统通过原子化操作将正文对应锚点精准替换为修正句，批注自动转为解决态，高效闭环。</li>
+      </ul>
+
+      <h4>11.6 第五道防线：专家「临床经验豁免」机制 (Clinical Experience Exemption)</h4>
+      <p>循证医学并非教条主义。在真实世界的重症救治与疑难杂症处置中，资深医学专家多年的临床直觉、用药微调经验及病房实操规范往往尚未形成发表文献：</p>
+      <ul>
+        <li><b>尊重临床实操</b>：对于缺少文献出处或因临床观察与经典文献存在微小出入的段落，平台提供<b>「标为临床经验」</b>通道。</li>
+        <li><b>物理状态存证</b>：医生点击后，系统在数据库中永久存证该断言的豁免记录 (<code>status: 'exempted'</code>)，既满足学术审查的追溯要求，又避免医生在后续修改保存时被反复打扰。</li>
+      </ul>
+
+      <h4>11.7 临床雷达扫描动效与边栏批注交互 (Mantle Radar & Margin Anchors)</h4>
+      <p>核验启动时，页面展示现代极客墨绿雷达波脉冲扫描动效 (Radar Wave)，实时反馈文献全文索引与证据链检索进度；核验完毕后，与正文 ProseMirror 物理锚点实现像素级吸附对齐，支持点击卡片平滑滚动定位正文，提供顶级学术科研级审校体验。</p>
+    `
+  },
+  {
     id: 'faq',
     title: '常见问题与临床操作贴士 (FAQ)',
     badge: '疑难解答',
@@ -2443,7 +2569,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '影像上传失败排查、切片对齐精度、导出排版微调与临床法律安全边界说明。',
     contentHtml: `
       <div class="help-section-head">
-        <h3>11. 常见问题与操作贴士 (FAQ & Troubleshooting)</h3>
+        <h3>12. 常见问题与操作贴士 (FAQ & Troubleshooting)</h3>
         <span class="help-tag warn">避坑指引 · 临床备忘</span>
       </div>
 
@@ -2481,7 +2607,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: '版本发布更新日志 (Release Notes)',
     badge: '更新里程碑',
     icon: icon('sparkles', { size: 16 }),
-    summary: '记录 Heurion 从 v2.0 到 v2.4 核心版本演进、临床影像量化、生物统计、零 PHI 隐私与交互设计里程碑。',
+    summary: '记录 Heurion 从 v2.0 到 v2.6 核心版本演进、临床影像量化、文献论断核验、生物统计、零 PHI 隐私与交互设计里程碑。',
     contentHtml: `
       <div class="help-section-head">
         <h3>13. 版本发布更新日志 (Release Notes & Milestones)</h3>
@@ -2490,7 +2616,21 @@ export const HELP_SECTIONS: HelpSection[] = [
       <p class="help-lead">Heurion 始终秉承「临床医生与科研人员的专业辅助伙伴」定位，每个版本均历经三甲临床专家严苛验证与医学数据安全审查。</p>
 
       <div class="help-release-card">
-        <div class="help-release-badge current">v2.5 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-badge current">v2.6 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-title">引用文献权威校验、PMC 全文表格与图注结构化提取、论断核验与一键正文纠错</div>
+        <ul class="help-release-list">
+          <li><b>PMC 开放获取全文与结构化表格提取 (PMC XML Table & Caption Mining)</b>：突破传统文献仅能抓取摘要的局限，直连 PubMed Central (PMC) 与 Europe PMC 开放获取 XML 树状节点；创新实现 <code>&lt;table-wrap&gt;</code> 表格（基线特征、终点亚组分析、不良事件统计等）与 <code>&lt;fig&gt;</code> 图注的行级结构化抽取与 Markdown 排版保留，彻底解决 RCT 关键临床终点数据盲区。</li>
+          <li><b>全链路权威文献登记与写屏障 (guardCitations)</b>：所有引用必须经由 PubMed / Crossref / Europe PMC 官方权威 API 检索校验并赋予唯一代币 <code>[@c:xxx]</code>；平台操作层强制拦截非法代币与裸标注入，彻底根除大模型伪造论文与捏造 DOI 现象。</li>
+          <li><b>细粒度论断核查引擎 (verify_claims)</b>：自动切分命题级数值主张句（HR、OR、95% CI、p 值、样本量等），对照已登记文献全文段落与 RCT 结构化表格进行深度比对，输出 <code>supported</code> (支持)、<code>unsupported</code> (矛盾)、<code>unclear</code> (存疑)、<code>missing_citation</code> (缺出处) 及 <code>exempted</code> (豁免) 五大权威裁定。</li>
+          <li><b>AI 智能纠错建议与「一键替换正文」 (One-Click Quick Patch)</b>：当检测到正文断言与文献矛盾或数值偏差时，AI 自动提炼 <code>【建议修改为】：...</code> 纠正文句；医生可直接在右侧伴随批注卡片上一键采纳，原子化原地更新正文，无需繁琐人工修改。</li>
+          <li><b>专家「临床经验豁免」机制 (Clinical Experience Exemption)</b>：针对权威专家的临床主观观察、病房经验总结或规范流程，支持一键「标为临床经验」，永久归档豁免，兼顾严谨循证与真实世界临床灵活性。</li>
+          <li><b>Mantle 临床雷达扫描与邮件废纸篓生命周期重构</b>：重构文献核验动效为墨绿科技雷达脉冲扫描交互；重构邮件系统「移入废纸篓 (Trash)」与「彻底永久删除 (Purge)」双层生命周期及空状态体验。</li>
+          <li><b>手机浏览器移动端响应式深度适配</b>：对官网首页（中英文版本）针对 iOS / Android 移动端视口进行完整重构，优化抽屉式汉堡菜单、触摸手势友好度与小屏幕排版。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.5 Pro (2026年10月)</div>
         <div class="help-release-title">临床随访排期日历、@heurion.org 专属科研邮箱与跨空间闭环联动</div>
         <ul class="help-release-list">
           <li><b>原生排期日历工作空间 (Calendar Space)</b>：支持月历网格、周视图与议程列表，直观规划靶向药耐药监测、气道三维容积复查及多中心科研评审节点。</li>
@@ -2563,9 +2703,9 @@ export const HELP_SECTIONS: HelpSection[] = [
 export function buildHelpMarkdown(): string {
   return `# Heurion 临床智能工作站 · 全流程使用手册与操作指南
 
-> **版本**：v2.5 Pro  
+> **版本**：v2.6 Pro  
 > **适用人群**：呼吸科、胸外科、放射影像科、泌尿外科、肿瘤科临床医师与医学科研人员  
-> **核心架构**：零 PHI 医学隐私 · MONAI 3D 深度量化 · 临床随访排期日历 · 专属科研邮箱 · 自动化生物统计
+> **核心架构**：零 PHI 医学隐私 · MONAI 3D 深度量化 · 引用文献全链路核验 · 临床随访排期日历 · 专属科研邮箱 · 自动化生物统计
 
 ---
 
@@ -3105,7 +3245,38 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 十一、 常见问题解答 (FAQ)
+## 十一、 引用文献真伪校验与学术论断核验指南 (Reference Verification & Claims Validation)
+
+在医学学术论文起草、循证指南研读及临床科研汇报中，通用大语言模型极易产生**“虚构文献 (Hallucinated Papers)”**、**“伪造 DOI”**、**“文献与论断张冠李戴 (Citation-Claim Mismatch)”**以及**“摘要信息茧房导致 RCT 表格数据缺失”**等致命痛点。Heurion 构建了全链路五道坚实防线，保障每一篇学术文稿的绝对循证严谨性：
+
+### 11.1 全链路真实文献登记与操作层写屏障 (\`guardCitations\`)
+1. **权威官方数据库实名检索**：集成 NCBI E-utilities (PubMed)、Crossref 及 Europe PMC 官方权威 API，输入 DOI 或 PMID 后，仅当元数据实名校验通过，方可注册并在平台内分发唯一受信代币 \`[@c:citation_id]\`。
+2. **底层操作层核心写屏障**：系统在文档统一操作层严密执行 \`guardCitations\` 守卫，**坚决拦截任何未经登记的伪造代币或直接粘贴的裸文本假引用**，从底层物理阻断大模型虚构文献注入。
+
+### 11.2 PMC XML 开放获取全文与结构化表格提取 (RCT 表格与图注突破)
+1. **突破摘要局限**：传统 AI 仅能浏览 200~300 字的摘要，而 RCT 试验的核心关键数据（各亚组分析 Hazard Ratio、95% CI、分层不良反应发生率、两组基线平衡 Table 1）全部深藏在正文表格中。
+2. **\`<table-wrap>\` 表格与 \`<fig>\` 图注解析**：直连 PubMed Central / Europe PMC 开放获取 XML 树状节点，将复杂医学表格与图注精准还原为行级结构化 Markdown 表格，使核验引擎能够直接对照 RCT 真实数据表进行证据核验。
+
+### 11.3 细粒度命题级论断核查与五大判定状态 (\`verify_claims\`)
+对正文中包含统计数值（HR、OR、95% CI、百分比、样本量、p 值等）及引用代币的句子进行命题级原子切分，对照文献证据库输出五大权威裁定：
+- **支持 (Supported · 绿标)**：正文主张与文献原文/表格实测数据完全自洽吻合；
+- **不支持 / 矛盾 (Unsupported · 红标警示)**：正文陈述与文献实测数据存在显著矛盾（如数值写反、错误宣称试验提前终止等）；
+- **无法判断 (Unclear · 黄标提示)**：文献未开源全文且摘要未提及该细节，提示需人工复核；
+- **缺少出处 (Missing Citation · 橙标提示)**：包含具体临床数值结论，但未标注任何参考文献；
+- **临床经验豁免 (Exempted · 灰绿标归档)**：经临床医师确认属于病房实践经验，永久豁免警示。
+
+### 11.4 AI 纠错修改建议与「一键替换正文」 (One-Click Quick Patch)
+当判定为 \`unsupported\` 时，核验引擎自动解析文献确凿证据并输出 \`【建议修改为】：<纠正后的文句>\`。医师无需在长文中手动翻找光标，直接在右侧批注卡片中点击**「一键替换正文」**，底层原子化执行精确替换，瞬间完成勘误闭环。
+
+### 11.5 专家「临床经验豁免」机制 (Clinical Experience Exemption)
+尊重真实世界临床实践的多样性。对于资深专家的临床观察总结、科室常规或病房实践规范，医师可点击卡片上的**「标为临床经验」**，系统在数据库中永久存证该断言的豁免状态 (\`status: 'exempted'\`)，自动归档并消解警示，后续核查不再重复打扰。
+
+### 11.6 临床雷达扫描与批注卡片联动
+核验过程中采用墨绿科技雷达波扫描动画展示检索与匹配进度；核验结果与正文锚点实现像素级高精度吸附对齐，红色虚线下划线直观警示，打造沉浸式专业学术审校环境。
+
+---
+
+## 十二、 常见问题解答 (FAQ)
 
 - **Q: 为什么上传 DICOM 耗时较长？**  
   A: 建议上传单个序列的压缩包（< 500MB），去除定位像后再压缩。
@@ -3116,9 +3287,18 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-## 十二、 版本更新日志 (Release Notes)
+## 十三、 版本更新日志 (Release Notes)
 
-### v2.5 Pro (当前最新版本 · 2026年10月)
+### v2.6 Pro (当前最新版本 · 2026年10月)
+- **PMC 开放获取全文与结构化表格提取 (PMC XML Table & Caption Mining)**：突破传统仅抓取摘要局限，深入抓取 PubMed Central / Europe PMC 开放获取 XML 中的 \`<table-wrap>\` 表格与 \`<fig>\` 图注，保留 Markdown 行级对齐排版，彻底解决 RCT 关键临床终点数据盲区。
+- **全链路权威文献登记与写屏障 (\`guardCitations\`)**：所有引用必须经由 PubMed / Crossref / Europe PMC 官方权威 API 检索注册并赋予唯一代币 \`[@c:xxx]\`；在平台操作层强制执行写前守卫，从物理底层彻底杜绝大模型伪造论文、捏造 DOI 与裸标注入。
+- **细粒度论断核查引擎 (\`verify_claims\`)**：自动切分命题级数值主张句（HR、OR、95% CI、p 值、样本量等），对照已登记文献全文及 RCT 表格进行深度对照，输出 \`supported\`、\`unsupported\`、\`unclear\`、\`missing_citation\` 及 \`exempted\` 五大权威裁定。
+- **AI 智能纠错建议与「一键替换正文」 (One-Click Quick Patch)**：当检测到正文断言与文献矛盾或数值偏差时，AI 自动提炼 \`【建议修改为】：...\` 纠正文句；医生可直接在右侧伴随批注卡片上一键采纳，原子化原地更新正文。
+- **专家「临床经验豁免」通道 (Clinical Experience Exemption)**：针对权威专家的临床主观观察、病房经验总结或规范流程，支持一键「标为临床经验」，永久归档豁免，兼顾严谨循证与真实世界临床灵活性。
+- **Mantle 临床雷达扫描与邮件废纸篓生命周期重构**：升级文献核验动效为墨绿科技雷达扫描交互；重构邮件系统「移入废纸篓 (Trash)」与「彻底永久删除 (Purge)」双层生命周期及空状态体验。
+- **手机浏览器移动端响应式深度适配**：对官网首页（中英文版本）针对 iOS / Android 移动端视口进行完整重构，优化抽屉式汉堡菜单、触摸手势友好度与小屏幕排版。
+
+### v2.5 Pro (2026年10月)
 - **原生排期日历工作空间 (Calendar Space)**：支持月历网格、周视图与议程列表，直观规划靶向药耐药监测、气道三维容积复查及多中心科研评审节点。
 - **专属医疗科研邮箱系统 (Mail Space)**：开箱即用 \`<username>@heurion.org\` 医生专属邮箱，支持随访高危提醒、真实世界研究 1:1 PSM 质控专函与 DSMB 盲态会议通知。
 - **跨空间两翼协同通道**：邮件一键「添加到日历」、随访专函直达「患者 3D 影像全景档案」、科研邮件一键直通「科研课题数据集与统计分析沙箱」。
@@ -3165,7 +3345,7 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
       <div class="dialog-head help-head">
         <div class="help-head-title">
           <h2>${icon('file', { size: 18 })} Heurion 临床智能工作站 · 全流程使用手册</h2>
-          <span class="help-version-pill">v2.4 Pro</span>
+          <span class="help-version-pill">v2.6 Pro</span>
         </div>
         <div class="help-head-actions">
           <div class="help-search-wrap">
