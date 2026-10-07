@@ -24,6 +24,10 @@
       <a href="#how" data-i18n="nav_how">工作方式</a>
       <a href="#security" data-i18n="nav_security">安全与合规</a>
       <a href="#partners" data-i18n="nav_partners">数据来源</a>
+      <div class="drawer-actions show-sm">
+        <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="btn_enter">进入工作台 <span aria-hidden="true">→</span></a>
+        <a class="btn line" href="/app" data-app-link data-i18n="btn_login">登录</a>
+      </div>
     </nav>
     <div class="top-cta">
       <button class="lang-btn" id="langBtn" aria-label="切换语言">
@@ -720,7 +724,7 @@
         document.querySelectorAll('[data-cta]').forEach(a => {
           a.innerHTML = (lang === 'en' ? 'Open Workstation ' : '进入工作台 ') + '<span aria-hidden="true">→</span>';
         });
-        document.querySelectorAll('.top-cta .ghost').forEach(a => a.hidden = true);
+        document.querySelectorAll('.top-cta .ghost, [data-i18n="btn_login"]').forEach(a => a.hidden = true);
       }
     } catch {}
   }
@@ -751,14 +755,36 @@
       document.querySelectorAll('[data-cta]').forEach(a => { 
         a.innerHTML = (currentLang === 'en' ? 'Open Workstation ' : '进入工作台 ') + '<span aria-hidden="true">→</span>';
       });
-      document.querySelectorAll('.top-cta .ghost').forEach(a => a.hidden = true);
+      document.querySelectorAll('.top-cta .ghost, [data-i18n="btn_login"]').forEach(a => a.hidden = true);
     }
   } catch {}
 
   document.getElementById('year').textContent = new Date().getFullYear();
   const btn = document.getElementById('menuBtn'), links = document.getElementById('links');
-  btn.onclick = () => { const open = links.classList.toggle('open'); btn.setAttribute('aria-expanded', String(open)); };
-  links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => { links.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }));
+  if (btn && links) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const open = links.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    };
+    links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+      links.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+    }));
+    document.addEventListener('click', (e) => {
+      if (links.classList.contains('open') && !links.contains(e.target) && !btn.contains(e.target)) {
+        links.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && links.classList.contains('open')) {
+        links.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.focus();
+      }
+    });
+  }
   const header = document.getElementById('top');
   const onScroll = () => header.classList.toggle('scrolled', scrollY > 8);
   addEventListener('scroll', onScroll, { passive: true }); onScroll();
