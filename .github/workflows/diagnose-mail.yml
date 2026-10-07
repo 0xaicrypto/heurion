@@ -47,7 +47,7 @@ jobs:
           $SSH "$HOST" "docker exec heurion2 node --input-type=module -e '
             import { DatabaseSync } from \"node:sqlite\";
             const db = new DatabaseSync(\"/app/data/platform/platform.db\");
-            const res = db.prepare(\"DELETE FROM mail_messages WHERE folder = \\\"inbox\\\" AND (recipient LIKE \\\"%@gmail.com\\\" OR recipient LIKE \\\"%@163.com\\\" OR recipient LIKE \\\"%@qq.com\\\")\").run();
+            const res = db.prepare(\"DELETE FROM mail_messages WHERE folder = ? AND (recipient LIKE ? OR recipient LIKE ? OR recipient LIKE ?)\").run(\"inbox\", \"%@gmail.com\", \"%@163.com\", \"%@qq.com\");
             console.log(\"已清理误投递至收件箱的外部邮件条数:\", res.changes);
           '" || true
 
