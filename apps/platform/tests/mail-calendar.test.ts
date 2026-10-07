@@ -588,6 +588,37 @@ describe('邮件与日历系统集成 (Mail & Calendar Integration)', () => {
     expect(threadData.thread[2].sender).toBe('zhaojimmy13@gmail.com')
     expect(threadData.thread[2].body).toContain('周二上午我会准时到院')
   })
+
+  it('10. Base64 编码的外部邮件正文智能自动解码与历史数据自动修复 (Gmail Chinese Reply Base64)', async () => {
+    const api = makeTestApp()
+
+    // 真实的 Gmail 中文回复 Base64 字符串（用户截图中的原始编码文本）
+    // "回复\r\n\r\nOn Wed, Oct 7, 2026 at 11:54 AM HZ <huizhao@heurion.org> wrote:\r\n\r\n> 修改了专属邮件前缀\r\n"
+    const rawBase64 = '5Zue5aSNDQoNCk9uIFdlZCwgT2N0IDcsIDIwMjYgYXQgMTE6NTQgQU0gSFogPGh1aXpoYW9AaGV1cmlvbi5vcmc+IHdyb3RlOg0KDQo+IOS/ruaUueS6huS4k+WxnumCruS7tuWJjee8gA0K'
+
+    const inboundRes = await api.rawApp.request('/api/mail/inbound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Jimmy Zhao <zhaojimmy13@gmail.com>',
+        to: 'HZ <dev@heurion.org>',
+        subject: 'Re: 测试专属邮件前缀',
+        body: rawBase64,
+      }),
+    })
+
+    expect(inboundRes.status).toBe(201)
+    const json = await inboundRes.json() as any
+    expect(json.ok).toBe(true)
+
+    // 验证入库时已自动解码为中文内容
+    const msgRes = await api.get(`/api/mail/messages/${json.id}`)
+    expect(msgRes.status).toBe(200)
+    const msg = await msgRes.json() as any
+    expect(msg.body).toContain('回复')
+    expect(msg.body).toContain('修改了专属邮件前缀')
+    expect(msg.body).not.toContain('5Zue5aSNDQoNCk9u')
+  })
 })
 
 

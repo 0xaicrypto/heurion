@@ -132,10 +132,39 @@ export function decodeQuotedPrintable(str: string): string {
   }
 }
 
-/** 智能探测并解码邮件正文（兼容 Quoted-Printable 或纯文本） */
+/** 智能探测并解码 Base64 编码的邮件正文（如 Gmail / Outlook 以 Base64 方式发送的邮件） */
+export function decodeBase64Text(raw: string): string {
+  if (!raw) return raw
+  const trimmed = raw.trim()
+  const nonB64 = trimmed.replace(/[A-Za-z0-9+/=\r\n]/g, '')
+  if (nonB64.length > 0) return raw
+
+  const compact = trimmed.replace(/\s+/g, '')
+  if (compact.length < 16) return raw
+
+  try {
+    const padLen = (4 - (compact.length % 4)) % 4
+    const padded = compact + '='.repeat(padLen)
+    const buf = Buffer.from(padded, 'base64')
+    const decoded = buf.toString('utf-8')
+
+    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(decoded)) return raw
+    if (/[\u4e00-\u9fa5\w]/.test(decoded)) {
+      return decoded
+    }
+  } catch {
+    // not valid base64
+  }
+  return raw
+}
+
+/** 智能探测并解码邮件正文（兼容 Base64、Quoted-Printable 或纯文本） */
 export function decodeEmailBody(body: string): string {
   if (!body) return ''
   let text = body
+  // 1. 优先尝试 Base64 解码 (针对外部 Gmail / Outlook 客户端的 Base64 转码邮件)
+  text = decodeBase64Text(text)
+  // 2. 尝试 Quoted-Printable 解码
   if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
     text = decodeQuotedPrintable(text)
   }
@@ -158,6 +187,23 @@ export class MailService {
   ) {
     this.domain = (opts.domain || 'heurion.org').replace(/heurion\.com$/, 'heurion.org')
     this.complete = opts.complete
+    this.healExistingMessages()
+  }
+
+  /** 自愈历史收到的 Base64 / QP 未解码邮件 */
+  private healExistingMessages(): void {
+    try {
+      const rows = this.store.db.prepare('SELECT id, body FROM mail_messages ORDER BY rowid DESC LIMIT 200;').all() as { id: string; body: string }[]
+      for (const row of rows) {
+        if (!row.body) continue
+        const decoded = decodeEmailBody(row.body)
+        if (decoded && decoded !== row.body) {
+          this.store.db.prepare('UPDATE mail_messages SET body = ? WHERE id = ?').run(decoded, row.id)
+        }
+      }
+    } catch {
+      // 容错保护
+    }
   }
 
   /** 是否配置了真实外网发信服务 (SMTP 或 Resend) */
@@ -292,13 +338,15 @@ export class MailService {
         }).join('\n\n')
 
         const system = `你是一位高年资临床主任与多中心医学试验学术秘书。你的职责是将主诊医师近 48 小时收到的医疗与科研邮件进行高密度、精炼的要点提炼与行动指引。
-请使用结构化 Markdown 输出，要求：
+请使用结构化 Markdown 无序列表输出，要求：
 1. 语言极其凝练专业，直接切入核心临床与科研指标（如 BAR、HAM容积、RECIST评估、PSM倾向评分、DSMB审查）；
-2. 必须包含三个小节：
-   - ### 重点随访与复查预警（标出患者代号，如 PT-BRONCHO-001，附指标与建议门诊时间）
-   - ### 科研课题与试验进展（标出课题代号，如 DAPA-HF，附入组进度与会议日程）
-   - ### 行动要点与待办（医师近期必须跟进确认的事项清单）
-3. 篇幅适中（约 200~350 字），排版美观紧凑。严禁在输出中包含任何 Emoji 表情符号或装饰图标，所有小节标题只输出纯文本（如 ### 重点随访与复查预警），不要带任何表情或符号前缀。所有视觉标志均由系统专业单色矢量图标渲染。不要废话和礼貌用语。`
+2. 必须包含且仅包含三个小节：
+   - ### 重点随访与复查预警（每个事项使用无序列表格式，如：- **PT-BRONCHO-001**：关键指标；建议门诊/复查时间）
+   - ### 科研课题与试验进展（每个事项使用无序列表格式，如：- **DAPA-HF**：入组进度与会议日程）
+   - ### 行动要点与待办（医师近期必须跟进确认的事项清单，使用无序列表）
+3. 篇幅适中（约 200~350 字），排版美观紧凑。
+4. 严禁在输出中包含任何 Emoji 表情符号或装饰图标，所有小节标题只输出纯文本（如 ### 重点随访与复查预警），不要带任何表情或符号前缀。
+5. 严禁使用 Markdown 表格语法（| 列1 | 列2 |），一律使用无序列表（- **项目**：内容），确保窄屏侧边栏的极致排版体验。不要输出多余的总体文档大标题（如 # 邮件摘要），不要废话和礼貌用语。`
 
         const userPrompt = `以下是主诊医师近 48 小时收到的 ${targetMails.length} 封重要邮件，请生成摘要报告：\n\n${mailContext}`
 

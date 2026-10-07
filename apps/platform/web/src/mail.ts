@@ -181,9 +181,40 @@ export function decodeQuotedPrintable(str: string): string {
   }
 }
 
+/** 智能探测并解码 Base64 编码的邮件正文（如 Gmail / 外部客户端以 Base64 方式发送的邮件） */
+export function decodeBase64Text(raw: string): string {
+  if (!raw) return raw
+  const trimmed = raw.trim()
+  const nonB64 = trimmed.replace(/[A-Za-z0-9+/=\r\n]/g, '')
+  if (nonB64.length > 0) return raw
+
+  const compact = trimmed.replace(/\s+/g, '')
+  if (compact.length < 16) return raw
+
+  try {
+    const padLen = (4 - (compact.length % 4)) % 4
+    const padded = compact + '='.repeat(padLen)
+    const bin = atob(padded)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    const decoded = new TextDecoder('utf-8').decode(bytes)
+
+    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(decoded)) return raw
+    if (/[\u4e00-\u9fa5\w]/.test(decoded)) {
+      return decoded
+    }
+  } catch {
+    // not valid base64
+  }
+  return raw
+}
+
 export function decodeEmailBody(body: string): string {
   if (!body) return ''
   let text = body
+  // 1. 优先尝试 Base64 智能解码（适配外部 Gmail/Outlook 的 UTF-8 Base64 转码邮件）
+  text = decodeBase64Text(text)
+  // 2. 尝试 Quoted-Printable 解码
   if (/=[0-9A-Fa-f]{2}/.test(text) || /=\r?\n/.test(text)) {
     text = decodeQuotedPrintable(text)
   }
@@ -293,22 +324,110 @@ function formatHighlights(text: string): string {
   return res
 }
 
+function renderBriefingTableBlock(tableLines: string[]): string {
+  const rows = tableLines.map(line => {
+    const cells = line.split('|')
+    if (cells.length > 2) {
+      return cells.slice(1, -1).map(c => stripEmojis(c.trim()))
+    }
+    return [stripEmojis(line.trim())]
+  })
+
+  if (rows.length < 2) {
+    return rows.map(r => `<p class="mail-briefing-p">${formatBriefingInline(r.join(' '))}</p>`).join('')
+  }
+
+  const headers = rows[0]!
+  const isSeparator = rows[1]!.every(c => /^:?-+:?$/.test(c))
+  const dataRows = isSeparator ? rows.slice(2) : rows.slice(1)
+
+  // 1. 如果表格包含结构化实体代号（如患者、课题、项目），优先在窄侧边栏渲染为精致卡片列表
+  const hasEntityCol = headers.some(h => /代号|患者|课题|项目|编号|ID/i.test(h))
+  if (hasEntityCol && dataRows.length > 0) {
+    const cardHtml = dataRows.map(row => {
+      const titleVal = row[0] || '详情'
+      const otherFields = row.slice(1)
+      const otherHeaders = headers.slice(1)
+
+      const fieldsHtml = otherFields.map((val, idx) => {
+        const label = otherHeaders[idx] || '内容'
+        const isAction = /建议|待办|处置|行动|门诊|复查/.test(label)
+        return `
+          <div class="mail-briefing-record-field ${isAction ? 'action' : ''}">
+            <span class="record-k">${esc(label)}：</span>
+            <span class="record-v">${formatBriefingInline(val)}</span>
+          </div>
+        `
+      }).join('')
+
+      return `
+        <div class="mail-briefing-record-card">
+          <div class="mail-briefing-record-head">
+            <span class="mail-briefing-record-title">${formatBriefingInline(titleVal)}</span>
+          </div>
+          <div class="mail-briefing-record-fields">${fieldsHtml}</div>
+        </div>
+      `
+    }).join('')
+
+    return `<div class="mail-briefing-record-list">${cardHtml}</div>`
+  }
+
+  // 2. 通用 Markdown 表格渲染
+  return `
+    <div class="mail-briefing-table-wrap">
+      <table class="mail-briefing-table">
+        <thead>
+          <tr>
+            ${headers.map(h => `<th>${esc(h)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${dataRows.map(row => `
+            <tr>
+              ${row.map(cell => `<td>${formatBriefingInline(cell)}</td>`).join('')}
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
 function formatBriefingMarkdown(raw: string): string {
   if (!raw) return ''
   const decoded = decodeEmailBody(raw)
   const lines = decoded.split('\n')
   const out: string[] = []
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
     const trimmed = line.trim()
     if (!trimmed) {
       out.push('<div class="mail-briefing-gap"></div>')
       continue
     }
 
+    // 探测并解析 Markdown 表格
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const tableLines: string[] = []
+      while (i < lines.length && lines[i]!.trim().startsWith('|')) {
+        tableLines.push(lines[i]!.trim())
+        i++
+      }
+      i--
+      out.push(renderBriefingTableBlock(tableLines))
+      continue
+    }
+
     if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
       const headingRaw = trimmed.replace(/^#+\s*/, '')
       const cleanHeading = stripEmojis(headingRaw)
+
+      // 忽略多余的顶层文档大标题（如「主诊医师 48h 邮件摘要」），卡片头部已有「AI 动态速报 · 近48h」
+      if (/^(?:主诊医师)?(?:近)?(?:48h|48小时)?(?:邮件)?(?:摘要|动态|速报|研判|报告)$/i.test(cleanHeading.replace(/\s+/g, ''))) {
+        continue
+      }
 
       let headingIcon = icon('sparkles', { size: 13, class: 'briefing-sec-icon info' })
       let secClass = ''

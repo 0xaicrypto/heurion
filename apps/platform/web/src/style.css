@@ -5527,6 +5527,112 @@ svg.mail-star-icon-filled polygon {
   border-radius: 0;
 }
 
+/* 48h 摘要结构化实体卡片 (患者/课题/项目) */
+.mail-briefing-record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.mail-briefing-record-card {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 0;
+}
+
+.mail-briefing-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 4px;
+}
+
+.mail-briefing-record-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.mail-briefing-record-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.mail-briefing-record-field {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  line-height: 1.45;
+}
+
+.mail-briefing-record-field .record-k {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.mail-briefing-record-field .record-v {
+  color: var(--text-2);
+  flex: 1;
+}
+
+.mail-briefing-record-field.action {
+  background: rgba(0, 229, 153, 0.06);
+  border-left: 2px solid var(--mint-text, #00E599);
+  padding: 4px 6px;
+  margin-top: 2px;
+}
+
+.mail-briefing-record-field.action .record-k {
+  color: var(--mint-text, #00E599);
+  font-weight: 600;
+}
+
+.mail-briefing-record-field.action .record-v {
+  color: var(--text);
+}
+
+/* 48h 摘要通用表格 */
+.mail-briefing-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+}
+
+.mail-briefing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  text-align: left;
+}
+
+.mail-briefing-table th,
+.mail-briefing-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: normal;
+  vertical-align: top;
+}
+
+.mail-briefing-table th {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.mail-briefing-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 /* 来源邮件列表 (Sources) */
 .mail-briefing-sources-wrap {
   display: flex;

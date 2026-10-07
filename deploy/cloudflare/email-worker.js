@@ -75,6 +75,33 @@ function decodeQuotedPrintable(str) {
   }
 }
 
+function decodeBase64Text(raw) {
+  if (!raw) return raw;
+  const trimmed = raw.trim();
+  const nonB64 = trimmed.replace(/[A-Za-z0-9+/=\r\n]/g, "");
+  if (nonB64.length > 0) return raw;
+
+  const compact = trimmed.replace(/\s+/g, "");
+  if (compact.length < 16) return raw;
+
+  try {
+    const padLen = (4 - (compact.length % 4)) % 4;
+    const padded = compact + "=".repeat(padLen);
+    const bin = atob(padded);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+
+    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(decoded)) return raw;
+    if (/[\u4e00-\u9fa5\w]/.test(decoded)) {
+      return decoded;
+    }
+  } catch {
+    // not valid base64
+  }
+  return raw;
+}
+
 export default {
   async fetch(request, env, ctx) {
     return new Response("Heurion Inbound Email Worker is active", {
@@ -97,7 +124,7 @@ export default {
       console.error("读取邮件流失败:", err);
     }
 
-    // 简单解析出文本正文（去除 MIME 头）
+    // 解析文本正文（去除 MIME 头并按编码规范解码）
     let cleanBody = rawText;
     const boundaryMatch = rawText.match(/boundary="?([^"\r\n]+)"?/i);
     if (boundaryMatch) {
@@ -107,7 +134,14 @@ export default {
         if (part.includes("Content-Type: text/plain")) {
           const bodySplit = part.split(/\r?\n\r?\n/);
           if (bodySplit.length > 1) {
-            cleanBody = bodySplit.slice(1).join("\n\n").trim();
+            const headerSection = bodySplit[0] || "";
+            let partBody = bodySplit.slice(1).join("\n\n").trim();
+            if (/content-transfer-encoding:\s*base64/i.test(headerSection)) {
+              partBody = decodeBase64Text(partBody);
+            } else if (/content-transfer-encoding:\s*quoted-printable/i.test(headerSection)) {
+              partBody = decodeQuotedPrintable(partBody);
+            }
+            cleanBody = partBody;
             break;
           }
         }
@@ -116,12 +150,22 @@ export default {
       // 非 multipart 纯文本邮件：头部与正文以双换行分隔
       const headerBodySplit = rawText.split(/\r?\n\r?\n/);
       if (headerBodySplit.length > 1) {
-        cleanBody = headerBodySplit.slice(1).join("\n\n").trim();
+        const headerSection = headerBodySplit[0] || "";
+        let partBody = headerBodySplit.slice(1).join("\n\n").trim();
+        if (/content-transfer-encoding:\s*base64/i.test(headerSection)) {
+          partBody = decodeBase64Text(partBody);
+        } else if (/content-transfer-encoding:\s*quoted-printable/i.test(headerSection)) {
+          partBody = decodeQuotedPrintable(partBody);
+        }
+        cleanBody = partBody;
       }
     }
 
-    // 去除 QP 编码及尾部 MIME boundary 标记
-    let finalBody = decodeQuotedPrintable(cleanBody || rawText || "(无正文内容)");
+    // 智能兜底解码：优先探测 Base64（如 Gmail 外部来信），再探测 Quoted-Printable
+    let finalBody = decodeBase64Text(cleanBody || rawText || "");
+    if (/=[0-9A-Fa-f]{2}/.test(finalBody) || /=\r?\n/.test(finalBody)) {
+      finalBody = decodeQuotedPrintable(finalBody);
+    }
     finalBody = finalBody.replace(/--[a-zA-Z0-9_\-=]+--?\s*$/g, "").trim();
 
     const payload = {
