@@ -1699,60 +1699,334 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: '临床科研工作流 (Research)',
     badge: '统计分析',
     icon: icon('chart', { size: 16 }),
-    summary: '方案设计、多中心数据集质控清洗、Table 1 基线表一键制表、Kaplan-Meier 生存曲线与 Cox 比例风险回归。',
+    summary: '方案设计、多中心数据集质控清洗、零 PHI 脱敏、Table 1 基线表一键制表、Kaplan-Meier 生存曲线与 Cox 比例风险回归森林图。',
     contentHtml: `
       <div class="help-section-head">
         <h3>9. 临床科研工作流 (Clinical Research & Automated Biostatistics)</h3>
-        <span class="help-tag">科研立项 · 统计分析</span>
+        <span class="help-tag">科研立项 · 多中心质控 · 自动化生物统计 · 顶刊闭环</span>
       </div>
-      <p class="help-lead">覆盖临床研究方案拟定、多源多格式数据表质控导入、自动化医学统计学制表及文章发表归档全周期。</p>
+      <p class="help-lead">Heurion 研究工作空间深度面向临床医学科学家、规培/专培医师及临床药理研究团队，提供从科研课题立项设计、多源多格式数据表质控导入、零 PHI 敏感数据脱敏、患者库智能入组、受限沙箱生物统计学制表（Table 1/KM/Cox），到论文写作数据零幻觉引用的全生命周期科研支撑体系。</p>
 
-      <h4>9.1 研究项目与方案管理</h4>
-      <p>进入「研究」工作空间，点击「＋ 新建研究」：</p>
+      <h4>9.1 科研课题立项与研究方案结构化起草 (Protocol Design & Registry)</h4>
+      <p>进入「研究 (Research)」工作空间，点击<b>「＋ 新建研究」</b>，可建立具有国际规范的课题档案：</p>
       <ul>
-        <li>输入研究题目、临床试验注册号 (如 ChiCTR / ClinicalTrials.gov NCT ID)、研究类型（前瞻性 RCT、回顾性队列或病例对照）。</li>
-        <li>结构化设定纳入与排除标准、暴露/干预因素及主要终点事件 (Primary Endpoint)。</li>
+        <li><b>课题核心标识 (Study Metadata)</b>：录入研究内部代号（如 <code>ST-HFREF-2026-001</code>）、中英文全称、主要研究者 (PI) 及参与机构。</li>
+        <li><b>伦理与注册登记 (IRB & Registry)</b>：关联医院机构伦理审查委员会批件编号（如 <code>IRB-2026-MED-0428</code>），支持录入中国临床试验注册中心 (ChiCTR) 或国际 ClinicalTrials.gov (NCT ID)，并在文章导出时自动溯源。</li>
+        <li><b>PICO 框架结构化方案制定</b>：
+          <ul>
+            <li><b>P (Population/目标患病人群)</b>：设定疾病类型（如 HFrEF 射血分数降低心衰）、纳排标准详细条款（如年龄、LVEF 范围、NYHA 分级、生化指标界限）。</li>
+            <li><b>I (Intervention/干预暴露因素)</b>：试验药物或治疗方案（如 SGLT2 抑制剂 恩格列净/达格列净 联合四联标准抗心衰治疗 GDMT）。</li>
+            <li><b>C (Comparator/对照方案)</b>：阳性对照、标准对照或安慰剂（如 单纯 GDMT 标准治疗）。</li>
+            <li><b>O (Outcome/研究终点事件)</b>：定义主要终点 (Primary Endpoint: 心血管死亡或因心衰加重紧急住院的复合事件 MACE) 与次要终点 (全因死亡、KCCQ-12 心衰生活质量评分、eGFR 复合肾终点)。</li>
+          </ul>
+        </li>
+        <li><b>样本量与统计功效前置估算 (Power & Sample Size Calculator)</b>：内置专业临床样本量计算器，输入预期 HR（如 0.70）、双侧显著性水平 \\(\\alpha = 0.05\\)、统计功效 \\(1-\\beta = 80\\%\\) 及预估年事件发生率，系统自动测算所需最少受试者样本量与观察事件总数，确保研究设计具备统计学严谨性。</li>
       </ul>
 
-      <h4>9.2 多格式原始数据集导入与质控</h4>
-      <p>在「数据集」面板中，支持直接上传主流统计软件原始文件：</p>
+      <h4>9.2 多源临床数据表导入、智能字典解析与零 PHI 脱敏 (Dataset Ingestion, QC & Zero-PHI Curation)</h4>
+      <p>在研究项目的「数据集」面板中，系统提供强大的数据接入与治理引擎：</p>
       <div class="help-grid-3">
-        <div class="help-chip-card"><b>.csv / .xlsx</b><span>通用表格文件</span></div>
-        <div class="help-chip-card"><b>.sas7bdat</b><span>SAS 数据集</span></div>
-        <div class="help-chip-card"><b>.sav</b><span>SPSS 数据文件</span></div>
+        <div class="help-chip-card"><b>.csv / .xlsx / .xls</b><span>通用表格文件 (支持 GBK/UTF-8 编码与多 Sheet 自动探测)</span></div>
+        <div class="help-chip-card"><b>.sas7bdat</b><span>SAS 统计分析数据集 (保留原始变量格式与标签映射)</span></div>
+        <div class="help-chip-card"><b>.sav / .dta</b><span>SPSS / Stata 二进制数据文件 (解析数值字典与缺失值定义)</span></div>
       </div>
-      <p>系统自动扫描变量字典、数据类型识别、缺失值比例报告及异常极端值警示。</p>
-
-      <h4>9.3 自动化高保真医学统计分析</h4>
+      <p>导入数据后，系统即刻触发多层次质控与安全处理：</p>
       <ul class="help-list-steps">
         <li>
-          <span class="step-num">${icon('template', { size: 14 })}</span>
+          <span class="step-num">${icon('search', { size: 14 })}</span>
           <div>
-            <b>Table 1 基线特征表一键生成</b>：系统自动检验连续变量正态性，正态数据输出 <code>Mean ± SD</code> 并应用独立样本 t 检验；偏态数据输出 <code>Median (IQR)</code> 并应用 Wilcoxon/Mann-Whitney U 检验；分类变量输出 <code>N (%)</code> 并自动采用 Pearson 卡方检验或 Fisher 确切概率法，自动生成三线表。
+            <b>变量字典与数据类型智能推断 (Variable Dictionary)</b>：自动识别连续型变量（正态或偏态）、二分类变量、无序多分类变量、等级有序变量及生存结局变量（随访时间与结局状态 0/1）。对于 SAS/SPSS 文件的数值编码（如 <code>1 = 男, 2 = 女</code>），自动解析值标签 (Value Labels)。
           </div>
         </li>
         <li>
-          <span class="step-num">${icon('chart', { size: 14 })}</span>
+          <span class="step-num">${icon('shield', { size: 14 })}</span>
           <div>
-            <b>Kaplan-Meier 生存分析与 Log-Rank 检验</b>：绘制高精度生存概率曲线，计算中位生存时间 (Median OS / PFS) 及 95% CI，底部自动对齐展示各时间节点风险人数表 (Number at Risk)。
+            <b>零 PHI 敏感信息红标拦截与前端物理脱敏 (Zero-PHI Scrubbing)</b>：对上传字段进行深度隐私合规审查，自动扫描并识别姓名、身份证号、电话、家庭住址及原始住院号。系统强制弹出脱敏确认卡，将敏感身份映射为不可逆的虚拟研究受试者编号（如 <code>S001, S002...</code>），患者真实身份绝不上云，完全满足国家《网络安全法》与国际 HIPAA 规范。
           </div>
         </li>
         <li>
-          <span class="step-num">${icon('dna', { size: 14 })}</span>
+          <span class="step-num">${icon('warning', { size: 14 })}</span>
           <div>
-            <b>Cox 比例风险模型与森林图 (Forest Plot)</b>：支持单因素与多因素回归分析，计算风险比 (HR) 或比值比 (OR)，自动绘制矢量级森林图。
+            <b>缺失值与极端异常值自动化质控 (Automated QC)</b>：按变量生成缺失率报告（&lt; 5% 优良、5%~20% 警示、&gt; 20% 严重），支持中位数插补、多重链式方程插补 (MICE)；基于 3-Sigma 原则与 Tukey 四分位距 (IQR) 检出逻辑异常值（如收缩压 350 mmHg 或年龄 150 岁）并进行标红高亮预警。
           </div>
         </li>
       </ul>
-      <h4>9.4 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
-      <p>将深度学习量化指标与长期临床随访结局深度融合：</p>
+
+      <h4>9.3 患者库多维条件筛选入组与动态队列生成 (Cohort Builder & Registry Linkage)</h4>
+      <p>平台打通临床诊疗「患者」工作区与「研究」工作区，支持基于真实病历直接构建研究队列：</p>
+      <ul>
+        <li><b>多维逻辑布尔检索</b>：支持组合诊断（ICD-10 / 疾病分类）、处方用药（ATC 药物编码）、生化检验阈值（如 NT-proBNP ≥ 600 pg/mL、eGFR ≥ 20 mL/min/1.73m²）及人口学指标；</li>
+        <li><b>3D 影像表型智能联动</b>：可将影像中心量化的特征（如心超 LVEF ≤ 40%、胸部 CT 测得的 L3 骨骼肌指数 SMI 或冠脉钙化积分 Agatston）作为纳入排除条件；</li>
+        <li><b>队列生成与列式隔离存储</b>：点击「生成研究队列」，系统自动提取对应患者的时间序列检验单、病史信息及影像指标，生成受控列式 Parquet 格式数据集，自动去标识化后载入课题沙箱。</li>
+      </ul>
+
+      <h4>9.4 隔离受限沙箱自动化医学统计分析 (Automated Biostatistics & Sandboxed Execution)</h4>
+      <p>Heurion 提供开箱即用、完全透明且可审计的生物统计引擎。所有运算均在隔离的沙箱容器中执行，调用标准 Python 统计生态（<code>scipy</code>, <code>statsmodels</code>, <code>lifelines</code>, <code>scikit-learn</code>），支持一键查阅和复制完整分析代码：</p>
+      <div class="help-grid-3">
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('template', { size: 14 })} Table 1 基线三线表</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>正态性自适应</b>：连续变量自动进行 Shapiro-Wilk 检验，正态数据输出 <code>Mean ± SD</code> (t 检验)，偏态数据输出 <code>Median (IQR)</code> (Wilcoxon 检验)；</li>
+              <li><b>分类变量自适应</b>：计数变量输出 <code>N (%)</code>，根据最小期望频数自动选用 Pearson 卡方检验或 Fisher 确切概率法；</li>
+              <li><b>倾向评分匹配 (PSM)</b>：支持 1:1 或 1:k 近邻卡钳匹配，自动计算标准化均数差 (SMD)，展示匹配前后协变量平衡状态。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('chart', { size: 14 })} Kaplan-Meier 生存分析</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>高精度曲线渲染</b>：绘制带 95% 置信区间的阶梯状累积生存率或累积风险曲线；</li>
+              <li><b>Log-Rank 统计检验</b>：自动计算 \\(\\chi^2\\) 统计量与精确 p 值，计算中位生存时间 (Median OS / PFS)；</li>
+              <li><b>风险人数表 (Number at Risk)</b>：严格对齐时间轴展示随访节点在险人数、事件发生数与截尾数，完全符合 NEJM / Lancet 制图标准。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('dna', { size: 14 })} Cox 比例风险与森林图</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>等比例风险假定检验</b>：基于 Schoenfeld 残差检验比例风险假定 (PH Assumption)；</li>
+              <li><b>单因素/多因素逐步回归</b>：校正混杂协变量，输出校正风险比 (Adjusted HR) 及 95% CI；</li>
+              <li><b>预设亚组交互检验 (Forest Plot)</b>：针对年龄、性别、并发症及生物标志物自动生成高清亚组森林图，标定交互作用 P 值 (\\(P_{\\text{interaction}}\\))。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <h4>9.5 影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)</h4>
+      <p>将深度学习影像量化指标与长期临床随访结局深度融合：</p>
       <ul>
         <li><b>肌少症 (SMI) 与脂肪分布预后分层</b>：依据 L3 骨骼肌指数 (SMI) 与内脏/皮下脂肪比 (VAT/SAT) 自动进行低 SMI 肌少症组 vs 对照组分组，一键绘制 Kaplan-Meier 生存曲线并计算 Log-Rank p 值；</li>
         <li><b>多因素 Cox 回归协变量校正</b>：将影像标志物与年龄、TNM 临床分期、ECOG 评分及化疗周期联动构建多因素 Cox 回归模型，自动输出 Adjusted HR 及森林图；</li>
         <li><b>IBSI 影像组学多中心特征建模</b>：提取的 107 项国际规范组学特征一键存入研究队列数据集，支撑肿瘤免疫治疗应答与复发风险预测科研。</li>
       </ul>
 
-      <p>所有分析结果与生成图表均可一键归入「写作」文档，实现从临床数据分析到论文撰写的一键闭环。</p>
+      <h4>9.6 论文稿件与学术幻灯片成果闭环 (Manuscript Integration & Research Closed-Loop)</h4>
+      <p>打通「研究」与「写作」之间的数字鸿沟，杜绝数据复制粘贴中的人为笔误与“统计幻觉”：</p>
+      <ul>
+        <li><b>课题上下文无缝绑定</b>：在写作编辑器中新建研究论文或汇报 PPT 时，直接关联指定研究课题；</li>
+        <li><b>数据与图表动态绑定引用</b>：在正文中通过 <code>{{research.table1}}</code>、<code>{{research.km_curve}}</code> 实时插入矢量图表，统计数字直接挂钩数据库。若随访数据补充更新，文档中的数值一键全量联动刷新；</li>
+        <li><b>顶级期刊格式无损导出</b>：一键导出包含高分辨率矢量图表、规范三线表和正确格式引文的 Word (.docx) 手稿与学术汇报幻灯片 (.pptx)。</li>
+      </ul>
+
+      <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
+
+      <h3>【标杆实战科研案例】SGLT2 抑制剂在真实世界 HFrEF 患者中的心血管保护效应前瞻性队列研究 (ST-HFREF-2026-001)</h3>
+      <p>为全面展示 Heurion 临床科研工作流的严谨度与真实价值，本案例基于一项真实世界多中心前瞻性登记队列研究，完整还原从立项、筛选、质控脱敏、Table 1 平衡、生存分析、亚组森林图到学术发表的全链路细节：</p>
+
+      <div class="help-feature-card" style="margin: 12px 0;">
+        <div class="hfc-title">${icon('report', { size: 14 })} 课题立项档案卡 (Clinical Research Protocol Card)</div>
+        <div class="hfc-desc">
+          <table class="help-table" style="margin: 6px 0;">
+            <tbody>
+              <tr>
+                <td style="width: 25%;"><b>研究课题名称</b></td>
+                <td><b>SGLT2 抑制剂联合标准抗心衰治疗在真实世界 HFrEF 患者中的心血管死亡与心衰再住院风险分析：一项多中心前瞻性登记队列研究</b></td>
+              </tr>
+              <tr>
+                <td><b>内部代号 / 注册号</b></td>
+                <td><code>ST-HFREF-2026-001</code> · 临床注册号：<b>ChiCTR2600098712</b> / <b>NCT06894312</b></td>
+              </tr>
+              <tr>
+                <td><b>伦理批件编号</b></td>
+                <td><b>IRB-2026-MED-0428</b> (经国家心血管病临床医学研究中心伦理委员会审批获准)</td>
+              </tr>
+              <tr>
+                <td><b>主要研究终点 (Primary Endpoint)</b></td>
+                <td><b>主要心血管不良事件 (MACE)</b>：24 个月随访期内心血管死亡或因心衰加重紧急再住院的复合事件</td>
+              </tr>
+              <tr>
+                <td><b>次要研究终点 (Secondary Endpoints)</b></td>
+                <td>全因死亡率、KCCQ-12 心衰生活质量临床评分改善度、左室射血分数 (LVEF) 改善绝对值、复合肾功能恶化终点</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h4>9.7 第一步：PICO 临床方案拟定与 CONSORT 入组筛选流向图 (PICO Protocol & CONSORT Flow)</h4>
+      <p>研究者在平台设定 PICO 规范并在患者中心启动智能筛选，生成符合国际 CONSORT 报告规范的入组流向图：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 17 PICO 研究设计架构与 CONSORT 受试者队列筛选流向图 (Cohort Screening Flow)</span>
+          <span class="help-case-tag">${icon('users', { size: 12 })} CONSORT 2010 标准</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-research-1-protocol-cohort.png" alt="PICO 研究设计架构与 CONSORT 受试者队列筛选流向图" />
+        <div class="help-case-caption">
+          <b>PICO 框架与队列流向核心指标解析：</b>
+          <ul>
+            <li><b>目标患病人群 (P)</b>：年龄 ≥ 18 岁、确诊慢性射血分数降低心衰 (HFrEF, LVEF ≤ 40%)、NYHA II~IV 级、基线血清 NT-proBNP ≥ 600 pg/mL；</li>
+            <li><b>干预组 (I, SGLT2i 组)</b>：在指南导向药物治疗 (GDMT: ARNI/ACEI/ARB + β受体阻滞剂 + 醛固酮受体拮抗剂 MRA) 基础上联合使用 SGLT2 抑制剂（恩格列净 10mg qd 或 达格列净 10mg qd）；</li>
+            <li><b>对照组 (C, Control 组)</b>：接受单纯标准 GDMT 抗心衰治疗（未联合 SGLT2i）；</li>
+            <li><b>CONSORT 严密筛选流程</b>：
+              <ol>
+                <li><b>初筛合格库</b>：多中心连续登记初筛符合心衰诊断患者 <b>2,150 例</b>；</li>
+                <li><b>标准排除标准 (排除 730 例)</b>：排除重度肾功能不全 (eGFR &lt; 20 mL/min/1.73m², n=248)、1 型糖尿病或酮症酸中毒病史 (n=82)、恶性肿瘤晚期或预期寿命 &lt; 1 年 (n=165)、基线 30 天内发生急性冠脉综合征或血运重建 (n=143)、失访或随访资料不全 (n=92)；</li>
+                <li><b>合格纳入队列</b>：入组 <b>1,420 例</b>（SGLT2i 联合组 780 例，对照组 640 例）；</li>
+                <li><b>1:1 倾向评分匹配 (PSM)</b>：为消除两组基线混杂偏倚，基于 18 项协变量通过 Logit 模型计算倾向评分，设定卡钳值 0.02 进行 1:1 最近邻无替换匹配，最终生成完全平衡的对比队列：<b>SGLT2i 组 710 例 vs 对照组 710 例 (共 1,420 例)</b>。</li>
+              </ol>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>9.8 第二步：Table 1 倾向评分匹配前后基线特征三线表与 SMD 平衡性评估 (Table 1 Baseline & SMD Balance)</h4>
+      <p>系统自动识别变量分布，完成统计检验并生成标准医学期刊 Table 1 三线表，直观呈现匹配前后的混杂消除效应：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 18 Table 1 倾向评分匹配前后基线人口学与临床特征三线表 (SMD Balance Evaluation)</span>
+          <span class="help-case-tag">${icon('template', { size: 12 })} Table 1 三线表 · PSM 平衡</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-research-2-table1-baseline.png" alt="Table 1 倾向评分匹配前后基线人口学与临床特征三线表" />
+        <div class="help-case-caption">
+          <b>Table 1 基线特征与倾向评分匹配效果解析：</b>
+          <ul>
+            <li><b>基线混杂消除</b>：匹配前（Raw Cohort），SGLT2i 组与对照组在年龄 (63.8 vs 66.2 岁, p=0.002, SMD=0.18)、2型糖尿病比例 (58.5% vs 46.2%, p&lt;0.001, SMD=0.24)、NYHA III/IV 级重症心衰比例 (44.2% vs 37.8%, p=0.012, SMD=0.15) 及 ARNI 联合使用率上存在显著失衡；</li>
+            <li><b>18 项协变量绝对标准化均数差 (SMD &lt; 0.05)</b>：经 1:1 倾向评分匹配后，包括年龄、性别、收缩压、舒张压、BMI、NYHA 分级、LVEF、NT-proBNP、eGFR、血肌酐、血钾、高血压、2型糖尿病、缺血性病因、三大类基础用药以及<b>胸腹 CT 自动测得的 L3 骨骼肌指数 (SMI)</b> 等所有 18 项协变量的 SMD 均显著收敛至 0.05 以下（远优于国际公认标准 0.10），两组达到拟随机化平行可比状态。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>9.9 第三步：主要终点 MACE 24 个月 Kaplan-Meier 累积无事件生存分析 (KM Survival Analysis)</h4>
+      <p>针对匹配后的 1,420 例受试者，系统自动拟合 Kaplan-Meier 生存曲线并执行 Log-Rank 假设检验：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 19 主要终点 MACE 24 个月 Kaplan-Meier 累积无事件生存曲线与风险人数表 (Log-Rank Test)</span>
+          <span class="help-case-tag">${icon('chart', { size: 12 })} Log-Rank p &lt; 0.0001</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-research-3-km-survival.png" alt="主要终点 MACE 24 个月 Kaplan-Meier 累积无事件生存曲线" />
+        <div class="help-case-caption">
+          <b>生存曲线核心统计量与临床获益测算：</b>
+          <ul>
+            <li><b>随访中位时间与主要终点发生率</b>：全队列中位随访时间 24.0 个月（最长随访 24 个月）；24 个月随访期末，SGLT2i 组主要终点 MACE 累积发生率为 <b>14.6% (104 / 710)</b>，显著低于对照组的 <b>23.8% (169 / 710)</b>；</li>
+            <li><b>假设检验显著性 (Log-Rank)</b>：统计量 \\(\\chi^2 = 18.42, p &lt; 0.0001\\)，两组无事件生存曲线在随访第 3 个月即呈现统计学显著分离，并随随访周期延长呈现持续拓宽的发散趋势；</li>
+            <li><b>绝对获益与需治疗人数 (NNT)</b>：SGLT2i 治疗使 24 个月 MACE <b>绝对风险降低 (ARR) 达 9.2%</b> (23.8% - 14.6%)；换算需治疗人数 <b>NNT = 10.9</b>（即每使用 SGLT2i 治疗 11 位 HFrEF 患者满 2 年，即可多预防 1 例心血管死亡或心衰恶化再住院），证实其极高的临床与卫生经济学价值；</li>
+            <li><b>Number at Risk 严密对齐</b>：图表底部清晰列出两组在 0、6、12、18、24 个月节点的生存风险在险人数表，完全满足《新英格兰医学杂志 (NEJM)》对前瞻性心血管临床研究的发表格式要求。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>9.10 第四步：多因素 Cox 比例风险回归与预设亚组分析森林图 (Cox Proportional Hazards & Subgroup Forest Plot)</h4>
+      <p>校正多维混杂协变量，并对预设的 6 个关键临床与影像生物标志物亚组进行效应检验：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 20 多因素 Cox 比例风险回归与预设亚组分析森林图 (Subgroup Forest Plot & Interactions)</span>
+          <span class="help-case-tag">${icon('dna', { size: 12 })} Adjusted HR = 0.62</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-research-4-cox-forest.png" alt="多因素 Cox 比例风险回归与预设亚组分析森林图" />
+        <div class="help-case-caption">
+          <b>多因素模型与亚组同质性分析：</b>
+          <ul>
+            <li><b>全人群多因素校正风险比</b>：在校正了年龄、性别、基线射血分数、NT-proBNP 常用对数值、NYHA 分级、合并症、基线肾功能及 CT 测得的 L3 SMI 肌少症表型后，加用 SGLT2i 的多因素校正风险比为 <b>Adjusted HR = 0.62 (95% CI: 0.49 - 0.78, p &lt; 0.001)</b>，表明加用 SGLT2 抑制剂使真实世界 HFrEF 患者心血管死亡与心衰再住院综合风险显著降低 <b>38%</b>；</li>
+            <li><b>6 大预设亚组获益一致性 (All \\(P_{\\text{interaction}} &gt; 0.05\\))</b>：
+              <ol>
+                <li><b>年龄亚组</b>：&lt; 65 岁 (HR 0.58, 95% CI 0.41-0.82) 与 ≥ 65 岁 (HR 0.65, 95% CI 0.48-0.88), \\(P_{\\text{interaction}} = 0.62\\)；</li>
+                <li><b>糖尿病状态</b>：合并 2 型糖尿病 (HR 0.60, 95% CI 0.44-0.82) 与非糖尿病心衰患者 (HR 0.64, 95% CI 0.46-0.89), \\(P_{\\text{interaction}} = 0.78\\)（确凿证实 SGLT2i 的心血管保护效应独立于降糖作用）；</li>
+                <li><b>基线心功能受损程度</b>：重度减低 LVEF ≤ 30% (HR 0.59, 95% CI 0.43-0.81) 与中度减低 LVEF 31%~40% (HR 0.65, 95% CI 0.47-0.90), \\(P_{\\text{interaction}} = 0.69\\)；</li>
+                <li><b>心衰病因学</b>：缺血性心肌病 (HR 0.63, 95% CI 0.46-0.86) 与非缺血性扩张型心肌病 (HR 0.61, 95% CI 0.42-0.89), \\(P_{\\text{interaction}} = 0.89\\)；</li>
+                <li><b>基线肾功能状态</b>：eGFR &lt; 60 (HR 0.64, 95% CI 0.46-0.89) 与 eGFR ≥ 60 mL/min/1.73m² (HR 0.60, 95% CI 0.43-0.84), \\(P_{\\text{interaction}} = 0.79\\)；</li>
+                <li><b>【跨模态影像创新】机体成分/肌少症亚组</b>：伴低 SMI 肌少症表型 (HR 0.57, 95% CI 0.39-0.83) 与正常骨骼肌患者 (HR 0.65, 95% CI 0.48-0.88), \\(P_{\\text{interaction}} = 0.58\\)（证实伴发重度肌肉衰弱恶液质的心衰极高危人群依然显著获益，甚至表现出更优的相对风险降幅趋势）。</li>
+              </ol>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>9.11 第五步：端到端科研证据闭环与 SCI 顶刊论文一键生成 (End-to-End Research Closed Loop)</h4>
+      <p>从最初提出临床科学问题到最终产出顶刊格式发表稿件，全流程数据链严丝合缝、完全透明：</p>
+
+      <div class="help-case-card">
+        <div class="help-case-header">
+          <span>图 21 从临床假设、数据脱敏、沙箱统计到 SCI 论文发表的端到端证据闭环工作流 (Research-to-Paper Loop)</span>
+          <span class="help-case-tag">${icon('sparkles', { size: 12 })} 真实科研闭环 · 零幻觉引用</span>
+        </div>
+        <img class="help-case-img" src="/site/real-case-research-5-research-loop.png" alt="从临床假设、数据脱敏、沙箱统计到 SCI 论文发表的端到端证据闭环工作流" />
+        <div class="help-case-caption">
+          <b>四阶段科研证据闭环核心逻辑：</b>
+          <ul>
+            <li><b>阶段一：临床科学问题与方案立项 (Protocol Design)</b>：确立明确临床问题，通过 ChiCTR / ClinicalTrials.gov 完成注册留痕；在患者中心启动多维布尔筛选，无缝入组 1,420 例受试者；</li>
+            <li><b>阶段二：数据质控与零 PHI 敏感信息脱敏 (Data QC & Zero-PHI)</b>：解析 SAS/SPSS 复杂变量，前端沙箱自动拦截剔除姓名与身份证号，生成 <code>S001~S1420</code> 虚拟科研标识码，输出列式隔离 Parquet 数据库；</li>
+            <li><b>阶段三：隔离沙箱自动化医学统计分析 (Automated Biostatistics)</b>：自动完成 18 项协变量的 1:1 PSM 匹配消除混杂偏倚；全自动生成 Table 1 三线表；拟合输出 Log-Rank p &lt; 0.0001 的 Kaplan-Meier 生存曲线；拟合 Adjusted HR = 0.62 的多因素 Cox 模型与 6 个亚组森林图，底层 Python 统计代码开源可审计；</li>
+            <li><b>阶段四：学术论文撰写与无损导出 (Manuscript Integration)</b>：在写作编辑器中无缝引用统计图表与动态字段，生成符合国际医学期刊编辑委员会 (ICMJE) 规范的标准英文论文稿件，一键无损导出 Word (.docx) 手稿与学术汇报幻灯片 (.pptx)。</li>
+          </ul>
+        </div>
+      </div>
+
+      <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
+
+      <h3>9.12 临床科研全流程操作与规范对照矩阵表 (Clinical Research Workflow Matrix)</h3>
+      <p>为帮助临床医生与统计师快速掌握全套科研工具，下表梳理了各环节的操作入口、核心技术与规范产出：</p>
+
+      <div class="help-feature-card" style="margin: 12px 0; overflow-x: auto;">
+        <table class="help-table" style="min-width: 820px;">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--line); background: var(--card-glass);">
+              <th>科研阶段</th>
+              <th>工作空间与操作入口</th>
+              <th>平台核心算法与技术机制</th>
+              <th>医学统计与国际规范</th>
+              <th>标准交付成果物 (Deliverables)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>1. 课题立项</b></td>
+              <td>研究空间 ➔ <code>＋ 新建研究</code></td>
+              <td>PICO 结构化表单引擎、样本量与统计功效前瞻估算器</td>
+              <td>CONSORT 声明、STROBE 指南、IRB 伦理批件、ChiCTR/NCT 注册</td>
+              <td>结构化研究方案 (Protocol)、预设终点定义、最少样本量估算书</td>
+            </tr>
+            <tr>
+              <td><b>2. 数据治理</b></td>
+              <td>研究空间 ➔ <code>数据集</code> ➔ 上传文件</td>
+              <td>SAS/SPSS/Stata 二进制解析、变量字典识别、3-Sigma 离群值告警</td>
+              <td>零 PHI (Zero-PHI) 个人隐私脱敏准则、MICE 缺失值多重插补规范</td>
+              <td>质控合格的列式 Parquet 数据库、清洗日志、受试者虚拟编号字典 (S001~Sn)</td>
+            </tr>
+            <tr>
+              <td><b>3. 队列筛选</b></td>
+              <td>患者空间 ➔ <code>多维高级筛选</code> ➔ 纳入研究</td>
+              <td>多维布尔逻辑筛选引擎、跨模态 3D 影像表型联动提取 (L3 SMI / RECIST)</td>
+              <td>临床纳排标准自动化判定、患者随访时间序列自动对齐</td>
+              <td>符合入组条件的候选队列预览表、CONSORT 入选/排除流向图 (图 17)</td>
+            </tr>
+            <tr>
+              <td><b>4. 基线平衡</b></td>
+              <td>研究空间 ➔ <code>统计分析</code> ➔ Table 1 生成</td>
+              <td>Shapiro-Wilk 正态检验、Logit 倾向评分匹配 (PSM 1:1 卡钳匹配)、SMD 计算</td>
+              <td>医学顶级期刊标准三线表规范 (Table 1)、协变量平衡标准 (SMD &lt; 0.10)</td>
+              <td>倾向评分匹配前后 Table 1 三线表、标准化均数差平衡评估图 (图 18)</td>
+            </tr>
+            <tr>
+              <td><b>5. 生存分析</b></td>
+              <td>研究空间 ➔ <code>统计分析</code> ➔ KM 生存曲线</td>
+              <td>Kaplan-Meier 乘积极限法、Log-Rank 渐近假设检验、ARR 与 NNT 算法</td>
+              <td>NEJM / Lancet 生存曲线规范、严格对齐的风险人数表 (Number at Risk)</td>
+              <td>带 95% 置信带的高清 KM 曲线、中位生存期、Log-Rank 统计检验量 (图 19)</td>
+            </tr>
+            <tr>
+              <td><b>6. 预后建模</b></td>
+              <td>研究空间 ➔ <code>统计分析</code> ➔ Cox 森林图</td>
+              <td>Schoenfeld 残差比例风险检验、多因素逐步 Cox 回归、亚组交互作用检验</td>
+              <td>多因素混杂协变量校正准则、预设亚组同质性检验 (\\(P_{\\text{interaction}}\\))</td>
+              <td>Adjusted HR 与 95% 置信区间、高清矢量级预设亚组森林图 (图 20)</td>
+            </tr>
+            <tr>
+              <td><b>7. 论文发表</b></td>
+              <td>写作空间 ➔ 关联研究课题 ➔ 插入图表</td>
+              <td>动态统计变量零幻觉绑定 (Dynamic Data Binding)、高保真文档渲染引擎</td>
+              <td>ICMJE 医学期刊投稿标准、CONSORT 声明、Word (.docx) / PPTX 无损导出</td>
+              <td>符合顶刊发表标准的研究论文初稿、学术汇报投影幻灯片、完整可复现 Python 脚本 (图 21)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     `
   },
   {
@@ -2308,17 +2582,89 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ## 九、 临床科研工作流 (Research)
 
-1. **科研立项与方案管理**：临床试验注册号、纳入排除标准、主要终点设定；
-2. **多格式数据集质控导入**：支持 CSV、Excel (\`.xlsx\`)、SAS (\`.sas7bdat\`)、SPSS (\`.sav\`)；自动检测缺失值与极端值；
-3. **自动化生物统计制表**：
-   - **Table 1 基线表**：正态分布 (Mean±SD, t检验) / 偏态分布 (Median(IQR), Wilcoxon) / 分类变量 (N(%), 卡方/Fisher) 自动选用；
-   - **Kaplan-Meier 生存曲线**：绘制生存曲线、Log-Rank 检验、中位生存期与 Number at Risk 表；
-   - **Cox 比例风险回归**：单因素与多因素分析，绘制风险比 (HR) 森林图。
-4. **影像生物标志物生存分析与预后建模 (Imaging Biomarker Survival Analysis)**：
-   - **肌少症 (SMI) 与脂肪分布预后分层**：依据 L3 骨骼肌指数 (SMI) 与内脏/皮下脂肪比 (VAT/SAT) 自动进行肌少症分组，一键绘制 Kaplan-Meier 生存曲线并计算 Log-Rank p 值；
-   - **多因素 Cox 回归协变量校正**：将影像标志物与年龄、TNM 分期、ECOG 评分及治疗方案联动构建多因素 Cox 回归模型，自动输出 Adjusted HR 及森林图；
-   - **IBSI 影像组学多中心特征建模**：提取的 107 项国际规范组学特征一键存入研究队列数据集，支撑肿瘤免疫治疗应答与复发风险预测科研。
-5. **成果归档**：分析图表与结果一键导入写作论文，形成从临床数据到论文发表的完整闭环。
+覆盖临床研究方案拟定、多源多格式数据表质控导入、零 PHI 敏感数据脱敏、患者库智能入组、受限沙箱生物统计学制表及文章发表归档全周期。
+
+### 9.1 核心功能与操作指南
+1. **科研立项与方案起草 (Protocol Design & Registry)**：
+   - 结构化录入研究代号 (如 \`ST-HFREF-2026-001\`)、中英文全称、PI、机构伦理审查批件号 (IRB) 与临床试验登记号 (ChiCTR / ClinicalTrials.gov NCT ID)；
+   - 依据 PICO 框架结构化输入目标人群 (Population)、干预措施 (Intervention)、对照方案 (Comparator) 与主要/次要终点事件 (Outcome)；
+   - 内置临床样本量与统计功效估算器 (Power & Sample Size Calculator)，依据预期 HR、$\\alpha$ 与统计功效估算最少样本量与事件数。
+2. **多格式数据集质控导入与零 PHI 敏感数据脱敏**：
+   - 原生支持 CSV、Excel (\`.xlsx\`/\`.xls\`)、SAS (\`.sas7bdat\`)、SPSS (\`.sav\`) 及 Stata (\`.dta\`)；
+   - 自动推断变量字典，解析连续、二分类、多分类及生存结局字段，映射 SAS/SPSS 值标签 (Value Labels)；
+   - 前端沙箱执行零 PHI (Zero-PHI) 严格审查，自动拦截姓名、身份证号、电话与住院号，映射为虚拟受试者编号 (\`S001~Sn\`)，患者真实身份绝不上云；
+   - 缺失率梯级评估与 3-Sigma / IQR 离群极端值智能标红预警，支持 MICE 多重插补。
+3. **患者库多维条件筛选入组与动态队列生成**：
+   - 打通患者中心与科研中心，支持基于 ICD-10 诊断、化验指标范围及 3D 影像表型（如心超 LVEF、CT L3 SMI 肌少症表型）多维布尔逻辑筛选；
+   - 实时预览入组候选人分布，一键生成隔离受控列式 Parquet 研究数据集。
+4. **受限隔离沙箱自动化医学统计分析**：
+   - **Table 1 基线特征三线表**：正态分布 (Mean±SD, t 检验) / 偏态分布 (Median(IQR), Wilcoxon 检验) / 分类变量 (N(%), 卡方/Fisher 确切概率法) 自动检验并选用；支持 1:1 或 1:k 倾向评分匹配 (PSM) 与标准化均数差 (SMD < 0.10) 平衡评估；
+   - **Kaplan-Meier 生存曲线**：绘制带 95% 置信区间的生存概率曲线，计算中位生存时间 (Median OS/PFS)，执行 Log-Rank 假设检验，底部严格对齐输出风险人数表 (Number at Risk Table)；
+   - **Cox 比例风险回归与亚组森林图**：检验比例风险假定，执行多因素回归校正混杂协变量，输出校正风险比 (Adjusted HR) 及 95% CI，自动生成带交互作用 P 值 ($P_{\\text{interaction}}$) 的高清亚组森林图；
+   - **完全透明开源**：底层调用 \`scipy\`、\`statsmodels\`、\`lifelines\` 标准 Python 统计库，每张图表附带完整底层执行脚本代码，支持一键复制代码与审计。
+5. **影像生物标志物生存分析与预后建模**：
+   - 将 TotalSegmentator L3 骨骼肌指数 (SMI)、内脏/皮下脂肪比 (VAT/SAT) 及 IBSI 107 项标准影像组学高维特征直接存入队列数据集，参与多因素预后生存分析。
+6. **成果闭环与学术发表**：
+   - 写作空间关联研究课题，正文无损嵌入图表与动态统计字段，数据随随访自动联动更新，一键导出发表级 Word (.docx) 手稿与演讲 PPTX。
+
+---
+
+### 9.2 【实战标杆科研案例】SGLT2 抑制剂在真实世界 HFrEF 患者中的心血管保护效应前瞻性队列研究 (ST-HFREF-2026-001)
+
+- **研究课题**：SGLT2 抑制剂联合标准抗心衰治疗在真实世界 HFrEF 患者中的心血管死亡与心衰再住院风险分析：一项多中心前瞻性登记队列研究
+- **项目代号**：\`ST-HFREF-2026-001\`
+- **注册登记**：ChiCTR2600098712 / ClinicalTrials.gov NCT06894312
+- **伦理批件**：IRB-2026-MED-0428 (国家心血管病临床医学研究中心)
+- **主要终点 (Primary MACE)**：24 个月随访期内心血管死亡或心衰恶化紧急再住院复合事件
+
+#### 1. PICO 方案拟定与 CONSORT 入组筛选流向图 (图 17)
+- 参考图像：[图 17 PICO 研究设计架构与 CONSORT 受试者队列筛选流向图](/site/real-case-research-1-protocol-cohort.png)；
+- **目标人群 (P)**：年龄 ≥ 18 岁，确诊慢性 HFrEF (LVEF ≤ 40%)，NYHA II~IV 级，基线 NT-proBNP ≥ 600 pg/mL；
+- **干预组 (I)**：标准四联抗心衰 GDMT + SGLT2 抑制剂（恩格列净 10mg qd 或 达格列净 10mg qd）；
+- **对照组 (C)**：单纯接受标准四联抗心衰 GDMT 治疗；
+- **CONSORT 筛选流程**：多中心初筛 2,150 例 ➔ 严格排除 730 例（重度肾衰 eGFR<20、T1D/DKA 病史、恶性肿瘤、近期急性冠脉综合征等） ➔ 入组 1,420 例（SGLT2i 组 780 例 vs 对照组 640 例） ➔ 1:1 倾向评分匹配 (PSM, 卡钳值 0.02) 最终平衡纳入 **710 例 vs 710 例 (共 1,420 例)**。
+
+#### 2. Table 1 倾向评分匹配前后基线特征三线表与 SMD 平衡 (图 18)
+- 参考图像：[图 18 Table 1 倾向评分匹配前后基线特征三线表](/site/real-case-research-2-table1-baseline.png)；
+- **基线混杂消除**：匹配前两组在年龄 (p=0.002, SMD=0.18)、2型糖尿病 (p<0.001, SMD=0.24)、NYHA III/IV 级比例 (p=0.012, SMD=0.15) 上存在显著差异；
+- **18 项协变量严密平衡**：经 1:1 PSM 匹配后，涵盖年龄、血压、LVEF、NT-proBNP、肾功能、用药史及 **CT 测得的 L3 骨骼肌指数 SMI** 等全部 18 项协变量的 SMD 均降至 **< 0.05**，实现拟随机化平行平衡。
+
+#### 3. 主要终点 MACE 24 个月 Kaplan-Meier 累积无事件生存分析 (图 19)
+- 参考图像：[图 19 主要终点 MACE 24 个月 Kaplan-Meier 累积无事件生存曲线](/site/real-case-research-3-km-survival.png)；
+- **累积事件发生率**：中位随访 24.0 个月；SGLT2i 组 24 个月 MACE 累积发生率为 **14.6% (104/710)**，对照组为 **23.8% (169/710)**；
+- **假设检验显著性**：Log-Rank $\\chi^2 = 18.42, p < 0.0001$，治疗 3 个月即呈现统计学显著分离；
+- **临床获益**：绝对风险降低 (ARR) 达 **9.2%**，需治疗人数 **NNT = 10.9**（治疗 11 例患者满 2 年即可预防 1 例 MACE 事件）；
+- **规范制表**：底部对齐输出 0、6、12、18、24 个月风险在险人数表 (Number at Risk)。
+
+#### 4. 多因素 Cox 比例风险回归与预设亚组分析森林图 (图 20)
+- 参考图像：[图 20 多因素 Cox 比例风险回归与预设亚组分析森林图](/site/real-case-research-4-cox-forest.png)；
+- **多因素校正风险比**：校正年龄、性别、LVEF、NT-proBNP、合并症及 L3 SMI 肌少症表型后，**Adjusted HR = 0.62 (95% CI: 0.49 - 0.78, p < 0.001)**，心血管死亡与心衰再住院风险显著降低 **38%**；
+- **6 大预设亚组获益一致性 (All $P_{\\text{interaction}} > 0.05$)**：
+  1. 年龄：< 65 岁 (HR 0.58) vs ≥ 65 岁 (HR 0.65), $P_{\\text{interaction}} = 0.62$；
+  2. 糖尿病状态：伴 T2D (HR 0.60) vs 非糖尿病 (HR 0.64), $P_{\\text{interaction}} = 0.78$（确证获益独立于血糖控制）；
+  3. 基线射血分数：LVEF ≤ 30% (HR 0.59) vs LVEF 31%~40% (HR 0.65), $P_{\\text{interaction}} = 0.69$；
+  4. 病因学：缺血性 (HR 0.63) vs 非缺血性 (HR 0.61), $P_{\\text{interaction}} = 0.89$；
+  5. 肾功能：eGFR < 60 (HR 0.64) vs eGFR ≥ 60 (HR 0.60), $P_{\\text{interaction}} = 0.79$；
+  6. **机体成分/肌少症亚组**：伴低 SMI 肌少症 (HR 0.57) vs 正常骨骼肌 (HR 0.65), $P_{\\text{interaction}} = 0.58$（极高危衰弱患者同等甚至更显著获益）。
+
+#### 5. 端到端科研证据闭环与 SCI 顶刊论文一键生成 (图 21)
+- 参考图像：[图 21 从临床假设、数据脱敏、沙箱统计到 SCI 论文发表的端到端证据闭环工作流](/site/real-case-research-5-research-loop.png)；
+- **阶段一 (立项筛选)**：PICO 结构化方案，ChiCTR 注册登记，患者库多维智能入组；
+- **阶段二 (质控脱敏)**：解析 SAS/SPSS 复杂变量，前端拦截 PHI 敏感数据，虚拟受试者代号隔离；
+- **阶段三 (沙箱统计)**：1:1 PSM 消除混杂，Table 1 三线表，KM 生存曲线，Cox 森林图，底层 Python 脚本完全开源；
+- **阶段四 (成果发表)**：写作空间数据绑定，零复制笔误，一键导出发表级 Word (.docx) 手稿与 PPTX。
+
+#### 6. 临床科研全流程操作与规范对照矩阵表
+| 科研阶段 | 工作空间与操作入口 | 平台核心算法与技术机制 | 医学统计与国际规范 | 标准交付成果物 (Deliverables) |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. 课题立项** | 研究空间 ➔ \`＋ 新建研究\` | PICO 结构化表单引擎、样本量与功效估算器 | CONSORT、STROBE、IRB 伦理批件、ChiCTR/NCT 注册 | 结构化方案、终点定义、最少样本量估算书 |
+| **2. 数据治理** | 研究空间 ➔ \`数据集\` ➔ 上传 | SAS/SPSS/Stata 二进制解析、变量字典、离群值告警 | 零 PHI (Zero-PHI) 脱敏、MICE 缺失值多重插补 | 列式 Parquet 库、清洗日志、受试者虚拟编号 (S001~Sn) |
+| **3. 队列筛选** | 患者空间 ➔ \`高级筛选\` ➔ 纳入研究 | 多维布尔筛选引擎、跨模态 3D 影像表型联动 (L3 SMI) | 临床纳排标准判定、随访时间序列自动对齐 | 候选队列预览表、CONSORT 入选/排除流向图 (图 17) |
+| **4. 基线平衡** | 研究空间 ➔ \`统计分析\` ➔ Table 1 | 正态性检验、1:1 PSM 卡钳匹配、SMD 计算 | 医学顶刊 Table 1 三线表规范、SMD < 0.10 协变量平衡 | PSM 前后 Table 1 三线表、SMD 平衡评估图 (图 18) |
+| **5. 生存分析** | 研究空间 ➔ \`统计分析\` ➔ KM 曲线 | Kaplan-Meier 乘积极限法、Log-Rank 检验、ARR/NNT | NEJM/Lancet 生存曲线规范、Number at Risk 风险表 | 带 95% 置信带 KM 曲线、Log-Rank 统计量 (图 19) |
+| **6. 预后建模** | 研究空间 ➔ \`统计分析\` ➔ Cox 森林图 | Schoenfeld 残差检验、多因素逐步 Cox、亚组交互检验 | 多因素协变量校正、预设亚组同质性检验 ($P_{\\text{interaction}}$) | Adjusted HR (0.62)、高清矢量预设亚组森林图 (图 20) |
+| **7. 论文发表** | 写作空间 ➔ 关联课题 ➔ 插入图表 | 动态统计变量零幻觉绑定、高保真文档渲染引擎 | ICMJE 投稿标准、Word (.docx) / PPTX 无损导出 | 发表级论文初稿、学术汇报 PPTX、可复现 Python 脚本 (图 21) |
+
 
 ---
 

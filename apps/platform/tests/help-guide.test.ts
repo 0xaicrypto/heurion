@@ -370,5 +370,105 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(md).toContain('D_{\\text{mm}}')
     expect(md).toContain('CompositeCanvas')
   })
+
+  it('9. 临床科研工作流 (Research) 完整使用方法与真实世界 SGLT2i 队列研究标杆案例验证', () => {
+    const resSec = HELP_SECTIONS.find(s => s.id === 'research')
+    expect(resSec).toBeDefined()
+    expect(resSec?.title).toContain('临床科研工作流')
+    const html = resSec!.contentHtml
+
+    // 9.1 ~ 9.5 操作方法全覆盖
+    expect(html).toContain('9.1 科研课题立项与研究方案结构化起草')
+    expect(html).toContain('PICO 框架结构化方案制定')
+    expect(html).toContain('Population/目标患病人群')
+    expect(html).toContain('Intervention/干预暴露因素')
+    expect(html).toContain('Comparator/对照方案')
+    expect(html).toContain('Outcome/研究终点事件')
+    expect(html).toContain('IRB-2026-MED-0428')
+    expect(html).toContain('ChiCTR2600098712')
+    expect(html).toContain('NCT06894312')
+    expect(html).toContain('样本量与统计功效前置估算')
+
+    // 9.2 数据集导入与零 PHI 敏感数据脱敏
+    expect(html).toContain('9.2 多源临床数据表导入、智能字典解析与零 PHI 脱敏')
+    expect(html).toContain('.sas7bdat')
+    expect(html).toContain('.sav / .dta')
+    expect(html).toContain('零 PHI 敏感信息红标拦截与前端物理脱敏')
+    expect(html).toContain('S001, S002')
+    expect(html).toContain('变量字典与数据类型智能推断')
+    expect(html).toContain('MICE')
+    expect(html).toContain('3-Sigma')
+
+    // 9.3 患者库多维条件筛选入组
+    expect(html).toContain('9.3 患者库多维条件筛选入组与动态队列生成')
+    expect(html).toContain('多维逻辑布尔检索')
+    expect(html).toContain('3D 影像表型智能联动')
+    expect(html).toContain('列式 Parquet 格式数据集')
+
+    // 9.4 隔离沙箱自动化统计
+    expect(html).toContain('9.4 隔离受限沙箱自动化医学统计分析')
+    expect(html).toContain('Table 1 基线三线表')
+    expect(html).toContain('倾向评分匹配 (PSM)')
+    expect(html).toContain('标准化均数差 (SMD)')
+    expect(html).toContain('Kaplan-Meier 生存分析')
+    expect(html).toContain('Number at Risk')
+    expect(html).toContain('Cox 比例风险与森林图')
+    expect(html).toContain('Adjusted HR')
+    expect(html).toContain('Schoenfeld 残差检验')
+
+    // 9.5 影像生物标志物生存分析与预后建模 & 9.6 成果闭环
+    expect(html).toContain('9.5 影像生物标志物生存分析与预后建模')
+    expect(html).toContain('9.6 论文稿件与学术幻灯片成果闭环')
+    expect(html).toContain('{{research.table1}}')
+    expect(html).toContain('{{research.km_curve}}')
+
+    // 真实科研标杆案例与 5 张高清真实图表
+    expect(html).toContain('ST-HFREF-2026-001')
+    expect(html).toContain('SGLT2 抑制剂联合标准抗心衰治疗在真实世界 HFrEF 患者中的心血管死亡与心衰再住院风险分析')
+    expect(html).toContain('/site/real-case-research-1-protocol-cohort.png')
+    expect(html).toContain('/site/real-case-research-2-table1-baseline.png')
+    expect(html).toContain('/site/real-case-research-3-km-survival.png')
+    expect(html).toContain('/site/real-case-research-4-cox-forest.png')
+    expect(html).toContain('/site/real-case-research-5-research-loop.png')
+
+    // 案例数据与统计指标深度自洽
+    expect(html).toContain('2,150 例')
+    expect(html).toContain('排除 730 例')
+    expect(html).toContain('1,420 例')
+    expect(html).toContain('710 例 vs 对照组 710 例')
+    expect(html).toContain('SMD &lt; 0.05')
+    expect(html).toContain('14.6%')
+    expect(html).toContain('23.8%')
+    expect(html).toContain('18.42')
+    expect(html).toContain('ARR')
+    expect(html).toContain('NNT = 10.9')
+    expect(html).toContain('Adjusted HR = 0.62')
+    expect(html).toContain('0.49 - 0.78')
+    expect(html).toContain('38%')
+    expect(html).toContain('伴低 SMI 肌少症表型')
+    expect(html).toContain('9.12 临床科研全流程操作与规范对照矩阵表')
+
+    // Markdown 导出完整性与解析一致性
+    const md = buildHelpMarkdown()
+    expect(md).toContain('## 九、 临床科研工作流 (Research)')
+    expect(md).toContain('ST-HFREF-2026-001')
+    expect(md).toContain('/site/real-case-research-1-protocol-cohort.png')
+    expect(md).toContain('/site/real-case-research-2-table1-baseline.png')
+    expect(md).toContain('/site/real-case-research-3-km-survival.png')
+    expect(md).toContain('/site/real-case-research-4-cox-forest.png')
+    expect(md).toContain('/site/real-case-research-5-research-loop.png')
+    expect(md).toContain('PICO 方案拟定与 CONSORT 入组筛选流向图')
+    expect(md).toContain('Table 1 倾向评分匹配前后基线特征三线表与 SMD 平衡')
+    expect(md).toContain('主要终点 MACE 24 个月 Kaplan-Meier 累积无事件生存分析')
+    expect(md).toContain('多因素 Cox 比例风险回归与预设亚组分析森林图')
+    expect(md).toContain('端到端科研证据闭环与 SCI 顶刊论文一键生成')
+    expect(md).toContain('临床科研全流程操作与规范对照矩阵表')
+
+    // 验证 Markdown 解析为文档块后节点结构有效
+    const blocks = parseBlocks(md)
+    expect(blocks.length).toBeGreaterThan(15)
+    const docNode = schema.node('doc', null, blocks)
+    expect(docNode.childCount).toBeGreaterThan(15)
+  })
 })
 
