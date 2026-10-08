@@ -150,3 +150,185 @@ describe('临床科研进阶套件测试 (Research Extensions)', () => {
     expect(docXml).toContain('L3 Skeletal Muscle Index')
   })
 })
+
+describe('临床科研 HTTP API 端点集成测试', async () => {
+  const { mkdtempSync, readFileSync, copyFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { buildApi } = await import('../src/http/api.ts')
+  const { Documents } = await import('../src/model/runtime.ts')
+  const { OpService } = await import('../src/ops/service.ts')
+  const { PostCheck } = await import('../src/collab/postcheck.ts')
+  const { SlideRenderer } = await import('../src/render/slides.ts')
+  const { Accounts } = await import('../src/auth/accounts.ts')
+  const { DatasetService, parseCsv } = await import('../src/datasets/service.ts')
+  const { StudyService } = await import('../src/research/service.ts')
+  const { Store } = await import('../src/store/db.ts')
+  const { TenantService } = await import('../src/auth/tenants.ts')
+  const { TenantKeys, kekFrom } = await import('../src/tenancy/keys.ts')
+  const { PatientService } = await import('../src/tenancy/patients.ts')
+  const { CohortService } = await import('../src/research/cohort.ts')
+  const { issueToken } = await import('../src/auth/token.ts')
+
+  const store = new Store(':memory:')
+  const docs = new Documents(store)
+  const ops = new OpService(docs)
+  const accounts = new Accounts(store, { secret: 'test-secret' })
+  const tenants = new TenantService(store, { devMode: false })
+  const keys = new TenantKeys(store, kekFrom({ secret: 'test-secret' }))
+  const patients = new PatientService(mkdtempSync(join(tmpdir(), 're-pt-')), tenants, keys, store)
+
+  const ingest = async (_owner: string, src: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 're-ing-'))
+    copyFileSync(src, join(dir, 'data.csv'))
+    const recs = parseCsv(readFileSync(src, 'utf8'))
+    const header = recs[0] ?? []
+    return {
+      csv: join(dir, 'data.csv'), cleanup: () => {},
+      profile: { ok: true, rows: recs.length - 1, truncated: false, columns: header.map(name => ({ name, type: 'text' as const, missing: 0, unique: 1 })) },
+    }
+  }
+
+  const dsDir = mkdtempSync(join(tmpdir(), 're-ds-'))
+  const datasets = new DatasetService(store, dsDir, ingest)
+  const studies = new StudyService(store, datasets)
+  const cohort = new CohortService(studies, patients, datasets)
+
+  const hosp = store.createTenant({ name: '测试研究中心', kind: 'org' })
+  const user = store.createUser({ username: 'dr_tester', display_name: 'Tester', password_hash: 'x', tenant: { id: hosp.id, role: 'admin' } })
+  const study = studies.create(user.id, { title: '心衰前瞻性队列研究', design: 'prospective_cohort' })
+  const authToken = `Bearer ${issueToken('test-secret', { u: user.id, d: '*', p: ['read', 'write'], aud: 'web', ttlSeconds: 3600, v: user.token_version })}`
+
+  // 创建一个测试数据集
+  const csvContent = 'group,age,sex,lvef\n达格列净组,66,M,31.0\n达格列净组,64,F,32.5\n对照组,65,M,31.2\n对照组,68,M,28.9\n'
+  const dsUpload = datasets.upload(user.id, 'dapa_study.csv', Buffer.from(csvContent, 'utf-8'), { name: 'DAPA-Study-Cohort' })
+  await datasets.idle()
+
+  const app = buildApi({
+    docs,
+    ops,
+    turns: {} as any,
+    postcheck: new PostCheck(docs),
+    crossref: {} as any,
+    renderer: new SlideRenderer(mkdtempSync(join(tmpdir(), 're-render-'))),
+    accounts,
+    devMode: true,
+    devUser: user.id,
+    datasets,
+    studies,
+    patients,
+    cohort,
+  })
+
+  it('1. GET /api/datasets/:did/table1-docx 原生 Word 导出', async () => {
+    const res = await app.request(`/api/datasets/${dsUpload.dataset.id}/table1-docx?group_col=group`, {
+      method: 'GET',
+      headers: { Authorization: authToken },
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    expect(res.headers.get('content-disposition')).toContain('.docx')
+
+    const buf = await res.arrayBuffer()
+    const docxBytes = new Uint8Array(buf)
+    expect(docxBytes.length).toBeGreaterThan(1000)
+
+    const unzipped = unzipSync(docxBytes)
+    expect(unzipped['word/document.xml']).toBeDefined()
+    const docXml = new TextDecoder().decode(unzipped['word/document.xml'])
+    expect(docXml).toContain('<w:tblBorders>')
+    expect(docXml).toContain('达格列净组')
+    expect(docXml).toContain('对照组')
+  })
+
+  it('2. POST /api/datasets/:did/table1-docx 带自定义配置导出', async () => {
+    const res = await app.request(`/api/datasets/${dsUpload.dataset.id}/table1-docx`, {
+      method: 'POST',
+      headers: {
+        Authorization: authToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        group_col: 'group',
+        title: 'Table 1. Baseline Characteristics of Pilot Cohort',
+        labels: { lvef: 'Left Ventricular Ejection Fraction (%)' },
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    const buf = await res.arrayBuffer()
+    const unzipped = unzipSync(new Uint8Array(buf))
+    const docXml = new TextDecoder().decode(unzipped['word/document.xml'])
+    expect(docXml).toContain('Table 1. Baseline Characteristics of Pilot Cohort')
+    expect(docXml).toContain('Left Ventricular Ejection Fraction')
+  })
+
+  it('3. GET /api/studies/:sid/cohort/consort 生成出版级流向图', async () => {
+    const res = await app.request(`/api/studies/${study.id}/cohort/consort?assessed=500`, {
+      method: 'GET',
+      headers: { Authorization: authToken },
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.svg).toContain('<svg')
+    expect(body.svg).toContain('CONSORT 2010')
+    expect(body.mermaid).toContain('graph TD')
+    expect(body.data.total_assessed).toBe(500)
+
+    // 测试 ?format=svg 直接返回矢量图
+    const resSvg = await app.request(`/api/studies/${study.id}/cohort/consort?format=svg`, {
+      method: 'GET',
+      headers: { Authorization: authToken },
+    })
+    expect(resSvg.status).toBe(200)
+    expect(resSvg.headers.get('content-type')).toBe('image/svg+xml')
+    const svgText = await resSvg.text()
+    expect(svgText).toContain('</svg>')
+  })
+
+  it('4. POST /api/studies/:sid/causal/e-value VanderWeele 计算与抗辩生成', async () => {
+    const res = await app.request(`/api/studies/${study.id}/causal/e-value`, {
+      method: 'POST',
+      headers: {
+        Authorization: authToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        effect_type: 'HR',
+        estimate: 0.74,
+        ci_lower: 0.65,
+        ci_upper: 0.85,
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.e_value_point).toBeGreaterThanOrEqual(2.0)
+    expect(body.e_value_ci).toBeGreaterThanOrEqual(1.58)
+    expect(body.academic_defense_zh).toContain('VanderWeele E-value')
+    expect(body.academic_defense_en).toContain('robust causal resilience')
+  })
+
+  it('5. POST /api/studies/:sid/causal/love-plot 协变量平衡散点图生成', async () => {
+    const res = await app.request(`/api/studies/${study.id}/causal/love-plot`, {
+      method: 'POST',
+      headers: {
+        Authorization: authToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'PSM Balance',
+        covariates: [
+          { name: 'age', label_zh: '年龄', pre_smd: 0.22, post_smd: 0.03 },
+        ],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.svg).toContain('<svg')
+    expect(body.svg).toContain('PSM Balance')
+  })
+})

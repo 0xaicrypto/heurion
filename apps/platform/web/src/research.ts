@@ -152,6 +152,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
           <div class="rs-card-head"><h3>数据集</h3>${w('<button class="small-btn" data-act="upload">＋ 上传数据</button><input type="file" id="rsUpload" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.xpt,.sas7bdat,.sav,.zsav,.dta" multiple hidden>')}</div>
           ${s.datasets.length ? `<ul class="rs-list">${s.datasets.map(d => `<li class="rs-item" data-dataset="${d.dataset_id}"><span class="rs-kind">${esc(d.format)}</span><b>${esc(d.name)}</b>
             <span class="muted small">${d.status === 'ready' ? `${d.rows.toLocaleString()} 行 × ${d.cols} 列` : d.status === 'review' ? '<span class="flag-L">待处理身份信息</span>' : d.status === 'failed' ? '<span class="flag-H">导入失败</span>' : '处理中…'}</span>
+            ${d.status === 'ready' ? `<button class="quiet small-btn" data-export-table1="${d.dataset_id}" title="导出符合医学期刊标准的原生 Word (.docx) Table 1 三线表">Word Table 1</button>` : ''}
             ${w(`<button class="quiet small-btn" data-unlink="dataset:${d.dataset_id}" title="移出研究（数据集回到上传者的「全部数据集」里）">移出</button>`)}</li>`).join('')}</ul>`
             : '<p class="muted small">上传 CSV、Excel、SAS、SPSS、Stata。在这个研究的文档里和 AI 对话时，会自动带上这些数据集。</p>'}
         </section>
@@ -198,12 +199,17 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     const SHAPE: Record<string, string> = { wide: '宽表', long: '长表' }
     return `<section class="rs-card wide" id="rsCohort">
       <div class="rs-card-head"><h3>入组患者${active.length ? `<span class="muted small"> · ${active.length} 人</span>` : ''}</h3>
-        ${canEdit ? `<button class="small-btn" data-act="screen">＋ 筛选入组</button>${active.length ? '<button class="small-btn" data-act="gen">生成研究数据集</button>' : ''}` : ''}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button class="small-btn" data-act="consort" title="查看出版级 CONSORT 2010 试验入组纳排流向图 (Figure 1)">📊 CONSORT 流程图</button>
+          <button class="small-btn" data-act="evalue" title="因果推断敏感度分析与顶刊审稿回复论述">⚖️ 因果推断 E-value</button>
+          ${canEdit ? `<button class="small-btn" data-act="screen">＋ 筛选入组</button>${active.length ? '<button class="small-btn" data-act="gen">生成研究数据集</button>' : ''}` : ''}
+        </div></div>
       ${c.pending.length ? `<div class="banner pt-pending"><span class="dot"></span>AI 建议了 ${c.pending.length} 项入组 / 移出，待你确认</div>
         <ul class="rs-list">${c.pending.map(p => `<li class="rs-item"><span class="rs-kind">${p.kind === 'enroll' ? '入组' : '移出'}</span><b>${esc(p.code ?? '—')}</b><span class="muted small">${esc(p.reason)}</span>
           <button class="small-btn primary" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="accept">确认</button><button class="quiet small-btn" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="reject">不采纳</button></li>`).join('')}</ul>` : ''}
       ${sets.map(d => `<div class="rs-cohort-ds${d.stale ? ' stale' : ''}" data-dataset="${d.dataset_id}"><span class="rs-kind">${SHAPE[d.shape] ?? d.shape} v${d.version}</span>
-        <span>${esc(d.name)} <span class="muted small">${d.rows} 行 · ${date(d.generated_at)}</span></span>
+        <span style="flex:1;">${esc(d.name)} <span class="muted small">${d.rows} 行 · ${date(d.generated_at)}</span></span>
+        ${d.shape === 'wide' ? `<button class="small-btn primary" data-export-table1="${d.dataset_id}" title="一键导出符合医学期刊标准的原生 Word (.docx) Table 1 基线三线表">📥 导出 Table 1 Word</button>` : ''}
         ${d.stale ? `<span class="flag-L small">入组或化验有变化，数据集已过期</span>${canEdit ? `<button class="small-btn" data-regen="${d.shape}">刷新</button>` : ''}` : '<span class="muted small">最新</span>'}</div>`).join('')}
       ${c.subjects.length ? `<div class="ds-scroll"><table class="users rs-subjects"><thead><tr><th>研究编号</th><th>代号</th><th>性别</th><th>入组时年龄</th><th>诊断标签</th><th>入组日期</th><th></th></tr></thead><tbody>
         ${c.subjects.map(x => `<tr class="${x.status === 'active' ? '' : 'muted'}"><td><b>${esc(x.subject_id)}</b></td>
@@ -310,6 +316,219 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
         void openStudy(studyId); void loadList()
       } catch (err) { btn.disabled = false; btn.textContent = '生成'; notice((err as Error).message, true) }
     }
+  }
+
+  /** 原生 Word (.docx) Table 1 导出下载 */
+  async function downloadTable1Docx(datasetId: string): Promise<void> {
+    try {
+      notice('正在生成原生 Word 三线表…')
+      const token = hooks.token()
+      const res = await fetch(`/api/datasets/${datasetId}/table1-docx`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: '导出失败' }))
+        throw new Error(err.error || '导出失败')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Table1_Baseline_${datasetId}.docx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      notice('已成功导出原生 Word (.docx) Table 1 基线三线表！')
+    } catch (err) {
+      notice((err as Error).message, true)
+    }
+  }
+
+  /** CONSORT 2010 受试者纳排筛选流向图弹窗 */
+  async function consortDialog(studyId: string): Promise<void> {
+    const dlg = $('dialog')
+    dlg.innerHTML = `<div class="dialog-card wide" role="dialog" aria-modal="true" aria-label="CONSORT 2010 流向图">
+      <div class="dialog-head">
+        <h2>CONSORT 2010 试验入组筛选流向图 (Figure 1)</h2>
+        <button class="quiet" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="dialog-body" style="display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span class="muted small">医学顶级期刊 (NEJM / Lancet / JAMA) 论文 Figure 1 标准入组流向图</span>
+          <span class="grow"></span>
+          <button class="small-btn" id="rsConsortCopyMermaid">📋 复制 Mermaid 代码</button>
+          <button class="small-btn primary" id="rsConsortDownloadSvg">⬇️ 下载矢量 SVG</button>
+        </div>
+        <div id="rsConsortSvgContainer" style="background:#ffffff;border:1px solid var(--line);border-radius:8px;padding:20px;overflow:auto;max-height:560px;display:flex;justify-content:center;align-items:flex-start;">
+          <div class="muted small" style="padding:40px;">正在生成出版级流向图…</div>
+        </div>
+        <div class="muted small" style="border-top:1px solid var(--line);padding-top:8px;">
+          💡 提示：该矢量图可直接拖入或插入论文排版系统；点击「复制 Mermaid 代码」可直接粘贴嵌入 Markdown 方案与报告。
+        </div>
+      </div>
+    </div>`
+    dlg.hidden = false
+    dlg.onclick = e => { if (e.target === dlg || (e.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
+
+    try {
+      const res = await api<{ svg: string; mermaid: string; data: any }>(`/api/studies/${studyId}/cohort/consort`)
+      const container = document.getElementById('rsConsortSvgContainer')
+      if (container) container.innerHTML = res.svg
+
+      const copyBtn = document.getElementById('rsConsortCopyMermaid')
+      if (copyBtn) {
+        copyBtn.onclick = () => {
+          navigator.clipboard.writeText(res.mermaid).then(() => {
+            notice('已复制 CONSORT Mermaid 流程图代码，可直接贴入 Markdown 文稿')
+          }).catch(() => {
+            notice('复制失败，请手动选取', true)
+          })
+        }
+      }
+
+      const dlBtn = document.getElementById('rsConsortDownloadSvg')
+      if (dlBtn) {
+        dlBtn.onclick = () => {
+          const blob = new Blob([res.svg], { type: 'image/svg+xml;charset=utf-8' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `CONSORT_2010_Flowchart_${studyId}.svg`
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+          notice('已下载 CONSORT 矢量 SVG 图')
+        }
+      }
+    } catch (err) {
+      notice((err as Error).message, true)
+    }
+  }
+
+  /** VanderWeele E-value 混杂偏倚敏感性分析弹窗 */
+  function evalueDialog(studyId: string): void {
+    const dlg = $('dialog')
+    dlg.innerHTML = `<div class="dialog-card wide" role="dialog" aria-modal="true" aria-label="因果推断 E-value">
+      <div class="dialog-head">
+        <h2>因果推断混杂偏倚分析 · VanderWeele E-value</h2>
+        <button class="quiet" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="dialog-body" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="muted small">
+          基于 VanderWeele &amp; Ding (Ann Intern Med 2017) 权威统计学公式。量化评估未知/未测量潜在混杂因素需要达到何种关联强度，才足以完全推翻当前效应估计。专为医学顶刊审稿意见回复 (Reviewer Rebuttal) 设计。
+        </div>
+        <form id="evalueForm" class="form" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;background:var(--panel-active, rgba(0,0,0,0.03));padding:14px;border-radius:8px;border:1px solid var(--line);">
+          <label>效应指标 (Effect Measure)
+            <select name="effect_type">
+              <option value="HR" selected>HR (风险比 - 生存分析/Cox回归)</option>
+              <option value="OR">OR (比值比 - Logistic回归)</option>
+              <option value="RR">RR (相对危险度 - 队列研究)</option>
+            </select>
+          </label>
+          <label>点估计值 (Estimate)
+            <input name="estimate" type="number" step="0.01" value="0.74" required>
+          </label>
+          <div class="row" style="gap:8px;align-items:flex-end;">
+            <label style="flex:1;">95% CI 下限
+              <input name="ci_lower" type="number" step="0.01" value="0.65" required>
+            </label>
+            <label style="flex:1;">95% CI 上限
+              <input name="ci_upper" type="number" step="0.01" value="0.85" required>
+            </label>
+          </div>
+          <div style="grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" name="rare_outcome" checked>
+              <span class="small">罕见事件假设 (Rare outcome assumption，结局发生率 &lt; 15%)</span>
+            </label>
+            <button type="submit" class="primary small-btn">计算 E-value 与生成抗辩论述</button>
+          </div>
+        </form>
+        <div id="evalueResult" style="display:none;flex-direction:column;gap:12px;"></div>
+      </div>
+    </div>`
+    dlg.hidden = false
+    dlg.onclick = e => { if (e.target === dlg || (e.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
+
+    const form = dlg.querySelector<HTMLFormElement>('#evalueForm')!
+    const compute = async () => {
+      const f = new FormData(form)
+      const effect_type = f.get('effect_type') as string
+      const estimate = Number(f.get('estimate'))
+      const ci_lower = Number(f.get('ci_lower'))
+      const ci_upper = Number(f.get('ci_upper'))
+      const rare_outcome = f.get('rare_outcome') === 'on'
+
+      try {
+        const res = await api<{
+          effect_type: string
+          estimate: number
+          ci_lower: number
+          ci_upper: number
+          e_value_point: number
+          e_value_ci: number
+          academic_defense_zh: string
+          academic_defense_en: string
+        }>(`/api/studies/${studyId}/causal/e-value`, {
+          method: 'POST',
+          body: JSON.stringify({ effect_type, estimate, ci_lower, ci_upper, rare_outcome }),
+        })
+
+        const resBox = document.getElementById('evalueResult')
+        if (resBox) {
+          resBox.style.display = 'flex'
+          resBox.innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div style="background:var(--accent-tint, #eff6ff);border:1px solid #bfdbfe;border-radius:8px;padding:12px;text-align:center;">
+                <div class="muted small">VanderWeele E-value (点估计)</div>
+                <div style="font-size:26px;font-weight:700;color:#1d4ed8;margin-top:4px;">${res.e_value_point.toFixed(2)}</div>
+                <div class="muted small" style="margin-top:2px;">未测量混杂需达 ${res.e_value_point.toFixed(2)} 倍关联方可完全消除效应</div>
+              </div>
+              <div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;text-align:center;">
+                <div class="muted small">95% CI 保守边界 E-value</div>
+                <div style="font-size:26px;font-weight:700;color:#047857;margin-top:4px;">${res.e_value_ci.toFixed(2)}</div>
+                <div class="muted small" style="margin-top:2px;">推翻统计显著性所需之最低混杂强度</div>
+              </div>
+            </div>
+            <div style="border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <b>🇨🇳 中文审稿抗辩论述 (适用于答复意见书 / 论著讨论段落)</b>
+                <button class="quiet small-btn" id="copyDefenseZh">复制中文论述</button>
+              </div>
+              <p style="font-size:13px;line-height:1.6;margin:0;color:var(--text);">${esc(res.academic_defense_zh)}</p>
+            </div>
+            <div style="border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <b>🇬🇧 English Reviewer Rebuttal (For NEJM / Lancet / JAMA Response)</b>
+                <button class="quiet small-btn" id="copyDefenseEn">Copy English Rebuttal</button>
+              </div>
+              <p style="font-size:13px;line-height:1.6;margin:0;font-family:Times New Roman, serif;color:var(--text);">${esc(res.academic_defense_en)}</p>
+            </div>
+          `
+
+          document.getElementById('copyDefenseZh')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(res.academic_defense_zh)
+            notice('已复制中文审稿抗辩论述')
+          })
+          document.getElementById('copyDefenseEn')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(res.academic_defense_en)
+            notice('Copied English Reviewer Rebuttal to clipboard')
+          })
+        }
+      } catch (err) {
+        notice((err as Error).message, true)
+      }
+    }
+
+    form.onsubmit = e => {
+      e.preventDefault()
+      void compute()
+    }
+
+    // Trigger initial calculation
+    void compute()
   }
 
   const PROMPTS: Record<string, (t: string) => string> = {
@@ -546,11 +765,19 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (fig) { await hooks.datasets.showProvenance(fig); return }
     const nd = t.closest<HTMLElement>('[data-new]')?.dataset.new
     if (nd) { await newDoc(nd as 'protocol' | 'manuscript' | 'slides', s); return }
+    const expT1 = t.closest<HTMLElement>('[data-export-table1]')?.dataset.exportTable1
+    if (expT1) {
+      e.stopPropagation()
+      void downloadTable1Docx(expT1)
+      return
+    }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
     if (act === 'more') { $('rsMore').hidden = !$('rsMore').hidden; return }
     if (act === 'upload') { ($('rsUpload') as HTMLInputElement).click(); return }
     if (act === 'screen') { screenDialog(id); return }
     if (act === 'gen') { datasetDialog(id); return }
+    if (act === 'consort') { void consortDialog(id); return }
+    if (act === 'evalue') { evalueDialog(id); return }
     if (act === 'attach') { $('rsMore').hidden = true; await attachExisting(s); return }
     if (act === 'addmember') {
       const user = ($('rsAddUser') as HTMLSelectElement).value, role = ($('rsAddRole') as HTMLSelectElement).value

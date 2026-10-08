@@ -224,6 +224,13 @@ const NOT_FOR_AI: Record<string, string> = {
   'DELETE /api/calendar/events/:id': '医生删除排期日程（医生操作）',
   'POST /api/docs/:id/comments/:cid/exempt-claim': '医生在界面上将某论断标记为临床经验豁免（医生主观判定）',
   'POST /api/docs/:id/comments/:cid/apply-claim-fix': '医生在界面上一键采纳论断修改建议并替换正文（医生确认操作）',
+  // 临床科研发表级证据链与三线表导出（由界面交互与下载）
+  'GET /api/datasets/:did/table1-docx': '原生 Word (.docx) Table 1 二进制文件流，由浏览器界面下载',
+  'POST /api/datasets/:did/table1-docx': '原生 Word (.docx) Table 1 二进制文件流，由浏览器界面下载',
+  'GET /api/studies/:sid/cohort/consort': '出版级 CONSORT 2010 流程图矢量 SVG 预览与下载，由界面展示下载',
+  'POST /api/studies/:sid/cohort/consort': '出版级 CONSORT 2010 流程图参数调整与矢量 SVG 生成，由界面交互',
+  'POST /api/studies/:sid/causal/e-value': '因果推断 VanderWeele E-value 敏感度与审稿回复交互计算器，由界面操作',
+  'POST /api/studies/:sid/causal/love-plot': '因果推断 Love Plot 协变量平衡收敛散点图生成，由界面展示',
 }
 
 describe('人机对等：每个接口（AI 的权限 = 用户的权限）', () => {
