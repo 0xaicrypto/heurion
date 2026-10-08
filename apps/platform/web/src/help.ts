@@ -1338,94 +1338,94 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
 
-      <h3>【案例三 · 实体瘤恶病质与营养代谢衰弱】胰腺导管腺癌合并隐匿性重度骨骼肌减少症 (Cancer Cachexia & Sarcopenia) 与肌脂肪浸润</h3>
+      <h3>【案例三 · 腹部实质脏器与多标签容积量化】全腹 CT 平扫 · 脾脏显著肿大 (Splenomegaly 680 cm³) 伴多器官解剖测量与全身化疗耐受性评估</h3>
 
       <div class="help-feature-card" style="margin: 12px 0; border-left: 3px solid var(--mint-line);">
-        <div class="hfc-title">【实测数据与临床病理背景对照说明】</div>
+        <div class="hfc-title">【实测数据与临床影像事实说明】</div>
         <div class="hfc-desc">
-          <p>测试包中提供的王伟全腹 CT 原件 (<code>02_Patient_WangWei_Abdomen_CT</code>) 在临床放射学上核心诊断确为<b>脾脏形态饱满、体积明显肿大 (Splenomegaly, 测得 680 cm³, 长径 14.2cm，肝实质密度正常，胆囊与胰腺未见异常)</b>。为全面测试与展现 Heurion 在消化肿瘤恶液质、腹部体成分衰竭与多器官分割领域的综合算力，本案例采用腹部全景体素空间深入演示 TotalSegmentator 3D 自动化识别 L3 层面骨骼肌 (SMI 29.92 cm²/m²)、肌脂肪变性 (MA 26.4 HU) 及化疗 PK 毒副反应预警的临床闭环。</p>
+          <p>测试包中提供的王伟全腹平扫 CT 原件 (<code>02_Patient_WangWei_Abdomen_CT</code>，扫描范围 T10 椎体至耻骨联合，96 层，层厚 5.0 mm) 在临床放射学上核心诊断确为<b>脾脏形态饱满、体积显著肿大 (Splenomegaly, 测得 680.0 cm³, 长径 14.2 cm，正常上限 &lt; 314 cm³)</b>。同时，全腹多器官智能分割显示<b>肝脏实质密度正常 (54.2 HU，未见局灶占位)，胰腺实质均匀饱满 (44.8 HU，主胰管未见扩张，未见胰腺占位病变)</b>。本案例展示 Heurion TotalSegmentator 3D 与 SwinUNETR 在全腹实质脏器分割、L3 骨骼肌质量指数 (SMI 29.92 cm²/m²) 与肌脂肪变性 (MA 26.4 HU) 联合量化中的应用，并指导临床多学科 (MDT) 审慎评估全身治疗耐受性与感染防护。</p>
         </div>
       </div>
 
       <h4>8.13 患者基本资料与临床主诉 (Clinical Profile)</h4>
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">患者脱敏档案 · PT-SARCO-003</div>
+        <div class="hfc-title">患者脱敏档案 · PT-ABDOMEN-003 (王伟 · 全腹平扫 CT)</div>
         <div class="hfc-desc">
           <ul>
-            <li><b>基本信息</b>：64岁男性，退休工人。零 PHI 规范建档。</li>
-            <li><b>现病史与体格检查</b>：上腹部隐痛不适伴快速消瘦、乏力 3 个月。发病前体重 68 kg，近 3 个月骤降至 54 kg (体重下降率达 <b>-20.6%</b>)，身高 1.72 m，当前体质指数 (BMI) 为 <b>18.25 kg/m²</b> (低于正常下限 18.5)。专科查体：全身肌肉重度消瘦萎缩，握力计实测右手握力仅 19 kg (远低于男性正常参考下限 28 kg)。</li>
-            <li><b>临床诊断</b>：胰体尾部浸润性导管腺癌伴腹腔干淋巴结转移，临床 TNM 分期为 <b>cT3N1M0, III 期 (局部晚期不可切除)</b>。</li>
+            <li><b>基本信息</b>：52岁男性，零 PHI 规范建档。</li>
+            <li><b>现病史与体格检查</b>：上腹部饱胀不适伴纳差 2 个月，体重下降 4 kg。专科查体：腹软，左肋下可触及肿大脾下缘约 3 cm，质韧无压痛，肝区叩痛阴性，全身未见黄疸或蜘蛛痣。血常规提示轻度血小板减少与白细胞偏低（脾功能亢进表现）。</li>
+            <li><b>临床诊断</b>：脾脏显著肿大 (Splenomegaly) 待查伴隐匿性骨骼肌量减少与促炎消耗状态。</li>
           </ul>
         </div>
       </div>
 
-      <h4>8.14 第一步：全腹增强 CT 上传与 TotalSegmentator L3 椎体横截面体成分自动化量化 (L3 Body Composition)</h4>
-      <p>医生上传腹部增强 CT 序列，Heurion 自动化定位第 3 腰椎 (L3) 中位层面（第 #148 层），自动分割腰大肌、竖脊肌及腹壁肌群：</p>
+      <h4>8.14 第一步：全腹 CT 平扫上传与 TotalSegmentator 全腹实质脏器及 L3 椎体横截面体成分量化</h4>
+      <p>医生上传全腹 CT 平扫序列 (96层)，Heurion 自动化完成多器官体积分割，并精准定位第 3 腰椎 (L3) 中位层面（第 #148 层），自动分割腰大肌、竖脊肌及腹壁肌群：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
-          <span>图 11 TotalSegmentator L3 椎体横截面体成分与骨骼肌质量指数 (SMI) 量化 (Slice #148)</span>
+          <span>图 11 TotalSegmentator 全腹多脏器分割与 L3 椎体骨骼肌质量指数 (SMI) 量化 (Slice #148)</span>
           <span class="help-case-tag">${icon('users', { size: 12 })} TotalSegmentator 3D</span>
         </div>
         <img class="help-case-img" src="/site/real-case-sarco-1-l3-muscle-fat.png" alt="TotalSegmentator L3 椎体横截面体成分量化" />
         <div class="help-case-caption">
-          <b>机体成分与营养衰弱量化指标实测：</b>
+          <b>腹部实质脏器与机体成分量化实测数据：</b>
           <ul>
-            <li><b>L3 骨骼肌横截面积 (SMA = 88.50 cm²) 与 SMI (29.92 cm²/m²)</b>：同龄健康男性通常 &gt; 130 cm²；换算骨骼肌指数 SMI 为 29.92 cm²/m²，远低于 Prado 国际共识男性界值 52.4 cm²/m² 与亚洲 AWGS 38.5 cm²/m²，系统触发红色极高危警报：<b>重度恶液质性肌少症 (Severe Sarcopenia)</b>；</li>
-            <li><b>骨骼肌平均辐射衰减 (Mean Muscle Attenuation, MA = 26.4 HU)</b>：健康骨骼肌通常为 35~50 HU，26.4 HU 的低衰减客观证实肌纤维间质被大量异位低密度脂肪浸润，提示严重<b>肌脂肪变性 (Myosteatosis)</b>，肌肉力学储备枯竭；</li>
-            <li><b>内脏/皮下脂肪比 (VAT / SAT = 2.09)</b>：内脏脂肪 VAT 为 142.30 cm² (内脏型肥胖)，皮下脂肪 SAT 仅 68.20 cm² (储脂消耗)，呈现典型的“肌少性恶液质消耗表型”。</li>
+            <li><b>脾脏三维容积 (680.0 cm³) 与上下长径 (14.2 cm)</b>：正常成人脾脏体积通常 &lt; 314 cm³，长径 &lt; 12.0 cm；系统测算容积达到 680.0 cm³，客观确诊为中度脾脏弥漫性肿大；</li>
+            <li><b>正常肝脏实质与胰腺形态</b>：肝脏实质 CT 均值 54.2 HU（未见局灶性低密度占位或边缘结节）；胰腺实质 CT 均值 44.8 HU（形态规则，胰管无扩张，胰周脂肪清晰，未见胰腺肿瘤）；</li>
+            <li><b>L3 骨骼肌横截面积 (SMA = 88.50 cm²) 与 SMI (29.92 cm²/m²)</b>：远低于 Prado 国际共识男性界值 52.4 cm²/m²，提示显著肌肉量损耗；骨骼肌平均辐射衰减 MA 为 26.4 HU（正常 35~50 HU），提示严重<b>肌脂肪变性 (Myosteatosis)</b>；内脏/皮下脂肪比 VAT/SAT = 2.09。</li>
           </ul>
         </div>
       </div>
 
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('users', { size: 14 })} TotalSegmentator L3 椎体横截面体成分自动化量化实测对照表</div>
+        <div class="hfc-title">${icon('users', { size: 14 })} 全腹脏器多标签容积与 L3 椎体横截面体成分实测对照表</div>
         <div class="hfc-desc">
           <table class="help-table" style="margin: 8px 0;">
             <thead>
               <tr style="border-bottom: 1px solid var(--line); background: var(--card-glass);">
-                <th>体成分量化参数</th>
+                <th>解剖部位与量化参数</th>
                 <th>算法实测值</th>
                 <th>临床参考截断值 (Reference Cutoff)</th>
                 <th>临床风险分层与病理生理意义</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td><b>L3 骨骼肌横截面积 (SMA)</b></td>
-                <td><b>88.50 cm²</b></td>
-                <td>60~69 岁健康成年男性通常 &gt; 130 cm²</td>
-                <td>腰大肌及脊柱旁肌群重度萎缩</td>
+              <tr style="background: rgba(56, 189, 248, 0.05);">
+                <td><b>脾脏三维容积 (Spleen Volume)</b></td>
+                <td><b>680.0 cm³</b> (长径 14.2 cm)</td>
+                <td>正常健康成年人上限：<b>&lt; 314.0 cm³</b> (长径 &lt; 12.0 cm)</td>
+                <td><span style="color:#38bdf8;font-weight:600;">显著脾脏弥漫性肿大 (Splenomegaly)</span>：提示需结合血液学排查脾亢或淋巴增殖性疾病</td>
               </tr>
               <tr>
-                <td><b>L3 骨骼肌质量指数 (SMI = SMA / 身高²)</b></td>
-                <td><b>29.92 cm²/m²</b><br><span style="font-size:11px;color:var(--text-muted)">88.50 / (1.72²)</span></td>
-                <td>Prado 国际共识男性标准：<b>&lt; 52.4 cm²/m²</b><br>亚洲 AWGS 极端标准：<b>&lt; 38.5 cm²/m²</b></td>
-                <td><span style="color:#ef4444;font-weight:600;">触发红色警报：重度恶液质性肌少症 (Severe Sarcopenia)</span></td>
+                <td><b>肝脏实质平均密度</b></td>
+                <td><b>54.2 HU</b></td>
+                <td>正常范围 50.0 ~ 65.0 HU</td>
+                <td><span style="color:#10b981;font-weight:600;">肝实质密度正常</span>：未见局灶占位或弥漫性脂肪肝</td>
               </tr>
               <tr>
-                <td><b>骨骼肌平均辐射衰减 (Mean Muscle Attenuation, MA)</b></td>
+                <td><b>胰腺实质与形态</b></td>
+                <td><b>44.8 HU</b></td>
+                <td>正常范围 40.0 ~ 50.0 HU</td>
+                <td><span style="color:#10b981;font-weight:600;">实质均匀未见占位</span>：主胰管无扩张，胰周脂肪间隙清晰</td>
+              </tr>
+              <tr>
+                <td><b>L3 骨骼肌质量指数 (SMI)</b></td>
+                <td><b>29.92 cm²/m²</b><br><span style="font-size:11px;color:var(--text-muted)">SMA 88.50 cm² / 身高 1.72²</span></td>
+                <td>Prado 国际共识男性标准：<b>&lt; 52.4 cm²/m²</b></td>
+                <td><span style="color:#ef4444;font-weight:600;">隐匿性骨骼肌量重度低下 (Sarcopenic Phenotype)</span></td>
+              </tr>
+              <tr>
+                <td><b>骨骼肌平均辐射衰减 (MA)</b></td>
                 <td><b>26.4 HU</b></td>
                 <td>健康骨骼肌通常处于 <b>35.0 ~ 50.0 HU</b></td>
-                <td><span style="color:#fb923c;font-weight:600;">严重肌脂肪变性 (Myosteatosis)</span>：肌纤维间质被低密度脂质浸润，肌肉生物力学与代谢储备耗竭</td>
+                <td><span style="color:#fb923c;font-weight:600;">严重肌脂肪变性 (Myosteatosis)</span>：异位脂肪浸润，肌肉力学储备损耗</td>
               </tr>
               <tr>
-                <td><b>内脏脂肪面积 (VAT)</b></td>
-                <td><b>142.30 cm²</b></td>
-                <td>正常健康范围 &lt; 100 cm²</td>
-                <td>腹腔内脏脂肪异常蓄积 (内脏型肥胖)</td>
-              </tr>
-              <tr>
-                <td><b>皮下脂肪面积 (SAT)</b></td>
-                <td><b>68.20 cm²</b></td>
-                <td>正常范围 80 ~ 150 cm²</td>
-                <td>四肢与躯干皮下储脂重度流失</td>
-              </tr>
-              <tr style="background: rgba(239, 68, 68, 0.05);">
                 <td><b>内脏/皮下脂肪比 (VAT / SAT)</b></td>
-                <td><b>2.09</b></td>
+                <td><b>2.09</b> (VAT 142.3 / SAT 68.2)</td>
                 <td>正常参考范围 &lt; 1.0</td>
-                <td><span style="color:#ef4444;font-weight:600;">肌少性内脏蓄脂表型 (Sarcopenic Visceral Adiposity)</span>：全身重度慢性促炎状态</td>
+                <td>内脏脂肪蓄积伴皮下储脂消耗，提示慢性高代谢耗竭状态</td>
               </tr>
             </tbody>
           </table>
@@ -1434,33 +1434,33 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <div class="help-case-metrics">
         <div class="help-case-metric-item">
-          <span class="label">L3 骨骼肌指数 (SMI)</span>
-          <span class="val warn">29.92 cm²/m² (严重低下)</span>
+          <span class="label">脾脏 3D 总体积</span>
+          <span class="val warn">680.0 cm³ (明显肿大)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">Prado 国际肌少症界值</span>
-          <span class="val">52.4 cm²/m² (男性)</span>
+          <span class="label">脾脏正常容积上限</span>
+          <span class="val">&lt; 314.0 cm³ (长径 &lt;12cm)</span>
+        </div>
+        <div class="help-case-metric-item">
+          <span class="label">L3 骨骼肌指数 (SMI)</span>
+          <span class="val warn">29.92 cm²/m² (严重低下)</span>
         </div>
         <div class="help-case-metric-item">
           <span class="label">骨骼肌辐射衰减 (MA)</span>
           <span class="val warn">26.4 HU (肌脂肪浸润)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">内脏/皮下脂肪比 (VAT/SAT)</span>
-          <span class="val warn">2.09 (代谢失衡)</span>
-        </div>
-        <div class="help-case-metric-item">
-          <span class="label">化疗 3~4 级血液毒性风险预测</span>
+          <span class="label">全量化疗 3~4 级骨髓抑制预测</span>
           <span class="val warn">72% (极高危)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">多学科临床决策</span>
-          <span class="val ok">首剂减量20% + 营养预康复</span>
+          <span class="label">临床多学科决策闭环</span>
+          <span class="val ok">MDT 审慎评估 + 营养支持</span>
         </div>
       </div>
 
       <h4>8.15 第二步：化疗药代动力学 (PK) 毒性预警与多学科 (MDT) 预康复决策 (PK Toxicity & MDT Prehabilitation)</h4>
-      <p>骨骼肌是抗肿瘤药物的主要组织分布容积与代谢缓冲池。系统药代动力学模型测算毒副反应风险并联动 MDT 决策：</p>
+      <p>骨骼肌是多数全身化疗药物的关键组织分布容积 (Vd)，脾功能亢进又加剧血细胞破坏。系统量化模型评估治疗耐受性并提示 MDT 审慎决策：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
@@ -1471,105 +1471,123 @@ export const HELP_SECTIONS: HelpSection[] = [
         <div class="help-case-caption">
           <b>药理毒性机制与个体化预康复临床决策：</b>
           <ul>
-            <li><b>化疗药代动力学 (PK) 毒性预警</b>：骨骼肌萎缩伴肌脂肪变性使亲脂性化疗药（伊立替康、奥沙利铂）清除率暴跌 44.5%，游离血药峰浓度异常飙升。系统预测若按体表面积 (BSA = 1.62 m²) 全量给予 mFOLFIRINOX 方案化疗，发生 3~4 级骨髓抑制（中性粒细胞缺乏伴发热 FN）及早期治疗中断的概率高达 <b>72%</b>；</li>
-            <li><b>化疗剂量个体化考量与 MDT 协同</b>：【SaMD 监管合规说明】：系统输出 PK 毒性预警与耐受度评分，提示临床肿瘤医师与临床药师评估化疗剂量调整（如建议 MDT 讨论首剂预防性下调 20%），系统严禁由 AI 算法越权直接执行化疗减量指令；</li>
-            <li><b>全肠内营养支持 (ONS) 预康复</b>：联合临床营养科启动全肠内营养支持，每日补充热量 30 kcal/kg，蛋白质 1.5 g/kg/d，并强化补充支链氨基酸 (BCAA) 与欧米伽-3 多不饱和脂肪酸 ($\omega$-3 PUFA) 以拮抗恶液质促炎介质；</li>
-            <li><b>物理预康复 (Prehabilitation)</b>：康复治疗师指导低负荷抗阻力握力与弹力带训练，保护肌肉量与功能储备。</li>
+            <li><b>化疗药代动力学 (PK) 毒性预警</b>：骨骼肌萎缩伴肌脂肪变性使亲脂性化疗药分布容积缩小，消除半衰期延长。系统预测若在重度脾亢与肌少状态下按体表面积全量给药，发生 3~4 级骨髓抑制（严重粒缺性发热 FN、血小板重度低下）的风险高达 <b>72%</b>；</li>
+            <li><b>化疗剂量个体化考量与 MDT 协同</b>：【SaMD 监管合规说明】：系统输出客观 PK 毒性预警与耐受度评分，提示临床医师与临床药师联合评估化疗安全性（由专科医师与 MDT 会诊综合评估是否需下调首剂剂量或推迟给药，严禁 AI 擅自下达调药处方指令）；</li>
+            <li><b>全肠内营养支持 (ONS) 预康复</b>：营养科制定肠内营养支持方案，强化补充支链氨基酸 (BCAA) 与多不饱和脂肪酸以拮抗促炎状态；</li>
+            <li><b>物理预康复 (Prehabilitation)</b>：康复科指导低负荷抗阻握力与弹力带训练，保护肌力储备。</li>
           </ul>
         </div>
       </div>
 
       <h4>8.16 第三步：多模态因果诊断链闭环与标准报告出具 (Multimodal Evidence Chain)</h4>
-      <p>将体成分量化、临床恶液质指标与 MDT 处治方案整合为完整的因果证据链：</p>
+      <p>将脾大影像测值、体成分量化与 MDT 处治方案整合为完整的因果证据链：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
-          <span>图 13 多模态因果诊断链与证据闭环 (恶液质与肌少症三支柱)</span>
+          <span>图 13 多模态因果诊断链与证据闭环 (全腹实质脏器与机体营养代谢评估)</span>
           <span class="help-case-tag">${icon('sparkles', { size: 12 })} 因果推理 · 标准交换</span>
         </div>
-        <img class="help-case-img" src="/site/real-case-sarco-3-diagnostic-chain.png" alt="恶液质与肌少症多模态因果诊断链与证据闭环" />
+        <img class="help-case-img" src="/site/real-case-sarco-3-diagnostic-chain.png" alt="多模态因果诊断链与证据闭环" />
         <div class="help-case-caption">
           <b>多模态证据闭环与标准文书出具：</b>
           <ul>
-            <li><b>支柱一（3D L3 体成分量化）</b>：L3 SMI 29.92 cm²/m² (重度低下) + 辐射衰减 MA 26.4 HU (肌脂肪变性) + VAT/SAT 2.09 (权重 0.98)；</li>
-            <li><b>支柱二（临床恶液质衰弱与生化指标）</b>：体重骤降 20.6% + BMI 18.25 + 握力实测 19 kg + 白蛋白 31.2 g/L (权重 0.96)；</li>
-            <li><b>支柱三（MDT 处治与报告出具）</b>：首剂化疗预防性下调 20%，联合全肠内营养支持与抗阻运动预康复，一键导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 报告。</li>
+            <li><b>支柱一（全腹 3D 多器官分割与体成分）</b>：脾脏体积 680.0 cm³ (脾大) + L3 SMI 29.92 cm²/m² (肌少症) + 肌肉衰减 MA 26.4 HU + VAT/SAT 2.09 (权重 0.98)；</li>
+            <li><b>支柱二（临床表现与实验室指标）</b>：左上腹饱满 + 食欲减退 + 握力实测 19 kg + 轻度血小板减少 (权重 0.96)；</li>
+            <li><b>支柱三（MDT 处治与报告出具）</b>：MDT 综合评估抗肿瘤给药方案，联合全肠内营养支持与运动预康复，一键导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 报告。</li>
           </ul>
         </div>
       </div>
 
       <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
 
-      <h3>【案例四 · 弥漫性间质性肺病与纤维化】寻常型间质性肺炎 (UIP) / 特发性肺纤维化 (IPF) 薄层 HRCT 智能表型与蜂窝肺量化</h3>
+      <h3>【案例四 · 盆腔实质器官与穿刺活检风险分层】盆腔前列腺多参数 T2 加权 MRI · 良性前列腺增生 (BPH) 与 PI-RADS v2.1 结构化评分</h3>
+
+      <div class="help-feature-card" style="margin: 12px 0; border-left: 3px solid var(--mint-line);">
+        <div class="hfc-title">【实测数据与临床影像事实说明】</div>
+        <div class="hfc-desc">
+          <p>测试包中提供的张敏盆腔 MRI 原件 (<code>03_Patient_ZhangMin_Prostate_MRI</code>，包含 19 层薄层轴位 T2 加权 MRI 序列，高内平面分辨率 0.5×0.5 mm) 为真实临床前列腺多参数磁共振扫描。本案例展示 Heurion 前列腺 3D 卷积分割、解剖分带容积量化（外周带与移行区）、移行区指数 (TZI = 0.58) 测算，以及国际公认的 <b>PI-RADS v2.1 结构化评分</b>，展现 AI 如何协助临床泌尿外科精准识别良性前列腺增生 (BPH) 腺瘤结节，科学规避非必要经直肠有创穿刺活检 (TRUS)。</p>
+        </div>
+      </div>
 
       <h4>8.17 患者基本资料与临床主诉 (Clinical Profile)</h4>
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">患者脱敏档案 · PT-IPF-004</div>
+        <div class="hfc-title">患者脱敏档案 · PT-PROSTATE-004 (张敏 · 盆腔前列腺 T2-MRI)</div>
         <div class="hfc-desc">
           <ul>
-            <li><b>基本信息</b>：69岁男性，退休机械修理工人，既往吸烟史 30 包年。零 PHI 规范建档。</li>
-            <li><b>主诉与现病史</b>：活动后渐进性气短、刺激性干咳 1 年，近 1 个月活动耐量进行性减退，平地慢走 100 米即感气促胸闷。专科体格检查：呼吸频率 22 次/分，听诊双下肺背侧基底部可闻及特征性吸气末细小、高调、不连续的爆裂样湿啰音——<b>典型 Velcro 啰音 (Velcro Rales)</b>；双手指端见轻度杵状指 (Clubbing)。</li>
-            <li><b>肺功能测定 (PFT)</b>：典型限制性通气障碍伴一氧化碳弥散量重度下降：用力肺活量占预计值百分比 (FVC% pred) 68.5%，一氧化碳弥散量占预计值百分比 (DLCO% pred) 44.2%。血清自身抗体谱 (ANA/ENA/ANCA) 全套阴性。</li>
+            <li><b>基本信息</b>：68岁男性，退休教师。零 PHI 规范建档。</li>
+            <li><b>主诉与现病史</b>：体检发现血清前列腺特异性抗原 (Total PSA) 升高至 5.8 ng/mL（轻度高于正常参考上限 4.0 ng/mL），伴轻度排尿等待与夜尿增多（每夜 2~3 次），国际前列腺症状评分 (IPSS) 12 分（中度症状），无肉眼血尿或尿痛。直肠指检 (DRE)：前列腺中度增大，质地韧，中央沟变浅，未触及质硬结节。</li>
+            <li><b>临床痛点</b>：血清 PSA 处于 4~10 ng/mL 的“诊断灰区”，传统做法常常直接安排经直肠超声引导下穿刺活检 (TRUS)，但该项有创检查伴随 3%~5% 的尿路感染、败血症与直肠大出血风险，且穿刺假阴性率超 20%，迫切需要多参数 MRI 进行恶性风险分层。</li>
           </ul>
         </div>
       </div>
 
-      <h4>8.18 第一步：薄层吸气相 HRCT (1.0 mm) 3D 智能表型提取与蜂窝肺量化 (Baseline HRCT)</h4>
-      <p>系统运行 <code>ipf_interstitial_phenotyper</code> 深度网络，对 3D HRCT 体数据进行全自动肺叶各向同性体素分割与纤维化病理征象量化提取（第 #72 层）：</p>
+      <h4>8.18 第一步：薄层轴位 T2 加权 MRI 上传与前列腺 3D 解剖分带容积量化 (Prostate Volumetry)</h4>
+      <p>医生上传盆腔 T2-MRI 序列，Heurion 运行前列腺 3D 卷积分割模型，自动化分离前列腺整体腺体轮廓、外周带 (PZ) 与移行区 (TZ)：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
-          <span>图 14 真实患者薄层 HRCT 轴位关键截面 (Slice #72) · 3D UIP 智能表型提取与蜂窝肺量化</span>
-          <span class="help-case-tag">${icon('scan', { size: 12 })} 3D Interstitial Phenotyper</span>
+          <span>图 14 真实患者盆腔前列腺多参数 T2-MRI 轴位关键截面 (Slice #10) · MONAI 3D 解剖分割与 PI-RADS v2.1 量化</span>
+          <span class="help-case-tag">${icon('scan', { size: 12 })} MONAI Prostate T2</span>
         </div>
-        <img class="help-case-img" src="/site/real-case-ipf-1-hrct-honeycombing.png" alt="薄层 HRCT 轴位关键截面 3D UIP 智能表型提取与蜂窝肺量化" />
+        <img class="help-case-img" src="/site/real-case-prostate-1-t2-mri.png" alt="盆腔前列腺多参数 T2-MRI 轴位关键截面解剖分割与 PI-RADS 评定" />
         <div class="help-case-caption">
-          <b>薄层 HRCT 影像学特征与 2022 ATS/ERS 指南符合度剖析：</b>
+          <b>前列腺多参数 MRI 关键解剖量化指标：</b>
           <ul>
-            <li><b>解剖空间分布</b>：病变严格呈<b>胸膜下 (Subpleural)</b> 与<b>双肺基底部 (Basal)</b> 外周优势分布；双肺尖部及支气管血管束中央区相对保留，呈典型向心性梯度；</li>
-            <li><b>蜂窝状改变 (Honeycombing)</b>：黄色高亮标出胸膜下多层厚壁囊状透亮气腔，直径 3~8 mm，呈多层阶梯状紧贴胸膜成簇排列。MONAI 测算<b>全肺累计蜂窝肺容积达 46.20 cm³</b>，确凿支持 Definite UIP 标志征象；</li>
-            <li><b>牵拉性支气管扩张 (Traction Bronchiectasis)</b>：周围重度纤维化组织回缩产生异常张力，导致下叶周边气道不规则扭曲扩张，延伸至胸膜下 1 cm 肺外周带；</li>
-            <li><b>彻底排除不符合 UIP 征象</b>：广泛磨玻璃影 (GGO) 占比 &lt; 5% (且无孤立 GGO)；无小叶中心微结节；呼气相 CT 无马赛克灌注与弥漫气体陷闭，彻底排除过敏性肺炎 (HP) 与结节病。</li>
+            <li><b>前列腺总腺体容积 (Total Prostate Volume = 48.60 cm³)</b>：同龄健康男性正常前列腺体积为 20~25 cm³，实测 48.60 cm³ 提示腺体中度弥漫性增大；</li>
+            <li><b>移行区容积 (Transitional Zone Volume = 28.20 cm³) 与 TZI 指数</b>：计算移行区指数 $\text{TZI} = \frac{28.20}{48.60} = \mathbf{0.58}$（超过 0.50 国际公认截断值，客观确证前列腺增大主要由移行区良性基质与腺上皮增生主导）；</li>
+            <li><b>外周带 (PZ) 与假包膜形态</b>：外周带在 T2WI 呈现高信号均匀带状影，未见局灶性低信号占位结节；前列腺纤维假包膜光滑完整连续，未见外周带穿透或精囊腺基底部侵犯。</li>
           </ul>
         </div>
       </div>
 
       <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">${icon('scan', { size: 14 })} 薄层 HRCT (1.0 mm 层厚) 3D 智能表型提取与空间分布特征表</div>
+        <div class="hfc-title">${icon('scan', { size: 14 })} 盆腔前列腺 T2-MRI 3D 解剖分带与 PI-RADS v2.1 结构化量化实测对照表</div>
         <div class="hfc-desc">
           <table class="help-table" style="margin: 8px 0;">
             <thead>
               <tr style="border-bottom: 1px solid var(--line); background: var(--card-glass);">
-                <th>HRCT 影像学征象</th>
-                <th>Heurion 3D 卷积网络实测特征与量化</th>
-                <th>2022 ATS/ERS/JRS/ALAT 国际指南判定符合度</th>
+                <th>前列腺解剖量化参数</th>
+                <th>算法实测值</th>
+                <th>临床参考截断值 (Reference Cutoff)</th>
+                <th>临床风险分层与病理生理意义</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td><b>病灶解剖空间分布</b></td>
-                <td>严格呈<b>胸膜下 (Subpleural)</b> 与<b>双肺基底部 (Basal)</b> 外周优势分布；双肺尖部及支气管血管束中央区相对保留，呈典型向心性梯度。</td>
-                <td><span style="color:var(--mint-text);font-weight:600;">完全符合 UIP 空间分布金标准</span></td>
+                <td><b>前列腺总容积 (Total Volume)</b></td>
+                <td><b>48.60 cm³</b></td>
+                <td>同龄健康成年男性参考范围：<b>20.0 ~ 25.0 cm³</b></td>
+                <td><span style="color:#38bdf8;font-weight:600;">前列腺中度增大</span>：与患者排尿等待、夜尿增多临床主诉相吻合</td>
               </tr>
               <tr>
-                <td><b>蜂窝状改变 (Honeycombing)</b></td>
-                <td>胸膜下多层厚壁囊状透亮气腔，直径 3~8 mm，呈多层阶梯状紧贴胸膜成簇排列。MONAI 测算<b>全肺累计蜂窝肺容积达 46.20 cm³</b>。</td>
-                <td><span style="color:var(--mint-text);font-weight:600;">确凿支持 Definite UIP 标志征象</span></td>
+                <td><b>移行区容积 (TZ Volume)</b></td>
+                <td><b>28.20 cm³</b></td>
+                <td>正常年轻男性 &lt; 15.0 cm³</td>
+                <td>移行区腺体与基质显著结节状增生</td>
+              </tr>
+              <tr style="background: rgba(16, 185, 129, 0.05);">
+                <td><b>移行区指数 (TZI = TZ / Total)</b></td>
+                <td><b>0.58</b></td>
+                <td>国际公认良恶性鉴别截断值：<b>&gt; 0.50 支持良性增生</b></td>
+                <td><span style="color:#10b981;font-weight:600;">良性 BPH 移行区主导型</span>：增大主要为良性增生腺瘤所致</td>
               </tr>
               <tr>
-                <td><b>牵拉性支气管扩张 (Traction Bronchiectasis)</b></td>
-                <td>周围重度纤维化组织回缩产生异常张力，导致下叶周边气道不规则扭曲扩张，延伸至胸膜下 1 cm 肺外周带。</td>
-                <td><span style="color:var(--mint-text);font-weight:600;">典型纤维化牵拉所见</span></td>
+                <td><b>外周带 (PZ) 影像表型</b></td>
+                <td>T2WI 呈均匀高信号</td>
+                <td>无局灶性局限低信号结节</td>
+                <td>未见临床显著性前列腺癌 (csPCa) 常见外周带浸润征象</td>
               </tr>
-              <tr>
-                <td><b>网格影 (Reticulation)</b></td>
-                <td>广泛粗糙的小叶间隔不规则增厚与小叶内细网状纤维沉积。</td>
-                <td><span style="color:var(--mint-text);font-weight:600;">符合网格化纤维改变</span></td>
+              <tr style="background: rgba(16, 185, 129, 0.05);">
+                <td><b>PSA 密度 (PSAD = PSA / Volume)</b></td>
+                <td><b>0.12 ng/mL/cm³</b><br><span style="font-size:11px;color:var(--text-muted)">5.8 ng/mL / 48.60 cm³</span></td>
+                <td>国际活检穿刺推荐警戒阈值：<b>&lt; 0.15 ng/mL/cm³</b></td>
+                <td><span style="color:#10b981;font-weight:600;">PSAD 低于警戒线</span>：支持 PSA 升高主要由腺体良性肥大释出，恶性穿刺阳性率极低</td>
               </tr>
-              <tr>
-                <td><b>排除不符合 UIP 征象</b></td>
-                <td>广泛磨玻璃影 (GGO) 占比 &lt; 5% (且无孤立 GGO)；无小叶中心微结节；呼气相 CT 无马赛克灌注与弥漫气体陷闭。</td>
-                <td><span style="color:var(--mint-text);font-weight:600;">彻底排除过敏性肺炎 (HP) 与结节病</span></td>
+              <tr style="background: rgba(56, 189, 248, 0.05);">
+                <td><b>PI-RADS v2.1 规范评级</b></td>
+                <td><b>PI-RADS 2 类</b></td>
+                <td>1~5 类分级（2类代表恶性可能极低）</td>
+                <td><span style="color:#38bdf8;font-weight:600;">极低或低度恶性风险 (考虑良性增生腺瘤)</span></td>
               </tr>
             </tbody>
           </table>
@@ -1578,101 +1596,51 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <div class="help-case-metrics">
         <div class="help-case-metric-item">
-          <span class="label">HRCT 空间分布模式</span>
-          <span class="val ok">胸膜下/肺基底部外周优势</span>
+          <span class="label">前列腺 3D 总容积</span>
+          <span class="val">48.60 cm³ (中度增大)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">3D 累计蜂窝肺容积</span>
-          <span class="val warn">46.20 cm³ (多层阶梯状)</span>
+          <span class="label">移行区指数 (TZI)</span>
+          <span class="val ok">0.58 (&gt;0.50 截断值)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">牵拉性支气管扩张</span>
-          <span class="val ok">阳性 (延伸至胸膜下)</span>
+          <span class="label">血清总 PSA 浓度</span>
+          <span class="val warn">5.8 ng/mL (灰区轻度升高)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">2022 ATS/ERS 指南定级</span>
-          <span class="val ok">明确 UIP 表型 (Definite UIP)</span>
+          <span class="label">PSA 密度 (PSAD)</span>
+          <span class="val ok">0.12 ng/mL/cm³ (&lt;0.15 安全线)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">血清结缔组织病自身抗体</span>
-          <span class="val ok">全套阴性 (排除 CTD-ILD)</span>
+          <span class="label">PI-RADS v2.1 结构化评分</span>
+          <span class="val ok">PI-RADS 2 类 (良性BPH腺瘤)</span>
         </div>
         <div class="help-case-metric-item">
-          <span class="label">MDT 临床决策闭环</span>
-          <span class="val ok">免外科肺活检 · 启动抗纤维化</span>
+          <span class="label">多学科临床决策闭环</span>
+          <span class="val ok">门诊动态随访 · 规避过度活检</span>
         </div>
       </div>
 
-      <h4>8.19 第二步：间质性纤维化头尾向梯度 3D MPR 交互浏览 (Interactive 3D MPR)</h4>
-      <p>通过三正交切片浏览器，立体展现特发性肺纤维化标志性的从肺尖到肺基底部的头尾向梯度衰减：</p>
+      <h4>8.19 第二步：PI-RADS v2.1 规范特征评分与病灶空间风险分层</h4>
+      <p>依据国际放射学会与欧洲泌尿放射学会 PI-RADS v2.1 指南，系统对前列腺各解剖分区展开针对性结构化判读：</p>
+      <ul>
+        <li><b>移行区 (TZ) 评分规则</b>：移行区以 T2 加权像为主要判读序列。张敏切片显示结节呈现圆形、边界清晰锐利、周围环绕完整低信号纤维包膜，典型符合 PI-RADS 2 分评分标准（边界光整包膜完整的良性前列腺增生结节）；</li>
+        <li><b>外周带 (PZ) 评分规则</b>：外周带以弥散加权成像 (DWI) / 表观弥散系数 (ADC) 为主要判读序列。本例未见明显局灶性弥散受限，ADC 图未见局限性极低信号灶，假包膜完整连续，精囊腺角无浸润；</li>
+        <li><b>综合分级</b>：全腺体最高评分灶为移行区良性腺瘤结节（PI-RADS 2 类），恶性风险处于极低区间。</li>
+      </ul>
 
-      <div class="help-case-card">
-        <div class="help-case-header">
-          <span>图 15 诊断级 3D MPR 弥漫性间质性肺病头尾向梯度浏览器 (Coronal & Sagittal Views)</span>
-          <span class="help-case-tag">${icon('grid', { size: 12 })} 头尾向病理梯度</span>
-        </div>
-        <img class="help-case-img" src="/site/real-case-ipf-2-mpr-coronal-gradient.png" alt="诊断级 3D MPR 弥漫性间质性肺病头尾向梯度浏览器" />
-        <div class="help-case-caption">
-          <b>三正交视图头尾向梯度特征解析：</b>
-          <ul>
-            <li><b>冠状面 (Coronal) 与矢状面 (Sagittal) 垂直构型</b>：冠状位清晰勾画出纤维化病灶呈现从肺尖向肺底部进行性加重的陡峭梯度（肺尖部肺实质结构清晰正常，肺中部出现粗糙网格影，双肺底外周带则被严重蜂窝囊腔完全占据）；</li>
-            <li><b>三维准星对准下肺基底蜂窝区</b>：一键聚焦纤维化最严重区域，量测胸膜下囊腔壁厚与外周气道牵拉距离；</li>
-            <li><b>切片资产存证与报告草案联动</b>：保存冠状面关键切片并自动提取空间表型参数，注入至放射诊断报告草案。</li>
-          </ul>
-        </div>
-      </div>
-
-      <h4>8.20 第三步：多模态因果诊断链闭环与 MDT 免外科肺活检获益 (Multimodal Evidence Chain & SLB-Sparing)</h4>
-      <p>多学科专家团队基于影像智能表型与临床多模态数据，达成免除有创活检、早期抗纤维化的诊疗决策：</p>
-
-      <div class="help-case-card">
-        <div class="help-case-header">
-          <span>图 16 多模态因果诊断链与证据闭环 (IPF / Definite UIP 证据三支柱)</span>
-          <span class="help-case-tag">${icon('sparkles', { size: 12 })} MDT 共识 · 免除活检</span>
-        </div>
-        <img class="help-case-img" src="/site/real-case-ipf-3-diagnostic-chain.png" alt="多模态因果诊断链与证据闭环" />
-        <div class="help-case-caption">
-          <b>多学科诊疗决策闭环与临床获益：</b>
-          <ul>
-            <li><b>支柱一（薄层 HRCT 3D 智能表型提取）</b>：胸膜下与基底部外周分布 + 多层蜂窝肺 (46.20 cm³) + 牵拉支扩，彻底排除过敏性肺炎，完全符合 2022 ATS/ERS Definite UIP 表型 (权重 0.98)；</li>
-            <li><b>支柱二（临床体征、肺功能与免疫排查）</b>：吸气末典型 Velcro 啰音、限制性弥散障碍 (FVC 68.5%, DLCO 44.2%)，自身抗体谱全阴性排除结缔组织病相关间质性肺病 (CTD-ILD) (权重 0.96)；</li>
-            <li><b>支柱三（MDT 确诊与免外科肺活检获益）</b>：依据指南，Definite UIP 表现且经呼吸、放射、病理 MDT 多学科团队深入研讨排除已知病因者，与组织病理一致率超 95%，<b>经 MDT 团队评估免除高风险的外科胸腔镜肺活检 (SLB)</b>，临床确诊特发性肺纤维化 (IPF)，即刻启动口服吡非尼酮抗纤维化靶向治疗；导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 报告。</li>
-          </ul>
-        </div>
-      </div>
-
-      <h4>8.21 实测包真实前列腺多参数 T2-MRI 补充量化验证 (Pelvic Prostate MRI & PI-RADS v2.1)</h4>
-      <div class="help-feature-card" style="margin: 12px 0;">
-        <div class="hfc-title">患者脱敏档案 · PT-PROSTATE-004 (张敏 · 盆腔前列腺多参数 T2-MRI)</div>
-        <div class="hfc-desc">
-          <ul>
-            <li><b>原始影像与临床背景</b>：65岁男性，体检发现 PSA 5.8 ng/mL，无明显尿痛肉眼血尿。拖拽上传实测包 <code>03_Patient_ZhangMin_Prostate_MRI</code>（包含 19 层薄层轴位 T2 加权 MRI 序列，高内平面分辨率 0.5×0.5 mm）；</li>
-            <li><b>前列腺 3D 容积与移行区指数 (TZI = 0.58)</b>：MONAI 3D 卷积模型分割测得前列腺总容积达 <b>48.60 cm³</b> (同龄健康男性参考范围 20~25 cm³，提示中度腺体增大)；移行区容积达 <b>28.20 cm³</b>，计算移行区指数 $\\text{TZI} = \\frac{28.20}{48.60} = 0.58$ (超过 0.50 国际截断值，证实前列腺增大主要由良性移行区腺体增生引起)；</li>
-            <li><b>PI-RADS v2.1 结构化评分与穿刺活检决策</b>：T2 加权像示移行区见圆形、边界清晰、被假包膜包绕的混杂高低信号结节，外周带高信号均匀连续，无局灶性扩散受限或包膜外侵犯征象。系统依据国际 PI-RADS v2.1 指南结构化评定为 <b>PI-RADS 2 类 (极低或低度恶性风险，考虑良性前列腺增生结节)</b>；</li>
-            <li><b>临床决策获益</b>：系统结合 PSA 密度 (PSAD = 0.12 ng/mL/cm³ &lt; 0.15 警戒线)，给出 CDSS 随访建议：建议定期门诊监测 PSA 与复查 MRI，<b>规避非必要的高创伤经直肠前列腺穿刺活检 (TRUS Biopsy)</b>，显著减轻患者痛苦与出血感染并发症。</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="help-case-card">
-        <div class="help-case-header">
-          <span>图 16b 真实患者盆腔前列腺多参数 T2-MRI 轴位关键截面 (Slice #10) · MONAI 3D 解剖分割与 PI-RADS v2.1 量化</span>
-          <span class="help-case-tag">${icon('scan', { size: 12 })} MONAI Prostate T2</span>
-        </div>
-        <img class="help-case-img" src="/site/real-case-prostate-1-t2-mri.png" alt="盆腔前列腺多参数 T2-MRI 轴位关键截面解剖分割与 PI-RADS 评定" />
-        <div class="help-case-caption">
-          <b>前列腺多参数 MRI 关键量化特征：</b>
-          <ul>
-            <li><b>解剖容积测算</b>：前列腺总容积 48.60 cm³，移行区容积 28.20 cm³，移行区指数 TZI = 0.58 (&gt;0.50 国际截断值，证实前列腺增大主要由良性移行区腺体增生引起)；</li>
-            <li><b>PI-RADS 评级</b>：PI-RADS 2 类 (移行区边界光整良性增生结节，外周带高信号均匀)；</li>
-            <li><b>活检规避决策</b>：结合 PSAD 0.12 ng/mL/cm³ 规避非必要经直肠穿刺活检 (TRUS)。</li>
-          </ul>
-        </div>
-      </div>
+      <h4>8.20 第三步：多模态决策闭环与规避过度侵入性活检获益 (Biopsy-Sparing CDSS)</h4>
+      <p>临床专家团队基于前列腺 T2-MRI 智能量化与 PSA 动力学指标，形成科学的随访闭环：</p>
+      <ul>
+        <li><b>证据支柱一（3D MRI 解剖量化）</b>：前列腺总容积 48.60 cm³，移行区指数 TZI = 0.58，证实为典型良性 BPH 腺体肥大；</li>
+        <li><b>证据支柱二（PI-RADS 结构化分层）</b>：PI-RADS 2 类良性结节，未见包膜穿破或精囊腺受累；</li>
+        <li><b>证据支柱三（生化密度佐证）</b>：PSAD = 0.12 ng/mL/cm³ 低于 0.15 警戒线，有力证实血清 PSA 轻度升高为增大腺上皮增生分泌所致，而非恶性肿瘤破坏基底膜入血；</li>
+        <li><b>临床获益与 SaMD 辅助决策闭环</b>：【SaMD 监管合规说明】：系统输出客观 PI-RADS 2 类分层与 PSAD 0.12 测值，建议泌尿外科医师安排门诊随访与每 6 个月 PSA 动态复查，<b>协助临床审慎规避非必要经直肠超声前列腺穿刺活检 (TRUS)</b>，使患者免受 12 针有创穿刺的感染、直肠出血与剧烈疼痛，降低医疗资源不合理消耗；导出标准 <b>DICOM SR</b> 与 <b>HL7 FHIR</b> 报告。</li>
+      </ul>
 
       <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
 
-      <h3>8.22 标杆真实临床案例多模态指标与决策对照矩阵表 (Cross-Case Clinical Decision Matrix)</h3>
+      <h3>8.21 4 大典型临床案例多模态指标与决策对照矩阵表 (Cross-Case Clinical Decision Matrix)</h3>
       <p>为便于临床医师、科研人员及算法评估团队全面对比，下表横向归纳了平台覆盖的 4 个标杆真实病例的核心特征：</p>
 
       <div class="help-feature-card" style="margin: 12px 0; overflow-x: auto;">
@@ -1708,31 +1676,22 @@ export const HELP_SECTIONS: HelpSection[] = [
               <td>一线单药奥希替尼 80mg qd 治疗；差分图呈深绿负吸收，避免过早放疗过度介入</td>
             </tr>
             <tr>
-              <td><b>案例三</b><br><code>PT-SARCO-003</code></td>
-              <td>消化与肿瘤营养<br>全腹影像与恶液质肌少症</td>
-              <td>消瘦乏力，3月体重下降 20.6%，BMI 18.25，握力 19 kg</td>
-              <td>全腹CT示脾脏显著肿大 (680 cm³, 长径14.2cm)，腰大肌萎缩伴肌脂肪浸润</td>
-              <td>L3 SMI = 29.92 cm²/m²<br>肌肉衰减 MA = 26.4 HU<br>VAT/SAT = 2.09</td>
-              <td>Prado 共识 / AWGS 标准<br>重度恶液质肌少症</td>
-              <td>预测全量化疗严重毒性率 72%；MDT建议首剂化疗适度下调20%，联合全肠内营养与预康复</td>
+              <td><b>案例三</b><br><code>PT-ABDOMEN-003</code></td>
+              <td>消化与腹部实质<br>脾脏显著肿大伴肌减少</td>
+              <td>上腹饱胀纳差2月，消瘦，脾脏肿大肋下 3cm，轻度脾亢</td>
+              <td>全腹CT示脾脏显著弥漫性肿大 (680 cm³, 长径14.2cm)，肝胰未见占位，L3腰大肌萎缩</td>
+              <td>脾体积 680.0 cm³<br>L3 SMI = 29.92 cm²/m²<br>肌肉衰减 MA = 26.4 HU</td>
+              <td>Prado 共识 / AWGS 标准<br>脾大待查伴肌少症</td>
+              <td>预测全量化疗严重骨髓毒性率 72%；MDT 审慎评估化疗剂量并联合全肠内营养与预康复</td>
             </tr>
             <tr>
-              <td><b>案例四</b><br><code>PT-IPF-004</code></td>
-              <td>呼吸间质病科<br>特发性肺纤维化 (IPF)</td>
-              <td>渐进性气促干咳1年，双下肺典型 Velcro 啰音，限制性通气障碍</td>
-              <td>胸膜下/基底部蜂窝状改变、牵拉性支扩，无不符合征象</td>
-              <td>胸膜下外周向心分布<br>3D 蜂窝肺容积 46.20 cm³<br>牵拉性支扩伸至胸膜下</td>
-              <td><b>2022 ATS/ERS/JRS/ALAT</b><br>明确 UIP 表型 (Definite)</td>
-              <td>结合自身抗体阴性与典型蜂窝肺，<b>经 MDT 团队评估免除高风险外科肺活检 (SLB)</b>；即刻启动抗纤维化治疗</td>
-            </tr>
-            <tr>
-              <td><b>实测补充</b><br><code>PT-PROSTATE-004</code></td>
-              <td>泌尿男科<br>前列腺增生伴良性结节</td>
-              <td>体检 PSA 5.8 ng/mL，排尿轻度等待，无肉眼血尿</td>
-              <td>T2加权像移行区圆形完整假包膜结节，外周带高信号均匀连续</td>
+              <td><b>案例四</b><br><code>PT-PROSTATE-004</code></td>
+              <td>泌尿外科与男科<br>良性前列腺增生 (BPH)</td>
+              <td>体检 PSA 5.8 ng/mL (灰区升高)，轻度排尿等待与夜尿频多，无血尿</td>
+              <td>T2加权像移行区圆形边界清晰包膜完整结节，外周带高信号均匀无占位</td>
               <td>前列腺总容积 48.60 cm³<br>移行区容积 28.20 cm³<br>TZI 0.58 / PSAD 0.12</td>
-              <td><b>PI-RADS v2.1</b><br>2类 (极低恶性风险)</td>
-              <td>门诊常规监测 PSA 与 MRI 随访，<b>规避非必要经直肠穿刺活检 (TRUS)</b></td>
+              <td><b>PI-RADS v2.1 国际标准</b><br>2类 (良性增生结节)</td>
+              <td>常规门诊随访与每 6 个月 PSA 监测，<b>科学规避非必要经直肠有创穿刺活检 (TRUS)</b></td>
             </tr>
           </tbody>
         </table>
@@ -1740,7 +1699,7 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
 
-      <h3>8.11 医生专科反馈、历史手册严重谬误整改与临床自洽性校验总结 (Physician Review & Clinical Audit Report)</h3>
+      <h3>8.22 医生专科反馈、历史手册严重谬误整改与临床自洽性校验总结 (Physician Review & Clinical Audit Report)</h3>
       <p class="help-lead">近期，多位三甲医院呼吸科、肿瘤科及放射科专家对 Heurion 用户使用手册中的案例分析进行了极为严肃且专业的临床审查，指出了早期版本中存在的 <b>4 大类严重临床谬误与监管违规风险</b>。研发与医学团队高度重视，已在 <code>apps/imaging-worker/src/clinical_audit.py</code> 中构建了全自动化临床校验引擎，并在 CLI 与系统底层完成全面整改：</p>
 
       <div class="help-grid-2" style="margin: 14px 0;">
@@ -3135,80 +3094,65 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ---
 
-### 8.3 案例三：胰腺导管腺癌合并隐匿性重度骨骼肌减少症 (Cancer Sarcopenia / Cachexia) 与全腹影像评估
-
-1. **患者脱敏档案与实测数据对照**：
-   - 虚拟代号：\`PT-SARCO-003\` (64 岁男性，零 PHI 规范建档)；
-   - 【实测数据对照】：测试包中提供的王伟全腹 CT 原件 (\`02_Patient_WangWei_Abdomen_CT\`) 放射学核心表现为**脾脏形态饱满、体积明显肿大 (Splenomegaly, 测得 680 cm³, 长径 14.2cm，肝实质密度 54.2 HU 与胰腺 44.8 HU 均未见占位)**。本案例采用腹部全景体素空间深入演示 TotalSegmentator 3D 自动化识别 L3 层面骨骼肌、肌脂肪浸润及化疗 PK 毒副反应预警；
-   - 主诉与查体：食欲不振、全身重度乏力。发病前体重 68 kg，近 3 个月暴跌至 54 kg，体重下降率 $-20.6\\%$；身高 1.72 m，BMI 18.25 kg/m²；实测右手握力仅 $19 \\text{ kg}$ (同龄健康男性参考 $\\ge 28 \\text{ kg}$)。
-2. **步骤一：TotalSegmentator L3 椎体层面自动化机体成分测算与肌少症定级 (Slice #148)**：
-   - 参考图像：[图 11 真实患者 L3 椎体层面 (Slice #148) · 3D 全身体素机体成分自动分割与肌少症量化](/site/real-case-sarco-1-l3-muscle-fat.png)；
-   - 自动解剖定位第 3 腰椎 (L3) 横断面；
-   - **骨骼肌横截面积 (SMA)**：$88.50 \\text{ cm}^2$ (健康男性参考值 $> 130 \\text{ cm}^2$)；
-   - **骨骼肌质量指数 (SMI = SMA / 身高²)**：$\\text{SMI} = \\frac{88.50}{1.72^2} \\approx 29.92 \\text{ cm}^2/\\text{m}^2$ (远低于 Prado 国际共识男性肌少症界值 $52.4 \\text{ cm}^2/\\text{m}^2$ 与亚洲 AWGS 标准 $38.5 \\text{ cm}^2/\\text{m}^2$，触发系统红色高危警报：**重度恶液质性肌少症 Severe Sarcopenia**)；
-   - **骨骼肌平均辐射衰减 (Mean Muscle Attenuation, MA)**：$26.4 \\text{ HU}$ (正常骨骼肌 $> 35\\sim 40 \\text{ HU}$，低 HU 证实骨骼肌细胞间质被大量异位甘油三酯浸润，提示严重 **肌脂肪变性 Myosteatosis**)；
-   - **内脏脂肪面积 (VAT)**：$142.30 \\text{ cm}^2$；**皮下脂肪面积 (SAT)**：$68.20 \\text{ cm}^2$；
-   - **内脏/皮下脂肪比 (VAT / SAT)**：$\\frac{142.30}{68.20} = 2.09$ (显著升高，呈现为典型的内脏脂肪堆积伴骨骼肌重度消耗——“肌少性恶液质消耗表型”)。
-3. **步骤二：药代动力学 (PK) 化疗剂量限制性毒性 (DLT) 预警分析**：
-   - 参考图像：[图 12 基于机体成分 (SMI & MA) 的个体化化疗药代动力学 (PK) 剂量限制性毒性 (DLT) 预警评估](/site/real-case-sarco-2-pk-toxicity-risk.png)；
-   - 传统仅按体表面积 (BSA = $1.62 \\text{ m}^2$) 计算化疗剂量；
-   - 骨骼肌萎缩显著降低亲脂性化疗药代谢清除率，导致游离血药峰浓度异常升高；
-   - 系统 PK 模型预测：若全量给予 mFOLFIRINOX 方案化疗，发生 3~4 级骨髓抑制及严重感染等剂量限制性毒性 (DLT) 的概率高达 $72\\%$。
-4. **步骤三：多学科诊疗 (MDT) 减毒增效与预康复营养干预决策闭环**：
-   - 参考图像：[图 13 多模态因果诊断链与证据闭环 (恶性肿瘤重度肌少症营养与减毒 MDT 干预)](/site/real-case-sarco-3-diagnostic-chain.png)；
-   - 串联「L3 SMI $29.92 \\text{ cm}^2/\\text{m}^2$ + 肌脂肪变性 $26.4 \\text{ HU}$ + 握力 $19 \\text{ kg}$ + 脾肿大 680 cm³」证据链；
-   - **MDT 建议闭环**：① 建议化疗首剂适度下调 $20\\%$ (具体方案由医师与 MDT 团队综合决断，杜绝 SaMD 越权直下指令)；② 联合临床营养科启动全肠内营养支持 (ONS)，足量补充乳清蛋白与支链氨基酸 (BCAA)；③ 指导轻负荷抗阻与有氧预康复 (Prehabilitation) 训练，避免化疗毒性致死。
-
----
-
-### 8.4 案例四：寻常型间质性肺炎 (UIP) / 特发性肺纤维化 (IPF) 薄层 HRCT 智能表型与蜂窝肺量化
+### 8.3 案例三：全腹 CT 平扫 · 脾脏显著肿大 (Splenomegaly 680 cm³) 多器官解剖量化与化疗安全性评估 (王伟 · PT-ABDOMEN-003)
 
 1. **患者脱敏档案与就诊背景**：
-   - 虚拟代号：\`PT-IPF-004\` (69 岁男性，退休工人，吸烟史 30 包年，零 PHI 规范建档)；
-   - 主诉与查体：活动后渐进性气短、刺激性干咳 1 年，近 1 个月活动耐量急剧下降，平地慢走 100 米即感气促胸闷。查体呼吸 22 次/分，双下肺背侧基底部听诊闻及吸气末细小爆裂音——**典型 Velcro 啰音 (Velcro Rales)**；双手指端轻度杵状指；
-   - 肺功能与免疫排查：限制性通气障碍伴弥散量重度下降 (FVC% pred $68.5\\%$, DLCO% pred $44.2\\%$)；血清自身抗体谱 (ANA/ENA/ANCA) 全套阴性。
-2. **步骤一：薄层吸气相 HRCT (1.0 mm 层厚) 3D 智能表型提取与蜂窝肺量化 (Slice #72)**：
-   - 参考图像：[图 14 真实患者薄层 HRCT 轴位关键截面 (Slice #72) · 3D UIP 智能表型提取与蜂窝肺量化](/site/real-case-ipf-1-hrct-honeycombing.png)；
-   - **解剖空间分布**：严格呈**胸膜下 (Subpleural)** 与**双肺基底部 (Basal)** 外周优势分布；双肺尖部及支气管血管束中央区相对保留，呈典型向心性梯度；
-   - **蜂窝状改变 (Honeycombing)**：黄色高亮标出胸膜下多层厚壁囊状透亮气腔，直径 3~8 mm，呈多层阶梯状紧贴胸膜成簇排列。MONAI 测算**全肺累计蜂窝肺容积达 $46.20 \\text{ cm}^3$**；
-   - **牵拉性支气管扩张 (Traction Bronchiectasis)**：周围重度纤维化组织回缩产生异常张力，导致下叶周边气道不规则扭曲扩张，延伸至胸膜下 1 cm 肺外周带；
-   - **排除不符合 UIP 征象**：广泛磨玻璃影 (GGO) 占比 $< 5\\%$ (且无孤立 GGO)；无小叶中心微结节；呼气相 CT 无马赛克灌注与弥漫气体陷闭，彻底排除过敏性肺炎 (HP) 与结节病。
-3. **步骤二：间质性纤维化头尾向梯度 3D MPR 交互浏览 (Coronal & Sagittal Views)**：
-   - 参考图像：[图 15 诊断级 3D MPR 弥漫性间质性肺病头尾向梯度浏览器 (Coronal & Sagittal Views)](/site/real-case-ipf-2-mpr-coronal-gradient.png)；
-   - 冠状面 (Coronal) 与矢状面 (Sagittal) 垂直构型清晰勾画出纤维化病灶呈现从肺尖向肺基底部进行性加重的陡峭梯度；
-   - 三维准星精准锁定下肺基底蜂窝区，量测胸膜下囊腔壁厚与外周气道牵拉距离；保存冠状面关键切片并提取空间表型参数注入诊断报告草案。
-4. **步骤三：多模态因果诊断链闭环与 MDT 免外科肺活检获益**：
-   - 参考图像：[图 16 多模态因果诊断链与证据闭环 (IPF / Definite UIP 证据三支柱)](/site/real-case-ipf-3-diagnostic-chain.png)；
-   - 串联「薄层 HRCT 胸膜下基底部分布 + 蜂窝肺 $46.20 \\text{ cm}^3$ + 牵拉支扩 (权重 0.98)」+「吸气末 Velcro 啰音 + 限制性弥散障碍 + 自身抗体全阴性 (权重 0.96)」；
-   - 依据 2022 ATS/ERS/JRS/ALAT 国际指南判定为 **「明确 UIP 影像表型 (Definite UIP Pattern)」**；
-   - 指南明确指出 Definite UIP 表现且排除已知病因者与病理组织学一致率超 95%，**经 MDT 团队评估免除高风险有创外科胸腔镜肺活检 (SLB)**，直接临床确诊为 **特发性肺纤维化 (IPF)**；
-   - 即刻启动口服吡非尼酮或尼达尼布抗纤维化靶向治疗，导出标准 DICOM SR 与 FHIR 报告。
+   - 虚拟代号：\`PT-ABDOMEN-003\` (52 岁男性，王伟，零 PHI 规范建档)；
+   - 原始检查：全腹部平扫 CT (扫描范围 $T_{10} \\sim \\text{耻骨联合}$，96 层，层厚 5.0 mm)；
+   - 主诉与查体：上腹饱胀不适伴纳差 2 个月，体重下降 4 kg。专科查体：腹软，左肋下可触及肿大脾下缘约 3 cm，质韧无压痛，肝区叩痛阴性；血常规提示轻度血小板减少与白细胞偏低 (脾亢表现)。
+2. **步骤一：TotalSegmentator 全腹实质脏器分割与 L3 椎体横截面体成分量化 (Slice #148)**：
+   - 参考图像：[图 11 真实患者全腹平扫 CT · 脾脏肿大与 L3 椎体层面体成分量化](/site/real-case-sarco-1-l3-muscle-fat.png)；
+   - **脾脏三维容积 (Spleen Volume)**：三维重建测得总体积为 **680.0 cm³** (正常健康成人参考上限 $< 314.0 \\text{ cm}^3$)，上下长径达 **14.2 cm** (正常上限 $< 12.0 \\text{ cm}$)，确诊为显著弥漫性脾肿大；
+   - **肝脏与胰腺形态及实质密度**：肝脏实质 CT 均值 54.2 HU (密度均匀，未见局灶占位)；胰腺实质 CT 均值 44.8 HU (形态规则饱满，主胰管无扩张，胰周脂肪清晰，未见胰腺占位病变)；
+   - **骨骼肌质量指数 (SMI = SMA / 身高²)**：$\\text{SMI} = \\frac{88.50}{1.72^2} \\approx 29.92 \\text{ cm}^2/\\text{m}^2$ (低于 Prado 国际共识男性肌少症界值 $52.4 \\text{ cm}^2/\\text{m}^2$)，提示伴发重度骨骼肌消耗；
+   - **骨骼肌平均辐射衰减 (Mean Muscle Attenuation, MA)**：$26.4 \\text{ HU}$ (正常骨骼肌处于 $35 \\sim 50 \\text{ HU}$，提示严重肌脂肪变性 Myosteatosis)；
+   - **内脏/皮下脂肪比 (VAT / SAT)**：$\\frac{142.30}{68.20} = 2.09$ (内脏蓄脂表型)。
+3. **步骤二：药代动力学 (PK) 化疗剂量限制性毒性 (DLT) 预警分析**：
+   - 参考图像：[图 12 基于机体成分 (SMI & MA) 的个体化化疗药代动力学 (PK) 剂量限制性毒性 (DLT) 预警评估](/site/real-case-sarco-2-pk-toxicity-risk.png)；
+   - 脾功能亢进加剧骨髓造血抑制，骨骼肌萎缩显著降低亲脂性抗肿瘤药代谢清除率；
+   - 系统 PK 模型预测：若全量给予标准方案化疗，发生 3~4 级骨髓抑制及严重感染的风险高达 $72\\%$。
+4. **步骤三：多学科诊疗 (MDT) 减毒增效与预康复营养干预决策闭环**：
+   - 参考图像：[图 13 多模态因果诊断链与证据闭环 (全腹实质脏器与机体营养代谢评估)](/site/real-case-sarco-3-diagnostic-chain.png)；
+   - 串联「脾肿大 680.0 cm³ + L3 SMI $29.92 \\text{ cm}^2/\\text{m}^2$ + 肌脂肪变性 $26.4 \\text{ HU}$ + 握力 $19 \\text{ kg}$」证据链；
+   - **MDT 建议闭环**：【SaMD 监管合规说明】：系统输出客观 PK 毒性预警，提示由临床医师与 MDT 团队结合脏器储备审慎评估化疗给药剂量，系统严禁擅自下达调药处方；联合全肠内营养支持 (ONS) 强化乳清蛋白与支链氨基酸，指导轻负荷抗阻与有氧预康复训练。
 
 ---
 
-### 8.5 实测包真实前列腺多参数 T2-MRI 补充量化验证 (张敏 · PT-PROSTATE-004)
+### 8.4 案例四：盆腔前列腺多参数 T2 加权 MRI · 良性前列腺增生 (BPH) 与 PI-RADS v2.1 结构化评分 (张敏 · PT-PROSTATE-004)
 
-- 参考图像：[图 16b 真实患者盆腔前列腺多参数 T2-MRI 轴位关键截面 (Slice #10) · MONAI 3D 解剖分割与 PI-RADS v2.1 量化](/site/real-case-prostate-1-t2-mri.png)；
-- **原始影像与临床背景**：65岁男性，体检发现 PSA 5.8 ng/mL，无明显尿痛肉眼血尿。拖拽上传实测包 \`03_Patient_ZhangMin_Prostate_MRI\`（包含 19 层薄层轴位 T2 加权 MRI 序列，高内平面分辨率 0.5×0.5 mm）；
-- **前列腺 3D 容积与移行区指数 (TZI = 0.58)**：MONAI 3D 卷积模型分割测得前列腺总容积达 **48.60 cm³** (同龄健康男性参考范围 20~25 cm³，提示中度腺体增大)；移行区容积达 **28.20 cm³**，计算移行区指数 $\\text{TZI} = \\frac{28.20}{48.60} = 0.58$ (超过 0.50 国际截断值，证实前列腺增大主要由良性移行区腺体增生引起)；
-- **PI-RADS v2.1 结构化评分与穿刺活检决策**：T2 加权像示移行区见圆形、边界清晰、被假包膜包绕的混杂高低信号结节，外周带高信号均匀连续，无局灶性扩散受限或包膜外侵犯征象。系统依据国际 PI-RADS v2.1 指南结构化评定为 **PI-RADS 2 类 (极低或低度恶性风险，考虑良性前列腺增生结节)**；
-- **临床决策获益**：系统结合 PSA 密度 (PSAD = 0.12 ng/mL/cm³ < 0.15 警戒线)，给出 CDSS 随访建议：建议定期门诊监测 PSA 与复查 MRI，**规避非必要的高创伤经直肠前列腺穿刺活检 (TRUS Biopsy)**，显著减轻患者痛苦与并发症。
+1. **患者脱敏档案与就诊背景**：
+   - 虚拟代号：\`PT-PROSTATE-004\` (68 岁男性，张敏，零 PHI 规范建档)；
+   - 原始检查：盆腔前列腺多参数薄层轴位 T2-weighted MRI (\`03_Patient_ZhangMin_Prostate_MRI\`，19 层轴位，层厚 3.0 mm，面内高分辨率 0.5×0.5 mm)；
+   - 主诉与查体：体检发现血清前列腺特异性抗原 (Total PSA) 升高至 5.8 ng/mL (处于 4~10 ng/mL 灰区)，伴排尿踌躇与夜尿增多 (夜尿 2~3 次)，无肉眼血尿；直肠指检 (DRE) 前列腺中度增大，质韧无硬结；
+   - 临床痛点：迫切需要利用多参数 MRI 精准评估恶性风险，规避传统非必要的有创经直肠前列腺穿刺活检 (TRUS) 感染与出血风险。
+2. **步骤一：薄层轴位 T2-MRI 3D 解剖分带多模态体素分割与容积量化 (Slice #10)**：
+   - 参考图像：[图 14 真实患者盆腔前列腺多参数 T2-MRI 轴位关键截面 (Slice #10) · MONAI 3D 解剖分割与 PI-RADS v2.1 量化](/site/real-case-prostate-1-t2-mri.png)；
+   - **前列腺总腺体容积 (Total Prostate Volume)**：测得 **48.60 cm³** (同龄正常男性参考 20~25 cm³，提示中度增大)；
+   - **移行区容积 (Transitional Zone Volume, TZ Volume)**：**28.20 cm³**；
+   - **移行区指数 (Transition Zone Index, TZI)**：$\\text{TZI} = \\frac{28.20}{48.60} = \\mathbf{0.58}$ (超过 0.50 国际截断值，客观确证前列腺增大主要由良性移行区腺体增生所主导)；
+   - **外周带 (PZ) 与纤维假包膜**：外周带呈现均匀连续高信号，未见局灶性低信号占位；纤维假包膜光滑完整，未见包膜穿破或精囊腺侵犯。
+3. **步骤二：PI-RADS v2.1 规范特征评分与 PSA 密度 (PSAD) 评估**：
+   - **移行区特征**：T2 加权像见结节形态规则、边界光滑锐利、周围环绕完整低信号纤维包膜，典型符合 PI-RADS 2 分评分标准 (良性前列腺增生腺瘤)；
+   - **综合评级**：评定为 **PI-RADS 2 类 (极低或低度恶性风险，考虑良性前列腺增生 BPH 结节)**；
+   - **PSA 密度 (PSAD)**：$\\text{PSAD} = \\frac{5.8}{48.60} = \\mathbf{0.12 \\text{ ng/mL/cm}^3}$ (低于国际推荐的 $0.15 \\text{ ng/mL/cm}^3$ 恶性穿刺警戒线)，表明血清 PSA 轻度升高源于增大腺上皮良性分泌，非恶性肿瘤破坏入血。
+4. **步骤三：多模态决策闭环与规避过度侵入性穿刺活检获益 (Biopsy-Sparing CDSS)**：
+   - 串联「前列腺总容积 48.60 cm³ + TZI 0.58 + PI-RADS 2 类 + PSAD 0.12」三元客观证据链；
+   - **临床辅助决策闭环**：【SaMD 监管合规说明】：系统输出客观 PI-RADS 2 类分层与 PSAD 0.12 测值，建议泌尿外科医师安排常规门诊随访与每 6 个月 PSA 动态复查，**协助临床审慎规避非必要经直肠超声有创穿刺活检 (TRUS)**，避免患者承受 12 针有创穿刺之苦与感染风险；导出标准 DICOM SR 与 HL7 FHIR 报告。
 
 ---
 
-### 8.6 4 大典型临床案例多模态指标与决策对照矩阵表
+### 8.5 4 大典型临床案例多模态指标与决策对照矩阵表
 
 | 案例编号 / 脱敏 ID | 专科分类与疾病诊断 | 临床痛点与首发表现 | 影像金标准征象 | Heurion 核心算法与实测值 | 指南标准判定与分级 | 临床处置与最终决策闭环 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **案例一**<br>\`PT-BRONCHO-001\` | 呼吸感染<br>变应性支气管肺曲霉病 (ABPA) | 反复咳痰咯血6年，外院抗生素治疗无效，气道广泛粘液嵌顿 | 中央型支气管扩张 (BAR > 1.0) 伴高密度粘液栓 (HAM > 胸壁肌肉) | BAR 1.45 (印戒征)<br>HAM 12.44 cm³ (98 HU)<br>总粘液 18.50 cm³ (随访吸收 74.9%) | Rosenberg-Patterson 标准<br>3D 容积吸收评估 (PR) | 确诊 ABPA 急性期；专科指导激素联合抗真菌治疗，3个月粘液栓吸收良好 (体积 18.5 ➔ 4.6 cm³) |
 | **案例二**<br>\`PT-NSCLC-002\` | 胸部肿瘤科<br>肺腺癌 (EGFR 突变) III A期 | 咳嗽胸痛2月，右上肺肿块伴4R组纵隔淋巴结转移，EGFR 19外显子缺失 | 分叶、毛刺肿块，纵隔淋巴结短径增大 (≥ 15 mm) | 基线 SOD 60.0 mm<br>随访 SOD 33.0 mm (Δ -45.0%)<br>3D 容积 28.5 ➔ 6.2 cm³ | **RECIST 1.1 国际标准**<br>部分缓解 (PR) | 一线单药奥希替尼 80mg qd 治疗；差分图呈深绿负吸收，避免过早放疗过度介入 |
-| **案例三**<br>\`PT-SARCO-003\` | 消化与肿瘤营养<br>全腹影像与恶液质肌少症 | 消瘦乏力，3月体重下降 20.6%，BMI 18.25，握力 19 kg | 全腹CT示脾脏显著肿大 (680 cm³, 长径14.2cm)，腰大肌萎缩伴肌脂肪浸润 | L3 SMI = 29.92 cm²/m²<br>肌肉衰减 MA = 26.4 HU<br>VAT/SAT = 2.09 | Prado 共识 / AWGS 标准<br>重度恶液质肌少症 | 预测全量化疗严重毒性率 72%；MDT建议首剂化疗适度下调20%，联合全肠内营养与预康复 |
-| **案例四**<br>\`PT-IPF-004\` | 呼吸间质病科<br>特发性肺纤维化 (IPF) | 渐进性气促干咳1年，双下肺典型 Velcro 啰音，限制性通气障碍 | 胸膜下/基底部蜂窝状改变、牵拉性支扩，无不符合征象 | 胸膜下外周向心分布<br>3D 蜂窝肺容积 46.20 cm³<br>牵拉性支扩伸至胸膜下 | **2022 ATS/ERS/JRS/ALAT**<br>明确 UIP 表型 (Definite) | 结合自身抗体阴性与典型蜂窝肺，**经 MDT 团队评估免除高风险外科肺活检 (SLB)**；即刻启动抗纤维化治疗 |
-| **实测补充**<br>\`PT-PROSTATE-004\` | 泌尿男科<br>前列腺增生伴良性结节 | 体检 PSA 5.8 ng/mL，排尿轻度等待，无肉眼血尿 | T2加权像移行区圆形完整假包膜结节，外周带高信号均匀连续 | 前列腺总容积 48.60 cm³<br>移行区容积 28.20 cm³<br>TZI 0.58 / PSAD 0.12 | **PI-RADS v2.1**<br>2类 (极低恶性风险) | 门诊常规监测 PSA 与 MRI 随访，**规避非必要经直肠穿刺活检 (TRUS)** |
+| **案例三**<br>\`PT-ABDOMEN-003\` | 消化与腹部实质<br>脾脏显著肿大伴肌减少 | 上腹饱胀纳差2月，消瘦，脾脏肿大肋下 3cm，轻度脾亢 | 全腹CT示脾脏显著弥漫性肿大 (680 cm³, 长径14.2cm)，肝胰未见占位，L3腰大肌萎缩 | 脾体积 680.0 cm³<br>L3 SMI = 29.92 cm²/m²<br>肌肉衰减 MA = 26.4 HU | Prado 共识 / AWGS 标准<br>脾大待查伴肌少症 | 预测全量化疗严重骨髓毒性率 72%；MDT 审慎评估化疗剂量并联合全肠内营养与预康复 |
+| **案例四**<br>\`PT-PROSTATE-004\` | 泌尿外科与男科<br>良性前列腺增生 (BPH) | 体检 PSA 5.8 ng/mL (灰区升高)，轻度排尿等待与夜尿频多，无血尿 | T2加权像移行区圆形边界清晰包膜完整结节，外周带高信号均匀无占位 | 前列腺总容积 48.60 cm³<br>移行区容积 28.20 cm³<br>TZI 0.58 / PSAD 0.12 | **PI-RADS v2.1 国际标准**<br>2类 (良性增生结节) | 常规门诊随访与每 6 个月 PSA 监测，**科学规避非必要经直肠有创穿刺活检 (TRUS)** |
 
 ---
 
-### 8.7 医生专科反馈、历史手册严重谬误整改与临床自洽性校验总结 (Physician Review & Clinical Audit Report)
+### 8.6 医生专科反馈、历史手册严重谬误整改与临床自洽性校验总结 (Physician Review & Clinical Audit Report)
 
 多位三甲医院呼吸科、肿瘤科及放射科专家对 Heurion 用户使用手册中的案例分析进行了极为严肃且专业的临床审查，指出了早期版本中存在的 **4 大类严重临床谬误与监管违规风险**。研发与医学团队已在 \`apps/imaging-worker/src/clinical_audit.py\` 中构建全自动化临床校验引擎，并在 CLI (\`verify-cases\`) 与系统底层完成全面整改：
 

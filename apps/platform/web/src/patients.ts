@@ -3754,16 +3754,16 @@ ${recommendations}
             <b>[ABPA 支扩与粘液栓]</b> PT-BRONCHO-001 · 52岁男 · BAR 1.45 印戒征 · HAM 粘液栓 12.44 cm³ (3D 容积吸收 74.9%)
           </span>
         </button>
-        <button data-pt-preset="sarco" title="点击快速进入或新建恶液质与骨骼肌减少症 TotalSegmentator L3 患者档案">
+        <button data-pt-preset="sarco" title="点击快速进入或新建全腹实质脏器与骨骼肌减少症 TotalSegmentator L3 患者档案">
           <span style="display:flex;align-items:center;gap:8px;">
             ${icon('users', { size: 16 })}
-            <b>[恶液质与肌少症]</b> PT-SARCO-003 · 64岁男 · TotalSegmentator L3 SMI 29.9 cm²/m² · 化疗剂量预警
+            <b>[全腹实质与肌少症]</b> PT-ABDOMEN-003 · 52岁男 · 脾肿大 680 cm³ · TotalSegmentator L3 SMI 29.9 cm²/m² · 化疗安全评估
           </span>
         </button>
-        <button data-pt-preset="ipf" title="点击快速进入或新建特发性肺纤维化 (IPF/UIP) 薄层 HRCT 患者档案">
+        <button data-pt-preset="prostate" title="点击快速进入或新建盆腔前列腺多参数 T2-MRI (PI-RADS v2.1) 患者档案">
           <span style="display:flex;align-items:center;gap:8px;">
-            ${icon('grid', { size: 16 })}
-            <b>[IPF / UIP 纤维化]</b> PT-IPF-004 · 69岁男 · 薄层 HRCT 蜂窝肺 46.2 cm³ · 确诊免外科肺活检
+            ${icon('scan', { size: 16 })}
+            <b>[前列腺 MRI 评估]</b> PT-PROSTATE-004 · 68岁男 · T2 MRI 腺体 48.6 cm³ (TZI 0.58) · PI-RADS 2 类良性增生
           </span>
         </button>
       </div>
@@ -3844,7 +3844,7 @@ ${recommendations}
       return
     }
     if (b.dataset.ptPreset === 'sarco') {
-      const existing = list.find(p => p.tags.some(t => /sarco|肌少症|恶液质|胰腺/i.test(t)) || p.code === 'PT-SARCO-003')
+      const existing = list.find(p => p.tags.some(t => /sarco|肌少症|恶液质|脾大|abdomen/i.test(t)) || p.code === 'PT-SARCO-003' || p.code === 'PT-ABDOMEN-003')
       if (existing) {
         await openPatient(existing.id)
       } else {
@@ -3852,13 +3852,13 @@ ${recommendations}
           const created = await api<Patient>('/api/patients', {
             method: 'POST',
             body: JSON.stringify({
-              code: 'PT-SARCO-003',
+              code: 'PT-ABDOMEN-003',
               sex: '男',
-              birth_year: '1962',
-              tags: ['胰腺导管腺癌', '恶液质', '重度肌少症', 'TotalSegmentator-L3']
+              birth_year: '1974',
+              tags: ['脾脏肿大', 'Splenomegaly', '肌少症', 'TotalSegmentator-L3', '化疗安全评估']
             })
           })
-          notice('已创建典型案例患者档案：PT-SARCO-003')
+          notice('已创建典型案例患者档案：PT-ABDOMEN-003')
           await loadList()
           await openPatient(created.id)
         } catch (err) {
@@ -3867,8 +3867,8 @@ ${recommendations}
       }
       return
     }
-    if (b.dataset.ptPreset === 'ipf') {
-      const existing = list.find(p => p.tags.some(t => /ipf|uip|间质性|纤维化/i.test(t)) || p.code === 'PT-IPF-004')
+    if (b.dataset.ptPreset === 'prostate' || b.dataset.ptPreset === 'ipf') {
+      const existing = list.find(p => p.tags.some(t => /prostate|前列腺|pi-rads|bph|ipf/i.test(t)) || p.code === 'PT-PROSTATE-004' || p.code === 'PT-IPF-004')
       if (existing) {
         await openPatient(existing.id)
       } else {
@@ -3876,13 +3876,13 @@ ${recommendations}
           const created = await api<Patient>('/api/patients', {
             method: 'POST',
             body: JSON.stringify({
-              code: 'PT-IPF-004',
+              code: 'PT-PROSTATE-004',
               sex: '男',
-              birth_year: '1957',
-              tags: ['特发性肺纤维化', 'UIP', '蜂窝肺', '薄层HRCT']
+              birth_year: '1958',
+              tags: ['前列腺增生', 'BPH', 'PI-RADS-2', '盆腔T2-MRI', '规避过度活检']
             })
           })
-          notice('已创建典型案例患者档案：PT-IPF-004')
+          notice('已创建典型案例患者档案：PT-PROSTATE-004')
           await loadList()
           await openPatient(created.id)
         } catch (err) {
