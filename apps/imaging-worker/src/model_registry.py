@@ -121,15 +121,15 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
     ),
     "spleen_ct": ModelSpec(
         name="spleen_ct",
-        display_name="MONAI 脾脏解剖体积测量与肿大评估模型",
+        display_name="MONAI 脾脏解剖体积测量与肿大评估模型 (3D-UNet)",
         modality="Abdomen CT",
-        version="v0.4.0",
-        size_mb=128.0,
-        sha256="1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+        version="v0.5.3",
+        size_mb=18.4,
+        sha256="502c312893994ec071a85c4f2e7d83a43f7789969faa73dae62f1291177f50fe",
         urls=[
-            "https://github.com/Project-MONAI/model-zoo/releases/download/v0.1.0/spleen_ct_v0.4.0.pt"
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/spleen_ct_segmentation_v0.5.3.zip"
         ],
-        description="用于门静脉高压与血液系统疾病患者的脾脏体积快速精确量化与 RECIST 径线提取。",
+        description="基于 MONAI 3D-UNet 架构的腹部薄层 CT 脾脏全自动三维分割与体积/RECIST径线测量。",
         architecture="UNet-3D",
         clinical_targets=["脾脏体积", "脾大 (Splenomegaly)", "门静脉高压"],
         file_name="spleen_ct_v0.4.0.pt"
@@ -160,7 +160,7 @@ def get_model_status(name: str) -> Dict[str, Any]:
     local_file = cache_dir / spec.file_name
     meta_file = cache_dir / f"{spec.file_name}.meta.json"
 
-    installed = local_file.exists() and local_file.stat().st_size > 0
+    installed = local_file.exists() and local_file.stat().st_size > 1024 * 1024
     size_bytes = local_file.stat().st_size if installed else 0
     size_mb = round(size_bytes / (1024 * 1024), 2)
 
@@ -248,8 +248,23 @@ def pull_model(
                         progress_callback(downloaded, total_len)
 
             if temp_file.exists() and temp_file.stat().st_size > 0:
-                temp_file.rename(local_file)
-                download_success = True
+                # If downloaded a zip archive (MONAI bundle), extract models/model.pt
+                if url.endswith(".zip") or temp_file.suffix == ".zip":
+                    import zipfile, shutil
+                    try:
+                        with zipfile.ZipFile(temp_file, "r") as zf:
+                            pt_entries = [n for n in zf.namelist() if n.endswith("model.pt")]
+                            if pt_entries:
+                                with zf.open(pt_entries[0]) as zf_in, open(local_file, "wb") as out_f:
+                                    shutil.copyfileobj(zf_in, out_f)
+                                download_success = True
+                            else:
+                                raise RuntimeError(f"Zip archive does not contain a valid model.pt: {url}")
+                    finally:
+                        temp_file.unlink(missing_ok=True)
+                else:
+                    temp_file.rename(local_file)
+                    download_success = True
                 break
         except Exception as e:
             last_error = str(e)
@@ -257,21 +272,11 @@ def pull_model(
                 temp_file.unlink(missing_ok=True)
             continue
 
-    # Fallback for offline / demo environments: create verified stub weight package
     if not download_success:
-        # Create a structured weight metadata archive for offline air-gapped deployments
-        stub_data = {
-            "model_name": spec.name,
-            "architecture": spec.architecture,
-            "version": spec.version,
-            "runtime": "MONAI 1.4 / PyTorch 2.5",
-            "fallback_mode": "adaptive_anatomical_envelope",
-            "clinical_notes": "Official weights initialized. Air-gapped runtime active."
-        }
-        content = json.dumps(stub_data, indent=2).encode("utf-8")
-        with open(local_file, "wb") as f:
-            f.write(content)
-        download_success = True
+        raise RuntimeError(
+            f"无法从官方仓库下载模型 '{name}' 权重: {last_error}。"
+            "根据医疗 SaMD 质控规范，已严格禁止算法层退化为伪造权重或启发式规则。"
+        )
 
     actual_sha = compute_sha256(local_file)
     meta = {
@@ -287,9 +292,8 @@ def pull_model(
     stat = get_model_status(name)
     return {
         "status": "success",
-        "message": f"模型 '{spec.display_name}' 成功安装至本地",
-        "model": stat,
-        "fallback_offline": not (actual_sha == spec.sha256)
+        "message": f"模型 '{spec.display_name}' 成功安装至本地 (大小: {stat['local_size_mb']} MB)",
+        "model": stat
     }
 
 def verify_model(name: str) -> Dict[str, Any]:

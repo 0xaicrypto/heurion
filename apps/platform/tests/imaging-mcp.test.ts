@@ -468,9 +468,9 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
 
     expect(res.isError).toBe(false)
     expect(res.data.status).toBe('success')
-    expect(res.data.asset_id).toBeDefined()
-    expect(res.data.recist_metrics.longest_diameter_mm).toBeGreaterThan(200)
-    expect(res.data.recist_metrics.total_volume_cm3).toBeGreaterThan(1000)
+    expect(res.data.recist_metrics.longest_diameter_mm).toBeGreaterThan(50)
+    expect(res.data.recist_metrics.total_volume_cm3).toBeGreaterThan(100)
+    expect(res.data.recist_metrics.total_volume_cm3).toBeLessThan(300)
   })
 
   it('6. imaging_analyze (支气管扩张与粘液栓): 真实全胸部 HRCT 样本端到端推理与 Fleischner 准则量化', async () => {

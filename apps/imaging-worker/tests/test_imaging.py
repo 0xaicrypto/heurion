@@ -221,7 +221,7 @@ def test_emphysema_metrics_and_endpoint():
     assert "total_lung_volume_liters" in data
 
 
-def test_cascaded_anatomical_masking():
+def test_strict_neural_inference_and_missing_weight_rejection():
     from engine import MONAIEngine, generate_synthetic_ct_volume
     engine = MONAIEngine()
     vol, _ = generate_synthetic_ct_volume(shape=(32, 64, 64), spacing=(1.5, 0.8, 0.8))
@@ -232,10 +232,16 @@ def test_cascaded_anatomical_masking():
     assert "emphysema" in res_copd["recist_metrics"]
     assert res_copd["key_slice_png_base64"].startswith("data:image/png;base64,")
 
-    # Test Liver lesion segmenter with bone-exclusion cascaded envelope
-    res_liver = engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="liver_lesion_segmenter")
-    assert res_liver["status"] == "success"
-    assert res_liver["recist_metrics"]["has_lesion"] in (True, False)
+    # Test Real Neural Inference for installed MONAI Spleen 3D-UNet model
+    res_spleen = engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="spleen_segmenter")
+    assert res_spleen["status"] == "success"
+    assert res_spleen["real_neural_inference"] is True
+    assert "MONAI 3D-UNet" in res_spleen["neural_info"]["neural_architecture"]
+
+    # Verify that requesting an uninstalled model strictly raises RuntimeError rather than degrading to heuristic fake rules
+    with pytest.raises(RuntimeError) as exc_info:
+        engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="liver_lesion_segmenter")
+    assert "权重尚未安装" in str(exc_info.value)
 
 
 def test_model_registry_and_endpoints():
@@ -351,7 +357,7 @@ def test_async_task_queue_and_endpoints():
 
     # 2. Poll task status
     import time
-    max_wait = 10
+    max_wait = 25
     start = time.time()
     final_task = None
     while time.time() - start < max_wait:

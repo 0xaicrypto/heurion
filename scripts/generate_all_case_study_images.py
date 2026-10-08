@@ -109,10 +109,10 @@ def generate_case_1_baseline_hrct():
     
     # HUD Box at top
     draw_hud_box(draw, 10, 10, 492, 100)
-    draw.text((16, 14), "HEURION CHEST-CT // BRONCHIECTASIS & MUCUS AI (ABPA)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
-    draw.text((16, 32), "计算加速: Apple Silicon Metal (MPS) | 关键断面: 第 #114 层 (右肺下叶基底段)", fill=(203, 213, 225, 240), font=get_font(11))
+    draw.text((16, 14), "HEURION CHEST-CT // 支气管与高密度粘液栓临床标注原型 (交互设计示意)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
+    draw.text((16, 32), "【临床标注原型】待挂载 MONAI 气道模型 | 断面层位: 第 #114 层 (右肺下叶基底段)", fill=(203, 213, 225, 240), font=get_font(11))
     draw.text((16, 48), "形态分型: 柱状支气管扩张 (Cylindrical) | 印戒征阳性 (BAR: 1.45 > 1.0)", fill=(250, 204, 21, 255), font=get_font(11, bold=True))
-    draw.text((16, 64), "粘液栓总容积: 18.50 cm3 (HAM高密度核心: 12.44 cm3, 98 HU) | 气道阻塞率: 10.4%", fill=(245, 158, 11, 255), font=get_font(11))
+    draw.text((16, 64), "粘液栓标注容积: 18.50 cm3 (HAM高密度核心: 12.44 cm3, 98 HU) | 气道阻塞率: 10.4%", fill=(245, 158, 11, 255), font=get_font(11))
     draw.text((16, 80), "Bhalla 粘液分级: 2 级 (局灶分支完全嵌顿) | Reiff 严重度评分: 12/18", fill=(52, 211, 153, 255), font=get_font(11))
     
     draw_scale_bar(draw, 512, 512)
@@ -319,10 +319,10 @@ def generate_nsclc_1_baseline_recist():
     
     # HUD Box at top
     draw_hud_box(draw, 10, 10, 492, 95)
-    draw.text((16, 14), "HEURION CHEST-CT // NSCLC 3D RECIST 1.1 AI", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
-    draw.text((16, 32), "计算加速: Apple Silicon Metal (MPS) | 关键断面: 第 #215 层 (右上肺尖段)", fill=(203, 213, 225, 240), font=get_font(11))
+    draw.text((16, 14), "HEURION CHEST-CT // 肺癌靶病灶 RECIST 1.1 临床测量原型 (交互设计示意)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
+    draw.text((16, 32), "【临床测量原型】待挂载 3D 肿瘤分割模型 | 断面层位: 第 #215 层 (右上肺尖段)", fill=(203, 213, 225, 240), font=get_font(11))
     draw.text((16, 48), "病理分型: 浸润性腺癌 (cT2bN2M0, EGFR 19del) | 基线扫描: 2026-06-15", fill=(203, 213, 225, 240), font=get_font(11))
-    draw.text((16, 64), "靶病灶 1 (右上肺实质肿块): 42.0 mm x 31.5 mm | 3D 容积: 28.50 cm3 (38 HU)", fill=(255, 110, 110, 255), font=get_font(11))
+    draw.text((16, 64), "靶病灶 1 (右上肺实质肿块): 42.0 mm x 31.5 mm | 3D 标注容积: 28.50 cm3 (38 HU)", fill=(255, 110, 110, 255), font=get_font(11))
     draw.text((16, 80), "靶病灶 2 (4R 纵隔淋巴结): 短径 18.0 mm (阳性 >=15mm) | 基线 SOD: 60.0 mm", fill=(251, 191, 36, 255), font=get_font(11))
     
     draw_scale_bar(draw, 512, 512)
@@ -737,8 +737,8 @@ def generate_prostate_1_t2_mri():
     
     # Top HUD Box
     draw_hud_box(draw, 10, 10, 492, 105)
-    draw.text((16, 14), "HEURION PELVIC MRI // MONAI 3D 前列腺解剖与 PI-RADS v2.1 结构化评分", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
-    draw.text((16, 32), "序列: 轴位薄层 T2-WI (0.5x0.5x3.0 mm) | 患者: 张敏 (PT-PROSTATE-004, 65岁)", fill=(203, 213, 225, 240), font=get_font(11))
+    draw.text((16, 14), "HEURION PELVIC MRI // 前列腺解剖分区与 PI-RADS v2.1 原型 (交互设计示意)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
+    draw.text((16, 32), "【解剖标注原型】待挂载 MONAI 前列腺模型 | 序列: 轴位薄层 T2-WI (0.5x0.5x3.0 mm)", fill=(203, 213, 225, 240), font=get_font(11))
     draw.text((16, 48), "前列腺总容积: 48.60 cm3 (增大) | 移行区容积: 28.20 cm3 | 移行区指数 (TZI): 0.58 (>0.50)", fill=(250, 204, 21, 255), font=get_font(11, bold=True))
     draw.text((16, 64), "PI-RADS v2.1 定级: 2 类 (移行区边界光整良性增生结节，外周带高信号均匀)", fill=(52, 211, 153, 255), font=get_font(11, bold=True))
     draw.text((16, 80), "PSAD: 0.12 ng/mL/cm3 (<0.15 阈值) | CDSS建议: 门诊常规随访，规避非必要穿刺活检 (TRUS)", fill=(52, 211, 153, 255), font=get_font(11))
@@ -749,6 +749,34 @@ def generate_prostate_1_t2_mri():
     base_img.convert("RGB").save(out_path, format="PNG", optimize=True)
     print(f"Saved: {out_path}")
 
+# =============================================================
+# REAL MONAI NEURAL INFERENCE: 官方 MONAI 3D-UNet 脾脏真实模型推理
+# =============================================================
+
+def generate_spleen_monai_real_inference():
+    print("Generating real-monai-spleen-inference.png via true PyTorch 3D-UNet pipeline on Metal (MPS)...")
+    import urllib.request
+    import json
+    import base64
+
+    # Connect to live imaging-worker running genuine MONAI 3D-UNet weights
+    req = urllib.request.Request(
+        "http://127.0.0.1:8004/api/v1/analyze/sample",
+        data=json.dumps({"sample_id": "spleen_test", "model_name": "spleen_segmenter"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+
+    b64_str = res["key_slice_png_base64"]
+    if "," in b64_str:
+        b64_str = b64_str.split(",", 1)[1]
+    
+    out_path = os.path.join(SITE_DIR, "real-monai-spleen-inference.png")
+    with open(out_path, "wb") as f:
+        f.write(base64.b64decode(b64_str))
+    print(f"Saved REAL MONAI Inference Image: {out_path} ({res['neural_info']})")
+
 def main():
     os.makedirs(SITE_DIR, exist_ok=True)
     print("==================================================================")
@@ -756,13 +784,16 @@ def main():
     print(f"Target Directory: {SITE_DIR}")
     print("==================================================================")
     
-    # Case 1: ABPA
+    # Real Neural Inference (Official MONAI 3D-UNet)
+    generate_spleen_monai_real_inference()
+    
+    # Case 1: ABPA (Schematic UI Prototype)
     generate_case_1_baseline_hrct()
     generate_case_1_diff_heatmap()
     generate_case_1_l3_smi()
     generate_case_1_diagnostic_chain()
     
-    # Case 2: NSCLC
+    # Case 2: NSCLC (Schematic UI Prototype)
     generate_nsclc_1_baseline_recist()
     generate_nsclc_2_mpr_3view()
     generate_nsclc_3_diff_heatmap()
@@ -774,10 +805,10 @@ def main():
     generate_sarco_2_pk_toxicity_risk()
     generate_sarco_3_diagnostic_chain()
     
-    # Case 4: Prostate MRI
+    # Case 4: Prostate MRI (Schematic UI Prototype)
     generate_prostate_1_t2_mri()
     
-    print("\n🎉 All 13 authentic case study images successfully generated with zero glyph errors!")
+    print("\n🎉 All case study images successfully generated with authentic real/prototype clarity!")
 
 if __name__ == "__main__":
     main()

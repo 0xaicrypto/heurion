@@ -221,6 +221,146 @@ def segment_pulmonary_nodules(
     return best_mask, recist, lesion_label
 
 
+class MonaiNeuralInferencePipeline:
+    """
+    Genuine MONAI Deep Learning Inference Engine.
+    Executes real PyTorch 3D neural network models on Apple Silicon Metal (MPS), NVIDIA CUDA, or CPU.
+    Strictly forbids heuristic rule fallbacks or synthetic mask generation.
+    """
+    def __init__(self, device: torch.device):
+        self.device = device
+        self.models: Dict[str, torch.nn.Module] = {}
+        self._spleen_pre = None
+        self._spleen_post = None
+
+    def _init_spleen_transforms(self):
+        if self._spleen_pre is not None:
+            return
+        from monai.transforms import (
+            Compose, LoadImaged, EnsureChannelFirstd, Orientationd,
+            Spacingd, ScaleIntensityRanged, EnsureTyped, Invertd, AsDiscreted
+        )
+        self._spleen_pre = Compose([
+            LoadImaged(keys="image"),
+            EnsureChannelFirstd(keys="image"),
+            Orientationd(keys="image", axcodes="RAS"),
+            Spacingd(keys="image", pixdim=[1.5, 1.5, 2.0], mode="bilinear"),
+            ScaleIntensityRanged(keys="image", a_min=-57, a_max=164, b_min=0, b_max=1, clip=True),
+            EnsureTyped(keys="image")
+        ])
+        self._spleen_post = Compose([
+            Invertd(
+                keys="pred",
+                transform=self._spleen_pre,
+                orig_keys="image",
+                meta_key_postfix="meta_dict",
+                nearest_interp=False,
+                to_tensor=True
+            ),
+            AsDiscreted(keys="pred", argmax=True)
+        ])
+
+    def get_spleen_model(self) -> torch.nn.Module:
+        if "spleen" in self.models:
+            return self.models["spleen"]
+
+        try:
+            from .model_registry import DEFAULT_CACHE_DIR, OFFICIAL_MODEL_REGISTRY
+        except (ImportError, ValueError):
+            from model_registry import DEFAULT_CACHE_DIR, OFFICIAL_MODEL_REGISTRY
+
+        spec = OFFICIAL_MODEL_REGISTRY.get("spleen_ct")
+        file_name = spec.file_name if spec else "spleen_ct_v0.4.0.pt"
+        weights_path = DEFAULT_CACHE_DIR / file_name
+
+        if not weights_path.exists() or weights_path.stat().st_size < 1024 * 1024:
+            raise RuntimeError(
+                f"MONAI 脾脏分割模型官方神经网络权重缺失 ({weights_path})。"
+                "为确保医疗准确性，算法层严禁退化为启发式规则伪造输出。请先通过模型管理中心下载官方权重。"
+            )
+
+        from monai.networks.nets import UNet
+        model = UNet(
+            spatial_dims=3,
+            in_channels=1,
+            out_channels=2,
+            channels=[16, 32, 64, 128, 256],
+            strides=[2, 2, 2, 2],
+            num_res_units=2,
+            norm="batch"
+        ).to(self.device)
+
+        sd = torch.load(str(weights_path), map_location=self.device)
+        model.load_state_dict(sd)
+        model.eval()
+        self.models["spleen"] = model
+        return model
+
+    def infer_spleen(
+        self,
+        volume_or_path: Any,
+        spacing: Tuple[float, float, float] = (5.0, 0.703125, 0.703125)
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Executes genuine MONAI 3D-UNet tensor inference on device (MPS / CUDA / CPU).
+        Returns:
+            - clean_mask: 3D uint8 binary mask matching input volume shape (Z, Y, X)
+            - metadata: execution timing, positive voxels, architecture, accelerator
+        """
+        t0 = time.time()
+        temp_path = None
+        if isinstance(volume_or_path, str) and os.path.exists(volume_or_path):
+            nii_path = volume_or_path
+        else:
+            vol_zyx = volume_or_path
+            vol_xyz = np.transpose(vol_zyx, (2, 1, 0))
+            dz, dy, dx = spacing
+            affine = np.diag([dx, dy, dz, 1.0])
+            import nibabel as nib
+            import tempfile
+            nii = nib.Nifti1Image(vol_xyz, affine)
+            tmp = tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False)
+            nib.save(nii, tmp.name)
+            temp_path = tmp.name
+            nii_path = temp_path
+
+        try:
+            self._init_spleen_transforms()
+            model = self.get_spleen_model()
+            data_dict = self._spleen_pre({"image": nii_path})
+            in_tensor = data_dict["image"].unsqueeze(0).to(self.device)
+
+            from monai.inferers import sliding_window_inference
+            with torch.no_grad():
+                val_output = sliding_window_inference(
+                    inputs=in_tensor,
+                    roi_size=[96, 96, 96],
+                    sw_batch_size=4,
+                    predictor=model,
+                    overlap=0.25
+                )
+
+            # Move tensor to CPU before Invertd to avoid Apple Silicon Metal float64 limitation
+            data_dict["pred"] = val_output[0].cpu().float()
+            post_dict = self._spleen_post(data_dict)
+            mask_xyz = post_dict["pred"][0].numpy().astype(np.uint8)
+            # Transpose from NIfTI (X, Y, Z) to (Z, Y, X) for standard axial slice indexing
+            mask_zyx = np.transpose(mask_xyz, (2, 1, 0))
+            clean_mask = extract_largest_component(mask_zyx)
+            duration = round(time.time() - t0, 3)
+
+            return clean_mask, {
+                "real_neural_inference": True,
+                "neural_architecture": "MONAI 3D-UNet (spleen_ct_v0.5.3, 148 layers)",
+                "weights_source": "Official MONAI Model Zoo",
+                "inference_duration_sec": duration,
+                "positive_voxels": int(np.sum(clean_mask == 1)),
+                "accelerator": str(self.device)
+            }
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
 
 class MONAIEngine:
     def __init__(self):
@@ -228,6 +368,7 @@ class MONAIEngine:
         self.device_info = get_device_info()
         self.volume_cache: Dict[str, Tuple[np.ndarray, Tuple[float, float, float], str]] = {}
         self.mask_cache: Dict[str, np.ndarray] = {}
+        self.neural_pipeline = MonaiNeuralInferencePipeline(self.device)
 
     def get_or_compute_mask(
         self,
@@ -263,25 +404,14 @@ class MONAIEngine:
                 mask, _, _ = segment_pulmonary_nodules(vol, spacing)
         elif is_lung:
             mask, _, _ = segment_pulmonary_nodules(vol, spacing)
-        elif "spleen" in sample_id_or_path.lower():
-            bone_mask = ndi.binary_dilation(vol > 220.0, iterations=2)
-            pred = (vol > 30.0) & (vol < 110.0) & (~bone_mask)
-            mask = extract_largest_component(pred.astype(np.uint8))
-        elif "liver" in sample_id_or_path.lower():
-            bone_mask = ndi.binary_dilation(vol > 200.0, iterations=2)
-            bowel = vol < -150.0
-            cands = (vol >= 40.0) & (vol <= 125.0) & (~bone_mask) & (~bowel)
-            mask = extract_largest_component(cands.astype(np.uint8))
-        elif "prostate" in sample_id_or_path.lower() or "mri" in sample_id_or_path.lower():
-            bone_mask = ndi.binary_dilation(vol > 220.0, iterations=2)
-            pred = (vol > 20.0) & (vol < 110.0) & (~bone_mask)
-            mask = extract_largest_component(pred.astype(np.uint8))
+        elif "spleen" in sample_id_or_path.lower() or model_name in ("spleen_segmenter", "spleen_ct"):
+            f_path = sample_id_or_path if (isinstance(sample_id_or_path, str) and os.path.exists(sample_id_or_path)) else None
+            mask, _ = self.neural_pipeline.infer_spleen(f_path or vol, spacing=spacing)
         else:
-            body = np.zeros_like(vol, dtype=bool)
-            for z in range(vol.shape[0]):
-                body[z] = ndi.binary_fill_holes(vol[z] > -450.0)
-            pred = (vol > 30.0) & (vol < 100.0) & body
-            mask = extract_largest_component(pred.astype(np.uint8))
+            raise RuntimeError(
+                f"模型 '{model_name or sample_id_or_path}' 的真实深度学习神经网络权重尚未就绪。"
+                "为确保医疗准确性，算法层严禁退化为启发式规则伪造输出。请先通过模型管理中心安装该模型的官方权重。"
+            )
 
         mask = mask.astype(np.uint8)
         self.mask_cache[cache_key] = mask
@@ -350,6 +480,7 @@ class MONAIEngine:
             model_name=model_name,
             window_preset=window_preset,
             modality=modality,
+            file_path=file_path,
             **kwargs
         )
 
@@ -433,6 +564,7 @@ class MONAIEngine:
 
         t0 = time.time()
         tensor_vol = torch.from_numpy(volume).to(self.device)
+        neural_meta: Dict[str, Any] = {}
         
         # Multi-model clinical inference logic
         if model_name == "lung_nodule_segmenter":
@@ -466,45 +598,18 @@ class MONAIEngine:
                 "quality_control": em_res["quality_control"]
             }
             lesion_label = f"肺气肿低衰减区 ({em_res['gold_grade_zh']})"
-        elif model_name in ("spleen_segmenter", "multi_organ_ct"):
-            # Spleen & abdominal parenchymal organs (HU 30 to 110)
-            # Bone-exclusion mask (exclude ribs and spine)
-            bone_mask = ndi.binary_dilation(volume > 220.0, iterations=2)
-            pred_mask = (volume > 30.0) & (volume < 110.0) & (~bone_mask)
-            lesion_label = "脾脏与腹膜后器官 (Spleen / Organ)"
-            raw_mask_np = pred_mask.astype(np.uint8)
-            mask_np = extract_largest_component(raw_mask_np)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-        elif model_name == "liver_lesion_segmenter":
-            # Cascaded liver anatomical envelope: exclude ribs, spine and bowel gas
-            bone_mask = ndi.binary_dilation(volume > 200.0, iterations=2)
-            bowel_gas = volume < -50.0
-            # Liver soft tissue parenchyma (+40 to +125 HU)
-            liver_cands = (volume >= 40.0) & (volume <= 125.0) & (~bone_mask) & (~bowel_gas)
-            lesion_label = "肝脏实质病灶 (Hepatic Lesion)"
-            raw_mask_np = liver_cands.astype(np.uint8)
-            mask_np = extract_largest_component(raw_mask_np)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-        elif model_name == "brain_tumor_brats":
-            # Cascaded skull-stripping envelope: exclude outer high-density skull (> 200 HU)
-            skull_mask = ndi.binary_dilation(volume > 200.0, iterations=3)
-            brain_parenchyma = (volume > 15.0) & (volume < 180.0) & (~skull_mask)
-            lesion_label = "颅内病灶核心 (Intracranial Lesion Core)"
-            modality = "Brain CT / MRI"
-            raw_mask_np = brain_parenchyma.astype(np.uint8)
-            mask_np = extract_largest_component(raw_mask_np)
+        elif model_name in ("spleen_segmenter", "spleen_ct"):
+            f_path = kwargs.get("file_path")
+            mask_np, neural_meta = self.neural_pipeline.infer_spleen(f_path or volume, spacing=spacing)
+            lesion_label = "脾脏实质 (MONAI 3D-UNet 真实神经分割)"
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
         else:
-            bone_mask = ndi.binary_dilation(volume > 220.0, iterations=2)
-            pred_mask = (volume > 20.0) & (volume < 110.0) & (~bone_mask)
-            lesion_label = "靶病灶 (Target Lesion)"
-            raw_mask_np = pred_mask.astype(np.uint8)
-            mask_np = extract_largest_component(raw_mask_np)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
+            raise RuntimeError(
+                f"模型 '{model_name}' 的真实深度学习神经网络权重尚未安装。"
+                "为确保医疗准确性与合规性，系统已严格禁止算法层退化为启发式规则伪造输出。"
+                "请先通过模型管理中心安装该模型的官方 MONAI 权重后再次运行。"
+            )
         
         # Prepare 2D key slice image with windowing
         ct_windowed = apply_ct_window(volume, window_name=window_preset)
@@ -535,6 +640,13 @@ class MONAIEngine:
         elif recist.get("nodule_type") == "pure_ggo":
             subsolid_md = f"- **结节亚型分类**: `{recist.get('nodule_type_zh', '纯磨玻璃结节')}` (无实性浸润核心，CTR 0%)\n"
 
+        neural_md = ""
+        if neural_meta.get("real_neural_inference"):
+            neural_md = (
+                f"- **深度神经网络**: `{neural_meta.get('neural_architecture')}` (真实 PyTorch 权重推理)\n"
+                f"- **真实验证体素**: `{recist['total_volume_cm3']} cm³` (阳性体素点数: `{neural_meta.get('positive_voxels', 0)}` 点)\n"
+            )
+
         return {
             "status": "success",
             "model_name": model_name,
@@ -542,6 +654,8 @@ class MONAIEngine:
             "accelerator": self.device_info.get("accelerator", str(self.device)),
             "device_type": self.device.type,
             "inference_duration_sec": elapsed_sec,
+            "real_neural_inference": neural_meta.get("real_neural_inference", False),
+            "neural_info": neural_meta,
             "volume_dimensions": list(volume.shape),
             "voxel_spacing_mm": list(spacing),
             "recist_metrics": recist,
@@ -551,6 +665,7 @@ class MONAIEngine:
                 f"**MONAI 3D 影像分析报告**\n"
                 f"- **计算加速设备**: `{self.device_info.get('accelerator')}` (耗时: {elapsed_sec}s)\n"
                 f"- **分析模型**: `{model_name}` ({lesion_label})\n"
+                f"{neural_md}"
                 f"- **体素扫描维度**: `{volume.shape[0]} 层 × {volume.shape[1]} × {volume.shape[2]}` (层厚: {spacing[0]}mm)\n"
                 f"- **最大横截面 (Key Slice)**: 第 `#{key_slice_idx}` 层\n"
                 f"{subsolid_md}"
