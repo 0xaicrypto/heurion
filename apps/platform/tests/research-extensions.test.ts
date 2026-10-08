@@ -3,6 +3,7 @@ import { renderConsortSvg, renderConsortMermaid, type ConsortDiagramData } from 
 import { calculateEValue, generateLovePlotSvg, type LovePlotConfig } from '../src/research/causal-inference.ts'
 import { generateTable1FromData } from '../src/datasets/table1.ts'
 import { exportTable1ToDocx } from '../src/datasets/table1-docx.ts'
+import { generateSurvivalAnalysis, renderForestPlotSvg } from '../src/datasets/survival.ts'
 import { unzipSync } from 'fflate'
 
 describe('临床科研进阶套件测试 (Research Extensions)', () => {
@@ -173,7 +174,7 @@ describe('临床科研 HTTP API 端点集成测试', async () => {
   const store = new Store(':memory:')
   const docs = new Documents(store)
   const ops = new OpService(docs)
-  const accounts = new Accounts(store, { secret: 'test-secret' })
+  const accounts = new Accounts(store, { secret: 'test-secret', devMode: true, devToken: 'dev', devUser: 'u1' })
   const tenants = new TenantService(store, { devMode: false })
   const keys = new TenantKeys(store, kekFrom({ secret: 'test-secret' }))
   const patients = new PatientService(mkdtempSync(join(tmpdir(), 're-pt-')), tenants, keys, store)
@@ -185,7 +186,7 @@ describe('临床科研 HTTP API 端点集成测试', async () => {
     const header = recs[0] ?? []
     return {
       csv: join(dir, 'data.csv'), cleanup: () => {},
-      profile: { ok: true, rows: recs.length - 1, truncated: false, columns: header.map(name => ({ name, type: 'text' as const, missing: 0, unique: 1 })) },
+      profile: { ok: true as const, rows: recs.length - 1, truncated: false, columns: header.map(name => ({ name, type: 'text' as const, missing: 0, unique: 1 })) },
     }
   }
 
@@ -331,4 +332,147 @@ describe('临床科研 HTTP API 端点集成测试', async () => {
     expect(body.svg).toContain('<svg')
     expect(body.svg).toContain('PSM Balance')
   })
+
+  it('6. GET /api/studies/:sid/ecrf/template 多模态字典模版返回', async () => {
+    const res = await app.request(`/api/studies/${study.id}/ecrf/template`, {
+      method: 'GET',
+      headers: { Authorization: authToken },
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.categories).toContain('imaging')
+    expect(body.categories).toContain('survival')
+    expect(body.variables.some((v: any) => v.id === 'recist_longest_diam_mm')).toBe(true)
+    expect(body.variables.some((v: any) => v.id === 'l3_smi')).toBe(true)
+  })
+
+  it('7. POST /api/studies/:sid/ecrf/extract 批量提取与切片证据溯源', async () => {
+    // 创建一个受试者并入组
+    const pt = patients.create({ userId: user.id, via: 'user' }, {
+      sex: 'M',
+      birth_year: 1960,
+      tags: ['心衰', '肺癌'],
+    })
+    cohort.enroll({ userId: user.id, via: 'user' }, study.id, { patient_ids: [pt.id] })
+
+    const res = await app.request(`/api/studies/${study.id}/ecrf/extract`, {
+      method: 'POST',
+      headers: {
+        Authorization: authToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        variable_ids: ['recist_longest_diam_mm', 'l3_smi', 'vat_to_sat_ratio', 'nt_pro_bnp'],
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.total_subjects).toBeGreaterThanOrEqual(1)
+    expect(body.extracted_variables.length).toBe(4)
+    expect(body.rows.length).toBeGreaterThanOrEqual(1)
+
+    const firstRow = body.rows[0]
+    expect(firstRow.subject_id).toBeDefined()
+    // 检查是否有 3D 切片层号溯源信息
+    const smiCell = firstRow.variables.l3_smi
+    expect(smiCell).toBeDefined()
+    expect(smiCell.confidence).toBeGreaterThan(0.8)
+    expect(smiCell.source_type).toBe('imaging')
+    expect(smiCell.source_slice_index).toBeDefined()
+  })
+
+  it('8. POST /api/studies/:sid/ecrf/save-dataset 保存为宽表研究数据集', async () => {
+    const res = await app.request(`/api/studies/${study.id}/ecrf/save-dataset`, {
+      method: 'POST',
+      headers: {
+        Authorization: authToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'Auto-eCRF 提取快照',
+      }),
+    })
+
+    expect(res.status).toBe(201)
+    const body = await res.json() as any
+    expect(body.dataset).toBeDefined()
+    expect(body.dataset.name).toContain('Auto-eCRF')
+    expect(body.dataset.id).toBeDefined()
+    expect(body.summary.extracted_cells).toBeGreaterThanOrEqual(1)
+  })
+
+  it('9. 临床生存分析引擎：Kaplan-Meier 累积生存拟合与 Cox 森林图矢量图渲染', () => {
+    const kmData = [
+      { time: 6, event: 0, group: '试验组' },
+      { time: 12, event: 1, group: '试验组' },
+      { time: 18, event: 0, group: '试验组' },
+      { time: 24, event: 1, group: '试验组' },
+      { time: 4, event: 1, group: '对照组' },
+      { time: 8, event: 1, group: '对照组' },
+      { time: 14, event: 1, group: '对照组' },
+      { time: 20, event: 0, group: '对照组' },
+    ]
+
+    const fit = generateSurvivalAnalysis(kmData, {
+      time_col: 'time',
+      event_col: 'event',
+      group_col: 'group',
+      time_unit: 'Months',
+      title: 'Figure 3. Kaplan-Meier Survival Curves',
+    })
+
+    expect(fit.groups.length).toBe(2)
+    expect(fit.log_rank).toBeDefined()
+    expect(fit.svg).toContain('<svg')
+    expect(fit.svg).toContain('Figure 3. Kaplan-Meier Survival Curves')
+    expect(fit.svg).toContain('No. at Risk')
+
+    const mockCox = {
+      sample_size: 400,
+      events_count: 85,
+      c_index: 0.74,
+      p_value_overall: 0.001,
+      covariates: [
+        {
+          variable: 'treatment',
+          name: 'treatment',
+          label: '联合治疗组 vs 单药对照组',
+          beta: -0.478,
+          se: 0.21,
+          z: -2.28,
+          p_value: 0.023,
+          p_value_formatted: '0.023',
+          hr: 0.62,
+          hr_ci_lower: 0.41,
+          hr_ci_upper: 0.94,
+          hr_formatted: '0.62 (0.41–0.94)',
+        },
+        {
+          variable: 'l3_smi',
+          name: 'l3_smi',
+          label: 'L3 骨骼肌质量指数正常 vs 肌少症',
+          beta: -0.598,
+          se: 0.23,
+          z: -2.60,
+          p_value: 0.009,
+          p_value_formatted: '0.009',
+          hr: 0.55,
+          hr_ci_lower: 0.35,
+          hr_ci_upper: 0.86,
+          hr_formatted: '0.55 (0.35–0.86)',
+        },
+      ],
+    }
+
+    const forestSvg = renderForestPlotSvg(mockCox, 'Figure 4. Multivariate Cox Proportional Hazards Regression')
+    expect(forestSvg).toContain('<svg')
+    expect(forestSvg).toContain('Figure 4. Multivariate Cox Proportional Hazards Regression')
+    expect(forestSvg).toContain('Hazard Ratio (95% CI)')
+    expect(forestSvg).toContain('0.62 (0.41–0.94)')
+    expect(forestSvg).toContain('Favors Treatment')
+    expect(forestSvg).toContain('Favors Control')
+  })
 })
+

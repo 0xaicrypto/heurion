@@ -231,6 +231,10 @@ const NOT_FOR_AI: Record<string, string> = {
   'POST /api/studies/:sid/cohort/consort': '出版级 CONSORT 2010 流程图参数调整与矢量 SVG 生成，由界面交互',
   'POST /api/studies/:sid/causal/e-value': '因果推断 VanderWeele E-value 敏感度与审稿回复交互计算器，由界面操作',
   'POST /api/studies/:sid/causal/love-plot': '因果推断 Love Plot 协变量平衡收敛散点图生成，由界面展示',
+  // Auto-eCRF 多模态特征批量提取与溯源（由界面弹窗交互配置、进度展示与数据归入）
+  'GET /api/studies/:sid/ecrf/template': 'Auto-eCRF 变量字典模版查询，由界面配置对话框渲染',
+  'POST /api/studies/:sid/ecrf/extract': 'Auto-eCRF 多模态特征自动提取巡航与切片证据溯源矩阵，由界面展示与交互溯源',
+  'POST /api/studies/:sid/ecrf/save-dataset': '将 eCRF 提取矩阵保存固化为研究快照数据集，由医生在界面操作确认',
 }
 
 describe('人机对等：每个接口（AI 的权限 = 用户的权限）', () => {

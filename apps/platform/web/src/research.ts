@@ -202,6 +202,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
           <button class="small-btn" data-act="consort" title="查看出版级 CONSORT 2010 试验入组纳排流向图 (Figure 1)">${icon('chart', { size: 13 })} CONSORT 流程图</button>
           <button class="small-btn" data-act="evalue" title="因果推断敏感度分析与顶刊审稿回复论述">${icon('evidence', { size: 13 })} 因果推断 E-value</button>
+          <button class="small-btn" data-act="ecrf" title="Auto-eCRF 多模态影像与临床指标批量提取与溯源">${icon('write', { size: 13 })} Auto-eCRF 批量回填</button>
           ${canEdit ? `<button class="small-btn" data-act="screen">＋ 筛选入组</button>${active.length ? '<button class="small-btn" data-act="gen">生成研究数据集</button>' : ''}` : ''}
         </div></div>
       ${c.pending.length ? `<div class="banner pt-pending"><span class="dot"></span>AI 建议了 ${c.pending.length} 项入组 / 移出，待你确认</div>
@@ -209,7 +210,10 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
           <button class="small-btn primary" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="accept">确认</button><button class="quiet small-btn" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="reject">不采纳</button></li>`).join('')}</ul>` : ''}
       ${sets.map(d => `<div class="rs-cohort-ds${d.stale ? ' stale' : ''}" data-dataset="${d.dataset_id}"><span class="rs-kind">${SHAPE[d.shape] ?? d.shape} v${d.version}</span>
         <span style="flex:1;">${esc(d.name)} <span class="muted small">${d.rows} 行 · ${date(d.generated_at)}</span></span>
-        ${d.shape === 'wide' ? `<button class="small-btn primary" data-export-table1="${d.dataset_id}" title="一键导出符合医学期刊标准的原生 Word (.docx) Table 1 基线三线表">${icon('download', { size: 13 })} 导出 Table 1 Word</button>` : ''}
+        ${d.shape === 'wide' ? `
+          <button class="small-btn primary" data-export-table1="${d.dataset_id}" title="一键导出符合医学期刊标准的原生 Word (.docx) Table 1 基线三线表">${icon('download', { size: 13 })} 导出 Table 1</button>
+          <button class="small-btn" data-survival="${d.dataset_id}" data-dsname="${esc(d.name)}" title="KM 生存曲线与 Cox 比例风险森林图分析">${icon('chart', { size: 13 })} 生存分析 & 森林图</button>
+        ` : ''}
         ${d.stale ? `<span class="flag-L small">入组或化验有变化，数据集已过期</span>${canEdit ? `<button class="small-btn" data-regen="${d.shape}">刷新</button>` : ''}` : '<span class="muted small">最新</span>'}</div>`).join('')}
       ${c.subjects.length ? `<div class="ds-scroll"><table class="users rs-subjects"><thead><tr><th>研究编号</th><th>代号</th><th>性别</th><th>入组时年龄</th><th>诊断标签</th><th>入组日期</th><th></th></tr></thead><tbody>
         ${c.subjects.map(x => `<tr class="${x.status === 'active' ? '' : 'muted'}"><td><b>${esc(x.subject_id)}</b></td>
@@ -531,6 +535,487 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     void compute()
   }
 
+  /** 临床顶刊生存分析与 Cox 风险回归弹窗 (Kaplan-Meier & Forest Plot) */
+  async function survivalDialog(datasetId: string, datasetName: string): Promise<void> {
+    const dlg = $('dialog')
+    dlg.innerHTML = `<div class="dialog-card wide" role="dialog" aria-modal="true" aria-label="生存分析">
+      <div class="dialog-head">
+        <h2>临床生存分析与 Cox 森林图 (Kaplan-Meier & Forest Plot)</h2>
+        <button class="quiet" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="muted small">
+          符合 NEJM / Lancet / JAMA 医学顶刊统计规范：Kaplan-Meier 累积生存拟合、Greenwood 95% 置信区间、对齐 Number at risk 风险表、Log-rank 显著性检验及多因素 Cox 比例风险回归森林图。
+        </div>
+        <div id="rsSurvLoading" class="muted small" style="padding:20px;text-align:center;">正在载入数据集指标与变量列…</div>
+        <form id="rsSurvForm" class="form" style="display:none;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;background:var(--panel-active, rgba(0,0,0,0.03));padding:14px;border-radius:8px;border:1px solid var(--line);">
+          <label>随访时间变量 (Time)
+            <select name="time_col" id="rsSurvTimeCol"></select>
+          </label>
+          <label>结局事件变量 (Event, 1/0)
+            <select name="event_col" id="rsSurvEventCol"></select>
+          </label>
+          <label>主要分层/暴露变量 (Group)
+            <select name="group_col" id="rsSurvGroupCol"></select>
+          </label>
+          <label>时间单位 (Unit)
+            <select name="time_unit">
+              <option value="Months" selected>月 (Months)</option>
+              <option value="Days">天 (Days)</option>
+              <option value="Years">年 (Years)</option>
+            </select>
+          </label>
+          <div style="grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+            <span class="muted small" id="rsSurvInfo">分析数据集：${esc(datasetName)}</span>
+            <button type="submit" class="primary small-btn">运行 KM 生存拟合与森林图</button>
+          </div>
+        </form>
+        <div id="rsSurvResult" style="display:none;flex-direction:column;gap:16px;">
+          <!-- KM Curve & Risk Table -->
+          <div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#ffffff;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <b>Figure 3: Kaplan-Meier 累积生存率曲线与风险集对照 (Number at Risk)</b>
+              <button class="small-btn" id="rsDlKmSvg">${icon('download', { size: 13 })} 下载 KM 矢量图 (SVG)</button>
+            </div>
+            <div id="rsKmSvgWrap" style="overflow:auto;max-height:480px;display:flex;justify-content:center;"></div>
+          </div>
+
+          <!-- Statistical Callout Metrics -->
+          <div id="rsSurvStats" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:12px;"></div>
+
+          <!-- Cox Forest Plot -->
+          <div id="rsForestWrap" style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#ffffff;display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <b>Figure 4: 多因素 Cox 比例风险回归亚组森林图 (Hazard Ratio & 95% CI)</b>
+              <button class="small-btn" id="rsDlForestSvg">${icon('download', { size: 13 })} 下载森林图 (SVG)</button>
+            </div>
+            <div id="rsForestSvgWrap" style="overflow:auto;max-height:420px;display:flex;justify-content:center;"></div>
+          </div>
+
+          <!-- Manuscript Report & Copy -->
+          <div style="border:1px solid var(--line);border-radius:8px;padding:14px;background:var(--panel);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <b>论文方法学与统计结果论述段落 (Methods & Results)</b>
+              <button class="small-btn" id="rsCopySurvMd">${icon('copy', { size: 13 })} 复制论文论述段落</button>
+            </div>
+            <div id="rsSurvMdText" style="font-size:12.5px;line-height:1.6;color:var(--text);white-space:pre-wrap;font-family:monospace;max-height:220px;overflow-y:auto;background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--line);"></div>
+          </div>
+        </div>
+      </div>
+    </div>`
+    dlg.hidden = false
+    dlg.onclick = e => { if (e.target === dlg || (e.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
+
+    try {
+      const ds = await api<{ id: string; columns?: Array<{ name: string; type?: string }>; labels?: Record<string, string> }>(`/api/datasets/${datasetId}`)
+      const cols = (ds.columns || []).map(c => c.name)
+      if (!cols.length) {
+        cols.push('followup_months', 'os_status', 'treatment_arm', 'age', 'sex', 'l3_smi', 'vat_to_sat_ratio')
+      }
+
+      const timeSel = document.getElementById('rsSurvTimeCol') as HTMLSelectElement
+      const eventSel = document.getElementById('rsSurvEventCol') as HTMLSelectElement
+      const groupSel = document.getElementById('rsSurvGroupCol') as HTMLSelectElement
+
+      const populate = (sel: HTMLSelectElement, candidates: string[], defMatch: (n: string) => boolean) => {
+        sel.innerHTML = candidates.map(c => {
+          const lbl = ds.labels?.[c] || c
+          return `<option value="${c}">${esc(lbl)} (${c})</option>`
+        }).join('')
+        const matched = candidates.find(defMatch)
+        if (matched) sel.value = matched
+      }
+
+      populate(timeSel, cols, n => /time|month|day|follow|surv|os/i.test(n))
+      populate(eventSel, cols, n => /status|event|dead|death|censor|outcome/i.test(n))
+      populate(groupSel, ['(不分组)', ...cols], n => /group|arm|treat|smi|ham/i.test(n))
+
+      const loadingEl = document.getElementById('rsSurvLoading')
+      const formEl = document.getElementById('rsSurvForm')
+      if (loadingEl) loadingEl.style.display = 'none'
+      if (formEl) formEl.style.display = 'grid'
+
+      const runAnalysis = async () => {
+        const timeCol = timeSel.value
+        const eventCol = eventSel.value
+        const groupCol = groupSel.value === '(不分组)' ? undefined : groupSel.value
+        const timeUnit = (document.getElementById('rsSurvForm') as HTMLFormElement)?.querySelector<HTMLSelectElement>('[name="time_unit"]')?.value || 'Months'
+
+        notice('正在运行医学顶刊级生存曲线拟合与 Cox 回归…')
+        try {
+          const res = await api<any>(`/api/datasets/${datasetId}/survival`, {
+            method: 'POST',
+            body: JSON.stringify({
+              time_col: timeCol,
+              event_col: eventCol,
+              group_col: groupCol,
+              time_unit: timeUnit,
+              title: `${datasetName} · Kaplan-Meier 生存率分析`,
+              show_censored: true,
+              show_risk_table: true,
+            })
+          })
+
+          const resWrap = document.getElementById('rsSurvResult')
+          const kmWrap = document.getElementById('rsKmSvgWrap')
+          const statsWrap = document.getElementById('rsSurvStats')
+          const forestWrap = document.getElementById('rsForestWrap')
+          const forestSvgWrap = document.getElementById('rsForestSvgWrap')
+          const mdText = document.getElementById('rsSurvMdText')
+
+          if (resWrap) resWrap.style.display = 'flex'
+          if (kmWrap) kmWrap.innerHTML = res.km_svg || '<div class="muted small">未生成 KM 图像</div>'
+
+          // Stats cards
+          let statsHtml = ''
+          if (res.log_rank) {
+            statsHtml += `<div style="border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--panel);">
+              <div class="muted small">Log-rank 显著性检验</div>
+              <div style="font-size:20px;font-weight:700;color:#0284c7;margin-top:2px;">${esc(res.log_rank.p_value_formatted)}</div>
+              <div class="muted small">Chi2 = ${res.log_rank.chi2.toFixed(2)}, df = ${res.log_rank.df}</div>
+            </div>`
+          }
+          if (res.groups) {
+            for (const [k, g] of Object.entries(res.groups) as Array<[string, any]>) {
+              statsHtml += `<div style="border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--panel);">
+                <div class="muted small">${esc(g.label || k)} (n=${g.total_n})</div>
+                <div style="font-size:20px;font-weight:700;color:var(--text);margin-top:2px;">中位生存: ${g.median_time !== null ? `${g.median_time} ${timeUnit}` : '未达 (NR)'}</div>
+                <div class="muted small">事件发生率: ${g.event_rate.toFixed(1)}% (${g.events_n}/${g.total_n})</div>
+              </div>`
+            }
+          }
+          if (statsWrap) statsWrap.innerHTML = statsHtml
+
+          // Forest plot
+          if (res.forest_plot_svg && forestWrap && forestSvgWrap) {
+            forestWrap.style.display = 'block'
+            forestSvgWrap.innerHTML = res.forest_plot_svg
+          } else if (forestWrap) {
+            forestWrap.style.display = 'none'
+          }
+
+          // Markdown
+          if (mdText) mdText.textContent = res.summary_markdown || ''
+
+          // Buttons
+          const dlKmBtn = document.getElementById('rsDlKmSvg')
+          if (dlKmBtn) {
+            dlKmBtn.onclick = () => {
+              const blob = new Blob([res.km_svg], { type: 'image/svg+xml;charset=utf-8' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `Figure3_Kaplan_Meier_${datasetId}.svg`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+              URL.revokeObjectURL(url)
+              notice('已下载 Figure 3 KM 矢量图')
+            }
+          }
+
+          const dlForestBtn = document.getElementById('rsDlForestSvg')
+          if (dlForestBtn && res.forest_plot_svg) {
+            dlForestBtn.onclick = () => {
+              const blob = new Blob([res.forest_plot_svg], { type: 'image/svg+xml;charset=utf-8' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `Figure4_Cox_Forest_Plot_${datasetId}.svg`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+              URL.revokeObjectURL(url)
+              notice('已下载 Figure 4 Cox 森林图')
+            }
+          }
+
+          const copyMdBtn = document.getElementById('rsCopySurvMd')
+          if (copyMdBtn) {
+            copyMdBtn.onclick = () => {
+              navigator.clipboard.writeText(res.summary_markdown || '').then(() => {
+                notice('已复制论文生存分析 Methods & Results 论述段落')
+              }).catch(() => {
+                notice('复制失败，请手动选取', true)
+              })
+            }
+          }
+
+          notice('生存分析与森林图生成完毕')
+        } catch (err) {
+          notice((err as Error).message, true)
+        }
+      }
+
+      const formElem = document.getElementById('rsSurvForm')
+      if (formElem) {
+        formElem.onsubmit = e => {
+          e.preventDefault()
+          void runAnalysis()
+        }
+      }
+
+      // Initial auto-run
+      void runAnalysis()
+    } catch (err) {
+      notice((err as Error).message, true)
+    }
+  }
+
+  /** Auto-eCRF 多模态影像与临床指标批量提取与溯源弹窗 */
+  async function ecrfDialog(studyId: string): Promise<void> {
+    const dlg = $('dialog')
+    dlg.innerHTML = `<div class="dialog-card wide" role="dialog" aria-modal="true" aria-label="Auto-eCRF 批量回填">
+      <div class="dialog-head">
+        <h2>Auto-eCRF 多模态批量特征提取与溯源引擎</h2>
+        <button class="quiet" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="muted small">
+          全自动巡航提取入组受试者的多期 3D 影像生物标志物（RECIST 1.1 / L3 SMI 肌少症 / 脂肪比 / BAR / HAM）及生化检验数据，全量配备单元格置信度与切片层号穿透溯源，直接生成医学宽表。
+        </div>
+
+        <div id="rsEcrfLoading" class="muted small" style="padding:20px;text-align:center;">正在载入多模态 eCRF 字典模版…</div>
+
+        <div id="rsEcrfConfig" style="display:none;flex-direction:column;gap:12px;">
+          <div style="border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <b>选择需要批量提取的回填字段字典</b>
+              <div style="display:flex;gap:6px;">
+                <button type="button" class="quiet small-btn" id="rsEcrfSelectAll">全选</button>
+                <button type="button" class="quiet small-btn" id="rsEcrfSelectDefault">重置推荐</button>
+              </div>
+            </div>
+            <div id="rsEcrfVarList" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));gap:8px;max-height:220px;overflow-y:auto;"></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;">
+            <button class="primary small-btn" id="rsStartExtract">${icon('write', { size: 13 })} 开始自动巡航批量提取</button>
+          </div>
+        </div>
+
+        <!-- Extract Progress -->
+        <div id="rsEcrfProgress" style="display:none;flex-direction:column;gap:10px;padding:24px 0;align-items:center;">
+          <div class="muted small" id="rsEcrfProgressText">正在调度 MONAI 3D 卷积节点分析入组受试者胸腹 CT 序列与病历库…</div>
+          <div style="width:80%;height:6px;background:var(--line);border-radius:3px;overflow:hidden;">
+            <div id="rsEcrfProgressBar" style="width:20%;height:100%;background:#0284c7;transition:width 0.4s ease;"></div>
+          </div>
+        </div>
+
+        <!-- Results Matrix View -->
+        <div id="rsEcrfResult" style="display:none;flex-direction:column;gap:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div id="rsEcrfSummaryBadge" style="display:flex;gap:8px;align-items:center;"></div>
+            <div style="display:flex;gap:8px;">
+              <button class="small-btn primary" id="rsEcrfSaveDataset">${icon('save', { size: 13 })} 保存为研究快照数据集</button>
+            </div>
+          </div>
+
+          <div class="muted small" style="display:flex;align-items:center;gap:6px;">
+            ${icon('info', { size: 13 })} <b>点击表格中任意数值单元格</b>，可立即展开其对应的原始 CT 切片层号、生化单原件与置信度溯源卡。
+          </div>
+
+          <div id="rsEcrfTableWrap" class="ds-scroll" style="max-height:360px;border:1px solid var(--line);border-radius:6px;"></div>
+
+          <!-- Click to Audit Detail Panel -->
+          <div id="rsEcrfAuditCard" style="display:none;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <b id="rsAuditTitle" style="color:#0284c7;">[证据溯源] 单元格数据核验卡</b>
+              <button class="quiet small-btn" id="rsAuditClose">关闭溯源</button>
+            </div>
+            <div id="rsAuditBody" style="font-size:12.5px;line-height:1.6;color:var(--text);"></div>
+          </div>
+        </div>
+      </div>
+    </div>`
+    dlg.hidden = false
+    dlg.onclick = e => { if (e.target === dlg || (e.target as HTMLElement).closest('[data-close]')) { dlg.hidden = true; dlg.innerHTML = '' } }
+
+    try {
+      const tmpl = await api<{ categories: string[]; variables: Array<{ id: string; name_zh: string; unit: string; category: string; default_checked: boolean }> }>(`/api/studies/${studyId}/ecrf/template`)
+      const varList = document.getElementById('rsEcrfVarList')
+      if (varList) {
+        varList.innerHTML = tmpl.variables.map(v => `
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+            <input type="checkbox" name="ecrf_var" value="${v.id}" ${v.default_checked ? 'checked' : ''}>
+            <span>${esc(v.name_zh)} <span class="muted small">${v.unit ? `(${v.unit})` : ''}</span></span>
+          </label>
+        `).join('')
+      }
+
+      const selAllBtn = document.getElementById('rsEcrfSelectAll')
+      const selDefBtn = document.getElementById('rsEcrfSelectDefault')
+      if (selAllBtn && varList) {
+        selAllBtn.onclick = () => {
+          varList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(cb => cb.checked = true)
+        }
+      }
+      if (selDefBtn && varList) {
+        selDefBtn.onclick = () => {
+          const defSet = new Set(tmpl.variables.filter(v => v.default_checked).map(v => v.id))
+          varList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(cb => cb.checked = defSet.has(cb.value))
+        }
+      }
+
+      const loadingEl = document.getElementById('rsEcrfLoading')
+      const configEl = document.getElementById('rsEcrfConfig')
+      if (loadingEl) loadingEl.style.display = 'none'
+      if (configEl) configEl.style.display = 'flex'
+
+      const startBtn = document.getElementById('rsStartExtract')
+      if (startBtn && varList) {
+        startBtn.onclick = async () => {
+          const selected = Array.from(varList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(cb => cb.value)
+          if (!selected.length) { notice('请至少选择一个回填变量', true); return }
+
+          if (configEl) configEl.style.display = 'none'
+          const progressEl = document.getElementById('rsEcrfProgress')
+          const bar = document.getElementById('rsEcrfProgressBar')
+          const txt = document.getElementById('rsEcrfProgressText')
+          if (progressEl) progressEl.style.display = 'flex'
+          if (bar) bar.style.width = '30%'
+          if (txt) txt.textContent = '正在调度 MONAI 3D 卷积节点分析入组受试者胸腹 CT 序列…'
+
+          setTimeout(() => {
+            if (bar) bar.style.width = '70%'
+            if (txt) txt.textContent = '正在提取 L3 骨骼肌 SMI、RECIST 径线与生化指标并建立审计溯源指纹…'
+          }, 300)
+
+          try {
+            const res = await api<any>(`/api/studies/${studyId}/ecrf/extract`, {
+              method: 'POST',
+              body: JSON.stringify({ variable_ids: selected })
+            })
+
+            if (bar) bar.style.width = '100%'
+            setTimeout(() => {
+              if (progressEl) progressEl.style.display = 'none'
+              renderEcrfResult(res)
+            }, 350)
+          } catch (err) {
+            if (progressEl) progressEl.style.display = 'none'
+            if (configEl) configEl.style.display = 'flex'
+            notice((err as Error).message, true)
+          }
+        }
+      }
+
+      const renderEcrfResult = (res: any) => {
+        const resultEl = document.getElementById('rsEcrfResult')
+        const badgeEl = document.getElementById('rsEcrfSummaryBadge')
+        const tableWrap = document.getElementById('rsEcrfTableWrap')
+        if (resultEl) resultEl.style.display = 'flex'
+        const s = res.summary
+        if (badgeEl) {
+          badgeEl.innerHTML = `
+            <span style="background:#eff6ff;color:#1d4ed8;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;border:1px solid #bfdbfe;">
+              受试者: ${res.total_subjects} 人
+            </span>
+            <span style="background:#f0fdf4;color:#15803d;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;border:1px solid #bbf7d0;">
+              成功回填指标: ${s.extracted_cells} 项 (${Math.round(s.avg_confidence * 100)}% 置信度)
+            </span>
+            <span style="background:#fef2f2;color:#b91c1c;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;border:1px solid #fecaca;">
+              缺漏待查: ${s.missing_cells} 项
+            </span>
+          `
+        }
+
+        // Build Table HTML
+        const vars: Array<{ id: string; name_zh: string; unit: string }> = res.extracted_variables
+        let tableHtml = `<table class="users" style="width:100%;font-size:12px;"><thead><tr><th style="position:sticky;left:0;background:var(--bg);z-index:2;">研究编号</th>`
+        for (const v of vars) {
+          tableHtml += `<th>${esc(v.name_zh)}<br><span class="muted small">${esc(v.unit || '—')}</span></th>`
+        }
+        tableHtml += `</tr></thead><tbody>`
+
+        for (const r of res.rows as Array<{ subject_id: string; variables: Record<string, any> }>) {
+          tableHtml += `<tr><td style="position:sticky;left:0;background:var(--bg);font-weight:700;">${esc(r.subject_id)}</td>`
+          for (const v of vars) {
+            const cell = r.variables[v.id]
+            if (!cell || cell.value === null) {
+              tableHtml += `<td class="muted" style="text-align:center;">—</td>`
+            } else {
+              const confPct = Math.round(cell.confidence * 100)
+              tableHtml += `<td>
+                <button type="button" class="linkish" data-audit-cell="${esc(r.subject_id)}" data-audit-var="${esc(v.id)}" style="font-weight:600;color:var(--text);text-align:left;display:block;width:100%;">
+                  ${esc(cell.formatted)}
+                  <span style="font-size:10px;color:#047857;margin-left:2px;">[${confPct}%]</span>
+                </button>
+              </td>`
+            }
+          }
+          tableHtml += `</tr>`
+        }
+        tableHtml += `</tbody></table>`
+        if (tableWrap) tableWrap.innerHTML = tableHtml
+
+        // Bind Click-to-Audit
+        if (tableWrap) {
+          tableWrap.onclick = (e) => {
+            const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-audit-cell]')
+            if (!btn) return
+            const subId = btn.dataset.auditCell!
+            const varId = btn.dataset.auditVar!
+            const row = (res.rows as any[]).find(r => r.subject_id === subId)
+            if (!row) return
+            const cell = row.variables[varId]
+            if (!cell) return
+            const vDef = vars.find(v => v.id === varId)
+
+            const auditCard = document.getElementById('rsEcrfAuditCard')
+            const auditTitle = document.getElementById('rsAuditTitle')
+            const auditBody = document.getElementById('rsAuditBody')
+            if (auditCard) auditCard.style.display = 'block'
+            if (auditTitle) auditTitle.textContent = `[证据穿透溯源] 受试者 ${subId} · ${vDef?.name_zh || varId}`
+            if (auditBody) {
+              auditBody.innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
+                  <div>• <b>回填数值</b>: <span style="font-weight:700;color:#0284c7;">${esc(cell.formatted)}</span></div>
+                  <div>• <b>模型提取置信度</b>: <span style="font-weight:700;color:#047857;">${Math.round(cell.confidence * 100)}%</span></div>
+                  <div>• <b>数据源模态</b>: <span style="font-weight:600;">${cell.source_type === 'imaging' ? 'MONAI 3D 卷积断层扫描' : cell.source_type === 'lab' ? '院内生化实验室检验单' : '基线临床病历'}</span></div>
+                  <div>• <b>提取时间戳</b>: <span class="muted small">${date(cell.extracted_at)}</span></div>
+                </div>
+                ${cell.source_slice_index ? `<div style="background:#f8fafc;padding:6px 10px;border-radius:4px;border:1px solid #e2e8f0;margin-top:4px;">
+                  <b>3D 影像切片锚点</b>: 轴位关键层号 <code>#${cell.source_slice_index}</code> 层 (解剖包络线内定向测量)
+                </div>` : ''}
+                ${cell.source_detail ? `<div style="margin-top:4px;color:var(--text-secondary);font-size:12px;">• 详细溯源说明: ${esc(cell.source_detail)}</div>` : ''}
+              `
+            }
+          }
+        }
+
+        const auditCloseBtn = document.getElementById('rsAuditClose')
+        if (auditCloseBtn) {
+          auditCloseBtn.onclick = () => {
+            const auditCard = document.getElementById('rsEcrfAuditCard')
+            if (auditCard) auditCard.style.display = 'none'
+          }
+        }
+
+        // Save Dataset
+        const saveDatasetBtn = document.getElementById('rsEcrfSaveDataset')
+        if (saveDatasetBtn) {
+          saveDatasetBtn.onclick = async () => {
+            notice('正在沉淀为研究快照数据集…')
+            try {
+              await api(`/api/studies/${studyId}/ecrf/save-dataset`, {
+                method: 'POST',
+                body: JSON.stringify({ variable_ids: vars.map(v => v.id) })
+              })
+              dlg.hidden = true
+              dlg.innerHTML = ''
+              notice('已成功保存为研究数据集！已自动归入研究并可一键导出 Table 1 与运行生存分析')
+              void openStudy(studyId)
+            } catch (err) {
+              notice((err as Error).message, true)
+            }
+          }
+        }
+      }
+    } catch (err) {
+      notice((err as Error).message, true)
+    }
+  }
+
   const PROMPTS: Record<string, (t: string) => string> = {
     protocol: t => `请为研究「${t}」起草一份研究方案：研究背景与目的、研究设计、研究人群（纳入与排除标准）、暴露 / 干预与对照、主要与次要终点、样本量估计、统计分析计划、伦理与数据管理。不确定的地方标「待定」，不要编造文献。`,
     manuscript: t => `请依据研究「${t}」的方案和已有分析，起草论文的方法与结果部分：结果段落只引用实际算出的数字，需要时用研究数据集补做分析（Table 1、主要终点分析）。`,
@@ -757,6 +1242,18 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
       catch (err) { notice((err as Error).message, true) }
       return
     }
+    const expT1 = t.closest<HTMLElement>('[data-export-table1]')?.dataset.exportTable1
+    if (expT1) {
+      e.stopPropagation()
+      void downloadTable1Docx(expT1)
+      return
+    }
+    const surv = t.closest<HTMLElement>('[data-survival]')
+    if (surv) {
+      e.stopPropagation()
+      void survivalDialog(surv.dataset.survival!, surv.dataset.dsname || '研究数据集')
+      return
+    }
     const regen = t.closest<HTMLElement>('[data-regen]')?.dataset.regen
     if (regen) { datasetDialog(id, regen); return }
     const ds = t.closest<HTMLElement>('[data-dataset]')?.dataset.dataset
@@ -765,12 +1262,6 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (fig) { await hooks.datasets.showProvenance(fig); return }
     const nd = t.closest<HTMLElement>('[data-new]')?.dataset.new
     if (nd) { await newDoc(nd as 'protocol' | 'manuscript' | 'slides', s); return }
-    const expT1 = t.closest<HTMLElement>('[data-export-table1]')?.dataset.exportTable1
-    if (expT1) {
-      e.stopPropagation()
-      void downloadTable1Docx(expT1)
-      return
-    }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act
     if (act === 'more') { $('rsMore').hidden = !$('rsMore').hidden; return }
     if (act === 'upload') { ($('rsUpload') as HTMLInputElement).click(); return }
@@ -778,6 +1269,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     if (act === 'gen') { datasetDialog(id); return }
     if (act === 'consort') { void consortDialog(id); return }
     if (act === 'evalue') { evalueDialog(id); return }
+    if (act === 'ecrf') { void ecrfDialog(id); return }
     if (act === 'attach') { $('rsMore').hidden = true; await attachExisting(s); return }
     if (act === 'addmember') {
       const user = ($('rsAddUser') as HTMLSelectElement).value, role = ($('rsAddRole') as HTMLSelectElement).value

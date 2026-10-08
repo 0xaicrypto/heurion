@@ -21,12 +21,12 @@ Next-Gen AI-Native Collaborative Workspace & Medical Intelligence Platform
   <a href="./README.md"><b>English</b></a> • <b>简体中文</b>
 </p>
 
-[核心特性](#-核心特性) • [双服务架构](#-双服务架构解耦) • [快速开始](#-快速开始) • [MCP 工具矩阵](#-mcp-工具矩阵) • [测试与质量](#-测试与质量保证) • [架构文档](#-架构与深度文档)
+[核心特性](#核心特性-features) • [双服务架构](#双服务架构解耦-architecture) • [快速开始](#快速开始-quick-start) • [MCP 工具矩阵](#mcp-工具矩阵-model-context-protocol) • [测试与质量](#测试与质量保证-testing--quality) • [架构文档](#架构与深度文档-documentation)
 
 ---
 </div>
 
-## 📖 平台概述 (Overview)
+## <img src="docs/icons/overview.svg" width="18" height="18" valign="middle" /> 平台概述 (Overview)
 
 **Heurion 2.0** 是一套专为临床医学与生命科学科研全生命周期打造的**端到端全流程智能工作台与协同画布**（Clinical Research AI Workstation）。
 
@@ -44,54 +44,54 @@ Next-Gen AI-Native Collaborative Workspace & Medical Intelligence Platform
 
 ---
 
-## ✨ 核心特性 (Features)
+## <img src="docs/icons/features.svg" width="18" height="18" valign="middle" /> 核心特性 (Features)
 
-### 🎨 1. 文档与演示文稿一体化双模工作台
+### <img src="docs/icons/studio.svg" width="16" height="16" valign="middle" /> 1. 文档与演示文稿一体化双模工作台
 - **Docs & Slides 双形态无缝切换**：支持文档长文排版模式与 16:9 交互式演示文稿（Slide Deck）模式。
 - **现代化设计器**：内置大纲导航、实时缩略图胶卷、卡片化版式设计、模板库快速注入与颜色/主题系统。
 - **即时图文混排与安全预览**：重构剪贴板原生多模态支持，支持操作系统截图粘贴即时高保真预览，并在落盘前实施严格的二进制校验。
 
-### 🛡️ 2. 结构化文档模型与写前守卫 (Write Guards)
+### <img src="docs/icons/shield.svg" width="16" height="16" valign="middle" /> 2. 结构化文档模型与写前守卫 (Write Guards)
 - **稳定块标识符（Stable Block IDs）**：文档和幻灯片具备全局唯一稳定的 Block ID，智能体可精准定位插入、追加、替换或修饰，杜绝“全篇覆写”导致的内容丢失与冲突。
 - **用户优先级原则（User Primacy）**：人类用户的并发编辑具有最高裁判权。
 - **评论锚点保护（Anchor Preservation）**：AI 编辑前后自动重算并保护人类留下的行内批注与评论锚点。
 - **原子事务与操作回滚**：所有对 CRDT 的更改均经过校验、预演与原子提交。
 
-### ⚡ 3. 自闭环矢量光栅化引擎 (Self-Contained Rasterizer)
+### <img src="docs/icons/zap.svg" width="16" height="16" valign="middle" /> 3. 自闭环矢量光栅化引擎 (Self-Contained Rasterizer)
 - **告别重量级外部依赖**：服务端内置基于 Rust/WASM 的 `@resvg/resvg-js` 高性能渲染引擎。
 - **无依赖高清渲染**：无需在部署环境安装庞大的 LibreOffice（`soffice`）或无头浏览器，即可纯在 Node.js 进程内秒级将 SVG/HTML 矢量幻灯片光栅化为 4K 高保真 PNG 预览图。
 - **并发防击穿与双级缓存**：具备内存 LRU 与磁盘持久化双层缓存，带高并发防请求击穿互斥锁。
 
-### 🌐 4. 实时多端协同 (Yjs CRDT)
+### <img src="docs/icons/globe.svg" width="16" height="16" valign="middle" /> 4. 实时多端协同 (Yjs CRDT)
 - **分布式无锁协同**：基于 Yjs CRDT（Conflict-free Replicated Data Type）与 WebSocket 协议，实现真人之间、人机之间的毫秒级协同操作。
 - **状态同步与持久化**：支持协同文档的快照落盘与离线重连增量同步。
 
-### 🩺 5. 严肃学术与医学证据链 (Medical Grounding)
+### <img src="docs/icons/stethoscope.svg" width="16" height="16" valign="middle" /> 5. 严肃学术与医学证据链 (Medical Grounding)
 - **多源权威文献检索**：深度聚合 PubMed、Europe PMC 以及 OpenAlex 学术文献库。
 - **严格引用规范校验**：内置引用解析引擎，智能体引用的文献必须经过校验，生成标准学术引注锚点与文末参考书目。
 - **PHR 患者健康档案与高级队列**：支持多租户隔离的患者健康档案（PHR）、资产管理、高级组合队列检索。
 - **PHI 隐私泄漏安全扫描**：内置 `phi-scan` 模块，自动拦截与告警未经脱敏的患者敏感个人健康信息。
 
-### 📊 6. 临床科研课题组协作与学术发表级证据链 (Clinical Evidence Suite)
+### <img src="docs/icons/chart.svg" width="16" height="16" valign="middle" /> 6. 临床科研课题组协作与学术发表级证据链 (Clinical Evidence Suite)
 - **去标识化受试者管理（S001...）**：多维条件筛选真实患者入组，自动解耦临床代号与学术编号，支持一键生成队列宽表/长表数据集。
 - **发表级 Table 1 原生 Word 三线表**：自动化生成符合顶刊要求的顶底 1.5pt、栏目 0.5pt、Times New Roman / 宋体排版与统计学检验脚注的 `.docx` 文件。
 - **CONSORT 2010 / STROBE 入组流向图**：矢量 SVG 与 Mermaid 动态渲染入组纳排流程。
 - **因果推断与混杂偏倚控制**：Love Plot 绝对 SMD 均衡点图与 VanderWeele E-value 未测混杂敏感度中英双语学术抗辩陈述。
 
-### 🤖 7. 标准化 Model Context Protocol (MCP)
+### <img src="docs/icons/bot.svg" width="16" height="16" valign="middle" /> 7. 标准化 Model Context Protocol (MCP)
 - 原生支持标准 MCP 协议，通过 SSE / Stdio 暴露结构化工具集。
 - 深度兼容 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）、Claude Desktop、Cursor 等任意兼容 MCP 的 Agent 运行时。
 
 ---
 
-## 🏛️ 双服务架构解耦 (Architecture)
+## <img src="docs/icons/layers.svg" width="18" height="18" valign="middle" /> 双服务架构解耦 (Architecture)
 
 Heurion 2.0 采用现代化 pnpm Monorepo 组织代码，清晰划分医学业务工作台与通用协同微服务：
 
 ```
 heurion2/
 ├── apps/
-│   ├── platform/              # 🏥 Heurion 2.0 核心医学智能工作台 (Port: 8787)
+│   ├── platform/              # [Platform] Heurion 2.0 核心医学智能工作台 (Port: 8787)
 │   │   ├── src/
 │   │   │   ├── model/         # 结构化文档/幻灯片模型、Block ID、方言与评论锚点
 │   │   │   ├── ops/           # 校验 → 写前守卫 → 原子应用操作层
@@ -104,7 +104,7 @@ heurion2/
 │   │   │   └── collab/        # Yjs WebSocket 协同网关
 │   │   └── web/               # 平台端 ProseMirror 协同编辑界面
 │   │
-│   ├── canvas-service/        # 🎨 OmniCanvas 独立画布与文档微服务 (Port: 8888)
+│   ├── canvas-service/        # [Canvas] OmniCanvas 独立画布与文档微服务 (Port: 8888)
 │   │   ├── src/
 │   │   │   ├── index.ts       # 独立微服务入口 (REST + WebSocket + MCP)
 │   │   │   ├── app.ts         # 纯净版 Canvas MCP Server（30 个排版/创作工具）
@@ -114,7 +114,7 @@ heurion2/
 │   │       ├── src/deck.ts    # 幻灯片设计器核心
 │   │       └── src/main.ts    # 现代工作台交互与命令体系
 │   │
-│   └── embedder/              # 🔍 本地向量与语义嵌入支持服务
+│   └── embedder/              # [Search] 本地向量与语义嵌入支持服务
 │
 ├── docs/                      # 架构规范、迁移计划与设计说明
 └── scripts/                   # 自动化运维、容器构建与评测脚本
@@ -122,7 +122,7 @@ heurion2/
 
 ---
 
-## 🚀 快速开始 (Quick Start)
+## <img src="docs/icons/terminal.svg" width="18" height="18" valign="middle" /> 快速开始 (Quick Start)
 
 ### 1. 环境准备
 - **Node.js**: $\ge 24.0.0$
@@ -185,11 +185,11 @@ PORT=8888 pnpm --filter @heurion2/canvas-service dev
 
 ---
 
-## 🛠️ MCP 工具矩阵 (Model Context Protocol)
+## <img src="docs/icons/tools.svg" width="18" height="18" valign="middle" /> MCP 工具矩阵 (Model Context Protocol)
 
 Heurion 为大模型提供了标准化、受安全约束的操作工具箱：
 
-### 📄 OmniCanvas 通用创作工具集 (`@heurion2/canvas-service`)
+### <img src="docs/icons/file-text.svg" width="16" height="16" valign="middle" /> OmniCanvas 通用创作工具集 (`@heurion2/canvas-service`)
 | 分类 | 工具名称 | 功能描述 |
 | :--- | :--- | :--- |
 | **画布管理** | `canvas_create`, `canvas_get`, `canvas_list` | 创建、查询与列出文档/幻灯片画布实体 |
@@ -199,7 +199,7 @@ Heurion 为大模型提供了标准化、受安全约束的操作工具箱：
 | **视觉呈现** | `canvas_slide_render`, `canvas_slide_delete`| 实时调用内置 resvg 引擎光栅化为 4K 高清预览 |
 | **表格与图表**| `canvas_table_insert`, `canvas_chart_insert` | 插入高表现力数据表格、柱状图/折线图等结构化视图 |
 
-### 🩺 医学科研专用扩展工具集 (`@heurion2/platform`)
+### <img src="docs/icons/dna.svg" width="16" height="16" valign="middle" /> 医学科研专用扩展工具集 (`@heurion2/platform`)
 | 分类 | 工具名称 | 功能描述 |
 | :--- | :--- | :--- |
 | **文献检索** | `literature_search_pubmed` | 检索 NCBI PubMed 权威医学文献，提取结构化摘要与 PMID |
@@ -211,7 +211,7 @@ Heurion 为大模型提供了标准化、受安全约束的操作工具箱：
 
 ---
 
-## 🧪 测试与质量保证 (Testing & Quality)
+## <img src="docs/icons/flask.svg" width="18" height="18" valign="middle" /> 测试与质量保证 (Testing & Quality)
 
 本项目坚持高覆盖率与自动化测试驱动，全代码库测试通过率保持在 **100%**：
 
@@ -231,17 +231,17 @@ pnpm --filter @heurion2/platform ui
 
 ---
 
-## 📚 架构与深度文档 (Documentation)
+## <img src="docs/icons/book.svg" width="18" height="18" valign="middle" /> 架构与深度文档 (Documentation)
 
-- 📘 [**平台整体技术架构 (PLATFORM.md)**](docs/PLATFORM.md)：系统模型层、操作层写前守卫、DSH 调度设计
-- 📙 [**多环境部署指南 (DEPLOY.md)**](docs/DEPLOY.md)：生产环境、容器化编排、反向代理与 TLS 配置
-- 📗 [**独立画布微服务设计规范 (canvas_mcp_standalone_architecture.md)**](file:///Users/huizhao/.gemini/antigravity-cli/brain/0c4a3943-b91a-40bb-a58c-c0bf6b82cba1/canvas_mcp_standalone_architecture.md)：纯净版 Canvas MCP、Yjs CRDT 协议设计
-- 📕 [**临床队列设计 (COHORT.md)**](docs/design/COHORT.md)：医学队列检索与多条件交并过滤
-- 📒 [**患者数据与共享凭证 (PATIENT.md & SHARING.md)**](docs/design/PATIENT.md)：患者档案授权 Claims 机制
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**平台整体技术架构 (PLATFORM.md)**](docs/PLATFORM.md)：系统模型层、操作层写前守卫、DSH 调度设计
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**多环境部署指南 (DEPLOY.md)**](docs/DEPLOY.md)：生产环境、容器化编排、反向代理与 TLS 配置
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**独立画布微服务设计规范 (canvas_mcp_standalone_architecture.md)**](file:///Users/huizhao/.gemini/antigravity-cli/brain/0c4a3943-b91a-40bb-a58c-c0bf6b82cba1/canvas_mcp_standalone_architecture.md)：纯净版 Canvas MCP、Yjs CRDT 协议设计
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**临床队列设计 (COHORT.md)**](docs/design/COHORT.md)：医学队列检索与多条件交并过滤
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**患者数据与共享凭证 (PATIENT.md & SHARING.md)**](docs/design/PATIENT.md)：患者档案授权 Claims 机制
 
 ---
 
-## 🤝 贡献与开源许可 (License)
+## <img src="docs/icons/scale.svg" width="18" height="18" valign="middle" /> 贡献与开源许可 (License)
 
 欢迎提交 Issue 和 Pull Request 来完善 Heurion 2.0！
 

@@ -18,6 +18,7 @@ import { ShareService } from '../tenancy/shares.ts'
 import { PatientClaimService } from '../tenancy/claims.ts'
 import { scanPhi, redactPhi } from '../ops/phi-scan.ts'
 import { CohortService } from '../research/cohort.ts'
+import { EcrfService } from '../research/ecrf.ts'
 import { renderConsortSvg, renderConsortMermaid, type ConsortDiagramData } from '../research/consort.ts'
 import { calculateEValue, generateLovePlotSvg, type EValueInput, type LovePlotConfig } from '../research/causal-inference.ts'
 import { exportTable1ToDocx } from '../datasets/table1-docx.ts'
@@ -2239,6 +2240,34 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       const svg = generateLovePlotSvg(body)
       return c.json({ svg })
     } catch (err) { return studyFailure(c, err) }
+  })
+
+  // —— Auto-eCRF 多模态数据批量提取与溯源 ——
+  const ecrf = deps.studies && deps.patients ? new EcrfService(deps.studies, deps.patients, deps.datasets ?? null) : null
+  app.get('/api/studies/:sid/ecrf/template', c => {
+    try {
+      if (!ecrf) throw new StudyError('unavailable', 'eCRF 服务未初始化', 400)
+      st().get(c.get('user'), c.req.param('sid'))
+      return c.json(ecrf.getTemplate())
+    } catch (err) { return studyFailure(c, err) }
+  })
+  app.post('/api/studies/:sid/ecrf/extract', async c => {
+    try {
+      if (!ecrf) throw new StudyError('unavailable', 'eCRF 服务未初始化', 400)
+      const sid = c.req.param('sid')
+      const body = await c.req.json<{ variable_ids?: string[] }>().catch(() => ({} as { variable_ids?: string[] }))
+      const res = await ecrf.extractCohortEcrf(me(c), sid, body.variable_ids)
+      return c.json(res)
+    } catch (err) { return cohortFailure(c, err) }
+  })
+  app.post('/api/studies/:sid/ecrf/save-dataset', async c => {
+    try {
+      if (!ecrf) throw new StudyError('unavailable', 'eCRF 服务未初始化', 400)
+      const sid = c.req.param('sid')
+      const body = await c.req.json<{ variable_ids?: string[]; name?: string }>().catch(() => ({} as { variable_ids?: string[]; name?: string }))
+      const res = await ecrf.saveDataset(me(c), sid, body)
+      return c.json(res, 201)
+    } catch (err) { return cohortFailure(c, err) }
   })
 
   // —— 数据集（实验室数据分析） ——

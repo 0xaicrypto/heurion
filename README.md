@@ -18,17 +18,17 @@
 </p>
 
 <p align="center">
-  <a href="#english"><b>English</b></a> • <a href="#-heurion-20--omnicanvas-中文版"><b>简体中文</b></a> • <a href="./README_CN.md"><b>独立中文文档</b></a>
+  <a href="#english"><b>English</b></a> • <a href="#heurion-20--omnicanvas-中文版"><b>简体中文</b></a> • <a href="./README_CN.md"><b>独立中文文档</b></a>
 </p>
 
-[Features](#-key-features) • [Architecture](#-dual-engine-architecture) • [Quick Start](#-quick-start) • [MCP Tools](#-mcp-tools-matrix) • [Testing](#-testing--quality-assurance) • [Docs](#-architecture--documentation)
+[Features](#key-features) • [Architecture](#dual-engine-architecture) • [Quick Start](#quick-start) • [MCP Tools](#mcp-tools-matrix) • [Testing](#testing--quality-assurance) • [Docs](#architecture--documentation)
 
 ---
 </div>
 
 <a name="english"></a>
 
-## 📖 Overview
+## <img src="docs/icons/overview.svg" width="18" height="18" valign="middle" /> Overview
 
 **Heurion 2.0** is an **end-to-end clinical research AI workstation and collaborative canvas** engineered for the full lifecycle of medical discovery:
 - **Patient Data Collection**: Digitizing outpatient/inpatient records, multimodal lab report OCR, and personal health records (PHR) with clinical claim authorization.
@@ -44,54 +44,54 @@ The project features a **decoupled dual-engine architecture**:
 
 ---
 
-## ✨ Key Features
+## <img src="docs/icons/features.svg" width="18" height="18" valign="middle" /> Key Features
 
-### 🎨 1. Modern Document & Presentation Studio (Dual-Mode)
+### <img src="docs/icons/studio.svg" width="16" height="16" valign="middle" /> 1. Modern Document & Presentation Studio (Dual-Mode)
 - **Fluid Docs & Slides Dual-Mode**: Seamlessly switch between long-form structured document authoring and 16:9 interactive presentation slide decks.
 - **Modern Designer Panel**: Built-in document outline navigation, real-time slide filmstrip, card-based layouts, instant template injection, and customizable themes.
 - **Rich Multimodal Clipboard & Live Preview**: Native clipboard extraction supporting OS screenshots, rich text, and images. Features instant local zero-latency preview (`createObjectURL`) alongside strict server-side zero-byte validation.
 
-### 🛡️ 2. Structured Document Model & Write Guards
+### <img src="docs/icons/shield.svg" width="16" height="16" valign="middle" /> 2. Structured Document Model & Write Guards
 - **Stable Block Identifiers**: Every paragraph, heading, table, and slide possesses an immutable Block ID. AI agents insert, replace, move, or modify targeted blocks without risky whole-document overwrites.
 - **User Primacy**: Human edits take precedence in concurrent conflicts.
 - **Comment Anchor Preservation**: Re-indexes and protects inline comments and annotations across AI and human editing sessions.
 - **Atomic Transactions & Safe Rollback**: Every change to the underlying CRDT is validated, pre-checked, and applied atomically.
 
-### ⚡ 3. Self-Contained Vector Slide Rasterizer
+### <img src="docs/icons/zap.svg" width="16" height="16" valign="middle" /> 3. Self-Contained Vector Slide Rasterizer
 - **Zero Heavyweight External Dependencies**: Embedded Rust/WASM-based `@resvg/resvg-js` high-performance rendering engine.
 - **Native 4K PNG Rendering**: Renders SVG/HTML slide decks directly into high-fidelity PNG thumbnails and exports within the Node.js process—no LibreOffice (`soffice`), Docker, or headless Chrome required.
 - **Two-Tier Caching & Anti-Stampede Locks**: In-memory LRU plus on-disk caching guarded by concurrency mutexes to prevent cache stampedes under heavy traffic.
 
-### 🌐 4. Real-Time Multi-Party CRDT Collaboration
+### <img src="docs/icons/globe.svg" width="16" height="16" valign="middle" /> 4. Real-Time Multi-Party CRDT Collaboration
 - **Distributed Lock-Free Sync**: Powered by Yjs CRDT (Conflict-free Replicated Data Type) and WebSocket protocol for sub-millisecond human-to-human and human-to-AI co-editing.
 - **Snapshot Persistence & Reconnection**: Automatic state persistence to disk with incremental delta synchronization upon reconnecting.
 
-### 🩺 5. Academic Grounding & Clinical Compliance
+### <img src="docs/icons/stethoscope.svg" width="16" height="16" valign="middle" /> 5. Academic Grounding & Clinical Compliance
 - **Multi-Source Literature Retrieval**: Integrated federated search across NCBI PubMed, Europe PMC, and OpenAlex.
 - **Citation Verification Engine**: Validates cited literature, checks DOIs/PMIDs, and automatically compiles standardized reference lists with bidirectional links.
 - **Patient Health Records (PHR) & Cohorts**: Multi-tenant patient record assets and compound cohort query builder.
 - **PHI Privacy Leak Scanner**: Built-in scanner to detect, flag, and mask Protected Health Information (PHI) before content is committed or sent off-premise.
 
-### 📊 6. Clinical Collaboration & Publication Evidence Suite
+### <img src="docs/icons/chart.svg" width="16" height="16" valign="middle" /> 6. Clinical Collaboration & Publication Evidence Suite
 - **De-Identified Subject Management (S001...)**: Compound criteria filtering to enroll eligible patients, decoupling clinical codes from academic research subject IDs with instant wide/long dataset synthesis.
 - **Publication-Grade Native Word Table 1**: Automated generation of native Word `.docx` 3-line tables complying with ICMJE/NEJM standards (1.5pt/0.5pt borders, Times/Songti academic typography, and statistical footnotes).
 - **CONSORT 2010 / STROBE Flowcharts**: Vector SVG and Mermaid dynamic participant enrollment flowcharts.
 - **Causal Inference & Sensitivity Diagnostics**: Absolute standardized mean difference (SMD) Love Plots and VanderWeele E-value unmeasured confounding sensitivity calculator with bilingual academic defense statements.
 
-### 🤖 7. Standardized Model Context Protocol (MCP)
+### <img src="docs/icons/bot.svg" width="16" height="16" valign="middle" /> 7. Standardized Model Context Protocol (MCP)
 - Exposes structured, safe toolsets over standard MCP transports (SSE and Stdio).
 - Out-of-the-box integration with [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh), Claude Desktop, Cursor, Gemini, and custom AI agent workflows.
 
 ---
 
-## 🏛️ Dual-Engine Architecture
+## <img src="docs/icons/layers.svg" width="18" height="18" valign="middle" /> Dual-Engine Architecture
 
 Heurion 2.0 is structured as a modern pnpm Monorepo:
 
 ```
 heurion2/
 ├── apps/
-│   ├── platform/              # 🏥 Heurion 2.0 Medical Intelligence Workspace (Port: 8787)
+│   ├── platform/              # [Platform] Heurion 2.0 Medical Intelligence Workspace (Port: 8787)
 │   │   ├── src/
 │   │   │   ├── model/         # Structured Document/Deck schema, Block IDs & comment anchors
 │   │   │   ├── ops/           # Validation → Write Guards → Atomic application layer
@@ -104,7 +104,7 @@ heurion2/
 │   │   │   └── collab/        # Yjs WebSocket collaboration gateway
 │   │   └── web/               # Platform ProseMirror collaborative editing UI
 │   │
-│   ├── canvas-service/        # 🎨 OmniCanvas Standalone Canvas Microservice (Port: 8888)
+│   ├── canvas-service/        # [Canvas] OmniCanvas Standalone Canvas Microservice (Port: 8888)
 │   │   ├── src/
 │   │   │   ├── index.ts       # Standalone microservice entry (REST + WebSocket + MCP)
 │   │   │   ├── app.ts         # Pure Canvas MCP Server (30 authoring/formatting tools)
@@ -114,7 +114,7 @@ heurion2/
 │   │       ├── src/deck.ts    # Slide deck designer core
 │   │       └── src/main.ts    # Workspace shell & command center
 │   │
-│   └── embedder/              # 🔍 Local embedding & semantic search helper service
+│   └── embedder/              # [Search] Local embedding & semantic search helper service
 │
 ├── docs/                      # Architectural specifications & migration plans
 └── scripts/                   # Ops, container build, and benchmarking scripts
@@ -122,7 +122,7 @@ heurion2/
 
 ---
 
-## 🚀 Quick Start
+## <img src="docs/icons/terminal.svg" width="18" height="18" valign="middle" /> Quick Start
 
 ### 1. Prerequisites
 - **Node.js**: $\ge 24.0.0$
@@ -185,11 +185,11 @@ Open your browser at: `http://127.0.0.1:8888`
 
 ---
 
-## 🛠️ MCP Tools Matrix
+## <img src="docs/icons/tools.svg" width="18" height="18" valign="middle" /> MCP Tools Matrix
 
 Heurion equips AI models with a standardized, boundary-checked tool suite:
 
-### 📄 OmniCanvas General Authoring Tools (`@heurion2/canvas-service`)
+### <img src="docs/icons/file-text.svg" width="16" height="16" valign="middle" /> OmniCanvas General Authoring Tools (`@heurion2/canvas-service`)
 | Category | Tool Name | Description |
 | :--- | :--- | :--- |
 | **Canvas Lifecycle** | `canvas_create`, `canvas_get`, `canvas_list` | Create, inspect, and list document/slide canvas entities |
@@ -199,7 +199,7 @@ Heurion equips AI models with a standardized, boundary-checked tool suite:
 | **Slide Rendering** | `canvas_slide_render`, `canvas_slide_delete`| Trigger resvg engine for 4K PNG rasterization & slide removal |
 | **Rich Elements**   | `canvas_table_insert`, `canvas_chart_insert` | Insert structured data tables and analytical charts |
 
-### 🩺 Medical Research Tools (`@heurion2/platform`)
+### <img src="docs/icons/dna.svg" width="16" height="16" valign="middle" /> Medical Research Tools (`@heurion2/platform`)
 | Category | Tool Name | Description |
 | :--- | :--- | :--- |
 | **PubMed** | `literature_search_pubmed` | Search NCBI PubMed; retrieve structured abstracts & PMIDs |
@@ -211,7 +211,7 @@ Heurion equips AI models with a standardized, boundary-checked tool suite:
 
 ---
 
-## 🧪 Testing & Quality Assurance
+## <img src="docs/icons/flask.svg" width="18" height="18" valign="middle" /> Testing & Quality Assurance
 
 The codebase enforces strict end-to-end automated testing with a **100% test pass rate**:
 
@@ -231,13 +231,13 @@ pnpm --filter @heurion2/platform ui
 
 ---
 
-## 📚 Architecture & Documentation
+## <img src="docs/icons/book.svg" width="18" height="18" valign="middle" /> Architecture & Documentation
 
-- 📘 [**Platform Architecture (PLATFORM.md)**](docs/PLATFORM.md): Document model, operational Write Guards, and DSH execution pool.
-- 📙 [**Deployment Guide (DEPLOY.md)**](docs/DEPLOY.md): Production setups, containerization, reverse proxying & TLS.
-- 📗 [**OmniCanvas Microservice Spec (canvas_mcp_standalone_architecture.md)**](file:///Users/huizhao/.gemini/antigravity-cli/brain/0c4a3943-b91a-40bb-a58c-c0bf6b82cba1/canvas_mcp_standalone_architecture.md): Pure Canvas MCP & CRDT protocol.
-- 📕 [**Cohort Architecture (COHORT.md)**](docs/design/COHORT.md): Medical cohort compound filtering rules.
-- 📒 [**Patient Data & Sharing (PATIENT.md & SHARING.md)**](docs/design/PATIENT.md): Authorization claims & record privacy.
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**Platform Architecture (PLATFORM.md)**](docs/PLATFORM.md): Document model, operational Write Guards, and DSH execution pool.
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**Deployment Guide (DEPLOY.md)**](docs/DEPLOY.md): Production setups, containerization, reverse proxying & TLS.
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**OmniCanvas Microservice Spec (canvas_mcp_standalone_architecture.md)**](file:///Users/huizhao/.gemini/antigravity-cli/brain/0c4a3943-b91a-40bb-a58c-c0bf6b82cba1/canvas_mcp_standalone_architecture.md): Pure Canvas MCP & CRDT protocol.
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**Cohort Architecture (COHORT.md)**](docs/design/COHORT.md): Medical cohort compound filtering rules.
+- <img src="docs/icons/bullet.svg" width="8" height="8" valign="middle" /> [**Patient Data & Sharing (PATIENT.md & SHARING.md)**](docs/design/PATIENT.md): Authorization claims & record privacy.
 
 ---
 
@@ -245,11 +245,11 @@ pnpm --filter @heurion2/platform ui
 
 ---
 
-# 🇨🇳 Heurion 2.0 & OmniCanvas (中文版)
+# Heurion 2.0 & OmniCanvas (中文版)
 
 > 本节包含完整的中文版使用指南。你也可以直接查阅 [独立中文文档 (README_CN.md)](./README_CN.md)。
 
-## 📖 平台概述 (Overview)
+## <img src="docs/icons/overview.svg" width="18" height="18" valign="middle" /> 平台概述 (Overview)
 
 **Heurion 2.0** 是一套专为临床医学与生命科学科研全生命周期打造的**端到端全流程智能工作台与协同画布**（Clinical Research AI Workstation）。
 
@@ -267,41 +267,41 @@ pnpm --filter @heurion2/platform ui
 
 ---
 
-## ✨ 核心特性 (Features)
+## <img src="docs/icons/features.svg" width="18" height="18" valign="middle" /> 核心特性 (Features)
 
-### 🎨 1. 文档与演示文稿一体化双模工作台
+### <img src="docs/icons/studio.svg" width="16" height="16" valign="middle" /> 1. 文档与演示文稿一体化双模工作台
 - **Docs & Slides 双形态无缝切换**：支持文档长文排版模式与 16:9 交互式演示文稿（Slide Deck）模式。
 - **现代化设计器**：内置大纲导航、实时缩略图胶卷、卡片化版式设计、模板库快速注入与颜色/主题系统。
 - **即时图文混排与安全预览**：重构剪贴板原生多模态支持，支持操作系统截图粘贴即时高保真预览，并在落盘前实施严格的二进制校验。
 
-### 🛡️ 2. 结构化文档模型与写前守卫 (Write Guards)
+### <img src="docs/icons/shield.svg" width="16" height="16" valign="middle" /> 2. 结构化文档模型与写前守卫 (Write Guards)
 - **稳定块标识符（Stable Block IDs）**：文档和幻灯片具备全局唯一稳定的 Block ID，智能体可精准定位插入、追加、替换或修饰，杜绝“全篇覆写”导致的内容丢失与冲突。
 - **用户优先级原则（User Primacy）**：人类用户的并发编辑具有最高裁判权。
 - **评论锚点保护（Anchor Preservation）**：AI 编辑前后自动重算并保护人类留下的行内批注与评论锚点。
 - **原子事务与操作回滚**：所有对 CRDT 的更改均经过校验、预演与原子提交。
 
-### ⚡ 3. 自闭环矢量光栅化引擎 (Self-Contained Rasterizer)
+### <img src="docs/icons/zap.svg" width="16" height="16" valign="middle" /> 3. 自闭环矢量光栅化引擎 (Self-Contained Rasterizer)
 - **告别重量级外部依赖**：服务端内置基于 Rust/WASM 的 `@resvg/resvg-js` 高性能渲染引擎。
 - **无依赖高清渲染**：无需在部署环境安装庞大的 LibreOffice（`soffice`）或无头浏览器，即可纯在 Node.js 进程内秒级将 SVG/HTML 矢量幻灯片光栅化为 4K 高保真 PNG 预览图。
 - **并发防击穿与双级缓存**：具备内存 LRU 与磁盘持久化双层缓存，带高并发防请求击穿互斥锁。
 
-### 🌐 4. 实时多端协同 (Yjs CRDT)
+### <img src="docs/icons/globe.svg" width="16" height="16" valign="middle" /> 4. 实时多端协同 (Yjs CRDT)
 - **分布式无锁协同**：基于 Yjs CRDT（Conflict-free Replicated Data Type）与 WebSocket 协议，实现真人之间、人机之间的毫秒级协同操作。
 - **状态同步与持久化**：支持协同文档的快照落盘与离线重连增量同步。
 
-### 🩺 5. 严肃学术与医学证据链 (Medical Grounding)
+### <img src="docs/icons/stethoscope.svg" width="16" height="16" valign="middle" /> 5. 严肃学术与医学证据链 (Medical Grounding)
 - **多源权威文献检索**：深度聚合 PubMed、Europe PMC 以及 OpenAlex 学术文献库。
 - **严格引用规范校验**：内置引用解析引擎，智能体引用的文献必须经过校验，生成标准学术引注锚点与文末参考书目。
 - **PHR 患者健康档案与高级队列**：支持多租户隔离的患者健康档案（PHR）、资产管理、高级组合队列检索。
 - **PHI 隐私泄漏安全扫描**：内置 `phi-scan` 模块，自动拦截与告警未经脱敏的患者敏感个人健康信息。
 
-### 🤖 6. 标准化 Model Context Protocol (MCP)
+### <img src="docs/icons/bot.svg" width="16" height="16" valign="middle" /> 6. 标准化 Model Context Protocol (MCP)
 - 原生支持标准 MCP 协议，通过 SSE / Stdio 暴露结构化工具集。
 - 深度兼容 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）、Claude Desktop、Cursor 等任意兼容 MCP 的 Agent 运行时。
 
 ---
 
-## 🚀 中文快速开始
+## <img src="docs/icons/terminal.svg" width="18" height="18" valign="middle" /> 中文快速开始
 
 ```bash
 git clone https://github.com/heurion-org/heurion.git
@@ -319,10 +319,10 @@ pnpm --filter @heurion2/canvas-service build
 PORT=8888 pnpm --filter @heurion2/canvas-service dev
 ```
 
-详细中文说明请查阅完整中文文档：👉 [**README_CN.md**](./README_CN.md)
+详细中文说明请查阅完整中文文档：[**README_CN.md**](./README_CN.md)
 
 ---
 
-## 🤝 开源许可 (License)
+## <img src="docs/icons/scale.svg" width="18" height="18" valign="middle" /> 开源许可 (License)
 
 本项目基于 [MIT License](./LICENSE) 协议开源。
