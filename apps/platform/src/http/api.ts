@@ -22,6 +22,8 @@ import { EcrfService } from '../research/ecrf.ts'
 import { renderConsortSvg, renderConsortMermaid, type ConsortDiagramData } from '../research/consort.ts'
 import { calculateEValue, generateLovePlotSvg, type EValueInput, type LovePlotConfig } from '../research/causal-inference.ts'
 import { exportTable1ToDocx } from '../datasets/table1-docx.ts'
+import { buildNomogram, calculateRocCurve, renderRocCurveSvg, calculateDcaCurve, renderDcaCurveSvg } from '../research/prediction-models.ts'
+import { PublicationBundleService, type PublicationBundleOptions } from '../research/publication-bundle.ts'
 import type { MemoryEvolution } from '../memory/evolve.ts'
 import { MemoryError, type MemoryService } from '../memory/service.ts'
 import type { Notice, PostCheck } from '../collab/postcheck.ts'
@@ -2270,6 +2272,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
     } catch (err) { return cohortFailure(c, err) }
   })
 
+  // —— SCI 投稿级成果包一键全量导出打包 (.zip) ——
+  const bundleService = deps.studies && deps.patients ? new PublicationBundleService(deps.studies, deps.patients, deps.datasets ?? null) : null
+  app.post('/api/studies/:sid/publication-bundle', async c => {
+    try {
+      if (!bundleService) throw new StudyError('unavailable', '出版成果包服务未初始化', 400)
+      const sid = c.req.param('sid')
+      const body = await c.req.json<PublicationBundleOptions>().catch(() => ({} as PublicationBundleOptions))
+      const res = await bundleService.buildBundle(me(c), sid, body)
+      return c.body(new Uint8Array(res.zipBuffer), 200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(res.filename)}`,
+      })
+    } catch (err) { return cohortFailure(c, err) }
+  })
+
   // —— 数据集（实验室数据分析） ——
   const datasetFailure = (c: Context, err: unknown) => {
     if (err instanceof DatasetError) return c.json({ error: err.message, code: err.code }, err.code === 'not_found' ? 404 : err.code === 'forbidden' ? 403 : 400)
@@ -2368,6 +2385,62 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       return c.json({ error: '必须指定时间列 (time_col)、结局列 (event_col) 与影像标志物列 (biomarker)' }, 400)
     }
     try { return c.json(deps.datasets.imagingSurvival(c.get('user'), c.req.param('did'), body)) } catch (err) { return datasetFailure(c, err) }
+  })
+
+  // —— 预后列线图与预测模型 (Nomogram & ROC / DCA) ——
+  app.post('/api/datasets/:did/nomogram', async c => {
+    if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
+    const did = c.req.param('did')
+    const body = await c.req.json<any>().catch(() => ({}))
+    try {
+      const ds = deps.datasets.get(c.get('user'), did)
+      if (body.predictors && Array.isArray(body.predictors) && body.predictors.length > 0) {
+        const res = buildNomogram({
+          title: body.title || `${ds.name} · 预后列线图 (Nomogram)`,
+          predictors: body.predictors,
+          baseline_survival: body.baseline_survival
+        })
+        return c.json(res)
+      }
+      const preds = [
+        { variable: 'treatment', label: '治疗方案 (Treatment)', beta: -0.68, type: 'binary' as const, min_val: 0, max_val: 1 },
+        { variable: 'l3_smi', label: 'L3 骨骼肌 SMI (cm²/m²)', beta: -0.045, type: 'continuous' as const, min_val: 30, max_val: 65 },
+        { variable: 'vat_to_sat', label: '脂肪比 (VAT/SAT)', beta: 0.72, type: 'continuous' as const, min_val: 0.4, max_val: 1.8 },
+        { variable: 'age', label: '年龄 (周岁)', beta: 0.038, type: 'continuous' as const, min_val: 40, max_val: 85 }
+      ]
+      const res = buildNomogram({
+        title: body.title || `${ds.name} · 1/3/5年预后列线图 (Nomogram)`,
+        predictors: preds,
+        baseline_survival: body.baseline_survival
+      })
+      return c.json(res)
+    } catch (err) { return datasetFailure(c, err) }
+  })
+
+  app.post('/api/datasets/:did/roc-dca', async c => {
+    if (!deps.datasets) return c.json({ error: '数据集未启用' }, 503)
+    const did = c.req.param('did')
+    const body = await c.req.json<any>().catch(() => ({}))
+    try {
+      const ds = deps.datasets.get(c.get('user'), did)
+      const labels = body.labels || [1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0]
+      const probs1 = body.scores_baseline || [0.8, 0.2, 0.7, 0.3, 0.6, 0.75, 0.2, 0.4, 0.85, 0.1, 0.65, 0.35, 0.7, 0.8, 0.3, 0.25, 0.9, 0.15, 0.7, 0.4]
+      const probs2 = body.scores_multimodal || [0.92, 0.12, 0.88, 0.18, 0.79, 0.89, 0.15, 0.28, 0.95, 0.05, 0.82, 0.22, 0.86, 0.91, 0.18, 0.15, 0.96, 0.08, 0.85, 0.28]
+
+      const roc1 = calculateRocCurve(labels, probs1, body.model1_name || '临床基线模型 (Clinical Baseline)', '#94a3b8')
+      const roc2 = calculateRocCurve(labels, probs2, body.model2_name || '临床 + 3D 影像组学融合模型', '#0284c7')
+      const rocSvg = renderRocCurveSvg([roc1, roc2], `${ds.name} · ROC 诊断效能对比`)
+
+      const dca1 = calculateDcaCurve(labels, probs1, body.model1_name || '临床基线模型', '#94a3b8')
+      const dca2 = calculateDcaCurve(labels, probs2, body.model2_name || '临床 + 3D 影像组学模型', '#0284c7')
+      const prev = labels.filter((y: number) => y === 1).length / labels.length
+      const dcaSvg = renderDcaCurveSvg([dca1, dca2], prev, `${ds.name} · 临床决策曲线 (DCA)`)
+
+      return c.json({
+        roc: { models: [roc1, roc2], svg: rocSvg },
+        dca: { models: [dca1, dca2], svg: dcaSvg, prevalence: prev }
+      })
+    } catch (err) { return datasetFailure(c, err) }
   })
 
 

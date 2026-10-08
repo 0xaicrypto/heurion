@@ -235,6 +235,10 @@ const NOT_FOR_AI: Record<string, string> = {
   'GET /api/studies/:sid/ecrf/template': 'Auto-eCRF 变量字典模版查询，由界面配置对话框渲染',
   'POST /api/studies/:sid/ecrf/extract': 'Auto-eCRF 多模态特征自动提取巡航与切片证据溯源矩阵，由界面展示与交互溯源',
   'POST /api/studies/:sid/ecrf/save-dataset': '将 eCRF 提取矩阵保存固化为研究快照数据集，由医生在界面操作确认',
+  // SCI 投稿包全量导出与预后预测模型 (Nomogram / ROC / DCA)
+  'POST /api/studies/:sid/publication-bundle': 'SCI 投稿级成果包一键全量导出打包 (.zip) 二进制文件流，由浏览器界面直接下载',
+  'POST /api/datasets/:did/nomogram': '预后预测列线图 (Nomogram) 标尺映射与矢量图生成，由界面交互弹窗计算与渲染',
+  'POST /api/datasets/:did/roc-dca': 'ROC 诊断效能对比与 DCA 临床决策净获益曲线分析，由界面交互弹窗渲染',
 }
 
 describe('人机对等：每个接口（AI 的权限 = 用户的权限）', () => {
