@@ -304,8 +304,8 @@ beforeAll(async () => {
               model_name: 'spleen_segmenter',
               modality: 'Abdominal CT',
               key_slice_png_base64,
-              recist_metrics: { longest_diameter_mm: 215.0, short_axis_mm: 125.0, total_volume_cm3: 1250.0, key_slice_index: 35 },
-              findings: ['脾脏体积增大'],
+              recist_metrics: { longest_diameter_mm: 87.8, short_axis_mm: 60.6, total_volume_cm3: 127.89, key_slice_index: 76 },
+              findings: ['脾脏实质 (MONAI 3D-UNet 真实神经分割)'],
             }), { status: 200, headers: { 'Content-Type': 'application/json' } })
           }
 
