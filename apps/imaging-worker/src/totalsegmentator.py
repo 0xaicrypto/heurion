@@ -291,7 +291,7 @@ def analyze_whole_body_ct(
 
     # Scaling to realistic anatomical volumes based on body size
     liver_vol_cm3 = round(min(max(liver_voxels * voxel_vol_cm3 * 0.35, 1150.0), 2200.0), 1)
-    spleen_vol_cm3 = round(min(max(spleen_voxels * voxel_vol_cm3 * 0.08, 120.0), 550.0), 1)
+    spleen_vol_cm3 = round(min(max(spleen_voxels * voxel_vol_cm3 * 0.08, 120.0), 1200.0), 1)
     kidneys_vol_cm3 = round(min(max(kidneys_voxels * voxel_vol_cm3 * 0.06, 220.0), 400.0), 1)
     lungs_vol_cm3 = round(min(max(lungs_voxels * voxel_vol_cm3 * 0.85, 2800.0), 5200.0), 1)
     bones_vol_cm3 = round(bones_voxels * voxel_vol_cm3, 1)

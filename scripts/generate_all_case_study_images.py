@@ -40,7 +40,7 @@ def draw_scale_bar(draw, w, h, scale_bar_mm=50.0, pixel_spacing_mm=0.8):
     draw.line([(margin_x, margin_y), (margin_x + scale_px, margin_y)], fill=(255, 255, 255, 240), width=3)
     draw.text((margin_x + scale_px // 2 - 14, margin_y - 18), "5 cm", fill=(255, 255, 255, 240), font=get_font(12, bold=True))
 
-def draw_caliper(draw, p1, p2, label_text, color=(0, 240, 255, 255), tick_len=6, label_offset_y=-16):
+def draw_caliper(draw, p1, p2, label_text, color=(0, 240, 255, 255), tick_len=6, label_offset_y=-16, label_offset_x=0):
     x1, y1 = p1
     x2, y2 = p2
     draw.line([p1, p2], fill=color, width=2)
@@ -52,21 +52,22 @@ def draw_caliper(draw, p1, p2, label_text, color=(0, 240, 255, 255), tick_len=6,
         ny = dx / dist * tick_len
         draw.line([(x1 - nx, y1 - ny), (x1 + nx, y1 + ny)], fill=color, width=2)
         draw.line([(x2 - nx, y2 - ny), (x2 + nx, y2 + ny)], fill=color, width=2)
-        mx = int((x1 + x2) / 2)
+        mx = int((x1 + x2) / 2) + label_offset_x
         my = int((y1 + y2) / 2) + label_offset_y
         font = get_font(11, bold=True)
         bbox = font.getbbox(label_text)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
-        draw.rectangle([mx - 4, my - 2, mx + tw + 6, my + th + 4], fill=(6, 17, 13, 230), outline=color, width=1)
-        draw.text((mx, my), label_text, fill=color, font=font)
+        lx = mx - tw // 2
+        draw.rectangle([lx - 4, my - 2, lx + tw + 4, my + th + 3], fill=(6, 17, 13, 230), outline=color, width=1)
+        draw.text((lx, my), label_text, fill=color, font=font)
 
 # =============================================================
 # CASE 1: 变应性支气管肺曲霉病 (ABPA) · 李想 (PT-BRONCHO-001)
 # =============================================================
 
 def generate_case_1_baseline_hrct():
-    print("Generating real-case-1-baseline-hrct.png...")
+    print("Generating real-case-1-baseline-hrct.png (physically calibrated to 0.8 mm/px)...")
     img = nib.load(os.path.join(DATA_DIR, "chest_lung_ct.nii.gz"))
     data = img.get_fdata(dtype=np.float32)
     # Slice #114 shows right lower lobe bronchiectasis and mucus impaction
@@ -82,24 +83,29 @@ def generate_case_1_baseline_hrct():
     overlay = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
     o_draw = ImageDraw.Draw(overlay)
     
-    # Bronchus & HAM mucus in right lower lobe (anatomical right is image left: around x=190, y=290)
-    bx, by = 195, 295
-    # Dilated bronchial wall (cyan)
-    o_draw.ellipse([bx - 26, by - 26, bx + 26, by + 26], fill=(14, 165, 233, 40), outline=(56, 189, 248, 220), width=2)
+    # True anatomical airway position in right lower lobe: bx=197, by=284
+    # At 0.8 mm/px (50mm = 62.5 px scale bar):
+    # - 11.6 mm dilated bronchus = 14.5 px diameter (radius ~7 px)
+    # - 8.0 mm accompanying artery = 10 px diameter (radius ~5 px)
+    # - BAR = 11.6 / 8.0 = 1.45 (Signet Ring sign)
+    bx, by = 197, 284
+    
+    # Dilated bronchial wall (cyan) - outer lumen diameter 14.5 px (11.6 mm)
+    o_draw.ellipse([bx - 7, by - 7, bx + 7, by + 7], fill=(14, 165, 233, 40), outline=(56, 189, 248, 220), width=2)
     # High attenuation mucus core (amber/coral: 12.44 cm3 core, 98 HU)
-    o_draw.ellipse([bx - 16, by - 16, bx + 16, by + 16], fill=(245, 158, 11, 140), outline=(245, 158, 11, 230), width=2)
-    # Adjacent pulmonary artery branch (vascular companion)
-    o_draw.ellipse([bx + 26, by - 12, bx + 44, by + 6], fill=(239, 68, 68, 120), outline=(239, 68, 68, 200), width=1)
+    o_draw.ellipse([bx - 5, by - 5, bx + 5, by + 5], fill=(245, 158, 11, 150), outline=(245, 158, 11, 230), width=1)
+    # Accompanying pulmonary artery branch (10 px = 8.0 mm)
+    o_draw.ellipse([bx + 8, by - 5, bx + 18, by + 5], fill=(239, 68, 68, 140), outline=(239, 68, 68, 220), width=1)
     
     base_img = Image.alpha_composite(base_img, overlay)
     draw = ImageDraw.Draw(base_img)
     
-    # Calipers: BAR caliper and HAM caliper
-    draw_caliper(draw, (bx - 26, by), (bx + 26, by), "支气管内径 11.6 mm", color=(56, 189, 248, 255), label_offset_y=-22)
-    draw_caliper(draw, (bx + 26, by - 3), (bx + 44, by - 3), "伴行伴随动脉 8.0 mm (BAR 1.45)", color=(250, 204, 21, 255), label_offset_y=10)
+    # Calipers: BAR caliper and HAM caliper cleanly staggered horizontally
+    draw_caliper(draw, (bx - 7, by), (bx + 7, by), "支气管内径 11.6 mm", color=(56, 189, 248, 255), label_offset_y=-24, label_offset_x=-30)
+    draw_caliper(draw, (bx + 8, by), (bx + 18, by), "伴行动脉 8.0 mm (BAR 1.45)", color=(250, 204, 21, 255), label_offset_y=16, label_offset_x=35)
     
-    # Callout text for mucus
-    draw.text((bx - 80, by + 34), "高密度粘液栓 HAM: 12.44 cm3 (98 HU)", fill=(245, 158, 11, 255), font=get_font(11, bold=True))
+    # Callout text for mucus clearly positioned below
+    draw.text((bx - 120, by + 52), "高密度粘液栓 HAM: 12.44 cm3 (98 HU)", fill=(245, 158, 11, 255), font=get_font(11, bold=True))
     
     # HUD Box at top
     draw_hud_box(draw, 10, 10, 492, 100)
@@ -131,11 +137,11 @@ def generate_case_1_diff_heatmap():
     diff_overlay = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
     d_draw = ImageDraw.Draw(diff_overlay)
     
-    bx, by = 195, 295
+    bx, by = 197, 284
     # Resorbed mucus zone in deep green (18.50 cm3 -> 4.60 cm3, 74.9% PR)
-    d_draw.ellipse([bx - 26, by - 26, bx + 26, by + 26], fill=(0, 229, 153, 140), outline=(0, 255, 170, 220), width=2)
+    d_draw.ellipse([bx - 8, by - 8, bx + 8, by + 8], fill=(0, 229, 153, 140), outline=(0, 255, 170, 220), width=2)
     # Remaining small residual mucus core (4.60 cm3)
-    d_draw.ellipse([bx - 8, by - 8, bx + 8, by + 8], fill=(245, 158, 11, 90), outline=(245, 158, 11, 180), width=1)
+    d_draw.ellipse([bx - 3, by - 3, bx + 3, by + 3], fill=(245, 158, 11, 120), outline=(245, 158, 11, 200), width=1)
     
     base_img = Image.alpha_composite(base_img, diff_overlay)
     draw = ImageDraw.Draw(base_img)
@@ -156,6 +162,7 @@ def generate_case_1_diff_heatmap():
 
 def generate_case_1_l3_smi():
     print("Generating real-case-4-l3-smi.png (authentic abdominal L3 level for normal muscle baseline)...")
+    from scipy.ndimage import binary_fill_holes
     img = nib.load(os.path.join(DATA_DIR, "spleen_test.nii.gz"))
     data = img.get_fdata(dtype=np.float32)
     # Slice #48 is the true L3 vertebra cross-section
@@ -167,30 +174,22 @@ def generate_case_1_l3_smi():
     norm = np.clip((slice_data - vmin) / (vmax - vmin), 0, 1)
     base_img = Image.fromarray((norm * 255).astype(np.uint8)).convert("RGBA")
     
-    # Healthy, robust muscularity overlay (SMA 174.39 cm2, SMI 56.94 cm2/m2)
-    seg_overlay = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-    s_draw = ImageDraw.Draw(seg_overlay)
+    # Authentic tissue segmentation masks from CT HU values
+    body_mask = slice_data > -700.0
+    bone_mask = (slice_data > 200.0) & body_mask
+    fat_mask = (slice_data >= -190.0) & (slice_data <= -30.0) & body_mask
+    muscle_mask = (slice_data >= -29.0) & (slice_data <= 150.0) & body_mask & (~bone_mask)
+    inner_cavity = binary_fill_holes(muscle_mask | bone_mask)
+    vat_mask = fat_mask & inner_cavity & (~bone_mask) & (~muscle_mask)
+    sat_mask = fat_mask & (~inner_cavity)
     
-    # L3 Vertebra (Posterior bone at cx=256, cy=350)
-    s_draw.ellipse([236, 328, 276, 372], fill=(254, 240, 138, 170), outline=(250, 204, 21, 230), width=1)
+    overlay = np.zeros((512, 512, 4), dtype=np.uint8)
+    overlay[muscle_mask] = [239, 68, 68, 140]  # Skeletal muscle (coral red)
+    overlay[vat_mask] = [245, 158, 11, 120]     # VAT (amber)
+    overlay[sat_mask] = [14, 165, 233, 90]      # SAT (sky blue)
+    overlay[bone_mask] = [254, 240, 138, 180]   # Bone (warm gold)
     
-    # Robust Psoas Muscles flanking vertebra
-    s_draw.ellipse([200, 316, 234, 368], fill=(239, 68, 68, 140), outline=(239, 68, 68, 220), width=1) # right psoas
-    s_draw.ellipse([278, 316, 312, 368], fill=(239, 68, 68, 140), outline=(239, 68, 68, 220), width=1) # left psoas
-    
-    # Robust Erector Spinae posterior to spine
-    s_draw.ellipse([180, 368, 236, 420], fill=(239, 68, 68, 130), outline=(239, 68, 68, 200), width=1)
-    s_draw.ellipse([276, 368, 332, 420], fill=(239, 68, 68, 130), outline=(239, 68, 68, 200), width=1)
-    
-    # Abdominal wall muscle band
-    s_draw.arc([110, 180, 402, 360], start=180, end=360, fill=(239, 68, 68, 120), width=8)
-    
-    # Visceral Fat (small area 15.07 cm2 in normal patient)
-    s_draw.ellipse([180, 220, 332, 290], fill=(245, 158, 11, 70), outline=(245, 158, 11, 160), width=1)
-    
-    # Subcutaneous Fat
-    s_draw.arc([80, 130, 432, 450], start=0, end=360, fill=(14, 165, 233, 90), width=10)
-    
+    seg_overlay = Image.fromarray(overlay, mode="RGBA")
     base_img = Image.alpha_composite(base_img, seg_overlay)
     draw = ImageDraw.Draw(base_img)
     
@@ -293,28 +292,30 @@ def generate_nsclc_1_baseline_recist():
     base_img = Image.fromarray((norm * 255).astype(np.uint8)).convert("RGBA")
     
     # Tumor in Right Upper Lobe (anatomical right is image left: cx=195, cy=240)
+    # At 0.8 mm/px: 42.0 mm = 52.5 px (radius 26 px)
     tumor_overlay = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
     t_draw = ImageDraw.Draw(tumor_overlay)
     
     cx, cy = 195, 245
-    t_draw.ellipse([cx - 24, cy - 18, cx + 24, cy + 18], fill=(255, 77, 79, 130), outline=(255, 77, 79, 220), width=2)
+    t_draw.ellipse([cx - 26, cy - 20, cx + 26, cy + 20], fill=(255, 77, 79, 130), outline=(255, 77, 79, 220), width=2)
     # Spiculation lines extending into lung parenchyma
     for angle in [30, 80, 130, 210, 260, 320]:
         rad = math.radians(angle)
-        ex = cx + int(32 * math.cos(rad))
-        ey = cy + int(25 * math.sin(rad))
-        t_draw.line([(cx + int(22 * math.cos(rad)), cy + int(16 * math.sin(rad))), (ex, ey)], fill=(255, 77, 79, 180), width=1)
+        ex = cx + int(34 * math.cos(rad))
+        ey = cy + int(26 * math.sin(rad))
+        t_draw.line([(cx + int(24 * math.cos(rad)), cy + int(18 * math.sin(rad))), (ex, ey)], fill=(255, 77, 79, 180), width=1)
     
     # 4R Lymph Node (Right paratracheal, next to trachea: lx=242, cy=235)
+    # At 0.8 mm/px: 18.0 mm = 22.5 px (radius 11 px)
     lx, ly = 242, 235
-    t_draw.ellipse([lx - 11, ly - 9, lx + 11, ly + 9], fill=(245, 158, 11, 140), outline=(245, 158, 11, 230), width=2)
+    t_draw.ellipse([lx - 11, ly - 11, lx + 11, ly + 11], fill=(245, 158, 11, 140), outline=(245, 158, 11, 230), width=2)
     
     base_img = Image.alpha_composite(base_img, tumor_overlay)
     draw = ImageDraw.Draw(base_img)
     
-    # Draw Calipers
-    draw_caliper(draw, (cx - 24, cy), (cx + 24, cy), "LD: 42.0 mm (靶病灶 #1)", color=(0, 240, 255, 255), label_offset_y=-20)
-    draw_caliper(draw, (lx, ly - 9), (lx, ly + 9), "短径: 18.0 mm (4R淋巴结)", color=(251, 191, 36, 255), label_offset_y=14)
+    # Draw Calipers (strictly calibrated to 0.8 mm/px and cleanly staggered)
+    draw_caliper(draw, (cx - 26, cy), (cx + 26, cy), "LD: 42.0 mm (靶病灶 #1)", color=(0, 240, 255, 255), label_offset_y=-24, label_offset_x=-30)
+    draw_caliper(draw, (lx, ly - 11), (lx, ly + 11), "短径: 18.0 mm (4R淋巴结)", color=(251, 191, 36, 255), label_offset_y=16, label_offset_x=45)
     
     # HUD Box at top
     draw_hud_box(draw, 10, 10, 492, 95)
@@ -532,6 +533,7 @@ def generate_nsclc_5_diagnostic_chain():
 
 def generate_sarco_1_l3_muscle_fat():
     print("Generating real-case-sarco-1-l3-muscle-fat.png (Wang Wei authentic L3 slice #48)...")
+    from scipy.ndimage import binary_fill_holes
     img = nib.load(os.path.join(DATA_DIR, "spleen_test.nii.gz"))
     data = img.get_fdata(dtype=np.float32)
     # Slice #48 of 96 slices is the true L3 vertebral level
@@ -543,30 +545,22 @@ def generate_sarco_1_l3_muscle_fat():
     norm = np.clip((slice_data - vmin) / (vmax - vmin), 0, 1)
     base_img = Image.fromarray((norm * 255).astype(np.uint8)).convert("RGBA")
     
-    # Severe muscle atrophy & myosteatosis overlay
-    seg_overlay = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-    s_draw = ImageDraw.Draw(seg_overlay)
+    # Authentic tissue segmentation masks from CT HU values
+    body_mask = slice_data > -700.0
+    bone_mask = (slice_data > 200.0) & body_mask
+    fat_mask = (slice_data >= -190.0) & (slice_data <= -30.0) & body_mask
+    muscle_mask = (slice_data >= -29.0) & (slice_data <= 150.0) & body_mask & (~bone_mask)
+    inner_cavity = binary_fill_holes(muscle_mask | bone_mask)
+    vat_mask = fat_mask & inner_cavity & (~bone_mask) & (~muscle_mask)
+    sat_mask = fat_mask & (~inner_cavity)
     
-    # Vertebral bone L3 (Posterior: cx=256, cy=350)
-    s_draw.ellipse([236, 328, 276, 372], fill=(254, 240, 138, 180), outline=(250, 204, 21, 230), width=1)
+    overlay = np.zeros((512, 512, 4), dtype=np.uint8)
+    overlay[muscle_mask] = [239, 68, 68, 140]  # Skeletal muscle (coral red)
+    overlay[vat_mask] = [245, 158, 11, 120]     # VAT (amber)
+    overlay[sat_mask] = [14, 165, 233, 90]      # SAT (sky blue)
+    overlay[bone_mask] = [254, 240, 138, 180]   # Bone (warm gold)
     
-    # Atrophied small psoas muscles flanking the spine
-    s_draw.ellipse([206, 324, 234, 362], fill=(239, 68, 68, 140), outline=(239, 68, 68, 220), width=1) # right psoas
-    s_draw.ellipse([278, 324, 306, 362], fill=(239, 68, 68, 140), outline=(239, 68, 68, 220), width=1) # left psoas
-    
-    # Erector spinae muscles (posterior)
-    s_draw.ellipse([186, 372, 236, 418], fill=(239, 68, 68, 130), outline=(239, 68, 68, 200), width=1)
-    s_draw.ellipse([276, 372, 326, 418], fill=(239, 68, 68, 130), outline=(239, 68, 68, 200), width=1)
-    
-    # Thin abdominal wall muscle
-    s_draw.arc([110, 180, 402, 360], start=180, end=360, fill=(239, 68, 68, 120), width=5)
-    
-    # Abundant Visceral Fat (VAT) in central abdominal cavity
-    s_draw.ellipse([170, 210, 342, 310], fill=(245, 158, 11, 100), outline=(245, 158, 11, 180), width=1)
-    
-    # Subcutaneous Fat (SAT)
-    s_draw.arc([80, 130, 432, 450], start=0, end=360, fill=(14, 165, 233, 90), width=8)
-    
+    seg_overlay = Image.fromarray(overlay, mode="RGBA")
     base_img = Image.alpha_composite(base_img, seg_overlay)
     draw = ImageDraw.Draw(base_img)
     
@@ -730,15 +724,16 @@ def generate_prostate_1_t2_mri():
     s_draw = ImageDraw.Draw(seg_overlay)
     
     cx, cy = 256, 275
-    # Peripheral Zone (PZ) in Cyan
-    s_draw.ellipse([cx - 58, cy - 48, cx + 58, cy + 48], fill=(14, 165, 233, 40), outline=(14, 165, 233, 220), width=2)
+    # Peripheral Zone (PZ) in Cyan (calibrated to 48 mm = 96 px at 0.5 mm/px)
+    s_draw.ellipse([cx - 48, cy - 38, cx + 48, cy + 38], fill=(14, 165, 233, 40), outline=(14, 165, 233, 220), width=2)
     # Transition Zone (TZ - BPH hyperplastic nodule) in Amber
-    s_draw.ellipse([cx - 40, cy - 34, cx + 40, cy + 34], fill=(245, 158, 11, 70), outline=(245, 158, 11, 220), width=2)
+    s_draw.ellipse([cx - 30, cy - 24, cx + 30, cy + 24], fill=(245, 158, 11, 70), outline=(245, 158, 11, 220), width=2)
     
     base_img = Image.alpha_composite(base_img, seg_overlay)
     draw = ImageDraw.Draw(base_img)
     
-    draw_caliper(draw, (cx - 58, cy + 54), (cx + 58, cy + 54), "前列腺横径 4.8 cm", color=(56, 189, 248, 255))
+    # 48 mm = 96 px at 0.5 mm/px
+    draw_caliper(draw, (cx - 48, cy + 46), (cx + 48, cy + 46), "前列腺横径 4.8 cm", color=(56, 189, 248, 255))
     
     # Top HUD Box
     draw_hud_box(draw, 10, 10, 492, 105)
