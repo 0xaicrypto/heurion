@@ -38,9 +38,7 @@ function setupEnv() {
 
   const actor: Actor = {
     userId: user.id,
-    tenantId: hosp.id,
-    roles: ['doctor'],
-    teams: ['team_oncology']
+    via: 'user',
   }
 
   const bundleService = new PublicationBundleService(studies, patients, datasets)
