@@ -2690,6 +2690,19 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); }
   color: var(--muted);
   font-weight: 500;
 }
+.help-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.help-nav-group-title {
+  padding: 12px 10px 4px;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
 .help-nav {
   display: flex;
   flex-direction: column;

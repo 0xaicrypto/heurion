@@ -1031,7 +1031,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           <div class="hfc-desc">
             <ul>
               <li><b>案例一 (ABPA)</b>：支扩印戒征 (BAR 1.45)、高密度粘液栓 (HAM 12.44 cm³)、3D 容积吸收评估 (74.9% PR)；</li>
-              <li><b>案例二 (NSCLC)</b>：EGFR Exon 19 del、基线 SOD 60.0mm ➔ 随访 SOD 33.0mm (-45.0% PR)、差分吸收热力图。</li>
+              <li><b>案例二 (NSCLC)</b>：EGFR Exon 19 del、基线 SOD 60.0mm → 随访 SOD 33.0mm (-45.0% PR)、差分吸收热力图。</li>
             </ul>
           </div>
         </div>
@@ -1063,7 +1063,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       </div>
 
       <h4>8.2 第一步：3D HRCT 上传与 MONAI 深度学习病灶量化 (Baseline HRCT)</h4>
-      <p>医生在「患者 ➔ 影像」面板上传包含 269 层的胸部高分辨 CT 序列 (DICOM/NIfTI)。系统调用 <code>bronchiectasis_mucus_analyzer</code> 深度网络完成全肺体素解析并自动聚焦病灶最大截面（第 #114 层）：</p>
+      <p>医生在「患者 → 影像」面板上传包含 269 层的胸部高分辨 CT 序列 (DICOM/NIfTI)。系统调用 <code>bronchiectasis_mucus_analyzer</code> 深度网络完成全肺体素解析并自动聚焦病灶最大截面（第 #114 层）：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
@@ -1177,7 +1177,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       </div>
 
       <h4>8.8 第一步：基线 3D 增强 CT 扫描与 MONAI 靶病灶 RECIST 1.1 自动测量 (Baseline HRCT)</h4>
-      <p>医生在「患者 ➔ 影像」面板上传包含 180 层的胸部增强 CT 序列。系统调用 <code>nsclc_recist_analyzer</code> (MONAI 3D SegResNet) 深度网络完成全肺体素解析并自动聚焦最大病灶截面（第 #86 层）：</p>
+      <p>医生在「患者 → 影像」面板上传包含 180 层的胸部增强 CT 序列。系统调用 <code>nsclc_recist_analyzer</code> (MONAI 3D SegResNet) 深度网络完成全肺体素解析并自动聚焦最大病灶截面（第 #86 层）：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
@@ -1290,7 +1290,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         </div>
         <div class="help-case-metric-item">
           <span class="label">3D 肿瘤容积吸收率</span>
-          <span class="val ok">-78.2% (28.5 ➔ 6.2 cm³)</span>
+          <span class="val ok">-78.2% (28.5 → 6.2 cm³)</span>
         </div>
         <div class="help-case-metric-item">
           <span class="label">IBSI 影像组学微观表型</span>
@@ -1664,14 +1664,14 @@ export const HELP_SECTIONS: HelpSection[] = [
               <td>中央型支气管扩张 (BAR &gt; 1.0) 伴高密度粘液栓 (HAM &gt; 胸壁肌肉)</td>
               <td>BAR 1.45 (印戒征)<br>HAM 12.44 cm³ (98 HU)<br>总粘液 18.50 cm³ (随访吸收 74.9%)</td>
               <td>Rosenberg-Patterson 标准<br>3D 容积吸收评估 (PR)</td>
-              <td>确诊 ABPA 急性期；专科指导激素联合抗真菌治疗，3个月粘液栓吸收良好 (体积 18.5 ➔ 4.6 cm³)</td>
+              <td>确诊 ABPA 急性期；专科指导激素联合抗真菌治疗，3个月粘液栓吸收良好 (体积 18.5 → 4.6 cm³)</td>
             </tr>
             <tr>
               <td><b>案例二</b><br><code>PT-NSCLC-002</code></td>
               <td>胸部肿瘤科<br>肺腺癌 (EGFR 突变) III A期</td>
               <td>咳嗽胸痛2月，右上肺肿块伴4R组纵隔淋巴结转移，EGFR 19外显子缺失</td>
               <td>分叶、毛刺肿块，纵隔淋巴结短径增大 (≥ 15 mm)</td>
-              <td>基线 SOD 60.0 mm<br>随访 SOD 33.0 mm (Δ -45.0%)<br>3D 容积 28.5 ➔ 6.2 cm³</td>
+              <td>基线 SOD 60.0 mm<br>随访 SOD 33.0 mm (Δ -45.0%)<br>3D 容积 28.5 → 6.2 cm³</td>
               <td><b>RECIST 1.1 国际标准</b><br>部分缓解 (PR)</td>
               <td>一线单药奥希替尼 80mg qd 治疗；差分图呈深绿负吸收，避免过早放疗过度介入</td>
             </tr>
@@ -1709,7 +1709,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             <ul>
               <li><b>人体生理容积界限</b>：正常成年人单侧肺叶体积约为 500~800 cm³。在支气管扩张粘液栓或局灶性病变分析中，算法严格施加解剖容积上限保护，杜绝异常伪影假阳性；</li>
               <li><b>血管阴性掩模与拓扑邻近</b>：系统在全肺体素解析中自动分割肺动静脉血管树，并将血管床作为阴性排除掩模；病灶分割必须具备沿支气管腔分布的解剖拓扑约束，准确提取高密度粘液栓 (HAM 核心 12.44 cm³, 98 HU) 与总粘液容积 (18.50 cm³)，绝对契合人体真实生理分布；</li>
-              <li><b>3D 容积吸收评估准则</b>：气道感染与粘液栓随访采用三维容积吸收率 (如 18.50 ➔ 4.60 cm³, 吸收率 74.9% PR)，杜绝套用实体瘤长径标准。</li>
+              <li><b>3D 容积吸收评估准则</b>：气道感染与粘液栓随访采用三维容积吸收率 (如 18.50 → 4.60 cm³, 吸收率 74.9% PR)，杜绝套用实体瘤长径标准。</li>
             </ul>
           </div>
         </div>
@@ -1754,13 +1754,13 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: '临床科研工作流 (Research)',
     badge: '统计分析',
     icon: icon('chart', { size: 16 }),
-    summary: '方案设计、多中心数据集质控清洗、零 PHI 脱敏、Table 1 基线表一键制表、Kaplan-Meier 生存曲线与 Cox 比例风险回归森林图。',
+    summary: '方案设计、多中心质控清洗、零 PHI 脱敏、Auto-eCRF 穿梭溯源、原生 Word Table 1 基线表、Kaplan-Meier 与 Cox 森林图、列线图 (Nomogram) 与 ROC/DCA 决策曲线、因果推断 E-value 及一键 SCI 投稿包 (.zip)。',
     contentHtml: `
       <div class="help-section-head">
         <h3>9. 临床科研工作流 (Clinical Research & Automated Biostatistics)</h3>
         <span class="help-tag">科研立项 · 多中心质控 · 自动化生物统计 · 顶刊闭环</span>
       </div>
-      <p class="help-lead">Heurion 研究工作空间深度面向临床医学科学家、规培/专培医师及临床药理研究团队，提供从科研课题立项设计、多源多格式数据表质控导入、零 PHI 敏感数据脱敏、患者库智能入组、受限沙箱生物统计学制表（Table 1/KM/Cox），到论文写作数据零幻觉引用的全生命周期科研支撑体系。</p>
+      <p class="help-lead">Heurion 研究工作空间深度面向临床医学科学家、规培/专培医师及临床药理研究团队，提供从科研课题立项设计、多源多格式数据表质控导入、零 PHI 敏感数据脱敏、Auto-eCRF 影像与检验指标批量提取与 3D 切片热力图穿梭溯源、患者库智能入组、受限沙箱生物统计学制表（Table 1/KM/Cox/Nomogram/ROC/DCA）、因果推断混杂偏倚分析 (VanderWeele E-value & Love Plot)，到论文写作数据零幻觉引用及一键导出 SCI 投稿出版包 (.zip) 的全生命周期科研支撑体系。</p>
 
       <h4>9.1 科研课题立项与研究方案结构化起草 (Protocol Design & Registry)</h4>
       <p>进入「研究 (Research)」工作空间，点击<b>「＋ 新建研究」</b>，可建立具有国际规范的课题档案：</p>
@@ -1865,6 +1865,116 @@ export const HELP_SECTIONS: HelpSection[] = [
         <li><b>数据与图表动态绑定引用</b>：在正文中通过 <code>{{research.table1}}</code>、<code>{{research.km_curve}}</code> 实时插入矢量图表，统计数字直接挂钩数据库。若随访数据补充更新，文档中的数值一键全量联动刷新；</li>
         <li><b>顶级期刊格式无损导出</b>：一键导出包含高分辨率矢量图表、规范三线表和正确格式引文的 Word (.docx) 手稿与学术汇报幻灯片 (.pptx)。</li>
       </ul>
+
+      <h4>9.7 CONSORT 2010 受试者入组筛选流向图与矢量导出 (CONSORT 2010 Flow Diagram & Mermaid)</h4>
+      <p>为满足国际顶级医学期刊（NEJM、Lancet、JAMA 等）对临床试验与前瞻性队列研究的严格审稿要求，平台依据 CONSORT 2010 声明标准全自动构建并输出 Figure 1 受试者入组筛选流程图：</p>
+      <ul>
+        <li><b>自动化漏斗级分支统计</b>：自初筛登记总人数、纳排标准逐条排除细目（如年龄不符、eGFR 过低、合并恶性肿瘤等）、随机化双盲分组（干预组 vs 对照组）、随访期失访或不良反应脱落，到最终进入意向性治疗分析 (ITT) 或符合方案集 (PP) 人数，全流程数值逻辑自洽闭环；</li>
+        <li><b>矢量图形与 Mermaid 源码双向导出</b>：支持一键导出 Publication-Ready 高清矢量图 (SVG / 300+ DPI PNG)；提供标准 <code>Mermaid.js</code> 流程图源码一键复制，方便在 Markdown 讲义、LaTeX 文稿及幻灯片中随时自由二开与重绘。</li>
+      </ul>
+
+      <h4>9.8 因果推断混杂偏倚分析：VanderWeele E-value 与 Love Plot 平衡诊断 (Causal Inference & Reviewer Rebuttal)</h4>
+      <p>在观察性研究与真实世界队列 (RWE) 中，审稿人常提出致命质疑：“未测量的混杂因素 (Unmeasured Confounders) 是否足以颠覆现有结论？”Heurion 内置权威因果推断评估工具：</p>
+      <div class="help-grid-2">
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('shield', { size: 14 })} VanderWeele E-value 混杂敏感度分析</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>权威敏感度量化</b>：基于哈佛大学 VanderWeele 教授因果推断定理，自动计算点估计 \\(E\\) 值与 95% 置信区间极限 \\(E\\) 值（如点估计 \\(E = 2.45\\)，CI 下限 \\(E = 1.98\\)）；</li>
+              <li><b>顶刊审稿意见抗辩论断 (Reviewer Rebuttal)</b>：系统根据计算结果自动起草符合 Lancet / BMJ 审稿答辩规范的中英文抗辩段落：“唯有未观测的混杂因素与干预暴露以及研究结局的相对危险度 (RR) 同时达到 2.45 以上，方能推翻本次观察到的保护效应”，有力反驳审稿人对未测混杂的质疑。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('chart', { size: 14 })} Love Plot 协变量平衡诊断图</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>标准化均数差 (SMD) 全景分布</b>：以图形化方式直观呈现 1:1 倾向评分匹配 (PSM) 或逆概率加权 (IPTW) 前后全部协变量（人口学、合并症、生化指标及影像表型）的平衡性变化；</li>
+              <li><b>严格收敛判定</b>：匹配后所有协变量绝对 SMD 均收敛至 0.05 虚线阈值以内（远严于国际公认 0.10 标准），确凿证明两组达到拟随机化的基线平行可比状态。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <h4>9.9 Auto-eCRF 多模态影像与检验指标批量提取与 3D 切片热力图穿梭溯源 (Auto-eCRF & 3D Provenance)</h4>
+      <p>彻底解决多中心科研临床数据采集中繁重、易错的人工录入痛点，打通“电子病历/检验报告 → 3D DICOM 影像 → 科研数据表”的实时可信溯源通道：</p>
+      <ul>
+        <li><b>批量智能抽取与字段结构化映射</b>：全自动解析电子病历文本、生化免疫检验单及 3D DICOM 影像元数据，自动映射至符合 CDISC 标准的研究变量（如人口学、LVEF、NT-proBNP、L3 SMI 骨骼肌指数、肿瘤长短径及 RECIST 变化率）；</li>
+        <li><b>3D 切片与 Grad-CAM 激活热力图穿梭溯源</b>：在研究数据集的表格中，点击任何由深度学习模型提取的影像特征数值，系统瞬间联动弹出轻量 3D MPR 浏览器，直达对应解剖层位及 Grad-CAM 卷积神经网络注意力热力图，100% 杜绝“科研黑盒”与数据造假疑虑。</li>
+      </ul>
+
+      <h4>9.10 临床预后列线图 (Nomogram) 与 ROC/DCA 决策曲线分析 (Nomogram, ROC & DCA Suite)</h4>
+      <p>为临床预后建模与转化医学提供国际一流水准的预测模型验证工具链：</p>
+      <div class="help-grid-3">
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('template', { size: 14 })} 列线图 (Nomogram)</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>0~100 分量化标尺</b>：将多因素 Cox 回归模型转换为可视化打分图，各协变量（年龄、LVEF、SMI、NT-proBNP）按权重对应点数；</li>
+              <li><b>多节点生存概率预测</b>：累加总分后直接对应标定 1 年、3 年、5 年生存率或疾病复发进展风险；</li>
+              <li><b>交互式在线评分卡</b>：支持临床医生在网页端实时输入患者当前指标，即时生成个体化生存概率卡片。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('chart', { size: 14 })} 受试者工作特征 (ROC)</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>AUC 面积与置信区间</b>：高保真绘制 ROC 曲线，计算曲线下面积 (AUC) 与 DeLong 95% 置信区间；</li>
+              <li><b>多模型与单指标同台比对</b>：支持联合预测模型与单一临床指标（如单纯 NT-proBNP 或 SMI）同屏比对；</li>
+              <li><b>Youden 指数最佳截断点</b>：自动标定灵敏度与特异度之和最大的最优诊断截断值 (Optimal Cutoff)。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="help-feature-card">
+          <div class="hfc-title">${icon('dna', { size: 14 })} 决策曲线分析 (DCA)</div>
+          <div class="hfc-desc">
+            <ul>
+              <li><b>临床净获益 (Net Benefit)</b>：评估模型指导临床干预决策时的实际净获益；</li>
+              <li><b>三线同台决策基准</b>：同台对比「Heurion 联合模型」、「全部干预 (Treat All)」与「全不干预 (Treat None)」；</li>
+              <li><b>获益窗口期自动判定</b>：自动计算阈值概率区间 (Threshold Probability Range)，满足 Lancet Digital Health 与 JCO 投稿规范。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <h4>9.11 原生 Word (.docx) Table 1 基线三线表一键导出 (OpenXML Native Word Export)</h4>
+      <p>针对传统从网页或统计软件复制表格到 Word 导致格式错位、线宽不一、中英文字体混乱的顽疾，Heurion 采用底层 OpenXML 规范直接生成原生 Word (.docx) 表格：</p>
+      <ul>
+        <li><b>医学顶刊经典三线表排版</b>：表头上顶线 (1.5pt 实线)、表头下线 (0.75pt 实线)、表底线 (1.5pt 实线)，严格去除任何纵向竖线，中文字体预设为宋体，英文及统计符号预设为 Times New Roman；</li>
+        <li><b>统计标注与脚注自适应</b>：自动附带 Shapiro-Wilk 检验正态性说明（<code>Mean ± SD</code> vs <code>Median (IQR)</code>）、显著性检验脚注与多组比较符号标记，可直接插入投稿手稿无需二次格式调整。</li>
+      </ul>
+
+      <h4>9.12 一键导出 SCI 投稿出版包 (.zip) (One-Click SCI Publication Bundle)</h4>
+      <p>为实现真正的科研成果交付闭环，在课题研究空间点击<b>「一键导出 SCI 投稿包」</b>，系统即可在本地沙箱中流式无损打包包含 12 项顶级医学期刊发表资产的 <code>.zip</code> 成果包：</p>
+      <div class="help-feature-card" style="margin: 12px 0;">
+        <div class="hfc-title">${icon('download', { size: 14 })} 12 项 SCI 顶刊投稿成果全量交付清单</div>
+        <div class="hfc-desc">
+          <table class="help-table" style="margin: 6px 0;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--line); background: var(--card-glass);">
+                <th>序号</th>
+                <th>交付文件名</th>
+                <th>格式标准与内容说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>01</td><td><code>01_Manuscript_ICMJE.docx</code></td><td>符合国际医学期刊编辑委员会 (ICMJE) 规范的完整论文手稿（含标题、摘要、正文与参考文献）</td></tr>
+              <tr><td>02</td><td><code>02_Cover_Letter.docx</code></td><td>面向目标期刊主编的规范投稿推荐信 (Cover Letter)，阐述临床科学假说与创新意义</td></tr>
+              <tr><td>03</td><td><code>03_Highlights.txt</code></td><td>3~5 条凝练的研究核心发现与临床指导价值清单</td></tr>
+              <tr><td>04</td><td><code>04_Figure1_CONSORT_Flow.svg</code></td><td>符合 CONSORT 2010 国际标准的受试者筛选与随机分组高清矢量流程图</td></tr>
+              <tr><td>05</td><td><code>05_Figure2_Table1_Baseline.docx</code></td><td>原生 OpenXML 标准 Table 1 基线人口学与临床特征三线表</td></tr>
+              <tr><td>06</td><td><code>06_Figure3_Kaplan_Meier.svg</code></td><td>带 95% 置信区间及严格对齐风险人数表 (Number at Risk) 的 KM 生存分析矢量图</td></tr>
+              <tr><td>07</td><td><code>07_Figure4_Cox_Forest.svg</code></td><td>包含多因素校正 Adjusted HR 及各亚组交互作用检验 P 值的高清森林图</td></tr>
+              <tr><td>08</td><td><code>08_Figure5_Nomogram.svg</code></td><td>临床预后预测列线图 (Figure 5)，含 0~100 评分标尺与 1/3/5 年生存率对应轴</td></tr>
+              <tr><td>09</td><td><code>09_Figure6_ROC_DCA_Curve.svg</code></td><td>联合模型 ROC 诊断曲线 (AUC 及 95% CI) 与 DCA 决策净获益曲线综合图版</td></tr>
+              <tr><td>10</td><td><code>10_Supplementary_Material.docx</code></td><td>补充附录材料 (Supplementary Appendix)，包含质控流程、缺失值插补说明及补充图表</td></tr>
+              <tr><td>11</td><td><code>11_Statistical_Analysis_Plan_SAP.pdf</code></td><td>前瞻性统计分析计划书 (SAP)，涵盖样本量测算依据与预设分析流程</td></tr>
+              <tr><td>12</td><td><code>12_Reproducible_Code_Python_R.zip</code></td><td>全流程开源统计分析脚本，支持一键在本地 Jupyter / R 环境 100% 复现所有图表与指标</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
 
@@ -2379,11 +2489,11 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <hr style="border: 0; border-top: 1px dashed var(--line); margin: 24px 0;">
 
-      <h3>9.12 临床科研全流程操作与规范对照矩阵表 (Clinical Research Workflow Matrix)</h3>
-      <p>为帮助临床医生与统计师快速掌握全套科研工具，下表梳理了各环节的操作入口、核心技术与规范产出：</p>
+      <h3>9.13 临床科研全流程操作与规范对照矩阵表 (Clinical Research Workflow Matrix)</h3>
+      <p>为帮助临床医生与统计师快速掌握全套科研工具，下表梳理了 10 大核心环节的操作入口、核心技术与规范产出：</p>
 
       <div class="help-feature-card" style="margin: 12px 0; overflow-x: auto;">
-        <table class="help-table" style="min-width: 820px;">
+        <table class="help-table" style="min-width: 860px;">
           <thead>
             <tr style="border-bottom: 2px solid var(--line); background: var(--card-glass);">
               <th>科研阶段</th>
@@ -2396,52 +2506,73 @@ export const HELP_SECTIONS: HelpSection[] = [
           <tbody>
             <tr>
               <td><b>1. 课题立项</b></td>
-              <td>研究空间 ➔ <code>＋ 新建研究</code></td>
+              <td>研究空间 → <code>＋ 新建研究</code></td>
               <td>PICO 结构化表单引擎、样本量与统计功效前瞻估算器</td>
               <td>CONSORT 声明、STROBE 指南、IRB 伦理批件、ChiCTR/NCT 注册</td>
               <td>结构化研究方案 (Protocol)、预设终点定义、最少样本量估算书</td>
             </tr>
             <tr>
-              <td><b>2. 数据治理</b></td>
-              <td>研究空间 ➔ <code>数据集</code> ➔ 上传文件</td>
-              <td>CDISC/SAS/SPSS/Stata 二进制解析、变量字典识别、3-Sigma 离群值告警</td>
+              <td><b>2. 数据治理与 Auto-eCRF</b></td>
+              <td>研究空间 → <code>数据集</code> → 上传/提取</td>
+              <td>CDISC/SAS/SPSS/Stata 解析、Auto-eCRF 批量提取、3D 切片与热力图穿梭溯源</td>
               <td>零 PHI (Zero-PHI) 个人隐私脱敏准则、MICE 缺失值多重插补规范</td>
-              <td>质控合格的列式 Parquet 数据库、清洗日志、受试者虚拟编号字典 (S001~Sn)</td>
+              <td>质控合格的列式 Parquet 数据库、清洗日志、可溯源数据字典</td>
             </tr>
             <tr>
-              <td><b>3. 队列筛选</b></td>
-              <td>患者空间 ➔ <code>多维高级筛选</code> ➔ 纳入研究</td>
+              <td><b>3. 队列筛选与 CONSORT</b></td>
+              <td>患者空间 → <code>多维高级筛选</code> → 纳入研究</td>
               <td>多维布尔逻辑筛选引擎、跨模态 3D 影像表型联动提取 (L3 SMI / RECIST)</td>
-              <td>临床纳排标准自动化判定、患者随访时间序列自动对齐</td>
-              <td>符合入组条件的候选队列预览表、CONSORT 入选/排除流向图 (图 17)</td>
+              <td>临床纳排标准自动化判定、CONSORT 2010 受试者筛选流程规范</td>
+              <td>符合入组条件的候选队列、CONSORT 入选/排除流向图 (Figure 1 矢量图与 Mermaid)</td>
             </tr>
             <tr>
-              <td><b>4. 基线平衡</b></td>
-              <td>研究空间 ➔ <code>统计分析</code> ➔ Table 1 生成</td>
-              <td>Shapiro-Wilk 正态检验、Logit 倾向评分匹配 (PSM 1:1 卡钳匹配)、SMD 计算</td>
-              <td>医学顶级期刊标准三线表规范 (Table 1)、协变量平衡标准 (SMD &lt; 0.10)</td>
-              <td>倾向评分匹配前后 Table 1 三线表、标准化均数差平衡评估图 (图 18)</td>
+              <td><b>4. 基线平衡与 Table 1</b></td>
+              <td>研究空间 → <code>统计分析</code> → Table 1 生成</td>
+              <td>Shapiro-Wilk 正态检验、Logit 倾向评分匹配 (PSM 1:1 卡钳匹配)、OpenXML 原生导出</td>
+              <td>医学顶级期刊标准三线表规范 (Table 1)、协变量平衡标准 (SMD &lt; 0.05)</td>
+              <td>倾向评分匹配前后 Table 1 原生 Word (.docx) 三线表、标准化均数差平衡评估图 (Figure 2)</td>
             </tr>
             <tr>
-              <td><b>5. 生存分析</b></td>
-              <td>研究空间 ➔ <code>统计分析</code> ➔ KM 生存曲线</td>
+              <td><b>5. 因果推断与混杂偏倚</b></td>
+              <td>研究空间 → <code>因果推断</code> → E-value 计算</td>
+              <td>VanderWeele 混杂敏感度定理、点估计与 CI 下限 E-value 算法、Love Plot 平衡图</td>
+              <td>观察性流行病学因果推断准则、国际顶级期刊审稿人质疑答辩规范</td>
+              <td>定量 E-value 指标报告、Love Plot 协变量平衡诊断图、顶刊抗辩段落 (Reviewer Rebuttal)</td>
+            </tr>
+            <tr>
+              <td><b>6. 生存分析</b></td>
+              <td>研究空间 → <code>统计分析</code> → KM 生存曲线</td>
               <td>Kaplan-Meier 乘积极限法、Log-Rank 渐近假设检验、ARR 与 NNT 算法</td>
               <td>NEJM / Lancet 生存曲线规范、严格对齐的风险人数表 (Number at Risk)</td>
-              <td>带 95% 置信带的高清 KM 曲线、中位生存期、Log-Rank 统计检验量 (图 19)</td>
+              <td>带 95% 置信带的高清 KM 曲线、中位生存期、Log-Rank 统计检验量 (Figure 3)</td>
             </tr>
             <tr>
-              <td><b>6. 预后建模</b></td>
-              <td>研究空间 ➔ <code>统计分析</code> ➔ Cox 森林图</td>
+              <td><b>7. 预后建模</b></td>
+              <td>研究空间 → <code>统计分析</code> → Cox 森林图</td>
               <td>Schoenfeld 残差比例风险检验、多因素逐步 Cox 回归、亚组交互作用检验</td>
               <td>多因素混杂协变量校正准则、预设亚组同质性检验 (\\(P_{\\text{interaction}}\\))</td>
-              <td>Adjusted HR 与 95% 置信区间、高清矢量级预设亚组森林图 (图 20)</td>
+              <td>Adjusted HR 与 95% 置信区间、高清矢量级预设亚组森林图 (Figure 4)</td>
             </tr>
             <tr>
-              <td><b>7. 论文发表</b></td>
-              <td>写作空间 ➔ 关联研究课题 ➔ 插入图表</td>
+              <td><b>8. 列线图与决策曲线</b></td>
+              <td>研究空间 → <code>预测模型</code> → Nomogram / DCA</td>
+              <td>0~100 评分标尺、1/3/5年生存率映射、AUC (95% CI) 与 Youden 截断点、临床净获益</td>
+              <td>TRIPOD 预测模型报告声明、Lancet Digital Health / JCO DCA 临床决策标准</td>
+              <td>预后预测列线图 (Figure 5)、个体化评分卡、ROC 与 DCA 决策曲线综合图版 (Figure 6)</td>
+            </tr>
+            <tr>
+              <td><b>9. 论文发表与数据绑定</b></td>
+              <td>写作空间 → 关联研究课题 → 插入图表</td>
               <td>动态统计变量零幻觉绑定 (Dynamic Data Binding)、高保真文档渲染引擎</td>
               <td>ICMJE 医学期刊投稿标准、CONSORT 声明、Word (.docx) / PPTX 无损导出</td>
-              <td>符合顶刊发表标准的研究论文初稿、学术汇报投影幻灯片、完整可复现 Python 脚本 (图 21)</td>
+              <td>符合顶刊发表标准的研究论文初稿、学术汇报投影幻灯片、完整可复现 Python 脚本</td>
+            </tr>
+            <tr>
+              <td><b>10. SCI 投稿包全量交付</b></td>
+              <td>研究空间 → <code>导出 SCI 投稿包</code></td>
+              <td>秒级无外部重型依赖流式 Zip 压缩、12 项投稿交付物全自动组织打包</td>
+              <td>国际主流医学出版商 (Elsevier, Springer Nature, Wiley) 稿件包格式标准</td>
+              <td>包含论文手稿、Cover Letter、Figure 1~6 矢量图版与 Word Table 1 等 12 项资产的 .zip 归档包</td>
             </tr>
           </tbody>
         </table>
@@ -2662,7 +2793,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: '版本发布更新日志 (Release Notes)',
     badge: '更新里程碑',
     icon: icon('sparkles', { size: 16 }),
-    summary: '记录 Heurion 从 v2.0 到 v2.6 核心版本演进、临床影像量化、文献论断核验、生物统计、零 PHI 隐私与交互设计里程碑。',
+    summary: '记录 Heurion 从 v2.0 到 v2.7 核心版本演进、临床影像量化、文献论断核验、生物统计、零 PHI 隐私与交互设计里程碑。',
     contentHtml: `
       <div class="help-section-head">
         <h3>13. 版本发布更新日志 (Release Notes & Milestones)</h3>
@@ -2671,7 +2802,22 @@ export const HELP_SECTIONS: HelpSection[] = [
       <p class="help-lead">Heurion 始终秉承「临床医生与科研人员的专业辅助伙伴」定位，每个版本均历经三甲临床专家严苛验证与医学数据安全审查。</p>
 
       <div class="help-release-card">
-        <div class="help-release-badge current">v2.6 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-badge current">v2.7 Pro (当前最新版本 · 2026年10月)</div>
+        <div class="help-release-title">SCI 投稿出版包一键打包、临床预后列线图 Nomogram、ROC/DCA 决策曲线、因果推断 E-value 与 Auto-eCRF 穿梭溯源</div>
+        <ul class="help-release-list">
+          <li><b>一键导出 SCI 投稿出版包 (.zip) (One-Click SCI Publication Bundle)</b>：一键自动生成 12 项顶级医学期刊投稿交付物（包含 ICMJE 论文初稿、Cover Letter、Figure 1~6 矢量图版与 Word Table 1、补充材料、统计分析计划书 SAP 及可复现 Python/R 代码包），原生轻量流式压缩交付。</li>
+          <li><b>临床预后列线图与交互式评分卡 (Nomogram & Risk Calculator)</b>：基于多因素 Cox 回归拟合 0~100 分积分标尺，直观预测 1/3/5 年生存概率；支持前端交互式点选并动态生成个体化风险评分卡。</li>
+          <li><b>ROC 诊断对比与 DCA 临床决策净获益曲线 (ROC & Decision Curve Analysis)</b>：支持带 95% 置信区间的 AUC 计算与 Youden 最佳截断值推荐；绘制 Treat All vs Treat None 决策曲线，定量标定临床决策获益窗口期。</li>
+          <li><b>因果推断混杂偏倚分析 (VanderWeele E-value & Love Plot)</b>：量化评估未测混杂因素对效应值的影响，自动生成符合顶级医学期刊审稿人严苛答辩要求的抗辩论断 (Reviewer Rebuttal Text)；配套 Love Plot 验证全部协变量 SMD &lt; 0.05 绝对平衡。</li>
+          <li><b>CONSORT 2010 入组筛选流向图与 Mermaid 导出</b>：全自动生成标准受试者初筛、排除标准统计、随机化分组及完成随访流程图，支持矢量图与 Mermaid 源码一键复制。</li>
+          <li><b>Auto-eCRF 多模态特征自动提取与 3D 切片热力图穿梭溯源</b>：自动从电子病历与 DICOM 影像中提取科研变量，并在数据表中支持点击数值一键穿梭至 3D MPR 影像切片与 Grad-CAM 激活区，实现 100% 证据链可信追溯。</li>
+          <li><b>原生 Word (.docx) Table 1 基线三线表一键导出</b>：基于 OpenXML 规范生成符合国际医学顶级期刊标准的 Table 1 原生 Word 文件，表头上顶线、表头下线与表底线严密排版，中英文双语免调格式。</li>
+          <li><b>OmniCanvas / AgentDoc 独立纯净画布微服务架构</b>：将自由画布引擎重构为独立轻量微服务，支持纯净无干扰的多模态因果诊断图解、影像病灶标注与科研证据卡片绘制。</li>
+        </ul>
+      </div>
+
+      <div class="help-release-card">
+        <div class="help-release-badge">v2.6 Pro (2026年10月)</div>
         <div class="help-release-title">引用文献权威校验、PMC 全文表格与图注结构化提取、论断核验与一键正文纠错</div>
         <ul class="help-release-list">
           <li><b>PMC 开放获取全文与结构化表格提取 (PMC XML Table & Caption Mining)</b>：突破传统文献仅能抓取摘要的局限，直连 PubMed Central (PMC) 与 Europe PMC 开放获取 XML 树状节点；创新实现 <code>&lt;table-wrap&gt;</code> 表格（基线特征、终点亚组分析、不良事件统计等）与 <code>&lt;fig&gt;</code> 图注的行级结构化抽取与 Markdown 排版保留，彻底解决 RCT 关键临床终点数据盲区。</li>
@@ -2758,9 +2904,9 @@ export const HELP_SECTIONS: HelpSection[] = [
 export function buildHelpMarkdown(): string {
   return `# Heurion 临床智能工作站 · 全流程使用手册与操作指南
 
-> **版本**：v2.6 Pro  
+> **版本**：v2.7 Pro  
 > **适用人群**：呼吸科、胸外科、放射影像科、泌尿外科、肿瘤科临床医师与医学科研人员  
-> **核心架构**：零 PHI 医学隐私 · MONAI 3D 深度量化 · 引用文献全链路核验 · 临床随访排期日历 · 专属科研邮箱 · 自动化生物统计
+> **核心架构**：零 PHI 医学隐私 · MONAI 3D 深度量化 · 引用文献全链路核验 · 临床随访排期日历 · 专属科研邮箱 · 自动化生物统计与 SCI 投稿出版包
 
 ---
 
@@ -3092,7 +3238,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - 证实肿瘤内部微观空间异质性显著降低，细胞密集度锐减，佐证分子层面的良好生物学应答。
 6. **步骤五：多模态因果诊断链闭环与 RECIST 1.1 标准报告出具**：
    - 参考图像：[图 10 多模态因果诊断链与证据闭环 (晚期 NSCLC 靶向治疗 PR 应答)](/site/real-case-nsclc-5-diagnostic-chain.png)；
-   - 串联「3D 影像体积/长径缩减 + 分子突变 (EGFR 19del 丰度降至 0.8%) + 肿瘤标志物 (CEA 58.4 ➔ 6.2 ng/mL)」三元证据链；
+   - 串联「3D 影像体积/长径缩减 + 分子突变 (EGFR 19del 丰度降至 0.8%) + 肿瘤标志物 (CEA 58.4 → 6.2 ng/mL)」三元证据链；
    - MDT 决策维持一线单药奥希替尼 80 mg qd 靶向治疗方案，推迟局部姑息放疗介入；一键导出标准 DICOM SR 与 FHIR 报告。
 
 ---
@@ -3148,8 +3294,8 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 | 案例编号 / 脱敏 ID | 专科分类与疾病诊断 | 临床痛点与首发表现 | 影像金标准征象 | Heurion 核心算法与实测值 | 指南标准判定与分级 | 临床处置与最终决策闭环 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **案例一**<br>\`PT-BRONCHO-001\` | 呼吸感染<br>变应性支气管肺曲霉病 (ABPA) | 反复咳痰咯血6年，外院抗生素治疗无效，气道广泛粘液嵌顿 | 中央型支气管扩张 (BAR > 1.0) 伴高密度粘液栓 (HAM > 胸壁肌肉) | BAR 1.45 (印戒征)<br>HAM 12.44 cm³ (98 HU)<br>总粘液 18.50 cm³ (随访吸收 74.9%) | Rosenberg-Patterson 标准<br>3D 容积吸收评估 (PR) | 确诊 ABPA 急性期；专科指导激素联合抗真菌治疗，3个月粘液栓吸收良好 (体积 18.5 ➔ 4.6 cm³) |
-| **案例二**<br>\`PT-NSCLC-002\` | 胸部肿瘤科<br>肺腺癌 (EGFR 突变) III A期 | 咳嗽胸痛2月，右上肺肿块伴4R组纵隔淋巴结转移，EGFR 19外显子缺失 | 分叶、毛刺肿块，纵隔淋巴结短径增大 (≥ 15 mm) | 基线 SOD 60.0 mm<br>随访 SOD 33.0 mm (Δ -45.0%)<br>3D 容积 28.5 ➔ 6.2 cm³ | **RECIST 1.1 国际标准**<br>部分缓解 (PR) | 一线单药奥希替尼 80mg qd 治疗；差分图呈深绿负吸收，避免过早放疗过度介入 |
+| **案例一**<br>\`PT-BRONCHO-001\` | 呼吸感染<br>变应性支气管肺曲霉病 (ABPA) | 反复咳痰咯血6年，外院抗生素治疗无效，气道广泛粘液嵌顿 | 中央型支气管扩张 (BAR > 1.0) 伴高密度粘液栓 (HAM > 胸壁肌肉) | BAR 1.45 (印戒征)<br>HAM 12.44 cm³ (98 HU)<br>总粘液 18.50 cm³ (随访吸收 74.9%) | Rosenberg-Patterson 标准<br>3D 容积吸收评估 (PR) | 确诊 ABPA 急性期；专科指导激素联合抗真菌治疗，3个月粘液栓吸收良好 (体积 18.5 → 4.6 cm³) |
+| **案例二**<br>\`PT-NSCLC-002\` | 胸部肿瘤科<br>肺腺癌 (EGFR 突变) III A期 | 咳嗽胸痛2月，右上肺肿块伴4R组纵隔淋巴结转移，EGFR 19外显子缺失 | 分叶、毛刺肿块，纵隔淋巴结短径增大 (≥ 15 mm) | 基线 SOD 60.0 mm<br>随访 SOD 33.0 mm (Δ -45.0%)<br>3D 容积 28.5 → 6.2 cm³ | **RECIST 1.1 国际标准**<br>部分缓解 (PR) | 一线单药奥希替尼 80mg qd 治疗；差分图呈深绿负吸收，避免过早放疗过度介入 |
 | **案例三**<br>\`PT-ABDOMEN-003\` | 消化与腹部实质<br>脾脏显著肿大伴肌减少 | 上腹饱胀纳差2月，消瘦，脾脏肿大肋下 3cm，轻度脾亢 | 全腹CT示脾脏显著弥漫性肿大 (680 cm³, 长径14.2cm)，肝胰未见占位，L3腰大肌萎缩 | 脾体积 680.0 cm³<br>L3 SMI = 29.92 cm²/m²<br>肌肉衰减 MA = 26.4 HU | Prado 共识 / AWGS 标准<br>脾大待查伴肌少症 | 预测全量化疗严重骨髓毒性率 72%；MDT 审慎评估化疗剂量并联合全肠内营养与预康复 |
 | **案例四**<br>\`PT-PROSTATE-004\` | 泌尿外科与男科<br>良性前列腺增生 (BPH) | 体检 PSA 5.8 ng/mL (灰区升高)，轻度排尿等待与夜尿频多，无血尿 | T2加权像移行区圆形边界清晰包膜完整结节，外周带高信号均匀无占位 | 前列腺总容积 48.60 cm³<br>移行区容积 28.20 cm³<br>TZI 0.58 / PSAD 0.12 | **PI-RADS v2.1 国际标准**<br>2类 (良性增生结节) | 常规门诊随访与每 6 个月 PSA 监测，**科学规避非必要经直肠有创穿刺活检 (TRUS)** |
 
@@ -3162,7 +3308,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 1. **【规范一 · 生理数值与解剖拓扑约束】肺部病灶容积与血管床阴性掩模过滤**：
    - **人体生理容积界限**：正常成年人单侧肺叶体积约为 500~800 cm³。在支气管扩张粘液栓或局灶性病变分析中，算法严格施加解剖容积上限保护，杜绝异常伪影假阳性；
    - **血管阴性掩模与拓扑邻近**：系统在全肺体素解析中自动分割肺动静脉血管树，并将血管床作为阴性排除掩模；病灶分割必须具备沿支气管腔分布的解剖拓扑约束，准确提取高密度粘液栓 (HAM 核心 12.44 cm³, 98 HU) 与总粘液容积 (18.50 cm³)，绝对契合人体真实生理分布；
-   - **3D 容积吸收评估准则**：气道感染与粘液栓随访采用三维容积吸收率 (如 18.50 ➔ 4.60 cm³, 吸收率 74.9% PR)，杜绝套用实体瘤长径标准。
+   - **3D 容积吸收评估准则**：气道感染与粘液栓随访采用三维容积吸收率 (如 18.50 → 4.60 cm³, 吸收率 74.9% PR)，杜绝套用实体瘤长径标准。
 2. **【规范二 · 扫描野与解剖定位基准】扫描范围严格匹配与机体成分分析定位**：
    - **胸部平扫解剖野限制**：标准胸部 HRCT 扫描范围为肺尖至肋膈角 (T1-T12/L1)，视野内仅涵盖胸部解剖结构。胸部平扫默认采用 T4 层面胸大肌指数 (PMI) 或 T12 竖脊肌作为胸腔局部肌量参考；
    - **L3 腰椎截面标准化基准**：第 3 腰椎 (L3) 骨骼肌质量指数 (SMI) 与肌衰减 (MA) 是国际公认的全身体成分与营养恶液质评估金标准（Prado 国际共识截断值 52.4 cm²/m²）；
@@ -3204,6 +3350,25 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - 将 TotalSegmentator L3 骨骼肌指数 (SMI)、内脏/皮下脂肪比 (VAT/SAT) 及 IBSI 107 项标准影像组学高维特征直接存入队列数据集，参与多因素预后生存分析。
 6. **成果闭环与学术发表**：
    - 写作空间关联研究课题，正文无损嵌入图表与动态统计字段，数据随随访自动联动更新，一键导出发表级 Word (.docx) 手稿与演讲 PPTX。
+7. **CONSORT 2010 受试者入组筛选流向图生成 (CONSORT 2010 Flow Diagram & Mermaid)**：
+   - 自动化入选/排除分支计算、漏斗级筛选统计、随机双盲分组与随访脱落人数严密闭环；
+   - 支持一键导出 Publication-Ready 高清矢量图 (SVG / 300+ DPI PNG) 及标准 \`Mermaid.js\` 流程图源码复制。
+8. **因果推断混杂偏倚分析 (VanderWeele E-value & Love Plot)**：
+   - 基于哈佛大学 VanderWeele 权威定理测算点估计与置信区间 E-value，量化未测混杂因素需多强方能推翻现有结论；
+   - 自动生成符合顶刊审稿规范的审稿答辩抗辩论断 (Reviewer Rebuttal Text)；
+   - 绘制 Love Plot 协变量平衡图，验证 1:1 PSM 匹配后所有指标 SMD 绝对收敛至 0.05 以下。
+9. **Auto-eCRF 多模态影像与检验指标批量提取与 3D 切片热力图穿梭溯源**：
+   - 批量从病历文本、生化化验与 3D DICOM 中抽取 CDISC 标准指标；
+   - 数据表中点击任意影像特征数值，瞬间穿梭至 3D MPR 影像切片与 Grad-CAM 注意力热力图，100% 证据可信溯源。
+10. **临床预后列线图 (Nomogram) 与 ROC/DCA 决策曲线分析 (Figure 5 & 6)**：
+    - **列线图 (Nomogram)**：0~100 分量化标尺，对应 1/3/5 年生存率或疾病进展风险，支持在线交互评分卡；
+    - **ROC 曲线与 AUC**：高保真绘制 ROC 曲线与 DeLong 95% CI，自动推荐 Youden 最优截断点；
+    - **决策曲线分析 (DCA)**：对比 Treat All vs Treat None 决策基准，精准标定临床决策获益窗口期。
+11. **原生 Word (.docx) Table 1 基线三线表一键导出**：
+    - 基于 OpenXML 标准直接输出原生 Word 三线表（1.5pt 表头顶线、0.75pt 表头下线、1.5pt 表底线，无纵向竖线）；
+    - 中文宋体、英文 Times New Roman，中英文双语自适应，下载即可直接插入投稿手稿。
+12. **一键导出 SCI 投稿出版包 (.zip) (One-Click SCI Publication Bundle)**：
+    - 一键流式打包 12 项顶刊投稿成果物（ICMJE 论文手稿、Cover Letter、Highlights、Figure 1~6 矢量图版与 Word Table 1、补充材料、统计分析计划书 SAP、可复现 Python/R 代码包），秒级交付。
 
 ---
 
@@ -3296,13 +3461,16 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 #### 6. 临床科研全流程操作与规范对照矩阵表
 | 科研阶段 | 工作空间与操作入口 | 平台核心算法与技术机制 | 医学统计与国际规范 | 标准交付成果物 (Deliverables) |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. 课题立项** | 研究空间 ➔ \`＋ 新建研究\` | PICO 结构化表单引擎、样本量与功效估算器 | CONSORT、STROBE、IRB 伦理批件、ChiCTR/NCT 注册 | 结构化方案、终点定义、最少样本量估算书 |
-| **2. 数据治理** | 研究空间 ➔ \`数据集\` ➔ 上传 | CDISC/SAS/SPSS/Stata 二进制解析、变量字典、离群值告警 | 零 PHI (Zero-PHI) 脱敏、MICE 缺失值多重插补 | 列式 Parquet 库、清洗日志、受试者虚拟编号 (S001~Sn) |
-| **3. 队列筛选** | 患者空间 ➔ \`高级筛选\` ➔ 纳入研究 | 多维布尔筛选引擎、跨模态 3D 影像表型联动 (L3 SMI) | 临床纳排标准判定、随访时间序列自动对齐 | 候选队列预览表、CONSORT 入选/排除流向图 (图 17) |
-| **4. 基线平衡** | 研究空间 ➔ \`统计分析\` ➔ Table 1 | 正态性检验、1:1 PSM 卡钳匹配、SMD 计算 | 医学顶刊 Table 1 三线表规范、SMD < 0.10 协变量平衡 | PSM 前后 Table 1 三线表、SMD 平衡评估图 (图 18) |
-| **5. 生存分析** | 研究空间 ➔ \`统计分析\` ➔ KM 曲线 | Kaplan-Meier 乘积极限法、Log-Rank 检验、ARR/NNT | NEJM/Lancet 生存曲线规范、Number at Risk 风险表 | 带 95% 置信带 KM 曲线、Log-Rank 统计量 (图 19) |
-| **6. 预后建模** | 研究空间 ➔ \`统计分析\` ➔ Cox 森林图 | Schoenfeld 残差检验、多因素逐步 Cox、亚组交互检验 | 多因素协变量校正、预设亚组同质性检验 ($P_{\\text{interaction}}$) | Adjusted HR (0.74)、高清矢量预设亚组森林图 (图 20) |
-| **7. 论文发表** | 写作空间 ➔ 关联课题 ➔ 插入图表 | 动态统计变量零幻觉绑定、高保真文档渲染引擎 | ICMJE 投稿标准、Word (.docx) / PPTX 无损导出 | 发表级论文初稿、学术汇报 PPTX、可复现 Python 脚本 (图 21) |
+| **1. 课题立项** | 研究空间 → \`＋ 新建研究\` | PICO 结构化表单引擎、样本量与功效估算器 | CONSORT、STROBE、IRB 伦理批件、ChiCTR/NCT 注册 | 结构化方案、终点定义、最少样本量估算书 |
+| **2. 数据治理与 Auto-eCRF** | 研究空间 → \`数据集\` → 上传/提取 | CDISC/SAS/SPSS 解析、Auto-eCRF 提取、3D 切片与热力图穿梭溯源 | 零 PHI (Zero-PHI) 脱敏、MICE 缺失值多重插补 | 列式 Parquet 库、清洗日志、可溯源数据字典 |
+| **3. 队列筛选与 CONSORT** | 患者空间 → \`高级筛选\` → 纳入研究 | 多维布尔筛选引擎、跨模态 3D 影像表型联动 (L3 SMI) | 临床纳排标准判定、CONSORT 2010 受试者筛选流程规范 | 候选队列预览表、CONSORT 入选/排除流向图 (Figure 1 矢量图与 Mermaid) |
+| **4. 基线平衡与 Table 1** | 研究空间 → \`统计分析\` → Table 1 | 正态性检验、1:1 PSM 卡钳匹配、OpenXML 原生导出 | 医学顶刊 Table 1 三线表规范、SMD < 0.05 协变量平衡 | PSM 前后 Table 1 原生 Word (.docx) 三线表、SMD 平衡评估图 (Figure 2) |
+| **5. 因果推断与混杂偏倚** | 研究空间 → \`因果推断\` → E-value | VanderWeele 混杂敏感度定理、E-value 算法、Love Plot | 观察性流行病学因果推断准则、审稿人答辩规范 | 定量 E-value 指标报告、Love Plot 平衡图、顶刊抗辩段落 (Reviewer Rebuttal) |
+| **6. 生存分析** | 研究空间 → \`统计分析\` → KM 曲线 | Kaplan-Meier 乘积极限法、Log-Rank 检验、ARR/NNT | NEJM/Lancet 生存曲线规范、Number at Risk 风险表 | 带 95% 置信带 KM 曲线、Log-Rank 统计量 (Figure 3) |
+| **7. 预后建模** | 研究空间 → \`统计分析\` → Cox 森林图 | Schoenfeld 残差检验、多因素逐步 Cox、亚组交互检验 | 多因素协变量校正、预设亚组同质性检验 ($P_{\\text{interaction}}$) | Adjusted HR (0.74)、高清矢量预设亚组森林图 (Figure 4) |
+| **8. 列线图与决策曲线** | 研究空间 → \`预测模型\` → Nomogram/DCA | 0~100 评分标尺、1/3/5年生存率映射、AUC (95% CI)、净获益 | TRIPOD 预测模型报告声明、Lancet Digital Health / JCO DCA 标准 | 预后列线图 (Figure 5)、个体评分卡、ROC 与 DCA 综合图版 (Figure 6) |
+| **9. 论文发表与数据绑定** | 写作空间 → 关联课题 → 插入图表 | 动态统计变量零幻觉绑定、高保真文档渲染引擎 | ICMJE 投稿标准、Word (.docx) / PPTX 无损导出 | 发表级论文初稿、学术汇报 PPTX、可复现 Python 脚本 |
+| **10. SCI 投稿包全量交付** | 研究空间 → \`导出 SCI 投稿包\` | 秒级无外部依赖流式 Zip 压缩、12 项成果物组织打包 | 国际主流医学出版商稿件包格式标准 | 包含论文、Cover Letter、Figure 1~6 图版与 Table 1 等 12 项资产的 .zip 归档包 |
 
 
 ---
@@ -3363,7 +3531,17 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 
 ## 十三、 版本更新日志 (Release Notes)
 
-### v2.6 Pro (当前最新版本 · 2026年10月)
+### v2.7 Pro (当前最新版本 · 2026年10月)
+- **一键导出 SCI 投稿出版包 (.zip) (One-Click SCI Publication Bundle)**：一键自动生成 12 项顶级医学期刊投稿交付物（包含 ICMJE 论文初稿、Cover Letter、Figure 1~6 矢量图版与 Word Table 1、补充材料、统计分析计划书 SAP 及可复现 Python/R 代码包），原生轻量流式压缩交付。
+- **临床预后列线图与交互式评分卡 (Nomogram & Risk Calculator)**：基于多因素 Cox 回归拟合 0~100 分积分标尺，直观预测 1/3/5 年生存概率；支持前端交互式点选并动态生成个体化风险评分卡。
+- **ROC 诊断对比与 DCA 临床决策净获益曲线 (ROC & Decision Curve Analysis)**：支持带 95% 置信区间的 AUC 计算与 Youden 最佳截断值推荐；绘制 Treat All vs Treat None 决策曲线，定量标定临床决策获益窗口期。
+- **因果推断混杂偏倚分析 (VanderWeele E-value & Love Plot)**：量化评估未测混杂因素对效应值的影响，自动生成符合顶级医学期刊审稿人严苛答辩要求的抗辩论断 (Reviewer Rebuttal Text)；配套 Love Plot 验证全部协变量 SMD < 0.05 绝对平衡。
+- **CONSORT 2010 入组筛选流向图与 Mermaid 导出**：全自动生成标准受试者初筛、排除标准统计、随机化分组及完成随访流程图，支持矢量图与 Mermaid 源码一键复制。
+- **Auto-eCRF 多模态特征自动提取与 3D 切片热力图穿梭溯源**：自动从电子病历与 DICOM 影像中提取科研变量，并在数据表中支持点击数值一键穿梭至 3D MPR 影像切片与 Grad-CAM 激活区，实现 100% 证据链可信追溯。
+- **原生 Word (.docx) Table 1 基线三线表一键导出**：基于 OpenXML 规范生成符合国际医学顶级期刊标准的 Table 1 原生 Word 文件，表头上顶线、表头下线与表底线严密排版，中英文双语免调格式。
+- **OmniCanvas / AgentDoc 独立纯净画布微服务架构**：将自由画布引擎重构为独立轻量微服务，支持纯净无干扰的多模态因果诊断图解、影像病灶标注与科研证据卡片绘制。
+
+### v2.6 Pro (2026年10月)
 - **PMC 开放获取全文与结构化表格提取 (PMC XML Table & Caption Mining)**：突破传统仅抓取摘要局限，深入抓取 PubMed Central / Europe PMC 开放获取 XML 中的 \`<table-wrap>\` 表格与 \`<fig>\` 图注，保留 Markdown 行级对齐排版，彻底解决 RCT 关键临床终点数据盲区。
 - **全链路权威文献登记与写屏障 (\`guardCitations\`)**：所有引用必须经由 PubMed / Crossref / Europe PMC 官方权威 API 检索注册并赋予唯一代币 \`[@c:xxx]\`；在平台操作层强制执行写前守卫，从物理底层彻底杜绝大模型伪造论文、捏造 DOI 与裸标注入。
 - **细粒度论断核查引擎 (\`verify_claims\`)**：自动切分命题级数值主张句（HR、OR、95% CI、p 值、样本量等），对照已登记文献全文及 RCT 表格进行深度对照，输出 \`supported\`、\`unsupported\`、\`unclear\`、\`missing_citation\` 及 \`exempted\` 五大权威裁定。
@@ -3409,6 +3587,14 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 `
 }
 
+const HELP_GROUPS = [
+  { title: '入门与通识', ids: ['overview', 'concepts'] },
+  { title: '安全与协同', ids: ['privacy', 'collaboration'] },
+  { title: '临床影像中心', ids: ['imaging', 'registration', 'diagnostics', 'casestudy'] },
+  { title: '临床科研与出版', ids: ['research'] },
+  { title: '学术写作与文献', ids: ['writing', 'citations', 'faq', 'releasenotes'] },
+]
+
 /** 打开交互式产品使用指南弹窗 */
 export function openHelpGuide(initialSectionId = 'overview'): void {
   const dlg = document.getElementById('dialog')!
@@ -3419,7 +3605,7 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
       <div class="dialog-head help-head">
         <div class="help-head-title">
           <h2>${icon('file', { size: 18 })} Heurion 临床智能工作站 · 全流程使用手册</h2>
-          <span class="help-version-pill">v2.6 Pro</span>
+          <span class="help-version-pill">v2.7 Pro</span>
         </div>
         <div class="help-head-actions">
           <div class="help-search-wrap">
@@ -3433,12 +3619,22 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
         <aside class="help-sidebar" id="helpSidebar">
           <div class="help-sidebar-title">手册目录导航</div>
           <nav class="help-nav" id="helpNav">
-            ${HELP_SECTIONS.map((sec, idx) => `
-              <button class="help-nav-item${sec.id === initialSectionId ? ' active' : ''}" data-target="${esc(sec.id)}">
-                <span class="hni-icon">${sec.icon}</span>
-                <span class="hni-text">${idx + 1}. ${esc(sec.title)}</span>
-                <span class="hni-badge">${esc(sec.badge)}</span>
-              </button>
+            ${HELP_GROUPS.map(group => `
+              <div class="help-nav-group">
+                <div class="help-nav-group-title">${esc(group.title)}</div>
+                ${group.ids.map(id => {
+                  const sec = HELP_SECTIONS.find(s => s.id === id)
+                  if (!sec) return ''
+                  const idx = HELP_SECTIONS.indexOf(sec)
+                  return `
+                    <button class="help-nav-item${sec.id === initialSectionId ? ' active' : ''}" data-target="${esc(sec.id)}">
+                      <span class="hni-icon">${sec.icon}</span>
+                      <span class="hni-text">${idx + 1}. ${esc(sec.title)}</span>
+                      <span class="hni-badge">${esc(sec.badge)}</span>
+                    </button>
+                  `
+                }).join('')}
+              </div>
             `).join('')}
           </nav>
           <div class="help-sidebar-footer">
@@ -3521,9 +3717,11 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
       const q = filterInput.value.trim().toLowerCase()
       const sections = dlg.querySelectorAll<HTMLElement>('.help-section')
       const navItems = dlg.querySelectorAll<HTMLElement>('.help-nav-item')
+      const navGroups = dlg.querySelectorAll<HTMLElement>('.help-nav-group')
       if (!q) {
         sections.forEach(s => s.hidden = false)
         navItems.forEach(n => n.hidden = false)
+        navGroups.forEach(g => g.hidden = false)
         return
       }
       sections.forEach(s => {
@@ -3535,6 +3733,10 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
         const target = n.dataset.target
         const sec = dlg.querySelector<HTMLElement>(`#help-sec-${target}`)
         n.hidden = !sec || sec.hidden
+      })
+      navGroups.forEach(g => {
+        const hasVisible = Array.from(g.querySelectorAll<HTMLElement>('.help-nav-item')).some(item => !item.hidden)
+        g.hidden = !hasVisible
       })
     })
   }
