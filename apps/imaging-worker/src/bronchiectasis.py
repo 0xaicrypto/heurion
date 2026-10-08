@@ -554,7 +554,7 @@ def analyze_bronchiectasis_and_mucus(
     # Diagnostic HUD
     draw.text((12, 6), f"HEURION CHEST-CT // BRONCHIECTASIS & MUCUS AI", fill=(56, 189, 248, 255), font=font_hud_title)
     hud_lines = [
-        f"计算加速: {dev_info.get('accelerator', 'Metal MPS')} | 关键断面: 第 #{key_slice_idx} 层",
+        f"计算加速: {dev_info.get('accelerator', str(device))} | 关键断面: 第 #{key_slice_idx} 层",
         f"形态分型: {phenotype}",
         f"BAR 扩张比: {bar_ratio} (参考 <=1.0) | 管壁厚度比: {wall_to_lumen_ratio}",
         f"粘液栓体积: {mucus_vol_cm3} cm³ (HAM高密度: {ham_vol_cm3} cm³) | 阻塞率: {occlusion_rate_pct}%",

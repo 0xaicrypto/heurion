@@ -168,6 +168,12 @@ export interface SurvivalAnalysisResult {
   narrative: string
   /** Markdown 格式总结表格 */
   markdown_table: string
+  /** 高清医学出版级 KM 生存曲线 SVG 字符串 (别名以兼容不同前端调用) */
+  km_svg?: string
+  /** Cox 森林图 SVG 字符串 (别名) */
+  forest_plot_svg?: string
+  /** 完整 Markdown 总结与述评 (别名) */
+  summary_markdown?: string
 }
 
 /** 规范化事件状态为 0 或 1 */
@@ -1151,9 +1157,12 @@ export function generateSurvivalAnalysis(
     cox,
     risk_table,
     svg,
+    km_svg: svg,
     forest_svg,
+    forest_plot_svg: forest_svg,
     narrative,
-    markdown_table
+    markdown_table,
+    summary_markdown: `${narrative}\n\n${markdown_table}`
   }
 }
 

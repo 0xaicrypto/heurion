@@ -663,45 +663,55 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
           const forestSvgWrap = document.getElementById('rsForestSvgWrap')
           const mdText = document.getElementById('rsSurvMdText')
 
+          const kmSvg = res.km_svg || res.svg || res.survival_analysis?.svg || ''
+          const forestSvg = res.forest_plot_svg || res.forest_svg || res.survival_analysis?.forest_svg || ''
+          const summaryMd = res.summary_markdown || res.publication_report_markdown || (res.narrative ? `${res.narrative}\n\n${res.markdown_table || ''}` : res.markdown_table) || ''
+          const logRank = res.log_rank || res.survival_analysis?.log_rank
+          const rawGroups = res.groups || res.survival_analysis?.groups
+          const groupList: any[] = Array.isArray(rawGroups) ? rawGroups : (rawGroups ? Object.values(rawGroups) : [])
+
           if (resWrap) resWrap.style.display = 'flex'
-          if (kmWrap) kmWrap.innerHTML = res.km_svg || '<div class="muted small">未生成 KM 图像</div>'
+          if (kmWrap) kmWrap.innerHTML = kmSvg || '<div class="muted small">未生成 KM 图像</div>'
 
           // Stats cards
           let statsHtml = ''
-          if (res.log_rank) {
+          if (logRank) {
             statsHtml += `<div style="border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--panel);">
               <div class="muted small">Log-rank 显著性检验</div>
-              <div style="font-size:20px;font-weight:700;color:#0284c7;margin-top:2px;">${esc(res.log_rank.p_value_formatted)}</div>
-              <div class="muted small">Chi2 = ${res.log_rank.chi2.toFixed(2)}, df = ${res.log_rank.df}</div>
+              <div style="font-size:20px;font-weight:700;color:#0284c7;margin-top:2px;">${esc(logRank.p_value_formatted)}</div>
+              <div class="muted small">Chi2 = ${logRank.chi2.toFixed(2)}, df = ${logRank.df}</div>
             </div>`
           }
-          if (res.groups) {
-            for (const [k, g] of Object.entries(res.groups) as Array<[string, any]>) {
+          if (groupList.length > 0) {
+            for (const g of groupList) {
+              const med = g.median_time !== null && g.median_time !== undefined ? `${g.median_time} ${timeUnit}` : '未达 (NR)'
+              const rate = typeof g.event_rate === 'number' ? g.event_rate.toFixed(1) : g.event_rate
               statsHtml += `<div style="border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--panel);">
-                <div class="muted small">${esc(g.label || k)} (n=${g.total_n})</div>
-                <div style="font-size:20px;font-weight:700;color:var(--text);margin-top:2px;">中位生存: ${g.median_time !== null ? `${g.median_time} ${timeUnit}` : '未达 (NR)'}</div>
-                <div class="muted small">事件发生率: ${g.event_rate.toFixed(1)}% (${g.events_n}/${g.total_n})</div>
+                <div class="muted small">${esc(g.label || g.group || '分层组')} (n=${g.total_n})</div>
+                <div style="font-size:20px;font-weight:700;color:var(--text);margin-top:2px;">中位生存: ${med}</div>
+                <div class="muted small">事件发生率: ${rate}% (${g.events_n}/${g.total_n})</div>
               </div>`
             }
           }
           if (statsWrap) statsWrap.innerHTML = statsHtml
 
           // Forest plot
-          if (res.forest_plot_svg && forestWrap && forestSvgWrap) {
+          if (forestSvg && forestWrap && forestSvgWrap) {
             forestWrap.style.display = 'block'
-            forestSvgWrap.innerHTML = res.forest_plot_svg
+            forestSvgWrap.innerHTML = forestSvg
           } else if (forestWrap) {
             forestWrap.style.display = 'none'
           }
 
           // Markdown
-          if (mdText) mdText.textContent = res.summary_markdown || ''
+          if (mdText) mdText.textContent = summaryMd
 
           // Buttons
           const dlKmBtn = document.getElementById('rsDlKmSvg')
           if (dlKmBtn) {
             dlKmBtn.onclick = () => {
-              const blob = new Blob([res.km_svg], { type: 'image/svg+xml;charset=utf-8' })
+              if (!kmSvg) { notice('暂无可下载的 KM 矢量图', true); return }
+              const blob = new Blob([kmSvg], { type: 'image/svg+xml;charset=utf-8' })
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a')
               a.href = url
@@ -715,9 +725,10 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
           }
 
           const dlForestBtn = document.getElementById('rsDlForestSvg')
-          if (dlForestBtn && res.forest_plot_svg) {
+          if (dlForestBtn) {
             dlForestBtn.onclick = () => {
-              const blob = new Blob([res.forest_plot_svg], { type: 'image/svg+xml;charset=utf-8' })
+              if (!forestSvg) { notice('暂无可下载的森林图', true); return }
+              const blob = new Blob([forestSvg], { type: 'image/svg+xml;charset=utf-8' })
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a')
               a.href = url
@@ -733,7 +744,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
           const copyMdBtn = document.getElementById('rsCopySurvMd')
           if (copyMdBtn) {
             copyMdBtn.onclick = () => {
-              navigator.clipboard.writeText(res.summary_markdown || '').then(() => {
+              navigator.clipboard.writeText(summaryMd).then(() => {
                 notice('已复制论文生存分析 Methods & Results 论述段落')
               }).catch(() => {
                 notice('复制失败，请手动选取', true)

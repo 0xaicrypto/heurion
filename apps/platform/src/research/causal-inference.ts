@@ -48,6 +48,10 @@ export interface EValueResult {
 export function calculateEValue(input: EValueInput): EValueResult {
   let { effect_type, estimate, ci_lower, ci_upper, rare_outcome = true } = input
 
+  if (estimate <= 0 || ci_lower <= 0 || ci_upper <= 0) {
+    throw new Error('因果效应比值及置信区间上下限必须为大于 0 的正数')
+  }
+
   // If OR and not rare outcome, approximate RR using sqrt(OR) or keep direct for HR/RR
   let rr = estimate
   let rr_ci_bound = estimate < 1.0 ? ci_upper : ci_lower
