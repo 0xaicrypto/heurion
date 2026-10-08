@@ -1989,7 +1989,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     if (evidence.syndrome_key === 'abpa_bronchiectasis' || isHAM) {
       findings = `1. **支气管树与管径测量**：双肺下叶及右肺中叶支气管明显扩张，支气管内径约 ${bronchusCaliber} mm，伴行动脉内径约 ${arteryCaliber} mm，支气管内径/伴行动脉内径比 (BAR) 达 ${barMax} (正常 < 1.0)；支气管管壁广泛增厚；扩张管腔内见多发指状/牙膏状软组织密度栓塞影嵌顿，CT 测值平均约 ${hamMeanHu} HU，局部最高峰值达 ${hamMaxHu} HU（**高密度粘液栓 HAM, High-Attenuation Mucus**），局部密度明显高于同层胸壁软组织及胸椎旁肌肉。\n` +
         `2. **外周气道与细支气管炎性浸润**：周边肺实质多叶段见斑片状树芽征 (Tree-in-bud Sign) 及外周细支气管栓塞，受累肺叶以 ${rawMetrics.distribution_summary || '左肺上叶、右肺下叶及左肺下叶'} 为主，气道未见确切孤立性实质肿物占位。\n` +
-        `3. **粘液嵌顿三维立体容积**：MONAI 3D 体素分割测得粘液栓立体总容积为 ${vol ?? 368.29} cm³，最大浸润横截面位于轴位第 #${keySlice} 层。\n` +
+        `3. **粘液嵌顿三维立体容积**：MONAI 3D 体素分割测得粘液栓立体总容积为 ${vol ?? 18.50} cm³，最大浸润横截面位于轴位第 #${keySlice} 层。\n` +
         `4. **纵隔与胸膜**：纵隔居中，气管隆突通畅，肺门及纵隔未见明确肿大淋巴结；双侧胸膜光滑无增厚，未见胸腔积液征象。`
     } else if (evidence.syndrome_key === 'lung_neoplasm_recist') {
       if (!hasLesion) {

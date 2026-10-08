@@ -361,7 +361,10 @@ def analyze_bronchiectasis_and_mucus(
     ham_plugs_np = ham_cand_np & dilated_envelope
 
     # True intraluminal non-HAM mucus requires higher local proximity and size filtering
-    intraluminal_mucus = mucus_cand_np & binary_dilation(ham_plugs_np, iterations=2)
+    if np.sum(ham_plugs_np) > 0:
+        intraluminal_mucus = mucus_cand_np & binary_dilation(ham_plugs_np, iterations=2)
+    else:
+        intraluminal_mucus = mucus_cand_np & dilated_envelope
     
     # Combined authentic mucus plugs: HAM core + adjacent mucoid impaction
     mucus_plugs_np = ham_plugs_np | intraluminal_mucus

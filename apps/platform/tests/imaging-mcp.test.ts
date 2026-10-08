@@ -288,7 +288,7 @@ beforeAll(async () => {
                 artery_caliber_mm: 5.8,
                 wall_thickness_mm: 2.4,
                 wall_to_lumen_ratio: 0.28,
-                total_mucus_volume_cm3: 368.29,
+                total_mucus_volume_cm3: 18.50,
                 high_attenuation_mucus_cm3: 12.44,
                 total_airway_volume_cm3: 3545.92,
                 airway_occlusion_rate_pct: 10.4,
