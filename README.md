@@ -72,7 +72,13 @@ The project features a **decoupled dual-engine architecture**:
 - **Patient Health Records (PHR) & Cohorts**: Multi-tenant patient record assets and compound cohort query builder.
 - **PHI Privacy Leak Scanner**: Built-in scanner to detect, flag, and mask Protected Health Information (PHI) before content is committed or sent off-premise.
 
-### 🤖 6. Standardized Model Context Protocol (MCP)
+### 📊 6. Clinical Collaboration & Publication Evidence Suite
+- **De-Identified Subject Management (S001...)**: Compound criteria filtering to enroll eligible patients, decoupling clinical codes from academic research subject IDs with instant wide/long dataset synthesis.
+- **Publication-Grade Native Word Table 1**: Automated generation of native Word `.docx` 3-line tables complying with ICMJE/NEJM standards (1.5pt/0.5pt borders, Times/Songti academic typography, and statistical footnotes).
+- **CONSORT 2010 / STROBE Flowcharts**: Vector SVG and Mermaid dynamic participant enrollment flowcharts.
+- **Causal Inference & Sensitivity Diagnostics**: Absolute standardized mean difference (SMD) Love Plots and VanderWeele E-value unmeasured confounding sensitivity calculator with bilingual academic defense statements.
+
+### 🤖 7. Standardized Model Context Protocol (MCP)
 - Exposes structured, safe toolsets over standard MCP transports (SSE and Stdio).
 - Out-of-the-box integration with [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh), Claude Desktop, Cursor, Gemini, and custom AI agent workflows.
 

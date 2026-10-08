@@ -72,7 +72,13 @@ Next-Gen AI-Native Collaborative Workspace & Medical Intelligence Platform
 - **PHR 患者健康档案与高级队列**：支持多租户隔离的患者健康档案（PHR）、资产管理、高级组合队列检索。
 - **PHI 隐私泄漏安全扫描**：内置 `phi-scan` 模块，自动拦截与告警未经脱敏的患者敏感个人健康信息。
 
-### 🤖 6. 标准化 Model Context Protocol (MCP)
+### 📊 6. 临床科研课题组协作与学术发表级证据链 (Clinical Evidence Suite)
+- **去标识化受试者管理（S001...）**：多维条件筛选真实患者入组，自动解耦临床代号与学术编号，支持一键生成队列宽表/长表数据集。
+- **发表级 Table 1 原生 Word 三线表**：自动化生成符合顶刊要求的顶底 1.5pt、栏目 0.5pt、Times New Roman / 宋体排版与统计学检验脚注的 `.docx` 文件。
+- **CONSORT 2010 / STROBE 入组流向图**：矢量 SVG 与 Mermaid 动态渲染入组纳排流程。
+- **因果推断与混杂偏倚控制**：Love Plot 绝对 SMD 均衡点图与 VanderWeele E-value 未测混杂敏感度中英双语学术抗辩陈述。
+
+### 🤖 7. 标准化 Model Context Protocol (MCP)
 - 原生支持标准 MCP 协议，通过 SSE / Stdio 暴露结构化工具集。
 - 深度兼容 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）、Claude Desktop、Cursor 等任意兼容 MCP 的 Agent 运行时。
 
