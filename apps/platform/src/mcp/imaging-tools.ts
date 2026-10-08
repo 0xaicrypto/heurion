@@ -408,7 +408,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
     description:
       '提取两期 3D 纵向随访 CT 之间的体素刚性配准与差分吸收热力图切片 (Difference Heatmap Overlay)：' +
       '将随访 CT 空间三线性插值对齐至基线 CT 坐标系，计算三维体素差分矩阵 (ΔHU = Followup - Baseline)。' +
-      '生成叠加差分吸收热力图的切片（🟢 绿色为吸收退缩区域 ΔHU < -thresh，🔴 红色为进展增大/浸润区域 ΔHU > thresh），' +
+      '生成叠加差分吸收热力图的切片（绿色为吸收退缩区域 ΔHU < -thresh，红色为进展增大/浸润区域 ΔHU > thresh），' +
       '并返回全容积 3D 吸收体素量、新发浸润体素量、净变化体积与总体动态演变趋势。',
     inputSchema: {
       baseline_sample_id: z.string().optional().describe('基线样本 ID，缺省为 chest_lung_ct'),
@@ -469,7 +469,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       })
       assetId = asset.id
       const figCaption = label || `图 3D 差分热力图 ${planeZh}第 ${resultData.slice_index} 层`
-      const figNote = `3D 差分热力图（🟢 吸收: ${resultData.statistics_3d?.regressed_volume_cm3} cm³, 🔴 进展: ${resultData.statistics_3d?.progressed_volume_cm3} cm³, 总体演变: ${resultData.statistics_3d?.dominant_trend}）`
+      const figNote = `3D 差分热力图（吸收: ${resultData.statistics_3d?.regressed_volume_cm3} cm³, 进展: ${resultData.statistics_3d?.progressed_volume_cm3} cm³, 总体演变: ${resultData.statistics_3d?.dominant_trend}）`
       markdownInsert = `![${figCaption}](asset:${asset.id} "${figNote}")`
     }
 

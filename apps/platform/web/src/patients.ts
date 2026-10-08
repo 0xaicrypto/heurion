@@ -800,6 +800,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       categories[cat].push(m)
     }
     const defaultDesc = modelsList.find(m => m.id === 'bronchiectasis_mucus_analyzer')?.target || '支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征'
+    const devAccel = devInfo.accelerator || 'GPU / 硬件加速计算集群'
 
     const body = dlg.querySelector('.dialog-body')
     if (!body) return
@@ -941,7 +942,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       <div id="imgProgressBox" hidden style="margin-top: 8px; padding: 12px; border: 1px solid var(--line); background: var(--panel); border-radius: 4px">
         <div class="row" style="align-items: center; gap: 10px">
           <span class="dot" style="background: var(--mint)"></span>
-          <b id="imgProgressMsg">正在调度 Apple Silicon M4 Pro 执行 3D 卷积推理...</b>
+          <b id="imgProgressMsg">正在调度 ${esc(devAccel)} 执行 3D 卷积推理...</b>
         </div>
         <div class="muted small" style="margin-top: 4px">包含三维体素分割、支气管伴行动脉测距 (BAR)、粘液栓体积积分与高清关键截面渲染。</div>
       </div>
@@ -1020,7 +1021,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       btnRun.disabled = true
       progressBox.hidden = false
-      progressMsg.textContent = '正在传输体素数据并调度 Apple Silicon Metal 执行 3D 卷积分割...'
+      progressMsg.textContent = `正在传输体素数据并调度 ${devAccel} 执行 3D 卷积分割...`
 
       try {
         if (isUpload && uploadedFile) {
@@ -1087,6 +1088,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
 
     const imgData = (r?.imaging_data as any) || {}
+    const modelName = imgData.model_id || imgData.model_name || (r?.title?.includes('支气管') ? 'bronchiectasis_mucus_analyzer' : undefined)
     const rawFileId = imgData.raw_file_id || r?.file_id
     const isPatientRealScan = Boolean(patientId && r && (rawFileId || r.id))
     let sampleId = imgData.sample_id || 'chest_lung_ct'
@@ -1106,6 +1108,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       } else {
         qParams.set('sample_id', sampleId)
       }
+      if (modelName) qParams.set('model_name', modelName)
       mprInfo = await api<any>(`/api/imaging/mpr/info?${qParams.toString()}`)
     } catch (err: any) {
       const bodyEl = dlg.querySelector('.dialog-body')
@@ -1356,7 +1359,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
         const midX = (x1 + x2) / 2
         const midY = (y1 + y2) / 2
-        const text = `📏 ${distanceMm.toFixed(1)} mm`
+        const text = `LD: ${distanceMm.toFixed(1)} mm`
         ctx.font = 'bold 12px monospace, sans-serif'
         const textMetrics = ctx.measureText(text)
         const padX = 6
@@ -1402,7 +1405,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         ctx.setLineDash([])
 
         const cmText = areaMm2 >= 100 ? ` (${(areaMm2 / 100).toFixed(2)} cm²)` : ''
-        const text = `🎯 ${areaMm2.toFixed(1)} mm²${cmText}`
+        const text = `ROI: ${areaMm2.toFixed(1)} mm²${cmText}`
         ctx.font = 'bold 12px monospace, sans-serif'
         const textMetrics = ctx.measureText(text)
         const padX = 6
@@ -1640,6 +1643,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           slice_index: currentSlice,
           window_preset: currentWindow,
           overlay_mask: overlayMask,
+          model_name: modelName,
         }
         if (isPatientRealScan) {
           payload.patient_id = patientId
@@ -1672,7 +1676,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       const hSp = data.pixel_spacing_mm?.horizontal || voxelSpacing.dx
       const vSp = data.pixel_spacing_mm?.vertical || voxelSpacing.dz
-      const lesionArea = Math.round((data.lesion_pixel_count || 0) * hSp * vSp * 10) / 10
+      const lesionArea = data.lesion_area_mm2 !== undefined ? data.lesion_area_mm2 : Math.round((data.lesion_pixel_count || 0) * hSp * vSp * 10) / 10
 
       hudRight.innerHTML = `512×512<br>Voxel: ${hSp}×${vSp} mm${lesionArea > 0 ? `<br><span style="color:#FCA5A5">病灶面积: ${lesionArea} mm²</span>` : ''}`
 
@@ -1828,6 +1832,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             slice_index: currentSlice,
             window_preset: currentWindow,
             overlay_mask: overlayMask,
+            model_name: modelName,
             save_asset: true,
             label,
             custom_png_base64: customB64,
@@ -1917,6 +1922,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               slice_index: currentSlice,
               window_preset: currentWindow,
               overlay_mask: overlayMask,
+              model_name: modelName,
               save_asset: true,
               label,
               custom_png_base64: customB64,
@@ -2028,7 +2034,7 @@ ${recommendations}
 
 ---
 
-> ⚠️ **医疗器械软件 (SaMD) 与临床合规声明 (Regulatory & Clinical Disclaimer)**:
+> **医疗器械软件 (SaMD) 与临床合规声明 (Regulatory & Clinical Disclaimer)**:
 > 1. 本影像报告及相关三维体素量化测量（包括 RECIST 1.1 径线、Lung-RADS 评级、BAR 支气管伴行动脉比、粘液栓密度 HU 统计）均由 Heurion 医学影像 AI 算法与 MONAI 深度学习推理核心辅助生成；
 > 2. 本报告所载全部影像测量数据、临床评级及随访指引仅供具备合法资质的执业医师临床决策参考，不单独作为确定性疾病诊断依据，亦不构成任何直接用药处方或医疗干预方案；
 > 3. 最终临床诊断结论、用药方案与手术治疗决策必须由主管执业医师结合患者现场体征、组织病理金标准及全面临床病史综合审定、签字确认并负专业责任。
@@ -2484,6 +2490,7 @@ ${recommendations}
           slice_index: baseSlice,
           window_preset: dualWindow,
           overlay_mask: dualOverlay,
+          model_name: bData?.model_id || bData?.model_name,
         }
         if (bReal) {
           body.patient_id = patientId
@@ -2572,6 +2579,7 @@ ${recommendations}
           slice_index: followSlice,
           window_preset: dualWindow,
           overlay_mask: dualOverlay,
+          model_name: fData?.model_id || fData?.model_name,
         }
         if (fReal) {
           body.patient_id = patientId

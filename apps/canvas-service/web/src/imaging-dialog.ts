@@ -81,9 +81,9 @@ export async function openImagingDialog(
       <div class="dialog-card" style="max-width: 860px; width: 94%; max-height: 90vh; overflow-y: auto;" role="dialog" aria-modal="true">
         <div class="dialog-head" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0; padding:12px 18px;">
           <div style="display:flex; align-items:center; gap:10px;">
-            <h2 style="font-size:16px; margin:0; font-weight:700; color:#0f172a;">🩺 MONAI 3D 医学影像与量化工作台</h2>
-            <span style="font-size:11.5px; padding:2px 8px; border-radius:12px; background:${isOnline ? '#ecfdf5; color:#047857;' : '#fef2f2; color:#b91c1c;'} font-weight:600;">
-              ${isOnline ? '🟢 ' + esc(acceleratorLabel) : '🔴 ' + esc(acceleratorLabel)}
+            <h2 style="font-size:16px; margin:0; font-weight:700; color:#0f172a;">MONAI 3D 医学影像与量化工作台</h2>
+            <span style="font-size:11.5px; padding:2px 8px; border-radius:12px; background:${isOnline ? '#ecfdf5; color:#047857;' : '#fef2f2; color:#b91c1c;'} font-weight:600; display:inline-flex; align-items:center;">
+              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${isOnline ? '#10b981' : '#ef4444'};margin-right:5px;"></span>${esc(acceleratorLabel)}
             </span>
           </div>
           <button class="quiet" data-close aria-label="关闭" style="border:none; background:transparent; font-size:18px; cursor:pointer;">✕</button>
@@ -101,7 +101,7 @@ export async function openImagingDialog(
                   </option>
                 `).join('')}
                 <option value="benchmark" ${selectedSource === 'benchmark' ? 'selected' : ''}>
-                  🔬 高拟真 3D 解剖 CT 体素基准 (合成 48 层)
+                  高拟真 3D 解剖 CT 体素基准 (合成 48 层)
                 </option>
               </select>
             </div>
@@ -122,7 +122,7 @@ export async function openImagingDialog(
           ${isBronchiectasis ? `
             <div style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; padding:12px 14px; margin-bottom:12px;">
               <div style="font-size:12px; font-weight:700; color:#1e293b; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-                <span>🎛️ 支气管扩张与粘液栓定量微调参数 (Fleischner Criteria)</span>
+                <span>支气管扩张与粘液栓定量微调参数 (Fleischner Criteria)</span>
                 <span style="font-size:11px; font-weight:normal; color:#64748b;">实时调节并触发重算</span>
               </div>
               <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px;">
@@ -160,15 +160,15 @@ export async function openImagingDialog(
 
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
             <div style="font-size:12px; color:#64748b;">
-              💡 采用 <b>Apple Silicon Metal (MPS) GPU</b> 与胸腔自动包络提取技术，无感剔除检查床与机架噪点，高精度量化各叶段。
+              采用 <b>硬件加速 GPU (Metal MPS / NVIDIA CUDA)</b> 与胸腔自动包络提取技术，无感剔除检查床与机架噪点，高精度量化各叶段。
             </div>
             <button id="btnRunInference" class="primary" style="background:#0284c7; color:#fff; border:none; padding:8px 18px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
-              ⚡ 运行 GPU 分析
+              运行 GPU 分析
             </button>
           </div>
 
           <div id="inferenceLoading" style="display:none; text-align:center; padding:20px 0; color:#0284c7; font-size:13.5px; font-weight:600;">
-            ⏳ 正在调度 M4 Pro Metal (MPS) GPU 执行高分辨率体素推理与气道量化追踪...
+            正在调度硬件加速计算节点 (GPU / MPS / CUDA) 执行高分辨率体素推理与气道量化追踪...
           </div>
 
           <!-- 3. 分析结果与可视化呈现 -->
@@ -178,7 +178,7 @@ export async function openImagingDialog(
                 <!-- 左侧切片图 -->
                 <div>
                   <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:6px; display:flex; justify-content:space-between;">
-                    <span>📷 最大横截面关键层 (Key Slice #${currentResult.recist_metrics.key_slice_index})</span>
+                    <span>最大横截面关键层 (Key Slice #${currentResult.recist_metrics.key_slice_index})</span>
                     <span style="font-size:11px; color:#0284c7; font-weight:bold;">${currentResult.modality}</span>
                   </div>
                   <img src="${esc(currentResult.image_url)}" alt="Key Slice" style="width:100%; border-radius:6px; border:1px solid #cbd5e1; background:#000; display:block;" />
@@ -191,8 +191,8 @@ export async function openImagingDialog(
                 <div>
                   <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">
                     ${currentResult.model_name === 'bronchiectasis_mucus_analyzer'
-                      ? '🫁 支气管扩张与粘液嵌顿 (Mucus Plug) 临床量化指标'
-                      : '📊 RECIST 1.1 肿瘤量化评估指标'}
+                      ? '支气管扩张与粘液嵌顿 (Mucus Plug) 临床量化指标'
+                      : 'RECIST 1.1 肿瘤量化评估指标'}
                   </div>
 
                   <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
@@ -259,7 +259,7 @@ export async function openImagingDialog(
                       • <b>检出征象</b>：<div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">
                         ${(currentResult.metrics.signs_detected || []).map((s: string) => `
                           <span style="background:#eff6ff; color:#1d4ed8; padding:2px 6px; border-radius:4px; font-size:11px; border:1px solid #bfdbfe;">
-                            ✓ ${esc(s)}
+                            ${esc(s)}
                           </span>
                         `).join('')}
                       </div>
@@ -277,7 +277,7 @@ export async function openImagingDialog(
               关闭
             </button>
             <button id="btnInsertCanvas" class="primary" style="background:#059669; color:#fff; border:none; padding:8px 20px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; ${currentResult ? '' : 'opacity:0.5; pointer-events:none;'}" title="将关键截面图与 RECIST 指标插入当前页面">
-              📌 插入当前页面 (幻灯片/文档)
+              插入当前页面 (幻灯片/文档)
             </button>
           </div>
         </div>
@@ -410,7 +410,7 @@ export async function openImagingDialog(
         } catch (err: any) {
           alert(`插入失败: ${err.message}`)
           btnInsert.disabled = false
-          btnInsert.textContent = '📌 插入当前页面'
+          btnInsert.textContent = '插入当前页面'
         }
       }
     }

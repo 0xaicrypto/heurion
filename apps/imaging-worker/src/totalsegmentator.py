@@ -17,37 +17,10 @@ except (ImportError, ValueError):
     from renderer import png_to_base64
 
 
-def get_cjk_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Loads a high-quality Chinese/CJK TrueType font with graceful fallback."""
-    font_paths = [
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        "/System/Library/Fonts/Supplemental/Songti.ttc",
-    ]
-    for p in font_paths:
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
-
-
-def get_sans_font(size: int = 14, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Loads a clean Sans-Serif font for medical HUD and metric callouts."""
-    font_paths = [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    ]
-    for p in font_paths:
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size)
-            except Exception:
-                continue
-    return get_cjk_font(size)
+try:
+    from .font_utils import get_cjk_font, get_sans_font, sanitize_text
+except (ImportError, ValueError):
+    from font_utils import get_cjk_font, get_sans_font, sanitize_text
 
 
 TOTAL_SEGMENTATOR_CLASSES = {
@@ -463,18 +436,19 @@ def render_totalsegmentator_l3_slice(
     draw = ImageDraw.Draw(base_img)
     font_bold = get_sans_font(12, bold=True)
     font_reg = get_sans_font(11, bold=False)
-    font_cjk = get_cjk_font(11)
+    font_cjk, supports_cjk = get_cjk_font(11)
 
     # Top-Left HUD Header
     hud_bg = [(8, 8), (280, 112)]
     draw.rounded_rectangle(hud_bg, radius=4, fill=(15, 23, 42, 210), outline=(51, 65, 85, 255))
     draw.text((16, 12), "TotalSegmentator L3 Body Composition", font=font_bold, fill=(241, 245, 249, 255))
     draw.text((16, 28), f"Level: L3 Lumbar (#{l3_index}/{total_slices})", font=font_reg, fill=(148, 163, 184, 255))
-    draw.text((16, 44), f"Skeletal Muscle (SMA): {sma_cm2} cm²", font=font_reg, fill=(248, 113, 113, 255))
-    draw.text((16, 60), f"Muscle Index (SMI): {smi_val} cm²/m²", font=font_reg, fill=(251, 146, 60, 255))
-    draw.text((16, 76), f"Visceral Fat (VAT): {vat_cm2} cm² (VAT/SAT: {vat_to_sat_ratio})", font=font_reg, fill=(250, 204, 21, 255))
+    draw.text((16, 44), f"Skeletal Muscle (SMA): {sma_cm2} cm2", font=font_reg, fill=(248, 113, 113, 255))
+    draw.text((16, 60), f"Muscle Index (SMI): {smi_val} cm2/m2", font=font_reg, fill=(251, 146, 60, 255))
+    draw.text((16, 76), f"Visceral Fat (VAT): {vat_cm2} cm2 (VAT/SAT: {vat_to_sat_ratio})", font=font_reg, fill=(250, 204, 21, 255))
     status_color = (239, 68, 68, 255) if is_sarcopenic else (52, 211, 153, 255)
-    draw.text((16, 92), f"Status: {sarcopenia_risk}", font=font_cjk, fill=status_color)
+    clean_risk = sanitize_text(sarcopenia_risk, supports_cjk)
+    draw.text((16, 92), f"Status: {clean_risk}", font=font_cjk, fill=status_color)
 
     # Top-Right Color Legend
     legend_bg = [(w - 145, 8), (w - 8, 92)]
@@ -535,9 +509,9 @@ def generate_totalsegmentator_report_markdown(
     hepatomegaly: bool
 ) -> str:
     """Formats full markdown analysis report with tables and risk stratification."""
-    sarc_badge = "⚠️ **肌少症阳性**" if is_sarcopenic else "✅ **骨骼肌储备正常**"
-    steat_badge = "⚠️ **肌脂肪浸润 (Myosteatosis)**" if is_myosteatotic else "✅ **肌质密度正常**"
-    obesity_badge = "⚠️ **肌少性肥胖风险 (Sarcopenic Obesity)**" if sarcopenic_obesity else "✅ **脂肪分布均衡**"
+    sarc_badge = "**肌少症阳性**" if is_sarcopenic else "**骨骼肌储备正常**"
+    steat_badge = "**肌脂肪浸润 (Myosteatosis)**" if is_myosteatotic else "**肌质密度正常**"
+    obesity_badge = "**肌少性肥胖风险 (Sarcopenic Obesity)**" if sarcopenic_obesity else "**脂肪分布均衡**"
 
     return f"""### TotalSegmentator 全身体素 104 类解剖分割与肌少症分析报告
 
@@ -554,8 +528,8 @@ def generate_totalsegmentator_report_markdown(
 | **骨骼肌总面积 (SMA)** | `{sma_cm2} cm²` | 男性基线 > 130 cm² | {sarc_badge} |
 | **骨骼肌质量指数 (SMI)** | **`{smi_val} cm²/m²`** | **Prado 诊断阈值: {sarcopenia_cutoff} cm²/m²** | **{sarcopenia_risk}** |
 | **肌肉平均衰减密度** | `{muscle_hu} HU` | 正常 > 40 HU (脂肪浸润 < 40 HU) | {steat_badge} |
-| **内脏脂肪面积 (VAT)** | `{vat_cm2} cm²` | 正常 < 100 cm² (腹型肥胖 > 100) | {'⚠️ 内脏脂肪超标' if vat_cm2 > 100 else '✅ 正常'} |
-| **皮下脂肪面积 (SAT)** | `{sat_cm2} cm²` | 正常参考 120-220 cm² | ✅ 正常范围 |
+| **内脏脂肪面积 (VAT)** | `{vat_cm2} cm²` | 正常 < 100 cm² (腹型肥胖 > 100) | {'内脏脂肪超标' if vat_cm2 > 100 else '正常'} |
+| **皮下脂肪面积 (SAT)** | `{sat_cm2} cm²` | 正常参考 120-220 cm² | 正常范围 |
 | **脂肪总面积 (TAT)** | `{tat_cm2} cm²` | VAT + SAT 合计容积 | 代谢综合征风险量化 |
 | **内脏/皮下脂肪比 (VAT/SAT)** | **`{vat_to_sat_ratio}`** | **切点比值: 1.0 (心血管高风险)** | {obesity_badge} |
 
@@ -565,11 +539,11 @@ def generate_totalsegmentator_report_markdown(
 
 | 解剖器官系统 | 三维容积 (cm³) | 临床生理参考范围 | 状态判定 |
 | :--- | :--- | :--- | :--- |
-| **肝脏实质 (Liver)** | `{liver_vol_cm3} cm³` | 1200 ~ 1700 cm³ | {'⚠️ 肝肿大 (Hepatomegaly)' if hepatomegaly else '✅ 正常'} |
-| **脾脏 (Spleen)** | `{spleen_vol_cm3} cm³` | 150 ~ 300 cm³ | {'⚠️ 脾肿大 (Splenomegaly)' if splenomegaly else '✅ 正常'} |
-| **双侧肾脏 (Kidneys)** | `{kidneys_vol_cm3} cm³` | 240 ~ 360 cm³ | ✅ 双肾体积对称良好 |
-| **全肺容积 (Lungs)** | `{lungs_vol_cm3} cm³` | 3200 ~ 4800 cm³ | ✅ 通气储备良好 |
-| **全身骨骼容积 (Bones)** | `{bones_vol_cm3} cm³` | 依骨质密度与骨架尺寸 | ✅ 脊柱/骨盆骨质连续完整 |
+| **肝脏实质 (Liver)** | `{liver_vol_cm3} cm³` | 1200 ~ 1700 cm³ | {'肝肿大 (Hepatomegaly)' if hepatomegaly else '正常'} |
+| **脾脏 (Spleen)** | `{spleen_vol_cm3} cm³` | 150 ~ 300 cm³ | {'脾肿大 (Splenomegaly)' if splenomegaly else '正常'} |
+| **双侧肾脏 (Kidneys)** | `{kidneys_vol_cm3} cm³` | 240 ~ 360 cm³ | 双肾体积对称良好 |
+| **全肺容积 (Lungs)** | `{lungs_vol_cm3} cm³` | 3200 ~ 4800 cm³ | 通气储备良好 |
+| **全身骨骼容积 (Bones)** | `{bones_vol_cm3} cm³` | 依骨质密度与骨架尺寸 | 脊柱/骨盆骨质连续完整 |
 
 ---
 

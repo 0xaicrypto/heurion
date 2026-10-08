@@ -100,13 +100,16 @@ async function loadDocList() {
       list.push(created)
     }
 
+    const ICON_DECK = `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="10.5" rx="2"/><path d="M10 14v3.5M6.5 17.5h7M7 8.5h6"/></svg>`
+    const ICON_DOC = `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5h7.5l4 4V17.5H4.5z"/><path d="M12 2.5v4h4M7 8.5h6M7 11.5h6M7 14.5h3.5"/></svg>`
+
     list.forEach(d => {
       const item = document.createElement('div')
       item.className = `gw-doc-item ${d.id === activeDocId ? 'active' : ''}`
       item.dataset.id = d.id
       item.innerHTML = `
         <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
-          <span style="font-size:16px;">${d.kind === 'deck' ? '🖼️' : '📄'}</span>
+          <span style="display:inline-flex; align-items:center; color:var(--gw-text-muted);">${d.kind === 'deck' ? ICON_DECK : ICON_DOC}</span>
           <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${d.title || '未命名'}</span>
         </div>
         <span style="font-size:11px; color:var(--gw-text-muted);">${d.kind === 'deck' ? '幻灯片' : '文档'}</span>
@@ -172,8 +175,11 @@ async function openDoc(docId: string) {
   const tabFilmstrip = $('tabFilmstrip')
   const tabDocs = $('tabDocs')
 
+  const ICON_DECK_APP = `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="10.5" rx="2"/><path d="M10 14v3.5M6.5 17.5h7M7 8.5h6"/></svg>`
+  const ICON_DOC_APP = `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5h7.5l4 4V17.5H4.5z"/><path d="M12 2.5v4h4M7 8.5h6M7 11.5h6M7 14.5h3.5"/></svg>`
+
   if (meta.kind === 'deck') {
-    appIcon.textContent = '🖼️'
+    appIcon.innerHTML = ICON_DECK_APP
     appIcon.className = 'gw-app-icon deck'
     modeBadge.textContent = '幻灯片模式'
     modeBadge.className = 'gw-mode-badge deck'
@@ -185,7 +191,7 @@ async function openDoc(docId: string) {
     // 切换到幻灯片胶卷标签
     tabFilmstrip.click()
   } else {
-    appIcon.textContent = '📄'
+    appIcon.innerHTML = ICON_DOC_APP
     appIcon.className = 'gw-app-icon doc'
     modeBadge.textContent = '文档模式'
     modeBadge.className = 'gw-mode-badge doc'
@@ -553,7 +559,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       const outlineText = await (await fetch(`/api/docs/${activeDocId}/outline`, {
         headers: { Authorization: `Bearer ${token}` },
       })).text()
-      alert(`📋 OmniCanvas 版面体检报告：\n\n${outlineText.slice(0, 500)}\n\n✅ 检查完成：未发现严重文字重叠或溢出。`)
+      alert(`OmniCanvas 版面体检报告：\n\n${outlineText.slice(0, 500)}\n\n检查完成：未发现严重文字重叠或溢出。`)
     } catch (err: any) {
       alert(`体检完成：${err.message}`)
     }
@@ -576,8 +582,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         const isBronchiectasis = res.model_name === 'bronchiectasis_mucus_analyzer'
         const bMetrics = (res as any).metrics
         const slideTitle = isBronchiectasis
-          ? '### 🫁 支气管扩张与粘液栓 (Mucus Plug) 定量评估报告'
-          : `### 🩺 MONAI 靶病灶量化评估 (${res.model_name})`
+          ? '### 支气管扩张与粘液栓 (Mucus Plug) 定量评估报告'
+          : `### MONAI 靶病灶量化评估 (${res.model_name})`
 
         const tableRows = isBronchiectasis && bMetrics ? [
           ['胸部 HRCT 评估指标', '临床定量读数 / 放射学征象'],
@@ -634,7 +640,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           ops.push({
             op: 'add_shape',
             slide_id: slideId,
-            markdown: `> 💡 **诊疗与随访建议**：\n> 1. 规范气道廓清治疗 (ACT) 与体位引流；\n> 2. 若伴高密度粘液栓 (HAM) 建议筛查总 IgE 排查 ABPA；\n> 3. 建议 6-12 个月复查胸部低剂量 HRCT 动态随访。`,
+            markdown: `> **诊疗与随访建议**：\n> 1. 规范气道廓清治疗 (ACT) 与体位引流；\n> 2. 若伴高密度粘液栓 (HAM) 建议筛查总 IgE 排查 ABPA；\n> 3. 建议 6-12 个月复查胸部低剂量 HRCT 动态随访。`,
             x: 490,
             y: 388,
             w: 440,
@@ -650,7 +656,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           ? `![${res.model_name} 关键切片](asset:${res.asset_id})\n\n${res.summary_markdown}`
           : `![RECIST 截面](asset:${res.asset_id})`
         navigator.clipboard?.writeText(mdSnippet).catch(() => {})
-        alert(`✅ 医学影像分析完成！\n已将临床分析报告与关键切片 Markdown 引用复制到剪贴板，您可在当前文档中随时粘贴：\n\n![${res.model_name}](asset:${res.asset_id})`)
+        alert(`医学影像分析完成！\n已将临床分析报告与关键切片 Markdown 引用复制到剪贴板，您可在当前文档中随时粘贴：\n\n![${res.model_name}](asset:${res.asset_id})`)
       }
     })
   }
@@ -710,7 +716,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => {
       const aiBubble = document.createElement('div')
       aiBubble.className = 'gw-chat-bubble ai'
-      aiBubble.innerHTML = `✨ <b>已接收任务指令</b>：<br>正在调用本地 MCP 工具链 (<code>deck_edit / layout_check</code>) 进行原子化执行响应...<br><span style="color:#047857; font-size:12px;">✓ 指令已成功提交并同步至实时画布。</span>`
+      aiBubble.innerHTML = `<b>已接收任务指令</b>：<br>正在调用本地 MCP 工具链 (<code>deck_edit / layout_check</code>) 进行原子化执行响应...<br><span style="color:#047857; font-size:12px;">指令已成功提交并同步至实时画布。</span>`
       chatBox.appendChild(aiBubble)
       chatBox.scrollTop = chatBox.scrollHeight
     }, 450)

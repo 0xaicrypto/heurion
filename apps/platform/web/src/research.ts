@@ -200,8 +200,8 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
     return `<section class="rs-card wide" id="rsCohort">
       <div class="rs-card-head"><h3>入组患者${active.length ? `<span class="muted small"> · ${active.length} 人</span>` : ''}</h3>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-          <button class="small-btn" data-act="consort" title="查看出版级 CONSORT 2010 试验入组纳排流向图 (Figure 1)">📊 CONSORT 流程图</button>
-          <button class="small-btn" data-act="evalue" title="因果推断敏感度分析与顶刊审稿回复论述">⚖️ 因果推断 E-value</button>
+          <button class="small-btn" data-act="consort" title="查看出版级 CONSORT 2010 试验入组纳排流向图 (Figure 1)">${icon('chart', { size: 13 })} CONSORT 流程图</button>
+          <button class="small-btn" data-act="evalue" title="因果推断敏感度分析与顶刊审稿回复论述">${icon('evidence', { size: 13 })} 因果推断 E-value</button>
           ${canEdit ? `<button class="small-btn" data-act="screen">＋ 筛选入组</button>${active.length ? '<button class="small-btn" data-act="gen">生成研究数据集</button>' : ''}` : ''}
         </div></div>
       ${c.pending.length ? `<div class="banner pt-pending"><span class="dot"></span>AI 建议了 ${c.pending.length} 项入组 / 移出，待你确认</div>
@@ -209,7 +209,7 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
           <button class="small-btn primary" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="accept">确认</button><button class="quiet small-btn" data-prop="${p.proposal_id}" data-pt="${p.patient_id}" data-propx="reject">不采纳</button></li>`).join('')}</ul>` : ''}
       ${sets.map(d => `<div class="rs-cohort-ds${d.stale ? ' stale' : ''}" data-dataset="${d.dataset_id}"><span class="rs-kind">${SHAPE[d.shape] ?? d.shape} v${d.version}</span>
         <span style="flex:1;">${esc(d.name)} <span class="muted small">${d.rows} 行 · ${date(d.generated_at)}</span></span>
-        ${d.shape === 'wide' ? `<button class="small-btn primary" data-export-table1="${d.dataset_id}" title="一键导出符合医学期刊标准的原生 Word (.docx) Table 1 基线三线表">📥 导出 Table 1 Word</button>` : ''}
+        ${d.shape === 'wide' ? `<button class="small-btn primary" data-export-table1="${d.dataset_id}" title="一键导出符合医学期刊标准的原生 Word (.docx) Table 1 基线三线表">${icon('download', { size: 13 })} 导出 Table 1 Word</button>` : ''}
         ${d.stale ? `<span class="flag-L small">入组或化验有变化，数据集已过期</span>${canEdit ? `<button class="small-btn" data-regen="${d.shape}">刷新</button>` : ''}` : '<span class="muted small">最新</span>'}</div>`).join('')}
       ${c.subjects.length ? `<div class="ds-scroll"><table class="users rs-subjects"><thead><tr><th>研究编号</th><th>代号</th><th>性别</th><th>入组时年龄</th><th>诊断标签</th><th>入组日期</th><th></th></tr></thead><tbody>
         ${c.subjects.map(x => `<tr class="${x.status === 'active' ? '' : 'muted'}"><td><b>${esc(x.subject_id)}</b></td>
@@ -357,14 +357,14 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span class="muted small">医学顶级期刊 (NEJM / Lancet / JAMA) 论文 Figure 1 标准入组流向图</span>
           <span class="grow"></span>
-          <button class="small-btn" id="rsConsortCopyMermaid">📋 复制 Mermaid 代码</button>
-          <button class="small-btn primary" id="rsConsortDownloadSvg">⬇️ 下载矢量 SVG</button>
+          <button class="small-btn" id="rsConsortCopyMermaid">${icon('copy', { size: 13 })} 复制 Mermaid 代码</button>
+          <button class="small-btn primary" id="rsConsortDownloadSvg">${icon('download', { size: 13 })} 下载矢量 SVG</button>
         </div>
         <div id="rsConsortSvgContainer" style="background:#ffffff;border:1px solid var(--line);border-radius:8px;padding:20px;overflow:auto;max-height:560px;display:flex;justify-content:center;align-items:flex-start;">
           <div class="muted small" style="padding:40px;">正在生成出版级流向图…</div>
         </div>
-        <div class="muted small" style="border-top:1px solid var(--line);padding-top:8px;">
-          💡 提示：该矢量图可直接拖入或插入论文排版系统；点击「复制 Mermaid 代码」可直接粘贴嵌入 Markdown 方案与报告。
+        <div class="muted small" style="border-top:1px solid var(--line);padding-top:8px;display:flex;align-items:center;gap:6px;">
+          ${icon('info', { size: 13 })} 提示：该矢量图可直接拖入或插入论文排版系统；点击「复制 Mermaid 代码」可直接粘贴嵌入 Markdown 方案与报告。
         </div>
       </div>
     </div>`
@@ -494,14 +494,14 @@ export function initResearch(api: Api, notice: Notice, hooks: ResearchHooks) {
             </div>
             <div style="border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <b>🇨🇳 中文审稿抗辩论述 (适用于答复意见书 / 论著讨论段落)</b>
+                <b>中文审稿抗辩论述 (适用于答复意见书 / 论著讨论段落)</b>
                 <button class="quiet small-btn" id="copyDefenseZh">复制中文论述</button>
               </div>
               <p style="font-size:13px;line-height:1.6;margin:0;color:var(--text);">${esc(res.academic_defense_zh)}</p>
             </div>
             <div style="border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <b>🇬🇧 English Reviewer Rebuttal (For NEJM / Lancet / JAMA Response)</b>
+                <b>English Reviewer Rebuttal (For NEJM / Lancet / JAMA Response)</b>
                 <button class="quiet small-btn" id="copyDefenseEn">Copy English Rebuttal</button>
               </div>
               <p style="font-size:13px;line-height:1.6;margin:0;font-family:Times New Roman, serif;color:var(--text);">${esc(res.academic_defense_en)}</p>

@@ -635,6 +635,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       const recordId = c.req.query('record_id') || c.req.query('file_id')
       let sampleId = c.req.query('sample_id') || 'chest_lung_ct'
       const filePath = c.req.query('file_path') || undefined
+      const modelName = c.req.query('model_name') || undefined
 
       if (patientId) {
         const volId = await ensureVolumeOnWorker(c, patientId, recordId)
@@ -644,7 +645,7 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       const resp = await fetch(`${imagingWorkerUrl}/api/v1/mpr/info`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sample_id: sampleId, file_path: filePath }),
+        body: JSON.stringify({ sample_id: sampleId, file_path: filePath, model_name: modelName }),
         signal: AbortSignal.timeout(15000),
       })
       if (!resp.ok) return c.json({ error: 'mpr_info_failed' }, resp.status as any)

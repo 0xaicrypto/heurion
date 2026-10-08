@@ -14,12 +14,12 @@
       <div class="gw-header-primary">
         <div class="gw-doc-meta">
           <div class="gw-app-logo" id="btnLogoHome" title="OmniCanvas 首页">
-            <span id="appIcon" class="gw-app-icon doc">📄</span>
+            <span id="appIcon" class="gw-app-icon doc"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5h7.5l4 4V17.5H4.5z"/><path d="M12 2.5v4h4M7 8.5h6M7 11.5h6M7 14.5h3.5"/></svg></span>
           </div>
           <div class="gw-title-container">
             <div class="gw-title-row">
               <input id="docTitle" class="gw-title-input" value="正在加载文档..." spellcheck="false" />
-              <button id="btnStar" class="gw-star-btn" title="加星标">⭐</button>
+              <button id="btnStar" class="gw-star-btn" title="加星标"><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="10 2 12.5 7.5 18.5 8.3 14 12.6 15.2 18.5 10 15.5 4.8 18.5 6 12.6 1.5 8.3 7.5 7.5 10 2"/></svg></button>
               <div id="syncPill" class="gw-sync-pill synced">
                 <span class="gw-sync-dot"></span>
                 <span id="syncText">已同步至本地云端</span>
@@ -30,10 +30,10 @@
         </div>
 
         <div class="gw-header-actions">
-          <button id="btnMcpConnect" class="gw-btn gw-btn-mcp" title="外部 Agent 直连协议">⚡ MCP: /mcp</button>
-          <button id="btnToggleAi" class="gw-btn" title="展开 / 收起 AI 协作面板">🤖 AI 助理</button>
-          <button id="btnExportMenu" class="gw-btn" title="导出文件">📥 导出 ▾</button>
-          <button id="btnPresent" class="gw-btn gw-btn-deck" style="display:none;" title="全屏放映演示">▶ 放映</button>
+          <button id="btnMcpConnect" class="gw-btn gw-btn-mcp" title="外部 Agent 直连协议"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><polygon points="11 2 4 12 10 12 9 18 16 8 10 8 11 2"/></svg>MCP: /mcp</button>
+          <button id="btnToggleAi" class="gw-btn" title="展开 / 收起 AI 协作面板"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px; margin-right:4px;"><rect x="3" y="6" width="14" height="10" rx="3"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="12.5" cy="11" r="1" fill="currentColor"/><path d="M10 2v4"/></svg>AI 助理</button>
+          <button id="btnExportMenu" class="gw-btn" title="导出文件"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><path d="M4 14v2.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V14M10 3v9M6.5 8.5L10 12l3.5-3.5"/></svg>导出 ▾</button>
+          <button id="btnPresent" class="gw-btn gw-btn-deck" style="display:none;" title="全屏放映演示"><svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor" style="vertical-align:-1px; margin-right:3px;"><polygon points="5 3 17 10 5 17 5 3"/></svg>放映</button>
           <div class="gw-avatar" title="当前登录角色：Editor">ED</div>
         </div>
       </div>
@@ -80,7 +80,7 @@
             <div class="gw-menu-option" id="menuInsertCard"><span>圆角卡片</span></div>
             <div class="gw-menu-option" id="menuInsertChart"><span>原生数据图表</span></div>
             <div class="gw-menu-option" id="menuInsertDiagram"><span>机制图 (SVG)</span></div>
-            <div class="gw-menu-option" id="menuInsertImaging"><span>🩺 医学影像 (MONAI)</span></div>
+            <div class="gw-menu-option" id="menuInsertImaging"><span>医学影像 (MONAI)</span></div>
           </div>
         </div>
 
@@ -88,7 +88,7 @@
           <button class="gw-menu-trigger">幻灯片</button>
           <div class="gw-dropdown-menu">
             <div class="gw-menu-option" id="menuAddSlide"><span>+ 新增幻灯片页</span><span class="gw-shortcut">Ctrl+M</span></div>
-            <div class="gw-menu-option" id="menuLayoutCheck"><span>🔍 版面健康体检</span></div>
+            <div class="gw-menu-option" id="menuLayoutCheck"><span>版面健康体检</span></div>
             <div class="gw-menu-option" id="menuChangeTheme"><span>更换设计主题</span></div>
           </div>
         </div>
@@ -96,7 +96,7 @@
         <div class="gw-menu-item">
           <button class="gw-menu-trigger">扩展</button>
           <div class="gw-dropdown-menu">
-            <div class="gw-menu-option" id="menuOpenMcp"><span>⚡ MCP 开放端点配置</span></div>
+            <div class="gw-menu-option" id="menuOpenMcp"><span>MCP 开放端点配置</span></div>
           </div>
         </div>
       </nav>
@@ -139,7 +139,7 @@
           <button id="btnDocBullet" class="gw-tb-btn" title="无序列表">• 列表</button>
           <button id="btnDocOrdered" class="gw-tb-btn" title="有序列表">1. 列表</button>
           <button id="btnDocTable" class="gw-tb-btn" title="插入表格">⊞ 表格</button>
-          <button id="btnDocImaging" class="gw-tb-btn" style="color:#0284c7; font-weight:600;" title="MONAI 3D 影像分析与 RECIST 测距">🩺 医学影像</button>
+          <button id="btnDocImaging" class="gw-tb-btn" style="color:#0284c7; font-weight:600;" title="MONAI 3D 影像分析与 RECIST 测距"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px; margin-right:3px;"><circle cx="10" cy="10" r="7"/><path d="M10 6v8M6 10h8"/></svg>医学影像</button>
         </div>
       </div>
 
@@ -162,13 +162,13 @@
           <button id="btnDeckSelect" class="gw-tb-btn active" title="选择工具">↖ 选择</button>
           <button id="btnDeckText" class="gw-tb-btn" title="添加独立文本框">T 文本框</button>
           <select id="selAddShape" class="gw-tb-select" title="添加几何色块或卡片">
-            <option value="">🔲 添加形状 ▾</option>
+            <option value="">添加形状 ▾</option>
             <option value="roundRect">圆角高亮卡片</option>
             <option value="rect">矩形内容卡片</option>
             <option value="ellipse">圆形 / 徽标色块</option>
           </select>
           <select id="selAddChart" class="gw-tb-select" title="插入原生数据图表">
-            <option value="">📈 插入图表 ▾</option>
+            <option value="">插入图表 ▾</option>
             <option value="column">垂直柱状图 (Column)</option>
             <option value="bar">水平条形图 (Bar)</option>
             <option value="line">趋势折线图 (Line)</option>
@@ -185,9 +185,9 @@
             <option value="teal">墨绿典雅 (Teal)</option>
             <option value="dark">暗夜黑 (Dark)</option>
           </select>
-          <button id="btnLayoutCheck" class="gw-tb-btn" title="检查形状重叠、文字溢出与版面问题">🔍 版面体检</button>
-          <button id="btnDeckImaging" class="gw-tb-btn" style="color:#0284c7; font-weight:600;" title="MONAI 3D 影像分析与 RECIST 测距">🩺 医学影像</button>
-          <button id="btnDeleteShape" class="gw-tb-btn" style="color:var(--gw-red);" title="删除当前选中的形状 (Delete)">🗑️ 删除形状</button>
+          <button id="btnLayoutCheck" class="gw-tb-btn" title="检查形状重叠、文字溢出与版面问题"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:3px;"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5L18 18"/></svg>版面体检</button>
+          <button id="btnDeckImaging" class="gw-tb-btn" style="color:#0284c7; font-weight:600;" title="MONAI 3D 影像分析与 RECIST 测距"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px; margin-right:3px;"><circle cx="10" cy="10" r="7"/><path d="M10 6v8M6 10h8"/></svg>医学影像</button>
+          <button id="btnDeleteShape" class="gw-tb-btn" style="color:var(--gw-red);" title="删除当前选中的形状 (Delete)"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:3px;"><path d="M4 6h12M8 6V4h4v2M6 6v10a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"/></svg>删除形状</button>
         </div>
       </div>
     </header>
@@ -197,8 +197,8 @@
       <!-- 左侧：Google Drive 文档库 / 幻灯片胶卷大纲 -->
       <aside id="leftSidebar" class="gw-sidebar-left">
         <div class="gw-sidebar-tabs">
-          <button id="tabDocs" class="gw-sidebar-tab active">📑 文档库</button>
-          <button id="tabFilmstrip" class="gw-sidebar-tab" style="display:none;">🖼️ 幻灯片大纲</button>
+          <button id="tabDocs" class="gw-sidebar-tab active"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><path d="M4 4h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4z"/><path d="M4 8h12M4 12h8"/></svg>文档库</button>
+          <button id="tabFilmstrip" class="gw-sidebar-tab" style="display:none;"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="7.5" cy="8.5" r="1.5"/><path d="M17 13l-4-4-6 6"/></svg>幻灯片大纲</button>
         </div>
 
         <div class="gw-sidebar-content">
@@ -236,24 +236,24 @@
       <!-- 右侧：Google Gemini 风格 AI 写作伙伴与 MCP 协议面板 -->
       <aside id="rightSidebar" class="gw-sidebar-right">
         <div class="gw-sidebar-tabs">
-          <button id="tabAiChat" class="gw-sidebar-tab active">🤖 AI 写作助手</button>
-          <button id="tabMcp" class="gw-sidebar-tab">⚡ MCP 协议端点</button>
+          <button id="tabAiChat" class="gw-sidebar-tab active"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><rect x="3" y="6" width="14" height="10" rx="3"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="12.5" cy="11" r="1" fill="currentColor"/><path d="M10 2v4"/></svg>AI 写作助手</button>
+          <button id="tabMcp" class="gw-sidebar-tab"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><polygon points="11 2 4 12 10 12 9 18 16 8 10 8 11 2"/></svg>MCP 协议端点</button>
         </div>
 
         <!-- 面板 A：AI 创作助手 -->
         <div id="panelAiChat" style="display:flex; flex-direction:column; height:calc(100% - 41px);">
           <div class="gw-ai-chips">
-            <button class="gw-chip" data-prompt="请为这份文档总结提炼核心结论与执行摘要">✨ 提炼摘要</button>
-            <button class="gw-chip" data-prompt="请在幻灯片中插入一张对比柱状图">📊 插入数据图表</button>
-            <button class="gw-chip" data-prompt="优化当前页面的版面布局，让要点更加清晰醒目">🎨 美化版面</button>
-            <button class="gw-chip" data-prompt="润色选中文段，提高学术表达的严谨性与专业度">📝 润色文段</button>
-            <button class="gw-chip" data-prompt="请调用 MONAI 影像计算节点分析真实腹部增强 CT 样本，执行脾脏与实质脏器分割，计算 RECIST 1.1 最大长径并生成图表汇报。">🩺 分析腹部 CT 影像与 RECIST</button>
-            <button class="gw-chip" data-prompt="全面检查幻灯片是否存在文字重叠或溢出，并自动修正">🔍 版面体检修复</button>
+            <button class="gw-chip" data-prompt="请为这份文档总结提炼核心结论与执行摘要">提炼摘要</button>
+            <button class="gw-chip" data-prompt="请在幻灯片中插入一张对比柱状图">插入数据图表</button>
+            <button class="gw-chip" data-prompt="优化当前页面的版面布局，让要点更加清晰醒目">美化版面</button>
+            <button class="gw-chip" data-prompt="润色选中文段，提高学术表达的严谨性与专业度">润色文段</button>
+            <button class="gw-chip" data-prompt="请调用 MONAI 影像计算节点分析真实腹部增强 CT 样本，执行脾脏与实质脏器分割，计算 RECIST 1.1 最大长径并生成图表汇报。">分析腹部 CT 影像与 RECIST</button>
+            <button class="gw-chip" data-prompt="全面检查幻灯片是否存在文字重叠或溢出，并自动修正">版面体检修复</button>
           </div>
 
           <div id="chatMessages" class="gw-chat-stream">
             <div class="gw-chat-bubble ai">
-              👋 您好！我是您的 <b>OmniCanvas AI 协同创作成伴</b>。<br><br>
+              您好！我是您的 <b>OmniCanvas AI 协同创作成伴</b>。<br><br>
               • <b>流式文档</b>：可直接撰写论文、调研报告或白皮书；<br>
               • <b>幻灯片画布</b>：支持原子化排版、卡片色块、数据图表与 LibreOffice 渲染；<br>
               • <b>人机对等</b>：外部 Agent 可通过 <code>/mcp</code> 端点以毫秒级并行指令操作当前页面。

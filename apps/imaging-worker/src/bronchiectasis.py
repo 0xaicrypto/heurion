@@ -11,41 +11,12 @@ try:
     from .device import get_optimal_device, get_device_info
     from .dicom_io import apply_ct_window
     from .renderer import png_to_base64
+    from .font_utils import get_cjk_font, get_sans_font, sanitize_text
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window
     from renderer import png_to_base64
-
-def get_cjk_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Loads a high-quality Chinese/CJK TrueType font with graceful fallback."""
-    font_paths = [
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        "/System/Library/Fonts/Supplemental/Songti.ttc",
-    ]
-    for p in font_paths:
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
-
-def get_sans_font(size: int = 14, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Loads a clean Sans-Serif font for medical HUD and metric callouts."""
-    font_paths = [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    ]
-    for p in font_paths:
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size)
-            except Exception:
-                continue
-    return get_cjk_font(size)
+    from font_utils import get_cjk_font, get_sans_font, sanitize_text
 
 def generate_synthetic_bronchiectasis_ct(
     shape: Tuple[int, int, int] = (48, 128, 128),
@@ -304,7 +275,8 @@ def analyze_bronchiectasis_and_mucus(
     mucus_min_hu: float = 10.0,
     mucus_max_hu: float = 75.0,
     ham_threshold_hu: float = 70.0,
-    bar_cutoff: float = 1.10
+    bar_cutoff: float = 1.10,
+    return_masks: bool = False
 ) -> Dict[str, Any]:
     """
     Executes quantitative HRCT Bronchiectasis and Mucus Plug Impaction Analysis:
@@ -342,15 +314,45 @@ def analyze_bronchiectasis_and_mucus(
     # 1. Segment lung field inside thoracic cavity (HU between -980 and -450)
     lung_mask = (tensor_vol > -980.0) & (tensor_vol < -450.0) & body_tensor
 
-    # 2. Segment patent airway lumen (HU < -850)
-    patent_airways = (tensor_vol > -1000.0) & (tensor_vol < -850.0) & body_tensor
+    # 2. Extract genuine conducting airway tree & dilated bronchi
+    # (Excludes diffuse alveolar lung parenchyma)
+    air_inside_body = (volume > -1020.0) & (volume < -850.0) & body_3d
+
+    patent_np = np.zeros_like(volume, dtype=bool)
+    z_dim = volume.shape[0]
+    for z in range(z_dim):
+        sl_air = air_inside_body[z]
+        if not np.any(sl_air):
+            continue
+        sl_vol = volume[z]
+        lbl_air, n_air = label(sl_air)
+        if n_air == 0:
+            continue
+        sizes = ndimage_sum(sl_air, lbl_air, range(1, n_air + 1))
+        for i, sz in enumerate(sizes, 1):
+            if 8 <= sz <= 2500:
+                blob = (lbl_air == i)
+                ring = binary_dilation(blob, iterations=2) & (~blob)
+                if np.sum(ring) > 0 and np.mean(sl_vol[ring]) > -450.0:
+                    patent_np[z] |= blob
+
+    # If patent_np is sparse (e.g. synthetic volume or peripheral bronchi), fall back to air blobs < 2500 px
+    if np.sum(patent_np) < 50:
+        for z in range(z_dim):
+            sl_air = air_inside_body[z]
+            lbl_air, n_air = label(sl_air)
+            if n_air == 0:
+                continue
+            sizes = ndimage_sum(sl_air, lbl_air, range(1, n_air + 1))
+            for i, sz in enumerate(sizes, 1):
+                if 8 <= sz <= 2500:
+                    patent_np[z] |= (lbl_air == i)
 
     # 3. Detect intraluminal mucus plugs and mucoid impaction
     # Soft tissue density situated within lung parenchymal envelope
     mucus_candidates = (tensor_vol >= mucus_min_hu) & (tensor_vol <= mucus_max_hu) & body_tensor
     ham_candidates = (tensor_vol > ham_threshold_hu) & (tensor_vol <= 120.0) & body_tensor # High-attenuation mucus
 
-    patent_np = patent_airways.cpu().numpy().astype(bool)
     mucus_cand_np = mucus_candidates.cpu().numpy().astype(bool)
     ham_cand_np = ham_candidates.cpu().numpy().astype(bool)
 
@@ -487,8 +489,8 @@ def analyze_bronchiectasis_and_mucus(
 
     # TrueType fonts
     font_hud_title = get_sans_font(size=13 if h >= 400 else 10, bold=True)
-    font_hud = get_cjk_font(size=12 if h >= 400 else 9)
-    font_caliper = get_cjk_font(size=12 if h >= 400 else 9)
+    font_hud, supports_cjk = get_cjk_font(size=12 if h >= 400 else 9)
+    font_caliper, _ = get_cjk_font(size=12 if h >= 400 else 9)
     font_scale = get_sans_font(size=11, bold=True)
 
     # BAR Measurement Caliper Annotation - Target largest cluster
@@ -514,11 +516,33 @@ def analyze_bronchiectasis_and_mucus(
         draw.line([(cx + (r if callout_dx > 0 else -r), cy), (cx + callout_dx, cy + callout_dy)], fill=(255, 215, 0, 240), width=2)
         draw.line([(cx + callout_dx, cy + callout_dy), (end_x, cy + callout_dy)], fill=(255, 215, 0, 240), width=2)
         text_x = cx + callout_dx + 4 if callout_dx > 0 else cx + callout_dx - 90
-        draw.text((text_x, cy + callout_dy - 18), f"BAR: {bar_ratio} ({phenotype.split(' ')[0]})", fill=(255, 235, 59, 255), font=font_caliper)
+        caliper_bar_str = sanitize_text(f"BAR: {bar_ratio} ({phenotype.split(' ')[0]})", supports_cjk)
+        draw.text((text_x, cy + callout_dy - 18), caliper_bar_str, fill=(255, 235, 59, 255), font=font_caliper)
         caliper_mucus_desc = f"粘液栓: {occlusion_rate_pct}% 阻塞"
         if mucus_nodule_locations:
             caliper_mucus_desc += f" ({mucus_nodule_locations[0]['segment']})"
-        draw.text((text_x, cy + callout_dy + 2), caliper_mucus_desc, fill=(255, 120, 120, 255), font=font_caliper)
+        caliper_mucus_str = sanitize_text(caliper_mucus_desc, supports_cjk)
+        draw.text((text_x, cy + callout_dy + 2), caliper_mucus_str, fill=(255, 120, 120, 255), font=font_caliper)
+    elif np.any(key_patent):
+        lbl_p, n_p = label(key_patent)
+        if n_p > 0:
+            szs_p = ndimage_sum(key_patent, lbl_p, range(1, n_p + 1))
+            target_p = int(np.argmax(szs_p)) + 1
+            p_coords = np.where(lbl_p == target_p)
+            cy = int(np.mean(p_coords[0]))
+            cx = int(np.mean(p_coords[1]))
+            r = 16 if h >= 400 else 10
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 215, 0, 240), width=2)
+            callout_dx = 35 if cx < w - 150 else -35
+            callout_dy = -22 if cy > 140 else 22
+            end_x = cx + callout_dx + (90 if callout_dx > 0 else -90)
+            draw.line([(cx + (r if callout_dx > 0 else -r), cy), (cx + callout_dx, cy + callout_dy)], fill=(255, 215, 0, 240), width=2)
+            draw.line([(cx + callout_dx, cy + callout_dy), (end_x, cy + callout_dy)], fill=(255, 215, 0, 240), width=2)
+            text_x = cx + callout_dx + 4 if callout_dx > 0 else cx + callout_dx - 90
+            caliper_bar_str = sanitize_text(f"BAR: {bar_ratio} ({phenotype.split(' ')[0]})", supports_cjk)
+            draw.text((text_x, cy + callout_dy - 18), caliper_bar_str, fill=(255, 235, 59, 255), font=font_caliper)
+            caliper_lumen_str = sanitize_text("支气管管腔通畅", supports_cjk)
+            draw.text((text_x, cy + callout_dy + 2), caliper_lumen_str, fill=(56, 189, 248, 255), font=font_caliper)
 
     # Scale Bar (lower right)
     scale_px = int(50.0 / spacing[1])
@@ -540,7 +564,8 @@ def analyze_bronchiectasis_and_mucus(
     y_pos = 24 if h >= 400 else 18
     line_step = 16 if h >= 400 else 11
     for line in hud_lines:
-        draw.text((12, y_pos), line, fill=(241, 245, 249, 245), font=font_hud)
+        clean_line = sanitize_text(line, supports_cjk)
+        draw.text((12, y_pos), clean_line, fill=(241, 245, 249, 245), font=font_hud)
         y_pos += line_step
 
     buf = io.BytesIO()
@@ -560,7 +585,7 @@ def analyze_bronchiectasis_and_mucus(
     nodule_md = ""
     if mucus_nodule_locations:
         for idx, n in enumerate(mucus_nodule_locations, 1):
-            ham_badge = " 🔥[HAM高密度]" if n.get("is_ham") else ""
+            ham_badge = " [HAM高密度]" if n.get("is_ham") else ""
             nodule_md += (
                 f"  {idx}. **{n['location_name']}** ({n['zone_type']}){ham_badge}：\n"
                 f"     - 切片层号: `{n['slice_range']}` (中心断面: `第 #{n['centroid_slice']} 层`)\n"
@@ -568,7 +593,7 @@ def analyze_bronchiectasis_and_mucus(
                 f"     - 局部 CT 值: 均值 `{n['mean_hu']} HU` (峰值 `{n['max_hu']} HU`)\n"
             )
 
-    return {
+    res = {
         "status": "success",
         "analysis_type": "bronchiectasis_and_mucus",
         "accelerator": dev_info.get("accelerator", str(device)),
@@ -598,7 +623,7 @@ def analyze_bronchiectasis_and_mucus(
         "key_slice_png_base64": png_to_base64(png_bytes),
         "key_slice_png_size_bytes": len(png_bytes),
         "summary_markdown": (
-            f"### 🫁 支气管扩张与粘液栓 (Mucus Plug) 深度分析报告\n\n"
+            f"### 支气管扩张与粘液栓 (Mucus Plug) 深度分析报告\n\n"
             f"- **计算加速设备**: `{dev_info.get('accelerator')}` (耗时: {elapsed}s)\n"
             f"- **病理形态分型**: **{phenotype}**\n"
             f"- **临床严重度**: **{severity}**\n"
@@ -612,10 +637,17 @@ def analyze_bronchiectasis_and_mucus(
             f"- **主要粘液栓/结节空间解剖定位 (Top {len(mucus_nodule_locations)})**:\n" +
             (nodule_md if nodule_md else "  - 未检测到孤立粘液结节\n") +
             f"- **典型影像学征象**:\n" +
-            "".join([f"  - ✓ {s}\n" for s in signs_detected]) +
-            f"\n> 💡 **治疗与随访建议**：\n"
+            "".join([f"  - {s}\n" for s in signs_detected]) +
+            f"\n> **治疗与随访建议**：\n"
             f"> 1. 规范气道清除技术 (Airway Clearance Techniques, ACT，如振动排痰、体位引流)；\n"
             f"> 2. 若伴高密度粘液栓 (HAM) 或复发性喘息，建议查血嗜酸粒细胞与总 IgE 排查变应性支气管肺曲霉病 (ABPA)；\n"
             f"> 3. 建议每 6-12 个月复查胸部低剂量 HRCT 进行动态粘液栓与管径追踪。"
         )
     }
+
+    if return_masks:
+        res["mask"] = mucus_plugs_np.astype(np.uint8)
+        res["mucus_mask"] = mucus_plugs_np.astype(np.uint8)
+        res["patent_airway_mask"] = patent_np.astype(np.uint8)
+
+    return res

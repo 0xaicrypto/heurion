@@ -88,6 +88,7 @@ class MprInfoRequest(BaseModel):
     sample_id: Optional[str] = "chest_lung_ct"
     volume_id: Optional[str] = None
     file_path: Optional[str] = None
+    model_name: Optional[str] = None
 
 class MprSliceRequest(BaseModel):
     sample_id: Optional[str] = "chest_lung_ct"
@@ -553,15 +554,15 @@ def get_mpr_volume_info(req: MprInfoRequest = Body(...)):
     """Returns 3D volume dimensions, spacing, slice counts and bounding box for a volume."""
     target = req.file_path or req.volume_id or req.sample_id or "chest_lung_ct"
     try:
-        return engine.get_mpr_info(target)
+        return engine.get_mpr_info(target, model_name=req.model_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read volume info: {str(e)}")
 
 @app.get("/api/v1/mpr/info")
-def get_mpr_volume_info_get(sample_id: str = "chest_lung_ct"):
+def get_mpr_volume_info_get(sample_id: str = "chest_lung_ct", model_name: Optional[str] = None):
     """GET variant for retrieving volume MPR info by sample_id."""
     try:
-        return engine.get_mpr_info(sample_id)
+        return engine.get_mpr_info(sample_id, model_name=model_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read volume info: {str(e)}")
 

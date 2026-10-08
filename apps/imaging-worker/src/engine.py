@@ -15,6 +15,7 @@ try:
     from .radiomics import extract_radiomics_features
     from .interactive import interactive_segment_3d
     from .totalsegmentator import analyze_whole_body_ct, generate_synthetic_whole_body_ct
+    from .font_utils import get_cjk_font, get_sans_font, sanitize_text
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window, CT_WINDOWS
@@ -23,6 +24,7 @@ except (ImportError, ValueError):
     from radiomics import extract_radiomics_features
     from interactive import interactive_segment_3d
     from totalsegmentator import analyze_whole_body_ct, generate_synthetic_whole_body_ct
+    from font_utils import get_cjk_font, get_sans_font, sanitize_text
 
 def generate_synthetic_ct_volume(
     shape: Tuple[int, int, int] = (48, 128, 128),
@@ -218,36 +220,75 @@ def segment_pulmonary_nodules(
 
     return best_mask, recist, lesion_label
 
-def _get_hud_font(size: int = 12) -> Tuple[Any, bool]:
-    """Returns a suitable font for clinical HUD drawing, and whether it supports CJK characters."""
-    font_candidates = [
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/Library/Fonts/Arial Unicode.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-    for p in font_candidates:
-        if os.path.exists(p):
-            try:
-                supports_cjk = any(k in p for k in ("Hiragino", "PingFang", "STHeiti", "wqy", "NotoSansCJK", "Unicode"))
-                return ImageFont.truetype(p, size), supports_cjk
-            except Exception:
-                pass
-    try:
-        return ImageFont.load_default(), False
-    except Exception:
-        return None, False
+
 
 class MONAIEngine:
     def __init__(self):
         self.device = get_optimal_device()
         self.device_info = get_device_info()
         self.volume_cache: Dict[str, Tuple[np.ndarray, Tuple[float, float, float], str]] = {}
+        self.mask_cache: Dict[str, np.ndarray] = {}
+
+    def get_or_compute_mask(
+        self,
+        sample_id_or_path: str,
+        vol: np.ndarray,
+        spacing: Tuple[float, float, float],
+        model_name: Optional[str] = None
+    ) -> np.ndarray:
+        """
+        Retrieves a cached 3D segmentation mask or executes the corresponding clinical model
+        to extract the authentic 3D lesion mask (strictly inside anatomical boundaries,
+        excluding heart, mediastinum, chest wall, and ribs).
+        """
+        cache_key = f"{sample_id_or_path}:{model_name or 'default'}"
+        if cache_key in self.mask_cache and self.mask_cache[cache_key].shape == vol.shape:
+            return self.mask_cache[cache_key]
+        if sample_id_or_path in self.mask_cache and self.mask_cache[sample_id_or_path].shape == vol.shape:
+            return self.mask_cache[sample_id_or_path]
+        base_k = os.path.basename(sample_id_or_path)
+        if base_k in self.mask_cache and self.mask_cache[base_k].shape == vol.shape:
+            return self.mask_cache[base_k]
+
+        is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus")) or (float(np.min(vol)) < -500 and float(np.mean(vol)) < -150)
+        
+        if model_name in ("bronchiectasis_mucus_analyzer", "bronchiectasis"):
+            try:
+                from .bronchiectasis import analyze_bronchiectasis_and_mucus
+            except (ImportError, ValueError):
+                from bronchiectasis import analyze_bronchiectasis_and_mucus
+            b_res = analyze_bronchiectasis_and_mucus(vol, spacing=spacing, window_preset="lung", return_masks=True)
+            mask = b_res.get("mucus_mask") or b_res.get("mask")
+            if mask is None:
+                mask, _, _ = segment_pulmonary_nodules(vol, spacing)
+        elif is_lung:
+            mask, _, _ = segment_pulmonary_nodules(vol, spacing)
+        elif "spleen" in sample_id_or_path.lower():
+            bone_mask = ndi.binary_dilation(vol > 220.0, iterations=2)
+            pred = (vol > 30.0) & (vol < 110.0) & (~bone_mask)
+            mask = extract_largest_component(pred.astype(np.uint8))
+        elif "liver" in sample_id_or_path.lower():
+            bone_mask = ndi.binary_dilation(vol > 200.0, iterations=2)
+            bowel = vol < -150.0
+            cands = (vol >= 40.0) & (vol <= 125.0) & (~bone_mask) & (~bowel)
+            mask = extract_largest_component(cands.astype(np.uint8))
+        elif "prostate" in sample_id_or_path.lower() or "mri" in sample_id_or_path.lower():
+            bone_mask = ndi.binary_dilation(vol > 220.0, iterations=2)
+            pred = (vol > 20.0) & (vol < 110.0) & (~bone_mask)
+            mask = extract_largest_component(pred.astype(np.uint8))
+        else:
+            body = np.zeros_like(vol, dtype=bool)
+            for z in range(vol.shape[0]):
+                body[z] = ndi.binary_fill_holes(vol[z] > -450.0)
+            pred = (vol > 30.0) & (vol < 100.0) & body
+            mask = extract_largest_component(pred.astype(np.uint8))
+
+        mask = mask.astype(np.uint8)
+        self.mask_cache[cache_key] = mask
+        self.mask_cache[sample_id_or_path] = mask
+        if base_k != sample_id_or_path:
+            self.mask_cache[base_k] = mask
+        return mask
 
     def register_volume(
         self,
@@ -551,17 +592,17 @@ class MONAIEngine:
         vol, _ = generate_synthetic_ct_volume(shape=(48, 128, 128), spacing=(1.5, 0.8, 0.8))
         return vol, (1.5, 0.8, 0.8), "CT"
 
-    def get_mpr_info(self, sample_id_or_path: str) -> Dict[str, Any]:
+    def get_mpr_info(self, sample_id_or_path: str, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Returns 3D volume dimensions, spacing, slice counts and bounding box."""
         vol, spacing, modality = self.load_volume_data(sample_id_or_path)
         z_dim, y_dim, x_dim = vol.shape
         dz, dy, dx = spacing
 
         is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus")) or (float(np.min(vol)) < -500 and float(np.mean(vol)) < -150)
-        lesion_mask = ((vol > -150.0) & (vol < 180.0)) if is_lung else ((vol > 30.0) & (vol < 110.0))
-        z_idx, y_idx, x_idx = np.where(lesion_mask)
+        lesion_mask = self.get_or_compute_mask(sample_id_or_path, vol, spacing, model_name=model_name)
+        z_idx, y_idx, x_idx = np.where(lesion_mask > 0)
 
-        if len(z_idx) > 20:
+        if len(z_idx) > 10:
             center = {
                 "axial": int(np.median(z_idx)),
                 "coronal": int(np.median(y_idx)),
@@ -611,10 +652,7 @@ class MONAIEngine:
         is_lung = any(k in sample_id_or_path.lower() for k in ("lung", "chest", "mucus")) or (window_preset == "lung") or (float(np.min(vol)) < -500 and float(np.mean(vol)) < -150)
         mask = None
         if overlay:
-            if is_lung:
-                mask = ((vol > 10.0) & (vol < 75.0)).astype(np.uint8)
-            else:
-                mask = ((vol > 35.0) & (vol < 110.0)).astype(np.uint8)
+            mask = self.get_or_compute_mask(sample_id_or_path, vol, spacing, model_name=model_name)
 
         if not window_preset:
             window_preset = "lung" if is_lung else "abdomen"
@@ -645,6 +683,9 @@ class MONAIEngine:
             h_spacing = dy
             plane_label = "矢状位 (Sagittal)"
 
+        orig_v_spacing = v_spacing
+        orig_h_spacing = h_spacing
+
         ct_uint8 = apply_ct_window(raw_slice, window_name=window_preset)
         h, w = ct_uint8.shape
 
@@ -673,8 +714,8 @@ class MONAIEngine:
             v_spacing = (h * v_spacing) / target_h
             w, h = target_w, target_h
 
-        font, supports_cjk = _get_hud_font(13)
-        font_sm, _ = _get_hud_font(11)
+        font, supports_cjk = get_cjk_font(13)
+        font_sm = get_sans_font(11, bold=True)
 
         draw = ImageDraw.Draw(base_img)
         scale_bar_mm = 50.0 if w >= 256 else 20.0
@@ -685,7 +726,7 @@ class MONAIEngine:
         draw.text((margin_x, margin_y - 14), f"{int(scale_bar_mm / 10)} cm", fill=(255, 255, 255, 220), font=font_sm)
 
         win = CT_WINDOWS.get(window_preset, {"level": 40, "width": 400})
-        display_plane = plane_label if supports_cjk else plane.upper()
+        display_plane = sanitize_text(plane_label, supports_cjk)
         hud = [
             f"MPR // {display_plane} #{idx}/{total}",
             f"{window_preset.title()} Window (W:{win['width']} L:{win['level']})",
@@ -693,12 +734,15 @@ class MONAIEngine:
         ]
         y_off = 10
         for l in hud:
-            draw.text((12, y_off), l, fill=(230, 235, 245, 230), font=font)
+            clean_l = sanitize_text(l, supports_cjk)
+            draw.text((12, y_off), clean_l, fill=(230, 235, 245, 230), font=font)
             y_off += 16
 
         buf = io.BytesIO()
         base_img.convert("RGB").save(buf, format="PNG", optimize=True)
         png_bytes = buf.getvalue()
+
+        area_mm2 = round(lesion_px * float(orig_h_spacing) * float(orig_v_spacing), 1)
 
         return {
             "plane": plane,
@@ -709,6 +753,7 @@ class MONAIEngine:
             "pixel_spacing_mm": {"horizontal": round(float(h_spacing), 3), "vertical": round(float(v_spacing), 3)},
             "lesion_present": lesion_present,
             "lesion_pixel_count": lesion_px,
+            "lesion_area_mm2": area_mm2,
             "slice_png_base64": png_to_base64(png_bytes),
             "slice_png_size_bytes": len(png_bytes)
         }
@@ -829,8 +874,8 @@ class MONAIEngine:
             v_spacing = (h * v_spacing) / target_h
             w, h = target_w, target_h
 
-        font, supports_cjk = _get_hud_font(13)
-        font_sm, _ = _get_hud_font(11)
+        font, supports_cjk = get_cjk_font(13)
+        font_sm = get_sans_font(11, bold=True)
 
         draw = ImageDraw.Draw(base_img)
         scale_bar_mm = 50.0 if w >= 256 else 20.0

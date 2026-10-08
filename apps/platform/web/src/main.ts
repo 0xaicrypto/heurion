@@ -1325,16 +1325,16 @@ function renderChatImages(): void {
   }).join('')
 
   const patientAction = docPatient
-    ? `<button type="button" class="chat-action-pill" data-prompt="请结合当前患者档案与既往病史，对比解读该影像截图并提供诊疗参考">🏥 结合当前患者档案诊断</button>`
+    ? `<button type="button" class="chat-action-pill" data-prompt="请结合当前患者档案与既往病史，对比解读该影像截图并提供诊疗参考">${icon('hospital', { size: 13 })} 结合当前患者档案诊断</button>`
     : ''
 
   box.innerHTML = `
     <div class="chat-img-list">${imgsHtml}</div>
     <div class="chat-img-actions">
       <span class="chat-img-actions-label">快捷分析提示：</span>
-      <button type="button" class="chat-action-pill" data-prompt="请提取附图中的病灶长短径尺寸与CT密度/信号特征，并给出影像学描述与拟诊">📏 提取长短径与密度测量</button>
-      <button type="button" class="chat-action-pill" data-prompt="请根据 RECIST 1.1 标准解读此影像切片中的靶病灶，评估病灶大小与肿瘤反应状态">🎯 RECIST 靶病灶解读</button>
-      <button type="button" class="chat-action-pill" data-prompt="请将此影像截面总结为一段规范的病程记录与影像学诊断意见草案">📝 生成病程影像记录</button>
+      <button type="button" class="chat-action-pill" data-prompt="请提取附图中的病灶长短径尺寸与CT密度/信号特征，并给出影像学描述与拟诊">${icon('ruler', { size: 13 })} 提取长短径与密度测量</button>
+      <button type="button" class="chat-action-pill" data-prompt="请根据 RECIST 1.1 标准解读此影像切片中的靶病灶，评估病灶大小与肿瘤反应状态">${icon('target', { size: 13 })} RECIST 靶病灶解读</button>
+      <button type="button" class="chat-action-pill" data-prompt="请将此影像截面总结为一段规范的病程记录与影像学诊断意见草案">${icon('write', { size: 13 })} 生成病程影像记录</button>
       ${patientAction}
     </div>
     <span class="muted small chat-img-hint">已附图 · AI 将结合临床影像/图表视角解读（请勿上传含真实姓名/身份证号等个人敏感标识的图片；3D 容积量化与 RECIST 评估请在「患者 -> 影像」上传）</span>

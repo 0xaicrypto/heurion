@@ -1072,7 +1072,7 @@ ${bHam > 0 || fHam > 0 ? `| **高密度粘液栓 (HAM)** | ${bHam} cm³ | ${fHam
 > **倍增指标**: **${vdt.days !== null ? `${vdt.days} 天` : '未触发倍增'}**（${vdt.label}）  
 > **动力学解读**: ${vdt.description}  
 > **临床建议**: ${vdt.recommendation}
-${vdt.clinical_alert ? `\n> ⚠️ **高危增殖预警**: 本病灶体积倍增时间 < 400 天，提示侵袭性恶性病灶快速增殖，强烈建议尽快提交胸部肿瘤 MDT 专科会诊评估手术指征。` : ''}
+${vdt.clinical_alert ? `\n> **高危增殖预警**: 本病灶体积倍增时间 < 400 天，提示侵袭性恶性病灶快速增殖，强烈建议尽快提交胸部肿瘤 MDT 专科会诊评估手术指征。` : ''}
 
 ---
 
@@ -1351,7 +1351,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
         criterion: 'HRCT 中心性支气管扩张 (BAR 印戒征阳性)',
         category: 'imaging',
         status: barPos ? 'positive' : barVal !== null ? 'negative' : 'positive',
-        evidence_value: barVal !== null ? `BAR 比值 ${barVal} (${barPos ? '印戒征阳性 ⚠' : '正常'})` : '影像提示支气管壁明显增厚与管腔囊柱状扩张',
+        evidence_value: barVal !== null ? `BAR 比值 ${barVal} (${barPos ? '印戒征阳性' : '正常'})` : '影像提示支气管壁明显增厚与管腔囊柱状扩张',
         reference_guideline: 'Fleischner 学会支气管扩张诊断标准 (BAR > 1.10)',
       })
 
@@ -1610,21 +1610,21 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const matchSummary = `共比对 ${totalCount} 项临床确诊指标，其中 ${posCount} 项确立阳性证据，${criteriaTable.filter(c => c.status === 'missing').length} 项建议补充送检。`
 
     // 构建结构化 Markdown 报告片段
-    let summaryMd = `### 🔬 ${syndrome} · 多模态因果诊断链\n\n`
+    let summaryMd = `### ${syndrome} · 多模态因果诊断链\n\n`
     summaryMd += `- **目标影像**: ${targetRec.title} (${targetRec.report_date || '近期'})\n`
-    summaryMd += `- **临床紧迫度**: ${clinicalUrgency === 'high' ? '⚠️ 高度提示临床干预' : clinicalUrgency === 'medium' ? '💡 建议密切随访' : '常规随访'}\n`
+    summaryMd += `- **临床紧迫度**: ${clinicalUrgency === 'high' ? '高度提示临床干预' : clinicalUrgency === 'medium' ? '建议密切随访' : '常规随访'}\n`
     summaryMd += `- **综合诊断印象**: ${diagnosticImpression}\n\n`
-    summaryMd += `#### 📋 临床确诊依据对照表\n\n`
+    summaryMd += `#### 临床确诊依据对照表\n\n`
     summaryMd += `| 诊断准则要点 | 证据类型 | 判定状态 | 患者客观实测值 | 参考临床指南 |\n`
     summaryMd += `| :--- | :--- | :---: | :--- | :--- |\n`
     for (const row of criteriaTable) {
-      const stBadge = row.status === 'positive' ? '✅ 阳性' : row.status === 'negative' ? '⚪ 阴性' : '⚠️ 缺漏待查'
+      const stBadge = row.status === 'positive' ? '阳性' : row.status === 'negative' ? '阴性' : '缺漏待查'
       const catText = row.category === 'imaging' ? '医学影像' : row.category === 'lab' ? '实验室化验' : '既往病史'
       summaryMd += `| ${row.criterion} | ${catText} | ${stBadge} | ${row.evidence_value} | ${row.reference_guideline} |\n`
     }
 
     if (matchedLabs.length > 0) {
-      summaryMd += `\n#### 🧪 协同关键实验室指标\n\n`
+      summaryMd += `\n#### 协同关键实验室指标\n\n`
       summaryMd += `| 化验项目 | 检测数值 | 异常标识 | 采样日期 | 临床因果关联解读 |\n`
       summaryMd += `| :--- | :--- | :---: | :--- | :--- |\n`
       for (const lab of matchedLabs) {
@@ -1633,7 +1633,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     }
 
     if (suggestedWorkup.length > 0) {
-      summaryMd += `\n#### 💡 推荐完善检查 / 诊疗路径\n\n`
+      summaryMd += `\n#### 推荐完善检查 / 诊疗路径\n\n`
       suggestedWorkup.forEach((item, idx) => {
         summaryMd += `${idx + 1}. ${item}\n`
       })
@@ -1981,7 +1981,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
       : `行临床规范化医学影像检查与三维空间序列采集，矩阵经高分辨重建算法重建后由 MONAI 深度学习量化网络统一判读。`
 
     const qcMethodNote = qc?.slice_thickness_mm
-      ? `\n> 📋 **扫描质控**: 轴位重建层厚为 **${qc.slice_thickness_mm} mm**（${qc.badge || (qc.is_thin_slice ? 'HRCT 薄层' : '常规层厚')}）。${qc.warning ? `\n> ⚠️ **成像质控警示**: ${qc.warning}` : ''}`
+      ? `\n> **扫描质控**: 轴位重建层厚为 **${qc.slice_thickness_mm} mm**（${qc.badge || (qc.is_thin_slice ? 'HRCT 薄层' : '常规层厚')}）。${qc.warning ? `\n> **成像质控警示**: ${qc.warning}` : ''}`
       : ''
 
     // 2. 影像学所见 (Findings)
@@ -2094,10 +2094,10 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const rptId = `RPT-${p.code}-${examDate.replace(/-/g, '')}-01`
 
     // 拼接符合三甲医院国际标准的全景报告 Markdown
-    let fullReportMd = `# 🏥 Heurion 临床影像诊断中心 · 全景多模态影像诊断报告单\n\n`
+    let fullReportMd = `# Heurion 临床影像诊断中心 · 全景多模态影像诊断报告单\n\n`
     fullReportMd += `**患者代号**: \`${p.code}\`  |  **性别/出生年份**: ${p.sex || '男'} / ${p.birth_year || '--'}  |  **检查日期**: ${examDate}  |  **报告流水号**: \`${rptId}\`\n`
     fullReportMd += `**检查项目**: ${targetRec.title}  |  **设备模态**: ${modality}  |  **分析模型**: MONAI 3D 卷积体素量化网络\n`
-    fullReportMd += `**报告科室**: 呼吸介入与医学影像联合诊疗中心  |  **诊断紧迫度**: ${urgency === 'high' ? '⚠️ 高度提示临床干预' : urgency === 'medium' ? '💡 密切随访' : '常规随访'}\n\n`
+    fullReportMd += `**报告科室**: 呼吸介入与医学影像联合诊疗中心  |  **诊断紧迫度**: ${urgency === 'high' ? '高度提示临床干预' : urgency === 'medium' ? '密切随访' : '常规随访'}\n\n`
     fullReportMd += `---\n\n`
 
     fullReportMd += `### 一、 临床主诉与既往指征 (Clinical Indications)\n`
@@ -2128,7 +2128,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     fullReportMd += `${recommendations}\n\n`
 
     fullReportMd += `---\n`
-    fullReportMd += `> ⚠️ **医疗器械软件 (SaMD) 与临床合规声明 (Regulatory & Clinical Disclaimer)**:\n`
+    fullReportMd += `> **医疗器械软件 (SaMD) 与临床合规声明 (Regulatory & Clinical Disclaimer)**:\n`
     fullReportMd += `> 1. 本诊断报告及相关三维体素量化测量（包括 RECIST 1.1 径线、Lung-RADS 评级、BAR 支气管伴行动脉比、粘液栓密度 HU 统计）均由 Heurion 医学影像 AI 算法与 MONAI 深度学习推理核心辅助生成；\n`
     fullReportMd += `> 2. 本报告所载全部影像测量数据、临床评级及随访指引**仅供具备合法资质的执业医师临床决策参考，不单独作为确定性疾病诊断依据，亦不构成任何直接用药处方或医疗干预方案**；\n`
     fullReportMd += `> 3. 最终临床诊断结论、用药方案与手术治疗决策必须由主管执业医师结合患者现场体征、组织病理金标准及全面临床病史综合审定、签字确认并负专业责任。\n`

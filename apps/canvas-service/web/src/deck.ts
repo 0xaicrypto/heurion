@@ -179,10 +179,10 @@ export class DeckView {
       const renderUnavailableHtml = `
         <div class="render-warning-overlay">
           <div class="render-warning-card">
-            <div class="render-warning-title">⚠️ 幻灯片精确渲染不可用</div>
+            <div class="render-warning-title">幻灯片精确渲染不可用</div>
             <div class="render-warning-desc">${esc(this.data?.render_info?.installHint || '当前系统缺少 LibreOffice，无法将 PPTX 转换为位图。')}</div>
             <div class="render-warning-actions">
-              <button class="btn-copy-install" data-copy-cmd="brew install --cask libreoffice">📋 复制安装命令 (macOS)</button>
+              <button class="btn-copy-install" data-copy-cmd="brew install --cask libreoffice">复制安装命令 (macOS)</button>
               <button class="btn-back-approx" data-back-approx="${i}">切回近似预览</button>
             </div>
             <div class="render-warning-fallback">已自动为您呈现高保真近真矢量预览：</div>
