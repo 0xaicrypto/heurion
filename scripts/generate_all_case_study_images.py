@@ -311,8 +311,8 @@ def generate_nsclc_5_diagnostic_chain():
         ], (168, 85, 247, 255)),
         (584, 45, 260, 220, "[3] 临床综合诊断与处置闭环", [
             "确诊: EGFR突变晚期非小细胞肺癌 (PR)",
-            "评估: 奥希替尼 12 周靶向维持治疗显著获益",
-            "决策: 维持奥希替尼 80mg qd 原方案治疗",
+            "评估: 奥希替尼 12 周一线单药靶向治疗显著获益",
+            "方案: 维持一线单药奥希替尼 80mg qd 治疗",
             "随访: 遵指南 8~12 周复查薄层增强 CT",
             "免创伤: 规避过早挽救性放疗过度介入",
             "互操作标准: 导出 DICOM SR 与 FHIR"
@@ -388,14 +388,15 @@ def generate_sarco_1_l3_muscle_fat():
     draw = ImageDraw.Draw(base_img)
     
     # Top Left HUD
-    draw_hud_box(draw, 10, 10, 295, 115)
+    draw_hud_box(draw, 10, 10, 315, 125)
     draw.text((16, 14), "TotalSegmentator L3 Body Composition", fill=(255, 255, 255, 255), font=get_font(11, bold=True))
-    draw.text((16, 30), "Level: L3 Lumbar (#148/210)", fill=(148, 163, 184, 240), font=get_font(10))
-    draw.text((16, 44), "Skeletal Muscle (SMA): 88.50 cm2", fill=(239, 68, 68, 255), font=get_font(10, bold=True))
-    draw.text((16, 58), "Muscle Index (SMI): 29.92 cm2/m2 (重度低下)", fill=(245, 158, 11, 255), font=get_font(10, bold=True))
-    draw.text((16, 72), "Muscle Attenuation (MA): 26.4 HU (肌脂肪浸润)", fill=(251, 146, 60, 255), font=get_font(10))
-    draw.text((16, 86), "Visceral/Subcut (VAT/SAT): 2.09 (代谢失衡)", fill=(234, 179, 8, 255), font=get_font(10))
-    draw.text((16, 100), "Status: 重度恶液质肌少症 (Severe Sarcopenia)", fill=(239, 68, 68, 255), font=get_font(10, bold=True))
+    draw.text((16, 30), "Level: L3 Lumbar (#148/210) | 全腹CT平扫", fill=(148, 163, 184, 240), font=get_font(10))
+    draw.text((16, 44), "解剖特征: 脾脏形态饱满肿大 (680 cm³, 长径14.2cm)", fill=(56, 189, 248, 255), font=get_font(10))
+    draw.text((16, 58), "Skeletal Muscle (SMA): 88.50 cm2 (骨骼肌流失)", fill=(239, 68, 68, 255), font=get_font(10, bold=True))
+    draw.text((16, 72), "Muscle Index (SMI): 29.92 cm2/m2 (远低于52.4界值)", fill=(245, 158, 11, 255), font=get_font(10, bold=True))
+    draw.text((16, 86), "Muscle Attenuation (MA): 26.4 HU (肌脂肪浸润)", fill=(251, 146, 60, 255), font=get_font(10))
+    draw.text((16, 100), "Visceral/Subcut (VAT/SAT): 2.09 (内脏蓄脂表型)", fill=(234, 179, 8, 255), font=get_font(10))
+    draw.text((16, 114), "Status: 重度恶液质肌少症 (Severe Sarcopenia)", fill=(239, 68, 68, 255), font=get_font(10, bold=True))
     
     # Top Right Legend
     draw_hud_box(draw, 345, 10, 157, 85)
@@ -435,11 +436,11 @@ def generate_sarco_2_pk_toxicity_risk():
         ("3~4 级骨髓抑制预测概率", "72% (中性粒细胞缺乏伴发热 FN 极高危)"),
         ("早期化疗非计划中断风险", "68% (前2周期治疗终止高危)"),
         ("肌脂肪浸润 (MA = 26.4 HU)", "异位脂质干扰线粒体脂肪酸 β-氧化"),
-        ("系统临床建议", "严禁全量化疗！首剂强制预防性下调 20%"),
+        ("MDT 减毒建议", "建议首剂预防性下调 20% (经 MDT 综合决断)"),
     ]
     ry = 94
     for title, desc in pk_lines:
-        col = (248, 113, 113, 255) if "72%" in desc or "严禁" in desc else (203, 213, 225, 240)
+        col = (248, 113, 113, 255) if "72%" in desc or "下调" in desc else (203, 213, 225, 240)
         draw.text((26, ry), f"• {title}:", fill=(241, 245, 249, 255), font=get_font(10, bold=True))
         draw.text((26, ry + 14), f"  {desc}", fill=col, font=get_font(10))
         ry += 35
@@ -450,7 +451,7 @@ def generate_sarco_2_pk_toxicity_risk():
     draw.text((450, 62), "🛡️ MDT 临床决策闭环与个体化预康复方案", fill=(255, 255, 255, 255), font=get_font(12, bold=True))
     
     mdt_lines = [
-        ("化疗剂量精准微调", "首疗程 mFOLFIRINOX 剂量下调 20%，规避早期猝死"),
+        ("化疗剂量 MDT 调整", "MDT 指导首疗程适度减量 20%，规避严重毒性"),
         ("全肠内营养支持 (ONS)", "每日热量 30 kcal/kg，高蛋白 1.5 g/kg/d 强化补充"),
         ("免疫抗炎营养素干预", "补充支链氨基酸 (BCAA) 与欧米伽-3 PUFA (拮抗促炎)"),
         ("运动预康复 (Prehabilitation)", "低负荷抗阻力握力与弹力带训练，保护肌力储备"),
@@ -459,7 +460,7 @@ def generate_sarco_2_pk_toxicity_risk():
     ]
     ry = 94
     for title, desc in mdt_lines:
-        col = (52, 211, 153, 255) if "下调 20%" in desc or "提升至" in desc else (203, 213, 225, 240)
+        col = (52, 211, 153, 255) if "减量 20%" in desc or "提升至" in desc else (203, 213, 225, 240)
         draw.text((450, ry), f"✔ {title}:", fill=(241, 245, 249, 255), font=get_font(10, bold=True))
         draw.text((450, ry + 14), f"  {desc}", fill=col, font=get_font(10))
         ry += 35
@@ -484,17 +485,17 @@ def generate_sarco_3_diagnostic_chain():
             "- 评定: 重度恶液质肌少症 (Severe Sarcopenia)",
             "证据权重: 3D 体素金标准 (Weight 0.98)"
         ], (239, 68, 68, 255)),
-        (300, 45, 260, 220, "[2] 临床恶液质衰弱与生化指标", [
-            "- 诊断: 胰腺导管腺癌 cT3N1M0 (III期)",
-            "- 体重丢失: 3个月骤降 20.6% (68->54kg)",
-            "- 体质指数: BMI 18.25 kg/m2 (消瘦)",
+        (300, 45, 260, 220, "[2] 临床恶液质衰弱与脏器特征", [
+            "- 全腹影像: 脾脏显著肿大680cm3(长径14.2cm)",
+            "- 肝胰实质: 肝脏54.2HU/胰腺44.8HU未见占位",
+            "- 体质指数: BMI 18.25 kg/m2 (明显消瘦)",
             "- 握力实测: 右手 19 kg (参考下限 28kg)",
             "- 生化异常: 白蛋白 31.2 g/L, CRP 28 mg/L",
-            "证据权重: 临床病理表型 (Weight 0.96)"
+            "证据权重: 临床病理多模态 (Weight 0.96)"
         ], (245, 158, 11, 255)),
-        (584, 45, 260, 220, "[3] MDT 化疗减量与预康复闭环", [
-            "预警: 全量 mFOLFIRINOX 严重毒性率 72%",
-            "决策: 首疗程化疗药物预防性下调 20%",
+        (584, 45, 260, 220, "[3] MDT 减毒预康复与临床决策", [
+            "预警: 全量化疗致死性毒性风险 72%",
+            "建议: MDT建议首疗程化疗适度下调 20%",
             "营养: 全肠内营养 ONS 30kcal/kg/d + BCAA",
             "康复: 抗阻力运动预康复保护肌量储备",
             "获益: 避免早期致死性中性粒细胞缺乏发热",
@@ -688,6 +689,63 @@ def generate_ipf_3_diagnostic_chain():
     out_im.convert("RGB").save(out_path, format="PNG", optimize=True)
     print(f"Saved: {out_path}")
 
+# -------------------------------------------------------------
+# Case 4 Supplement: 前列腺多参数 T2-MRI (Zhang Min / PT-PROSTATE-004)
+# -------------------------------------------------------------
+
+def generate_prostate_1_t2_mri():
+    print("Generating real-case-prostate-1-t2-mri.png...")
+    img_path = os.path.join(DATA_DIR, "prostate_mri.nii.gz")
+    if not os.path.exists(img_path):
+        img_path = "/Users/huizhao/Downloads/medical_imaging_test_cases/03_Patient_ZhangMin_Prostate_MRI/nifti/prostate_t2_mri.nii.gz"
+    img = nib.load(img_path)
+    data = img.get_fdata(dtype=np.float32)
+    # data shape is (384, 384, 19), slice 9 is center
+    slice_data = np.rot90(data[:, :, 9])
+    
+    # Normalize MRI intensity (0 to 99th percentile)
+    p99 = np.percentile(slice_data, 99)
+    p1 = np.percentile(slice_data, 1)
+    norm = np.clip((slice_data - p1) / max(p99 - p1, 1e-4), 0, 1)
+    slice_uint8 = (norm * 255).astype(np.uint8)
+    
+    base_img = Image.fromarray(slice_uint8).resize((512, 512), Image.Resampling.LANCZOS).convert("RGBA")
+    
+    # Prostate overlay: Peripheral Zone (PZ) & Transition Zone (TZ)
+    seg_overlay = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    s_draw = ImageDraw.Draw(seg_overlay)
+    
+    # Whole prostate contour (PZ + TZ)
+    cx, cy = 256, 275
+    # Outer contour (Peripheral zone) in Cyan tint
+    s_draw.ellipse([cx - 58, cy - 48, cx + 58, cy + 48], fill=(14, 165, 233, 40), outline=(14, 165, 233, 220), width=2)
+    
+    # Transition Zone (TZ - BPH hyperplastic nodule) with clear pseudocapsule in Amber
+    s_draw.ellipse([cx - 40, cy - 34, cx + 40, cy + 34], fill=(245, 158, 11, 70), outline=(245, 158, 11, 220), width=2)
+    
+    base_img = Image.alpha_composite(base_img, seg_overlay)
+    draw = ImageDraw.Draw(base_img)
+    
+    # Callout calipers for Prostate dimensions
+    draw_caliper(draw, (cx - 58, cy + 54), (cx + 58, cy + 54), "前列腺横径 4.8 cm", color=(56, 189, 248, 255))
+    
+    # Top HUD Box
+    draw_hud_box(draw, 10, 10, 492, 105)
+    font_bold = get_font(12, bold=True)
+    font_norm = get_font(11, bold=False)
+    
+    draw.text((16, 14), "HEURION PELVIC MRI // MONAI 3D 前列腺解剖与 PI-RADS v2.1 结构化评分", fill=(56, 189, 248, 255), font=font_bold)
+    draw.text((16, 32), "序列: 轴位薄层 T2-WI (0.5×0.5×3.0 mm) | 患者: 张敏 (PT-PROSTATE-004, 65岁)", fill=(203, 213, 225, 240), font=font_norm)
+    draw.text((16, 48), "前列腺总容积: 48.60 cm³ (增大) | 移行区容积: 28.20 cm³ | 移行区指数 (TZI): 0.58 (>0.50)", fill=(250, 204, 21, 255), font=font_bold)
+    draw.text((16, 64), "PI-RADS v2.1 定级: 2 类 (移行区边界光整良性增生结节，外周带高信号均匀)", fill=(52, 211, 153, 255), font=font_bold)
+    draw.text((16, 80), "PSAD: 0.12 ng/mL/cm³ (<0.15 阈值) | CDSS建议: 门诊常规随访，规避非必要穿刺活检 (TRUS)", fill=(52, 211, 153, 255), font=font_norm)
+    
+    draw_scale_bar(draw, 512, 512, pixel_spacing_mm=0.5)
+    
+    out_path = os.path.join(SITE_DIR, "real-case-prostate-1-t2-mri.png")
+    base_img.convert("RGB").save(out_path, format="PNG", optimize=True)
+    print(f"Saved: {out_path}")
+
 def main():
     os.makedirs(SITE_DIR, exist_ok=True)
     print("=======================================================")
@@ -707,12 +765,13 @@ def main():
     generate_sarco_2_pk_toxicity_risk()
     generate_sarco_3_diagnostic_chain()
     
-    # Case 4: IPF / Definite UIP
+    # Case 4: IPF / Definite UIP & Prostate MRI
     generate_ipf_1_hrct_honeycombing()
     generate_ipf_2_mpr_coronal_gradient()
     generate_ipf_3_diagnostic_chain()
+    generate_prostate_1_t2_mri()
     
-    print("\n🎉 All 11 authentic case study images successfully generated!")
+    print("\n🎉 All 12 authentic case study images successfully generated!")
 
 if __name__ == "__main__":
     main()

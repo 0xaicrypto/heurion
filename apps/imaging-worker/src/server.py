@@ -13,6 +13,7 @@ try:
     from .model_registry import list_registered_models, pull_model, verify_model, get_model_status
     from .dicom_io import anonymize_dicom_zip, anonymize_dicom_file
     from .task_queue import task_manager, TaskStage
+    from .clinical_audit import run_all_clinical_audits
 except (ImportError, ValueError):
     from device import get_device_info
     from engine import MONAIEngine, generate_synthetic_ct_volume
@@ -20,6 +21,7 @@ except (ImportError, ValueError):
     from model_registry import list_registered_models, pull_model, verify_model, get_model_status
     from dicom_io import anonymize_dicom_zip, anonymize_dicom_file
     from task_queue import task_manager, TaskStage
+    from clinical_audit import run_all_clinical_audits
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -1125,6 +1127,18 @@ def cancel_task_endpoint(task_id: str):
     if not success:
         raise HTTPException(status_code=400, detail=f"无法取消任务 '{task_id}' (已完成或不存在)")
     return {"status": "cancelled", "task_id": task_id}
+
+@app.get("/api/v1/clinical/audit-cases")
+def audit_cases_endpoint(cases_dir: Optional[str] = "/Users/huizhao/Downloads/medical_imaging_test_cases"):
+    """
+    Executes full clinical benchmark audit across all 4 downloaded test cases,
+    validating physiological plausibility, anatomical scan boundaries,
+    and SaMD clinical decision support compliance against doctor feedback.
+    """
+    try:
+        return run_all_clinical_audits(cases_root_dir=cases_dir or "/Users/huizhao/Downloads/medical_imaging_test_cases")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"临床审计执行异常: {str(e)}")
 
 def start_server():
     port = int(os.environ.get("PORT", "8004"))
