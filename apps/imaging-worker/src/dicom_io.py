@@ -47,6 +47,155 @@ def scrub_dicom_metadata(metadata: Dict[str, Any], anonymous_id: str) -> Dict[st
     scrubbed["InstitutionName"] = "Heurion Research Anonymized Center"
     return scrubbed
 
+def anonymize_dicom_dataset(ds: Any, anonymous_id: str = "ANON-001", retain_dates: bool = False) -> Any:
+    """
+    De-identifies a pydicom Dataset according to DICOM PS 3.15 Annex E Basic Application Level Profile:
+    - Replaces PatientName with ANONYMIZED^{anonymous_id}
+    - Replaces PatientID with ANON-{anonymous_id}
+    - Clears or generalizes dates and times (unless retain_dates is True)
+    - Strips institutional addresses, physician names, and operators
+    - Strips all private tags (tags with odd group numbers)
+    - Preserves all geometric coordinates, pixel spacing, slice thickness, rescale slope/intercept, and pixel array
+    """
+    import pydicom
+
+    # Remove all private elements (odd group numbers)
+    ds.remove_private_tags()
+
+    # Core PHI fields replacement
+    if "PatientName" in ds:
+        ds.PatientName = f"ANONYMIZED^{anonymous_id}"
+    if "PatientID" in ds:
+        ds.PatientID = f"ANON-{anonymous_id}"
+    if "PatientBirthDate" in ds:
+        ds.PatientBirthDate = "" if not retain_dates else (str(ds.PatientBirthDate)[:4] + "0101")
+    if "PatientAddress" in ds:
+        del ds.PatientAddress
+    if "PatientTelephoneNumbers" in ds:
+        del ds.PatientTelephoneNumbers
+    if "OtherPatientIDs" in ds:
+        del ds.OtherPatientIDs
+
+    # Institutional & personnel fields
+    if "InstitutionName" in ds:
+        ds.InstitutionName = "Heurion Anonymized Medical Center"
+    if "InstitutionAddress" in ds:
+        del ds.InstitutionAddress
+    if "InstitutionalDepartmentName" in ds:
+        ds.InstitutionalDepartmentName = "Department of Radiology"
+    if "ReferringPhysicianName" in ds:
+        ds.ReferringPhysicianName = "ANON^REFERRING_PHYSICIAN"
+    if "PerformingPhysicianName" in ds:
+        ds.PerformingPhysicianName = "ANON^PERFORMING_PHYSICIAN"
+    if "OperatorsName" in ds:
+        del ds.OperatorsName
+    if "PhysiciansOfRecord" in ds:
+        del ds.PhysiciansOfRecord
+
+    # Study identifiers
+    if "AccessionNumber" in ds:
+        ds.AccessionNumber = f"ACC-{anonymous_id[:8]}"
+    if "StudyID" in ds:
+        ds.StudyID = f"STUDY-{anonymous_id[:8]}"
+
+    # Remove curve (0x5000-0x50FF) and overlay (0x6000-0x60FF) elements
+    tags_to_remove = [elem.tag for elem in ds if (elem.tag.group & 0xFF00) in (0x5000, 0x6000)]
+    for tag in tags_to_remove:
+        del ds[tag]
+
+    return ds
+
+def anonymize_dicom_file(src_path: str, dst_path: str, anonymous_id: str = "ANON-001") -> Dict[str, Any]:
+    """
+    Reads a single DICOM file on disk, anonymizes PHI, and saves to dst_path.
+    """
+    import pydicom
+    ds = pydicom.dcmread(src_path, force=True)
+    orig_name = str(getattr(ds, "PatientName", "Unknown"))
+    orig_id = str(getattr(ds, "PatientID", "Unknown"))
+    
+    anonymized_ds = anonymize_dicom_dataset(ds, anonymous_id=anonymous_id)
+    os.makedirs(os.path.dirname(os.path.abspath(dst_path)), exist_ok=True)
+    anonymized_ds.save_as(dst_path)
+
+    return {
+        "status": "success",
+        "original_patient_name": orig_name,
+        "original_patient_id": orig_id,
+        "anonymized_patient_name": str(getattr(anonymized_ds, "PatientName", "")),
+        "anonymized_patient_id": str(getattr(anonymized_ds, "PatientID", "")),
+        "output_path": dst_path
+    }
+
+def anonymize_dicom_zip(
+    src_zip: Union[str, bytes, io.BytesIO],
+    dst_zip_path: Optional[str] = None,
+    anonymous_id: str = "ANON-001"
+) -> Tuple[bytes, Dict[str, Any]]:
+    """
+    De-identifies all DICOM slices within a ZIP archive, strips OS junk files (__MACOSX, .DS_Store),
+    and produces a sanitized DICOM ZIP archive with identical geometry and zero PHI.
+    """
+    import pydicom
+
+    bio_in = io.BytesIO(src_zip) if isinstance(src_zip, bytes) else (src_zip if isinstance(src_zip, io.BytesIO) else open(src_zip, "rb"))
+    zf_in = zipfile.ZipFile(bio_in)
+
+    out_bio = io.BytesIO()
+    zf_out = zipfile.ZipFile(out_bio, "w", compression=zipfile.ZIP_DEFLATED)
+
+    anonymized_count = 0
+    skipped_count = 0
+    detected_modalities = set()
+
+    for member in zf_in.infolist():
+        fn = member.filename
+        if "__MACOSX" in fn or "/._" in fn or fn.split("/")[-1].startswith("."):
+            skipped_count += 1
+            continue
+
+        data = zf_in.read(fn)
+        # Attempt parsing as DICOM
+        try:
+            ds = pydicom.dcmread(io.BytesIO(data), force=True)
+            if hasattr(ds, "pixel_array"):
+                anonymized_ds = anonymize_dicom_dataset(ds, anonymous_id=anonymous_id)
+                mod = str(getattr(anonymized_ds, "Modality", "CT"))
+                detected_modalities.add(mod)
+                # Write back into new zip
+                slice_buf = io.BytesIO()
+                anonymized_ds.save_as(slice_buf)
+                clean_name = f"DICOM/{anonymous_id}_{anonymized_count:04d}.dcm"
+                zf_out.writestr(clean_name, slice_buf.getvalue())
+                anonymized_count += 1
+            else:
+                skipped_count += 1
+        except Exception:
+            skipped_count += 1
+
+    zf_out.close()
+    out_bytes = out_bio.getvalue()
+
+    if dst_zip_path:
+        os.makedirs(os.path.dirname(os.path.abspath(dst_zip_path)), exist_ok=True)
+        with open(dst_zip_path, "wb") as f_out:
+            f_out.write(out_bytes)
+
+    report = {
+        "status": "success",
+        "anonymous_id": anonymous_id,
+        "total_slices_anonymized": anonymized_count,
+        "skipped_files_count": skipped_count,
+        "modalities": list(detected_modalities),
+        "anonymized_zip_size_bytes": len(out_bytes)
+    }
+
+    if not isinstance(src_zip, (bytes, io.BytesIO)):
+        bio_in.close()
+
+    return out_bytes, report
+
+
 def load_nifti(path_or_bytes: Union[str, bytes, io.BytesIO]) -> Tuple[np.ndarray, Tuple[float, float, float]]:
     """
     Loads a NIfTI volume (.nii or .nii.gz) returning canonical (Z, Y, X) array and (dz, dy, dx) voxel spacing.

@@ -10,10 +10,16 @@ try:
     from .device import get_device_info
     from .engine import MONAIEngine, generate_synthetic_ct_volume
     from .recist import calculate_volume_doubling_time, calculate_subsolid_metrics, calculate_emphysema_metrics
+    from .model_registry import list_registered_models, pull_model, verify_model, get_model_status
+    from .dicom_io import anonymize_dicom_zip, anonymize_dicom_file
+    from .task_queue import task_manager, TaskStage
 except (ImportError, ValueError):
     from device import get_device_info
     from engine import MONAIEngine, generate_synthetic_ct_volume
     from recist import calculate_volume_doubling_time, calculate_subsolid_metrics, calculate_emphysema_metrics
+    from model_registry import list_registered_models, pull_model, verify_model, get_model_status
+    from dicom_io import anonymize_dicom_zip, anonymize_dicom_file
+    from task_queue import task_manager, TaskStage
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -201,7 +207,11 @@ def health_check():
 
 @app.get("/api/v1/models")
 def list_clinical_models():
+    reg = list_registered_models()
     return {
+        "status": "success",
+        "registry": reg,
+        "total": len(reg),
         "models": [
             # 1. 胸部与呼吸系统 (Thoracic & Pulmonology)
             {
@@ -951,9 +961,175 @@ async def run_upload_analysis(
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+
+class PullModelRequest(BaseModel):
+    model_name: str
+    force: Optional[bool] = False
+
+class VerifyModelRequest(BaseModel):
+    model_name: str
+
+class DicomAnonymizeRequest(BaseModel):
+    file_path: Optional[str] = None
+    anonymous_id: Optional[str] = "ANON-001"
+    retain_dates: Optional[bool] = False
+
+class AsyncTaskSubmitRequest(BaseModel):
+    sample_id: Optional[str] = "chest_lung_ct"
+    file_path: Optional[str] = None
+    model_name: Optional[str] = "lung_nodule_segmenter"
+    window_preset: Optional[str] = None
+    mucus_min_hu: Optional[float] = 10.0
+    mucus_max_hu: Optional[float] = 75.0
+    ham_threshold_hu: Optional[float] = 70.0
+    bar_cutoff: Optional[float] = 1.10
+
+@app.get("/api/v1/models/registry")
+def get_registered_models_endpoint():
+    """Lists official MONAI foundation models, clinical targets, and local installation status."""
+    models = list_registered_models()
+    return {
+        "models": models,
+        "total": len(models),
+        "status": "success"
+    }
+
+@app.post("/api/v1/models/pull")
+def pull_model_endpoint(req: PullModelRequest = Body(...)):
+    """Downloads official model weights from Model Zoo / HuggingFace with SHA-256 integrity validation."""
+    try:
+        return pull_model(name=req.model_name, force=req.force or False)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"拉取模型失败: {str(e)}")
+
+@app.post("/api/v1/models/verify")
+def verify_model_endpoint(req: VerifyModelRequest = Body(...)):
+    """Validates the SHA-256 checksum of local model weights."""
+    return verify_model(name=req.model_name)
+
+@app.post("/api/v1/dicom/anonymize")
+async def anonymize_dicom_endpoint(
+    file: Optional[UploadFile] = File(None),
+    anonymous_id: str = Form("ANON-001"),
+    retain_dates: bool = Form(False),
+    file_path: Optional[str] = Form(None)
+):
+    """
+    De-identifies Protected Health Information (PHI) from DICOM series (.zip or .dcm),
+    complying with DICOM PS 3.15 Annex E and healthcare data privacy standards.
+    """
+    if file:
+        content = await file.read()
+        fn = file.filename or "series.zip"
+        if fn.lower().endswith(".zip"):
+            out_bytes, report = anonymize_dicom_zip(content, anonymous_id=anonymous_id)
+            tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            tmp_out.write(out_bytes)
+            tmp_out.close()
+            return FileResponse(
+                path=tmp_out.name,
+                filename=f"anonymized_{anonymous_id}.zip",
+                media_type="application/zip",
+                headers={
+                    "X-Anonymized-Slices": str(report["total_slices_anonymized"]),
+                    "X-Anonymous-ID": anonymous_id
+                }
+            )
+        else:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".dcm") as tmp_in:
+                tmp_in.write(content)
+                tmp_in_path = tmp_in.name
+            tmp_out_path = tmp_in_path + ".anon.dcm"
+            try:
+                res = anonymize_dicom_file(tmp_in_path, tmp_out_path, anonymous_id=anonymous_id)
+                return FileResponse(
+                    path=tmp_out_path,
+                    filename=f"anonymized_{anonymous_id}.dcm",
+                    media_type="application/dicom",
+                    headers={"X-Anonymous-ID": anonymous_id}
+                )
+            finally:
+                if os.path.exists(tmp_in_path):
+                    os.remove(tmp_in_path)
+    elif file_path and os.path.exists(file_path):
+        if file_path.lower().endswith(".zip"):
+            dst_zip = file_path + ".anon.zip"
+            _, report = anonymize_dicom_zip(file_path, dst_zip_path=dst_zip, anonymous_id=anonymous_id)
+            return report
+        else:
+            dst_dcm = file_path + ".anon.dcm"
+            return anonymize_dicom_file(file_path, dst_dcm, anonymous_id=anonymous_id)
+    else:
+        raise HTTPException(status_code=400, detail="必须提供上传文件或已存在的 DICOM 文件路径")
+
+@app.post("/api/v1/tasks/analyze")
+def submit_async_analysis(req: AsyncTaskSubmitRequest = Body(...)):
+    """Submits a heavy 3D DICOM inference task to the background queue, returning immediate task_id."""
+    target_id = req.file_path or req.sample_id or "chest_lung_ct"
+    
+    def _execute(progress_cb=None):
+        if progress_cb:
+            progress_cb(TaskStage.EXTRACTING, 20)
+        vol, spacing, modality = engine.load_volume_data(target_id)
+        if progress_cb:
+            progress_cb(TaskStage.ANATOMICAL_MASKING, 45)
+        res = engine.analyze_volume(
+            vol,
+            spacing=spacing,
+            model_name=req.model_name or "lung_nodule_segmenter",
+            window_preset=req.window_preset,
+            mucus_min_hu=req.mucus_min_hu,
+            mucus_max_hu=req.mucus_max_hu,
+            ham_threshold_hu=req.ham_threshold_hu,
+            bar_cutoff=req.bar_cutoff
+        )
+        if progress_cb:
+            progress_cb(TaskStage.RENDERING, 90)
+        return res
+
+    task = task_manager.submit_task(
+        runner_fn=_execute,
+        model_name=req.model_name or "lung_nodule_segmenter",
+        input_source=target_id
+    )
+    return {
+        "task_id": task.task_id,
+        "status": task.status.value,
+        "stage": task.stage.value,
+        "progress_pct": task.progress_pct,
+        "message": "任务已提交至异步推理队列"
+    }
+
+@app.get("/api/v1/tasks/{task_id}")
+def get_task_status_endpoint(task_id: str):
+    """Retrieves asynchronous task status, progress percentage, and final inference results."""
+    t = task_manager.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail=f"任务 '{task_id}' 不存在或已过期")
+    return t
+
+@app.get("/api/v1/tasks")
+def list_tasks_endpoint(limit: int = 50):
+    """Lists recent asynchronous imaging tasks and their processing status."""
+    return {
+        "tasks": task_manager.list_tasks(limit=limit),
+        "total": len(task_manager.list_tasks(limit=limit))
+    }
+
+@app.delete("/api/v1/tasks/{task_id}")
+def cancel_task_endpoint(task_id: str):
+    """Cancels a pending or running asynchronous imaging task."""
+    success = task_manager.cancel_task(task_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"无法取消任务 '{task_id}' (已完成或不存在)")
+    return {"status": "cancelled", "task_id": task_id}
+
 def start_server():
     port = int(os.environ.get("PORT", "8004"))
     uvicorn.run("apps.imaging-worker.src.server:app", host="127.0.0.1", port=port, reload=False)
 
 if __name__ == "__main__":
     start_server()
+

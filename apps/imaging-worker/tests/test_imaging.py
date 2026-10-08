@@ -237,3 +237,142 @@ def test_cascaded_anatomical_masking():
     assert res_liver["status"] == "success"
     assert res_liver["recist_metrics"]["has_lesion"] in (True, False)
 
+
+def test_model_registry_and_endpoints():
+    from model_registry import list_registered_models, pull_model, verify_model, OFFICIAL_MODEL_REGISTRY
+    models = list_registered_models()
+    assert len(models) >= 5
+    names = [m["name"] for m in models]
+    assert "lung_nodule_ct" in names
+    assert "totalsegmentator" in names
+    assert "vista3d" in names
+
+    client = TestClient(app)
+    # Test GET /api/v1/models
+    res = client.get("/api/v1/models")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["total"] >= 5
+
+    # Test POST /api/v1/models/pull
+    res_pull = client.post("/api/v1/models/pull", json={"model_name": "spleen_ct", "force": False})
+    assert res_pull.status_code == 200
+    pull_data = res_pull.json()
+    assert pull_data["status"] in ("success", "already_installed")
+
+    # Test POST /api/v1/models/verify
+    res_v = client.post("/api/v1/models/verify", json={"model_name": "spleen_ct"})
+    assert res_v.status_code == 200
+    assert "installed" in res_v.json()
+
+
+def test_dicom_anonymization_and_endpoint():
+    import io
+    import zipfile
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, CTImageStorage, generate_uid
+    from dicom_io import anonymize_dicom_dataset, anonymize_dicom_zip
+
+    # Create synthetic pydicom dataset with PHI
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.file_meta.MediaStorageSOPClassUID = CTImageStorage
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.SOPClassUID = CTImageStorage
+    ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID
+    ds.Modality = "CT"
+    ds.PatientName = "Zhang^San"
+    ds.PatientID = "HOSP-998877"
+    ds.PatientBirthDate = "19750512"
+    ds.InstitutionName = "First Affiliated Hospital"
+    ds.ReferringPhysicianName = "Dr^Li"
+    ds.Rows = 16
+    ds.Columns = 16
+    ds.BitsAllocated = 16
+    ds.BitsStored = 16
+    ds.HighBit = 15
+    ds.PixelRepresentation = 1
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.PixelSpacing = [1.0, 1.0]
+    ds.SliceThickness = "2.0"
+    ds.ImagePositionPatient = [0.0, 0.0, 10.0]
+    ds.PixelData = np.zeros((16, 16), dtype=np.int16).tobytes()
+
+    # Test in-memory dataset anonymization
+    anon_ds = anonymize_dicom_dataset(ds, anonymous_id="TEST01")
+    assert "ANONYMIZED^TEST01" == str(anon_ds.PatientName)
+    assert "ANON-TEST01" == str(anon_ds.PatientID)
+    assert "Heurion" in str(anon_ds.InstitutionName)
+
+    # Test zip anonymization
+    buf = io.BytesIO()
+    ds.save_as(buf, write_like_original=False)
+    dcm_bytes = buf.getvalue()
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("slice_001.dcm", dcm_bytes)
+        zf.writestr("__MACOSX/._slice_001.dcm", b"junk")
+    
+    zip_bytes = zip_buf.getvalue()
+    out_bytes, report = anonymize_dicom_zip(zip_bytes, anonymous_id="BATCH01")
+    assert report["total_slices_anonymized"] == 1
+    assert report["skipped_files_count"] == 1
+    assert len(out_bytes) > 0
+
+    # Test API endpoint
+    client = TestClient(app)
+    res = client.post(
+        "/api/v1/dicom/anonymize",
+        data={"anonymous_id": "API01", "retain_dates": "false"},
+        files={"file": ("test_series.zip", zip_bytes, "application/zip")}
+    )
+    assert res.status_code == 200
+    assert res.headers["x-anonymous-id"] == "API01"
+    assert res.headers["x-anonymized-slices"] == "1"
+
+
+def test_async_task_queue_and_endpoints():
+    client = TestClient(app)
+
+    # 1. Submit async inference task
+    res_submit = client.post("/api/v1/tasks/analyze", json={
+        "sample_id": "chest_lung_ct",
+        "model_name": "lung_nodule_segmenter"
+    })
+    assert res_submit.status_code == 200
+    data = res_submit.json()
+    assert "task_id" in data
+    assert data["status"] in ("queued", "running")
+    task_id = data["task_id"]
+
+    # 2. Poll task status
+    import time
+    max_wait = 10
+    start = time.time()
+    final_task = None
+    while time.time() - start < max_wait:
+        res_poll = client.get(f"/api/v1/tasks/{task_id}")
+        assert res_poll.status_code == 200
+        poll_data = res_poll.json()
+        if poll_data["status"] == "completed":
+            final_task = poll_data
+            break
+        time.sleep(0.3)
+
+    assert final_task is not None
+    assert final_task["status"] == "completed"
+    assert final_task["progress_pct"] == 100
+    assert "recist_metrics" in final_task["result"]
+    assert "key_slice_png_base64" in final_task["result"]
+
+    # 3. List tasks
+    res_list = client.get("/api/v1/tasks")
+    assert res_list.status_code == 200
+    tasks_list = res_list.json()
+    assert any(t["task_id"] == task_id for t in tasks_list["tasks"])
+
+
