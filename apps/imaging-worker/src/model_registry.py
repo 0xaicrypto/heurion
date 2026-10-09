@@ -301,7 +301,8 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
 
 def get_model_cache_dir() -> Path:
     """Returns the local cache directory for storing model weights."""
-    cache_dir = DEFAULT_CACHE_DIR
+    raw = os.environ.get("HEURION_MODEL_DIR")
+    cache_dir = Path(raw) if raw else DEFAULT_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 

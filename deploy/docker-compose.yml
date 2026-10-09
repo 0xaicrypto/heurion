@@ -65,6 +65,9 @@ services:
       - OMP_NUM_THREADS=2
       - MKL_NUM_THREADS=2
       - OPENBLAS_NUM_THREADS=2
+      - HEURION_MODEL_DIR=/app/models
+    volumes:
+      - imaging-models:/app/models
     networks: [web]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health')"]
@@ -96,6 +99,7 @@ volumes:
   data:
   caddy-data:
   caddy-config:
+  imaging-models:
 
 networks:
   web:

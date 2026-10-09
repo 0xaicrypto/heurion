@@ -265,13 +265,13 @@ class MonaiNeuralInferencePipeline:
             return self.models["spleen"]
 
         try:
-            from .model_registry import DEFAULT_CACHE_DIR, OFFICIAL_MODEL_REGISTRY
+            from .model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
         except (ImportError, ValueError):
-            from model_registry import DEFAULT_CACHE_DIR, OFFICIAL_MODEL_REGISTRY
+            from model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
 
         spec = OFFICIAL_MODEL_REGISTRY.get("spleen_ct")
         file_name = spec.file_name if spec else "spleen_ct_v0.4.0.pt"
-        weights_path = DEFAULT_CACHE_DIR / file_name
+        weights_path = get_model_cache_dir() / file_name
 
         if not weights_path.exists() or weights_path.stat().st_size < 1024 * 1024:
             raise RuntimeError(

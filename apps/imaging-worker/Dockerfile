@@ -44,13 +44,33 @@ RUN uv pip install --no-cache --python /opt/venv/bin/python \
       "scipy>=1.12.0" \
       "python-multipart>=0.0.32"
 
-# 3. 复制代码与创建数据目录
+# 3. 复制代码与创建模型和数据目录
 COPY apps/imaging-worker/src /app/apps/imaging-worker/src
-RUN mkdir -p /app/apps/imaging-worker/data
+RUN mkdir -p /app/apps/imaging-worker/data /app/models
+
+ENV HEURION_MODEL_DIR=/app/models
+
+# 预先下载核心基座临床模型（脾脏、脑胶质瘤、肺结节、全身多器官，约 188MB）
+# 确保生产环境容器无需等待网络拉取即可立即执行真实 3D 卷积推理
+RUN python3 -c "\
+import sys, time; \
+sys.path.insert(0, '/app/apps/imaging-worker/src'); \
+from model_registry import pull_model; \
+for m in ['spleen_ct', 'brats_mri', 'lung_nodule_ct', 'wholebody_ct']: \
+    for attempt in range(3): \
+        try: \
+            print(f'Baking model {m} (attempt {attempt+1})...'); \
+            pull_model(m); \
+            break; \
+        except Exception as e: \
+            if attempt == 2: \
+                print(f'Warning: failed to bake {m} during build ({e}), will be pulled at runtime/deploy'); \
+            else: \
+                time.sleep(2)"
 
 WORKDIR /app/apps/imaging-worker
 
-# 4. 创建非 root 用户运行，确保隔离安全性
+# 4. 创建非 root 用户运行，确保隔离安全性并赋予模型目录与数据目录写权限
 RUN useradd -m -u 1000 imaginguser && \
     chown -R imaginguser:imaginguser /app /opt/venv
 
