@@ -240,7 +240,7 @@ def test_strict_neural_inference_and_missing_weight_rejection():
 
     # Verify that requesting an uninstalled model strictly raises RuntimeError rather than degrading to heuristic fake rules
     with pytest.raises(RuntimeError) as exc_info:
-        engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="liver_lesion_segmenter")
+        engine.analyze_volume(volume=vol, spacing=(1.5, 0.8, 0.8), model_name="uninstalled_custom_model")
     assert "权重尚未安装" in str(exc_info.value)
 
 
@@ -380,5 +380,45 @@ def test_async_task_queue_and_endpoints():
     assert res_list.status_code == 200
     tasks_list = res_list.json()
     assert any(t["task_id"] == task_id for t in tasks_list["tasks"])
+
+
+def test_gz_and_tar_gz_volume_loading():
+    import gzip, tarfile, tempfile, shutil
+    from pathlib import Path
+    from dicom_io import load_volume, load_nifti
+    
+    # 1. Test .gz extension loading (where filename is just .gz, not .nii.gz)
+    src_sample = Path(__file__).parent.parent / "data" / "lidc_lung_nodule_mask.nii.gz"
+    with tempfile.NamedTemporaryFile(suffix=".gz", delete=False) as tmp_gz:
+        shutil.copyfile(src_sample, tmp_gz.name)
+        tmp_gz_path = tmp_gz.name
+    try:
+        vol, spacing, mod = load_volume(tmp_gz_path)
+        assert vol.shape == (133, 512, 512)
+        assert mod in ("CT", "MRI")
+    finally:
+        if os.path.exists(tmp_gz_path):
+            os.remove(tmp_gz_path)
+
+    # 2. Test upload with .tar.gz archive
+    client = TestClient(app)
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_tar:
+        with tarfile.open(fileobj=tmp_tar, mode="w:gz") as tf:
+            tf.add(src_sample, arcname="scan.nii.gz")
+        tar_path = tmp_tar.name
+
+    try:
+        with open(tar_path, "rb") as f_tar:
+            res_up = client.post(
+                "/api/v1/analyze/upload",
+                files={"file": ("archive.tar.gz", f_tar, "application/gzip")},
+                data={"model_name": "lung_nodule_segmenter"}
+            )
+        assert res_up.status_code == 200
+        res_data = res_up.json()
+        assert res_data["status"] == "success"
+    finally:
+        if os.path.exists(tar_path):
+            os.remove(tar_path)
 
 

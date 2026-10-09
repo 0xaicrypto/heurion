@@ -853,9 +853,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <label for="imgFileInput" style="display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--line-strong); padding: 18px 14px; border-radius: 6px; background: var(--hover); cursor: pointer; text-align: center">
             ${icon('upload', { size: 24, style: 'color: var(--blue); margin-bottom: 6px' })}
             <span style="font-size: 13px; font-weight: 500">点击选择或拖拽医学影像文件至此</span>
-            <span class="muted small" style="margin-top: 4px">支持高分辨率序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或整套 DICOM 序列 ZIP 压缩包 (.zip)</span>
+            <span class="muted small" style="margin-top: 4px">支持高分辨率序列：NIfTI (.nii, .nii.gz, .gz)、单个 DICOM (.dcm) 或整套 DICOM 序列压缩包 (.zip, .tar.gz)</span>
           </label>
-          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="display: none">
+          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.gz,.dcm,.dicom,.zip,.tar,.tar.gz,.tgz,application/gzip,application/x-gzip,application/zip,application/x-tar,application/octet-stream" style="display: none">
           <div id="imgUploadFileName" class="muted small" style="margin-top: 6px; display: none; color: var(--teal)"></div>
           <div class="muted small" style="margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; display: flex; align-items: flex-start; gap: 5px">
             ${icon('info', { size: 13, style: 'margin-top: 2px; color: var(--blue); flex-shrink: 0' })}
@@ -877,8 +877,13 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               </option>
             `).join('') : `
               <option value="chest_lung_ct" selected>全胸部 HRCT 扫描 (269层 512x512，83.6MB)</option>
-              <option value="nsclc_lung_ct">非小细胞肺癌随访增强 CT (180层 512x512，62.4MB)</option>
+              <option value="lidc_lung_nodule_ct">LIDC 肺孤立性结节 CT (133层 512x512，36.2MB)</option>
+              <option value="copd_emphysema_ct">慢阻肺 COPD 吸气相 HRCT (350层 350x350，30.6MB)</option>
+              <option value="liver_tumor_ct">肝脏肿瘤强化 CT (588层 512x512，207.6MB)</option>
               <option value="spleen_test">腹部增强 CT 扫描 (96层 512x512，29.6MB)</option>
+              <option value="cardiac_heart_mri">左心房高分辨心脏 MRI (130层 320x320，14.8MB)</option>
+              <option value="brats_brain_mri">BraTS 脑胶质瘤多模态 MRI (155层 240x240，9.4MB)</option>
+              <option value="hippocampus_brain_mri">海马区脑高分辨 MRI (37层 36x57，0.1MB)</option>
               <option value="prostate_mri">前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
             `}
           </select>
@@ -886,9 +891,13 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             <span class="muted small">快捷选择：</span>
             <button type="button" class="pt-sample-chip active" data-sid="chest_lung_ct">${icon('lung', { size: 12 })} 全胸部 HRCT</button>
             <button type="button" class="pt-sample-chip" data-sid="lidc_lung_nodule_ct">${icon('lung', { size: 12 })} LIDC 肺结节 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="copd_emphysema_ct">${icon('lung', { size: 12 })} 慢阻肺 COPD</button>
+            <button type="button" class="pt-sample-chip" data-sid="liver_tumor_ct">${icon('abdomen', { size: 12 })} 肝脏肿瘤 CT</button>
             <button type="button" class="pt-sample-chip" data-sid="spleen_test">${icon('abdomen', { size: 12 })} 腹部增强 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="cardiac_heart_mri">${icon('scan', { size: 12 })} 心脏 MRI</button>
+            <button type="button" class="pt-sample-chip" data-sid="brats_brain_mri">${icon('brain', { size: 12 })} BraTS 脑胶质瘤</button>
+            <button type="button" class="pt-sample-chip" data-sid="hippocampus_brain_mri">${icon('brain', { size: 12 })} 海马区 MRI</button>
             <button type="button" class="pt-sample-chip" data-sid="prostate_mri">${icon('scan', { size: 12 })} 前列腺 T2-MRI</button>
-            <button type="button" class="pt-sample-chip" data-sid="brats_brain_mri">${icon('scan', { size: 12 })} BraTS 脑胶质瘤 MRI</button>
           </div>
           <div class="muted small" style="margin-top: 6px; font-size: 11.5px">预置真实临床三维体素扫描数据。系统将完整 3D 原始体素序列加密归档至该患者档案。</div>
         </div>
@@ -1042,18 +1051,21 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       let autoMatchedLabel = ''
       if (currentSpecialty === 'auto') {
         if (!isUpload) {
-          if (sid === 'chest_lung_ct' || sid === 'lidc_lung_nodule_ct' || sid === 'nsclc_lung_ct') {
+          if (sid === 'chest_lung_ct' || sid === 'lidc_lung_nodule_ct' || sid === 'copd_emphysema_ct' || sid === 'nsclc_lung_ct') {
             matchedCategory = 'chest'
             autoMatchedLabel = '胸部与呼吸'
-          } else if (sid === 'spleen_test') {
+          } else if (sid === 'spleen_test' || sid === 'liver_tumor_ct') {
             matchedCategory = 'abdomen'
-            autoMatchedLabel = '腹部与泌尿'
+            autoMatchedLabel = '腹部与消化'
           } else if (sid === 'prostate_mri') {
             matchedCategory = 'abdomen'
             autoMatchedLabel = '前列腺与盆腔'
-          } else if (sid === 'brats_brain_mri') {
+          } else if (sid === 'brats_brain_mri' || sid === 'hippocampus_brain_mri') {
             matchedCategory = 'brain'
             autoMatchedLabel = '颅脑多模态 MRI'
+          } else if (sid === 'cardiac_heart_mri') {
+            matchedCategory = 'brain'
+            autoMatchedLabel = '心血管高分辨 MRI'
           } else {
             matchedCategory = 'all'
           }
@@ -1064,11 +1076,11 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
             autoMatchedLabel = '胸部与呼吸'
           } else if (/abdom|spleen|liver|pancrea|kidney|renal|kits/.test(fn)) {
             matchedCategory = 'abdomen'
-            autoMatchedLabel = '腹部与泌尿'
+            autoMatchedLabel = '腹部与消化'
           } else if (/prostat|pelvi|tz|bph/.test(fn)) {
             matchedCategory = 'abdomen'
             autoMatchedLabel = '前列腺与盆腔'
-          } else if (/brain|neuro|head|cranial|brats|glioma|stroke/.test(fn)) {
+          } else if (/brain|neuro|head|cranial|brats|glioma|stroke|hippo/.test(fn)) {
             matchedCategory = 'brain'
             autoMatchedLabel = '颅脑与神经'
           } else if (/cardiac|heart|cine|valve|coronary|lvef/.test(fn)) {
@@ -1100,7 +1112,11 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       if (!isUpload) {
         if (sid === 'chest_lung_ct') preferredModelId = 'bronchiectasis_mucus_analyzer'
         else if (sid === 'lidc_lung_nodule_ct') preferredModelId = 'lung_nodule_segmenter'
+        else if (sid === 'copd_emphysema_ct') preferredModelId = 'copd_emphysema_analyzer'
+        else if (sid === 'liver_tumor_ct') preferredModelId = 'liver_lesion_segmenter'
+        else if (sid === 'cardiac_heart_mri') preferredModelId = 'cardiac_mri_segmentation'
         else if (sid === 'brats_brain_mri') preferredModelId = 'brain_tumor_brats'
+        else if (sid === 'hippocampus_brain_mri') preferredModelId = 'brain_tumor_segmenter'
         else if (sid === 'nsclc_lung_ct') preferredModelId = 'nsclc_recist_analyzer'
         else if (sid === 'spleen_test') preferredModelId = 'multi_organ_ct'
         else if (sid === 'prostate_mri') preferredModelId = 'prostate_mri_segmenter'
@@ -1108,9 +1124,11 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         if (/bronch|mucus|ham|abpa/.test(fn)) preferredModelId = 'bronchiectasis_mucus_analyzer'
         else if (/nodule/.test(fn)) preferredModelId = 'lung_nodule_segmenter'
         else if (/copd|emphysema/.test(fn)) preferredModelId = 'copd_emphysema_analyzer'
+        else if (/liver|hepatic/.test(fn)) preferredModelId = 'liver_lesion_segmenter'
+        else if (/cardiac|heart/.test(fn)) preferredModelId = 'cardiac_mri_segmentation'
         else if (/spleen/.test(fn)) preferredModelId = 'spleen_segmenter'
         else if (/prostat/.test(fn)) preferredModelId = 'prostate_mri_segmenter'
-        else if (/brain|brats/.test(fn)) preferredModelId = 'brain_tumor_segmenter'
+        else if (/brain|brats|hippo/.test(fn)) preferredModelId = 'brain_tumor_brats'
       }
       if (!preferredModelId && filtered.length > 0 && filtered[0]) preferredModelId = filtered[0].id
 
@@ -1211,7 +1229,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           inferredHint = ` · 智能识别专科: <b>腹部与消化</b>`
         } else if (/prostat|pelvi|bph/.test(fn)) {
           inferredHint = ` · 智能识别专科: <b>前列腺与盆腔</b>`
-        } else if (/brain|neuro|head|brats/.test(fn)) {
+        } else if (/brain|neuro|head|brats|hippo/.test(fn)) {
           inferredHint = ` · 智能识别专科: <b>颅脑与神经</b>`
         } else if (/cardiac|heart|valve/.test(fn)) {
           inferredHint = ` · 智能识别专科: <b>心血管</b>`
@@ -1277,7 +1295,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       const uploadedFile = fileInput?.files?.[0]
 
       if (isUpload && !uploadedFile) {
-        notice('请先选择或拖拽要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .dcm / .zip 序列包)，或点击右上角载入演示样本快速体验。', true)
+        notice('请先选择或拖拽要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .gz / .dcm / .zip / .tar.gz 序列包)，或点击右上角载入演示样本快速体验。', true)
         return
       }
 

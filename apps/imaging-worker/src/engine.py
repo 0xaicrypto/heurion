@@ -1275,6 +1275,18 @@ class MONAIEngine:
             key_slice_idx = recist["key_slice_index"]
             neural_meta["neural_architecture"] = "MONAI SegResNet (Renal Structures CECT, 148 layers)"
             neural_meta["kidneys_volume_cm3"] = recist["total_volume_cm3"]
+        elif model_name in ("liver_lesion_segmenter", "liver_ct"):
+            f_path = kwargs.get("file_path")
+            mask_np, neural_meta = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[6])
+            if np.sum(mask_np) < 10:
+                mask_np = np.zeros_like(volume, dtype=np.uint8)
+                lesion_label = "肝实质与局灶病灶 (当前扫描视野未包含完整肝脏解剖或未见明确病灶)"
+            else:
+                lesion_label = "肝脏实质与占位病灶 (MONAI SwinUNETR / LiTS 真实神经分割)"
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
+            neural_meta["neural_architecture"] = "MONAI SwinUNETR (Liver Segment, Class 6)"
+            neural_meta["liver_volume_cm3"] = recist["total_volume_cm3"]
         elif model_name in ("prostate_mri_segmenter", "prostate_mri"):
             f_path = kwargs.get("file_path")
             mask_np, neural_meta = self.neural_pipeline.infer_prostate(f_path or volume, spacing=spacing)
@@ -1287,7 +1299,7 @@ class MONAIEngine:
             lesion_label = "脑胶质瘤全肿瘤区 (MONAI SegResNet 真实神经分割)"
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
-        elif model_name in ("cardiac_mri_segmentation", "ventricular_short_axis"):
+        elif model_name in ("cardiac_mri_segmentation", "ventricular_short_axis", "cardiac_anatomy_segmenter"):
             f_path = kwargs.get("file_path")
             mask_np, neural_meta = self.neural_pipeline.infer_cardiac(f_path or volume, spacing=spacing)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
@@ -1543,8 +1555,8 @@ class MONAIEngine:
 
         data_dir = Path(__file__).resolve().parent.parent / "data"
 
-        # 2. Check if sample ID exists in data dir (.nii.gz, .nii, .zip)
-        for ext in (".nii.gz", ".nii", ".zip"):
+        # 2. Check if sample ID exists in data dir (.nii.gz, .nii, .zip, .gz)
+        for ext in (".nii.gz", ".nii", ".zip", ".gz"):
             p = data_dir / f"{sample_id_or_path}{ext}"
             if p.exists():
                 vol, spacing, modality = load_volume(str(p), filename=f"{sample_id_or_path}{ext}")

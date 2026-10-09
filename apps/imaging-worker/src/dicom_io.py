@@ -215,10 +215,34 @@ def load_nifti(path_or_bytes: Union[str, bytes, io.BytesIO]) -> Tuple[np.ndarray
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
     else:
-        nimg = nib.load(path_or_bytes)
-        data = nimg.get_fdata(dtype=np.float32)
-        header = nimg.header
-        zooms = header.get_zooms()[:3]
+        try:
+            nimg = nib.load(path_or_bytes)
+            data = nimg.get_fdata(dtype=np.float32)
+            header = nimg.header
+            zooms = header.get_zooms()[:3]
+        except Exception:
+            # Check if file has gzip magic bytes (\x1f\x8b), e.g. files uploaded as .gz
+            is_gzip = False
+            try:
+                with open(path_or_bytes, "rb") as f_chk:
+                    is_gzip = f_chk.read(2) == b"\x1f\x8b"
+            except Exception:
+                pass
+            if is_gzip:
+                import shutil
+                with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tmp_proxy:
+                    shutil.copyfile(path_or_bytes, tmp_proxy.name)
+                    tmp_proxy_path = tmp_proxy.name
+                try:
+                    nimg = nib.load(tmp_proxy_path)
+                    data = nimg.get_fdata(dtype=np.float32)
+                    header = nimg.header
+                    zooms = header.get_zooms()[:3]
+                finally:
+                    if os.path.exists(tmp_proxy_path):
+                        os.remove(tmp_proxy_path)
+            else:
+                raise
 
     if data.ndim == 4:
         data = data[..., 0]
@@ -239,7 +263,7 @@ def load_dicom_series(folder_path: str) -> Tuple[np.ndarray, Tuple[float, float,
         if "__MACOSX" in root:
             continue
         for f in filenames:
-            if f.lower().endswith((".nii", ".nii.gz")):
+            if f.lower().endswith((".nii", ".nii.gz", ".gz")):
                 nii_candidates.append(os.path.join(root, f))
     if nii_candidates:
         vol, spacing = load_nifti(nii_candidates[0])
@@ -489,7 +513,7 @@ def load_volume(source: Union[str, bytes, io.BytesIO], filename: Optional[str] =
         # Check NIfTI (gzip magic \x1f\x8b or .nii in filename)
         header_bytes = bio.read(4)
         bio.seek(0)
-        if header_bytes.startswith(b"\x1f\x8b") or fn.endswith((".nii", ".nii.gz")):
+        if header_bytes.startswith(b"\x1f\x8b") or fn.endswith((".nii", ".nii.gz", ".gz")):
             vol, spacing = load_nifti(bio)
             modality = "MRI" if "mri" in fn else "CT"
             return vol, spacing, modality
@@ -508,7 +532,7 @@ def load_volume(source: Union[str, bytes, io.BytesIO], filename: Optional[str] =
         vol, spacing, meta = load_dicom_from_zip(source)
         return vol, spacing, meta.get("modality", "CT")
 
-    if fn.endswith((".nii", ".nii.gz")):
+    if fn.endswith((".nii", ".nii.gz", ".gz")):
         vol, spacing = load_nifti(source)
         modality = "MRI" if "mri" in fn else "CT"
         return vol, spacing, modality

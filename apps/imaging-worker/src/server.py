@@ -610,6 +610,26 @@ def list_samples():
             "default_window": "lung",
             "size_mb": round(lidc_path.stat().st_size / (1024 * 1024), 1)
         })
+    copd_path = DATA_DIR / "copd_emphysema_ct.nii.gz"
+    if copd_path.exists():
+        samples.append({
+            "id": "copd_emphysema_ct",
+            "name": "真实临床慢阻肺 COPD 吸气相 HRCT 扫描 (全肺容积与 LAA-950% 肺气肿定量)",
+            "modality": "Chest CT",
+            "default_model": "copd_emphysema_analyzer",
+            "default_window": "lung",
+            "size_mb": round(copd_path.stat().st_size / (1024 * 1024), 1)
+        })
+    liver_path = DATA_DIR / "liver_tumor_ct.nii.gz"
+    if liver_path.exists():
+        samples.append({
+            "id": "liver_tumor_ct",
+            "name": "真实临床肝脏肿瘤强化 CT 扫描 (LiTS / MSD Task03 肝实质与局灶病灶)",
+            "modality": "Abdominal CT",
+            "default_model": "liver_lesion_segmenter",
+            "default_window": "abdomen",
+            "size_mb": round(liver_path.stat().st_size / (1024 * 1024), 1)
+        })
     if spleen_path.exists():
         samples.append({
             "id": "spleen_test",
@@ -619,14 +639,15 @@ def list_samples():
             "default_window": "abdomen",
             "size_mb": round(spleen_path.stat().st_size / (1024 * 1024), 1)
         })
-    if mri_path.exists():
+    cardiac_path = DATA_DIR / "cardiac_heart_mri.nii.gz"
+    if cardiac_path.exists():
         samples.append({
-            "id": "prostate_mri",
-            "name": "真实临床前列腺 T2 加权 MRI (19层 320x320)",
-            "modality": "Pelvic MRI",
-            "default_model": "prostate_mri_segmenter",
-            "default_window": "abdomen",
-            "size_mb": round(mri_path.stat().st_size / (1024 * 1024), 1)
+            "id": "cardiac_heart_mri",
+            "name": "真实临床左心房高分辨心脏 MRI (MSD Task02 心肌与心室构型)",
+            "modality": "Cardiac MRI",
+            "default_model": "cardiac_mri_segmentation",
+            "default_window": "mediastinum",
+            "size_mb": round(cardiac_path.stat().st_size / (1024 * 1024), 1)
         })
     brats_path = DATA_DIR / "brats_brain_mri.nii.gz"
     if brats_path.exists():
@@ -638,12 +659,31 @@ def list_samples():
             "default_window": "brain",
             "size_mb": round(brats_path.stat().st_size / (1024 * 1024), 1)
         })
+    hippo_path = DATA_DIR / "hippocampus_brain_mri.nii.gz"
+    if hippo_path.exists():
+        samples.append({
+            "id": "hippocampus_brain_mri",
+            "name": "真实临床海马区脑高分辨 MRI (MSD Task04 阿尔茨海默与记忆功能区)",
+            "modality": "Brain MRI",
+            "default_model": "brain_tumor_segmenter",
+            "default_window": "brain",
+            "size_mb": round(hippo_path.stat().st_size / (1024 * 1024), 1)
+        })
+    if mri_path.exists():
+        samples.append({
+            "id": "prostate_mri",
+            "name": "真实临床前列腺 T2 加权 MRI (19层 320x320)",
+            "modality": "Pelvic MRI",
+            "default_model": "prostate_mri_segmenter",
+            "default_window": "abdomen",
+            "size_mb": round(mri_path.stat().st_size / (1024 * 1024), 1)
+        })
     return {"samples": samples}
  
 @app.get("/api/v1/samples/{sample_id}/file")
 def get_sample_file(sample_id: str):
     """Streams the raw 3D volume sample file (.nii.gz)."""
-    for ext in (".nii.gz", ".nii"):
+    for ext in (".nii.gz", ".nii", ".zip", ".gz"):
         sample_file = DATA_DIR / f"{sample_id}{ext}"
         if sample_file.exists():
             return FileResponse(
@@ -1125,6 +1165,39 @@ async def run_upload_analysis(
                     ham_threshold_hu=f_ham_thresh,
                     bar_cutoff=f_bar_cutoff
                 )
+    elif fn_lower.endswith((".tar.gz", ".tgz", ".tar")):
+        import tarfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tar_path = os.path.join(tmp_dir, "upload.tar.gz")
+            with open(tar_path, "wb") as f_out:
+                f_out.write(content)
+            with tarfile.open(tar_path, "r:*") as tf:
+                resolved_tmp = Path(tmp_dir).resolve()
+                total_uncompressed = 0
+                max_uncompressed = 500 * 1024 * 1024  # 500MB
+                for member in tf.getmembers():
+                    target_path = (resolved_tmp / member.name).resolve()
+                    if not target_path.is_relative_to(resolved_tmp):
+                        raise HTTPException(status_code=400, detail="Tar Slip detected: 非法压缩包路径")
+                    total_uncompressed += member.size
+                    if total_uncompressed > max_uncompressed:
+                        raise HTTPException(status_code=400, detail="解压体积超过上限 (Max 500MB)")
+                if hasattr(tarfile, "data_filter"):
+                    tf.extractall(tmp_dir, filter="data")
+                else:
+                    tf.extractall(tmp_dir)
+            if os.path.exists(tar_path):
+                os.remove(tar_path)
+            with INFERENCE_SEMAPHORE:
+                return engine.analyze_file(
+                    file_path=tmp_dir,
+                    model_name=model_name,
+                    window_preset=window_preset,
+                    mucus_min_hu=f_mucus_min,
+                    mucus_max_hu=f_mucus_max,
+                    ham_threshold_hu=f_ham_thresh,
+                    bar_cutoff=f_bar_cutoff
+                )
     elif fn_lower.endswith((".dcm", ".dicom")):
         with tempfile.TemporaryDirectory() as tmp_dir:
             dcm_path = os.path.join(tmp_dir, file.filename or "slice.dcm")
@@ -1141,7 +1214,8 @@ async def run_upload_analysis(
                     bar_cutoff=f_bar_cutoff
                 )
     else:
-        suffix = ".nii.gz" if fn_lower.endswith(".nii.gz") else ".nii"
+        is_gz = fn_lower.endswith((".nii.gz", ".gz")) or (len(content) >= 2 and content[:2] == b"\x1f\x8b")
+        suffix = ".nii.gz" if is_gz else ".nii"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
