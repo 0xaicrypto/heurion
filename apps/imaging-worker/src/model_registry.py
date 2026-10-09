@@ -25,21 +25,230 @@ class ModelSpec:
     file_name: str
 
 OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
+    "spleen_ct": ModelSpec(
+        name="spleen_ct",
+        display_name="MONAI 脾脏全自动三维分割与体积测算模型 (3D-UNet)",
+        modality="Abdomen CT",
+        version="v0.4.0",
+        size_mb=18.4,
+        sha256="502c312893994ec071a85c4f2e7d83a43f7789969faa73dae62f1291177f50fe",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/spleen_ct_segmentation_v0.5.3.zip"
+        ],
+        description="基于 MONAI 3D-UNet 架构的腹部薄层 CT 脾脏全自动三维分割与体积/RECIST径线测量。",
+        architecture="UNet-3D",
+        clinical_targets=["脾脏体积", "脾大 (Splenomegaly)", "门静脉高压"],
+        file_name="spleen_ct_v0.4.0.pt"
+    ),
     "lung_nodule_ct": ModelSpec(
         name="lung_nodule_ct",
-        display_name="MONAI Model Zoo 肺结节高精度智能分割 (SwinUNETR)",
+        display_name="MONAI Model Zoo 肺结节检出与分割模型 (RetinaNet / UNet)",
         modality="Chest CT",
-        version="v1.2.0",
-        size_mb=246.5,
-        sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        version="v0.5.9",
+        size_mb=79.83,
+        sha256="b5e79231466adae93a6fe8e8594029e9add142914e223b879aa0343bb2402d01",
         urls=[
-            "https://github.com/Project-MONAI/model-zoo/releases/download/v0.1.0/lung_nodule_ct_v1.2.0.pt",
-            "https://huggingface.co/monai/lung_nodule_ct/resolve/main/model.pt"
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/lung_nodule_ct_detection_v0.5.9.zip"
         ],
-        description="基于 SwinUNETR 架构的胸部薄层 CT 肺实质结节检出与分割，支持磨玻璃、部分实性与实性结节双通道量化。",
-        architecture="SwinUNETR-3D",
+        description="胸部薄层 CT 肺实质结节检出与分割，支持磨玻璃、部分实性与实性结节量化与 Lung-RADS 评估。",
+        architecture="RetinaNet-UNet-3D",
         clinical_targets=["肺结节", "磨玻璃结节 (GGO)", "部分实性结节 (PSN)", "实性结节 (SN)"],
-        file_name="lung_nodule_ct_v1.2.0.pt"
+        file_name="lung_nodule_ct_v0.5.9.pt"
+    ),
+    "swinunetr_btcv": ModelSpec(
+        name="swinunetr_btcv",
+        display_name="MONAI SwinUNETR 腹部多器官解剖分割模型 (BTCV 国际竞赛)",
+        modality="Abdomen CT",
+        version="v0.5.0",
+        size_mb=244.46,
+        sha256="52e7c3114444e41bb14f644e0dd2b7d42d70ad4b4dec0c1bfa4a552a4b92a096",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/swin_unetr_btcv_segmentation_v0.5.0.zip"
+        ],
+        description="BTCV 腹部 13 类关键实质器官（肝、脾、双肾、胰腺、胆囊、食管、胃、主动脉、下腔静脉、门静脉等）高精度语义分割。",
+        architecture="SwinUNETR-Large",
+        clinical_targets=["肝脏", "脾脏", "双肾", "胰腺", "腹部大血管"],
+        file_name="swinunetr_btcv_v0.5.0.pt"
+    ),
+    "brats_mri": ModelSpec(
+        name="brats_mri",
+        display_name="MONAI BraTS 颅脑多模态胶质瘤亚区精细分割 (T1/T1c/T2/FLAIR)",
+        modality="Brain MRI",
+        version="v0.4.8",
+        size_mb=17.97,
+        sha256="860ccb3f1c21c99d0410ad8a1ac4ef6b8fab60cec0a503b0ba42675741a750ae",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/brats_mri_segmentation_v0.4.8.zip"
+        ],
+        description="精细提取全肿瘤 (WT)、水肿浸润区、增强肿瘤核心 (ET) 与坏死区 (TC)，辅助神经外科手术边界评估。",
+        architecture="SegResNet-3D",
+        clinical_targets=["全脑胶质瘤 (WT)", "肿瘤增强核心 (ET)", "坏死囊变区 (TC)"],
+        file_name="brats_mri_v0.4.8.pt"
+    ),
+    "wholebody_ct": ModelSpec(
+        name="wholebody_ct",
+        display_name="MONAI 全身 CT 多器官全景分割模型",
+        modality="Body CT",
+        version="v0.1.9",
+        size_mb=71.74,
+        sha256="80b429fb4b080df11c9ed0b0bdaa8a615ff083921bb213a512cf285afbc4e3fe",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/wholeBody_ct_segmentation_v0.1.9.zip"
+        ],
+        description="覆盖胸腹盆骨骼、大血管与内脏器官的全景 CT 快速分割基础模型。",
+        architecture="SegResNet-3D",
+        clinical_targets=["胸部器官", "腹部器官", "纵隔血管", "骨骼解剖"],
+        file_name="wholebody_ct_v0.1.9.pt"
+    ),
+    "prostate_mri": ModelSpec(
+        name="prostate_mri",
+        display_name="MONAI 前列腺多参数 MRI 3D 解剖分带模型",
+        modality="Pelvic MRI",
+        version="v0.3.2",
+        size_mb=145.73,
+        sha256="3c18e4c658bb088f551b1d63219ef8340fe6256d016c75fc140d3da49dda696d",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/prostate_mri_anatomy_v0.3.2.zip"
+        ],
+        description="前列腺 T2W MRI 多通道解剖分割，精准划分外周带 (PZ) 与移行带 (TZ)，辅助 PI-RADS 评估。",
+        architecture="UNet-3D",
+        clinical_targets=["前列腺全腺体", "外周带 (PZ)", "移行带 (TZ)", "PI-RADS 靶区定位"],
+        file_name="prostate_mri_v0.3.2.pt"
+    ),
+    "renal_structures_cect": ModelSpec(
+        name="renal_structures_cect",
+        display_name="MONAI 增强 CT 肾脏精细解剖分割模型",
+        modality="Abdomen CECT",
+        version="v0.1.0",
+        size_mb=72.41,
+        sha256="ef934ae5b6fdf9a19b83ab9ec28b64d63dca43aea8ef3e177724c3076170a21f",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/renalStructures_CECT_segmentation_v0.1.0.zip"
+        ],
+        description="基于增强期薄层 CT 提取肾实质、肾盂、肾静脉和肾肿瘤亚区，辅助保肾手术 (PN) 规划。",
+        architecture="SegResNet-3D",
+        clinical_targets=["肾实质", "肾盂输尿管", "肾血管", "肾占位/囊肿"],
+        file_name="renal_structures_cect_v0.1.0.pt"
+    ),
+    "ventricular_short_axis": ModelSpec(
+        name="ventricular_short_axis",
+        display_name="MONAI 心脏短轴 Cine-MRI 3标签腔室分割模型",
+        modality="Cardiac MRI",
+        version="v0.3.2",
+        size_mb=6.32,
+        sha256="27d5532401fa6c1883872fa21635adbb7615981e7f385d0c58dd75b355e340b3",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/ventricular_short_axis_3label_v0.3.2.zip"
+        ],
+        description="心脏短轴稳态自由进动 (SSFP) 序列左心室 (LV)、右心室 (RV) 和心肌 (MYO) 腔室形态分割与射血分数测算。",
+        architecture="UNet-2D/3D",
+        clinical_targets=["左心室内膜", "左心室心肌", "右心室内膜", "心室容积/射血分数 (LVEF)"],
+        file_name="ventricular_short_axis_v0.3.2.pt"
+    ),
+    "wholebrainseg_large_unest": ModelSpec(
+        name="wholebrainseg_large_unest",
+        display_name="MONAI 全脑多结构 MRI 大规模分割模型 (Large UNEST)",
+        modality="Brain MRI",
+        version="v0.2.3",
+        size_mb=332.74,
+        sha256="79a52ccd77bc35d05410f39788a1b063af3eb3b809b42241335c18aed27ec422",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/wholeBrainSeg_Large_UNEST_segmentation_v0.2.3.zip"
+        ],
+        description="基于 Transformer-UNEST 架构的高精细全脑 133 类灰白质解剖亚核团分割，支持阿尔茨海默病与神经退行性病变海马体积评估。",
+        architecture="UNEST-Large-3D",
+        clinical_targets=["大脑皮层", "白质", "双侧海马体", "脑室系统", "基底节区"],
+        file_name="wholebrainseg_large_unest_v0.2.3.pt"
+    ),
+    "pancreas_ct_dints": ModelSpec(
+        name="pancreas_ct_dints",
+        display_name="MONAI 胰腺与胰腺肿物 CT 神经架构搜索分割模型 (DiNTS)",
+        modality="Abdomen CT",
+        version="v0.4.3",
+        size_mb=528.17,
+        sha256="a18ae8b837f6affe778d7e9f130e6045c04a6f7d5b5dd8470155b9a18b6bcb65",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/pancreas_ct_dints_segmentation_v0.4.3.zip"
+        ],
+        description="基于可微神经架构搜索 (DiNTS) 的胰腺实质与占位病灶三维细粒度分割，突破小器官低对比度分割瓶颈。",
+        architecture="DiNTS-3D-NAS",
+        clinical_targets=["胰腺实质", "胰头/胰体/胰尾", "胰腺囊实性占位", "胰腺导管腺癌 (PDAC)"],
+        file_name="pancreas_ct_dints_v0.4.3.pt"
+    ),
+    "pathology_tumor_detection": ModelSpec(
+        name="pathology_tumor_detection",
+        display_name="MONAI 数字病理全视野切片 (WSI) 肿瘤转移灶检出模型",
+        modality="Digital Pathology (WSI)",
+        version="v0.5.7",
+        size_mb=42.71,
+        sha256="5a0d9b9e714e18a90c1f7f7d9c7e47f807c59f9f8c681b84865fae208fcbb4d6",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/pathology_tumor_detection_v0.5.7.zip"
+        ],
+        description="针对淋巴结与实体肿瘤 HE 染色高倍率全视野数字病理切片 (WSI) 的微转移灶全自动检出与定位。",
+        architecture="TorchVision-ResNet / FPN",
+        clinical_targets=["前哨淋巴结转移", "微浸润灶", "肿瘤细胞团", "病理分期辅助"],
+        file_name="pathology_tumor_detection_v0.5.7.pt"
+    ),
+    "pathology_nuclei": ModelSpec(
+        name="pathology_nuclei",
+        display_name="MONAI 病理切片细胞核多类别精细分割与分类模型",
+        modality="Digital Pathology",
+        version="v0.2.1",
+        size_mb=144.22,
+        sha256="cf6eb5a0467422c2c1ffbff72e2b4aca17dcdd8d2087bd1a27ce86fea98a1ab6",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/pathology_nuclei_segmentation_classification_v0.2.1.zip"
+        ],
+        description="HE 染色数字病理多组织细胞核分割与表型分类（肿瘤细胞核、淋巴细胞、成纤维细胞、上皮细胞核）。",
+        architecture="HoVer-Net / UNet-2D",
+        clinical_targets=["肿瘤浸润淋巴细胞 (TILs)", "核异型性", "核质比测算", "细胞增殖指数"],
+        file_name="pathology_nuclei_v0.2.1.pt"
+    ),
+    "valve_landmarks": ModelSpec(
+        name="valve_landmarks",
+        display_name="MONAI 心脏超声/CT 瓣膜关键解剖地标检测模型",
+        modality="Cardiac CT/Echo",
+        version="v0.4.3",
+        size_mb=12.73,
+        sha256="b0187ee65b150c0c693b16e6a65d0b3f659bed163423a1e4a5a6b3bb4fbeb7bf",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/valve_landmarks_v0.4.3.zip"
+        ],
+        description="主动脉瓣与二尖瓣解剖关键铰链点与瓣尖 3D 热图地标定位，辅助 TAVR/TMVR 经导管瓣膜置换术前规划。",
+        architecture="Heatmap-Regression-UNet",
+        clinical_targets=["主动脉瓣环", "二尖瓣前后瓣叶地标", "冠状动脉开口高度", "瓣膜置换规划"],
+        file_name="valve_landmarks_v0.4.3.pt"
+    ),
+    "breast_density": ModelSpec(
+        name="breast_density",
+        display_name="MONAI 乳腺钼靶 X 射线致密度与 BI-RADS 分类模型",
+        modality="Mammography (MG)",
+        version="v0.1.5",
+        size_mb=96.16,
+        sha256="710a49172243ea9972bec5dc717382c294ed77310596b6ad0df9bb83f7ceafce",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/breast_density_classification_v0.1.5.zip"
+        ],
+        description="符合 ACR BI-RADS 第 5 版标准的乳腺数字化 X 射线摄影 (CC/MLO) 腺体致密度四分类 (a, b, c, d)。",
+        architecture="DenseNet-Classifier-2D",
+        clinical_targets=["BI-RADS 腺体致密度", "脂肪型", "散在纤维腺体型", "不均匀致密型", "极度致密型"],
+        file_name="breast_density_v0.1.5.pt"
+    ),
+    "endoscopic_tool": ModelSpec(
+        name="endoscopic_tool",
+        display_name="MONAI 微创腹腔镜/胸腔镜手术器械动态语义分割模型",
+        modality="Endoscopic Video",
+        version="v0.5.5",
+        size_mb=44.15,
+        sha256="1a24d5f1d30a44474e8bb87abb62f289add2c40a291eac67138242679e928729",
+        urls=[
+            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/endoscopic_tool_segmentation_v0.5.5.zip"
+        ],
+        description="内窥镜微创手术视频中抓持钳、超声刀、电凝钩与吸引器等手术器械实时像素级分割与跟踪遮蔽。",
+        architecture="ToolNet-SegResNet-2D",
+        clinical_targets=["抓钳", "超声刀", "双极电凝", "视野遮挡剔除", "术中安全边界"],
+        file_name="endoscopic_tool_v0.5.5.pt"
     ),
     "totalsegmentator": ModelSpec(
         name="totalsegmentator",
@@ -56,22 +265,6 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         architecture="nnUNet-ResNet50-3D",
         clinical_targets=["双肺五叶", "气管树", "纵隔大血管", "肝脾胰肾", "骨骼肋骨系统"],
         file_name="totalsegmentator_v2.0.5.pt"
-    ),
-    "swinunetr_btcv": ModelSpec(
-        name="swinunetr_btcv",
-        display_name="MONAI SwinUNETR 腹部多器官解剖分割 (BTCV 国际竞赛冠军模型)",
-        modality="Abdomen CT",
-        version="v1.0.0",
-        size_mb=247.8,
-        sha256="c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8",
-        urls=[
-            "https://github.com/Project-MONAI/model-zoo/releases/download/v0.1.0/swinunetr_btcv_v1.0.0.pt",
-            "https://huggingface.co/monai/swinunetr_btcv/resolve/main/model.pt"
-        ],
-        description="BTCV 腹部 13 类关键实质器官（肝、脾、肾、胰腺、主动脉等）高精度语义分割。",
-        architecture="SwinUNETR-Large",
-        clinical_targets=["肝脏", "脾脏", "双肾", "胰腺", "腹部大动脉"],
-        file_name="swinunetr_btcv_v1.0.0.pt"
     ),
     "vista3d": ModelSpec(
         name="vista3d",
@@ -103,36 +296,6 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         architecture="DenseNet121-3D-Parenchyma",
         clinical_targets=["慢性阻塞性肺疾病 (COPD)", "肺气肿容积", "低衰减区 (LAA-950%)"],
         file_name="copd_emphysema_v1.1.0.pt"
-    ),
-    "brats_mri": ModelSpec(
-        name="brats_mri",
-        display_name="MONAI BraTS 颅脑多模态胶质瘤亚区精细分割 (T1/T1c/T2/FLAIR)",
-        modality="Brain MRI",
-        version="v2.1.0",
-        size_mb=215.2,
-        sha256="f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2",
-        urls=[
-            "https://github.com/Project-MONAI/model-zoo/releases/download/v0.1.0/brats_mri_v2.1.0.pt"
-        ],
-        description="精细提取全肿瘤 (WT)、水肿浸润区、增强肿瘤核心 (ET) 与坏死区 (TC)，辅助神经外科手术边界评估。",
-        architecture="SegResNet-3D",
-        clinical_targets=["全脑胶质瘤 (WT)", "肿瘤增强核心 (ET)", "坏死囊变区 (TC)"],
-        file_name="brats_mri_v2.1.0.pt"
-    ),
-    "spleen_ct": ModelSpec(
-        name="spleen_ct",
-        display_name="MONAI 脾脏解剖体积测量与肿大评估模型 (3D-UNet)",
-        modality="Abdomen CT",
-        version="v0.5.3",
-        size_mb=18.4,
-        sha256="502c312893994ec071a85c4f2e7d83a43f7789969faa73dae62f1291177f50fe",
-        urls=[
-            "https://github.com/Project-MONAI/model-zoo/releases/download/hosting_storage_v1/spleen_ct_segmentation_v0.5.3.zip"
-        ],
-        description="基于 MONAI 3D-UNet 架构的腹部薄层 CT 脾脏全自动三维分割与体积/RECIST径线测量。",
-        architecture="UNet-3D",
-        clinical_targets=["脾脏体积", "脾大 (Splenomegaly)", "门静脉高压"],
-        file_name="spleen_ct_v0.4.0.pt"
     )
 }
 
