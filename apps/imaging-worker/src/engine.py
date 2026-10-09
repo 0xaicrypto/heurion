@@ -1158,9 +1158,9 @@ class MONAIEngine:
             mask_np, recist, lesion_label = segment_pulmonary_nodules(volume, spacing, prompt_point=prompt_pt)
             key_slice_idx = recist["key_slice_index"]
             neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI 3D RetinaNet / UNet (Pulmonary Nodule)",
-                "weights_source": "Official MONAI Model Zoo",
+                "real_neural_inference": False,
+                "neural_architecture": "Anatomical Lung Parenchyma Envelope & HU Morphological Screening",
+                "weights_source": "Quantitative Pulmonary Windowing (Lung-RADS v1.1)",
                 "positive_voxels": int(np.sum(mask_np > 0)),
                 "accelerator": str(self.device)
             }
@@ -1194,8 +1194,9 @@ class MONAIEngine:
             }
             lesion_label = f"肺气肿低衰减区 ({em_res.get('gold_grade_zh', 'GOLD评估')})"
             neural_meta = {
-                "real_neural_inference": True,
+                "real_neural_inference": False,
                 "neural_architecture": "Quantitative CT (COPD GOLD 2024 LAA-950%)",
+                "weights_source": "GOLD 2024 Criteria",
                 "positive_voxels": int(np.sum(mask_np > 0)),
                 "accelerator": str(self.device)
             }
@@ -1217,9 +1218,9 @@ class MONAIEngine:
             }
             lesion_label = f"病毒性肺炎磨玻璃与实变累及区 ({severity}, 累及 {pct}%)"
             neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI COVID-Net (Pneumonia GGO & Consolidation)",
-                "weights_source": "Official MONAI Model Zoo",
+                "real_neural_inference": False,
+                "neural_architecture": "Pulmonary Ground-Glass Opacity & Consolidation Quantitative Volumetry",
+                "weights_source": "Quantitative Chest CT Radiomics",
                 "positive_voxels": int(np.sum(mask_np > 0)),
                 "infection_percentage": pct,
                 "accelerator": str(self.device)
@@ -1258,17 +1259,6 @@ class MONAIEngine:
             key_slice_idx = recist["key_slice_index"]
             neural_meta["neural_architecture"] = "MONAI SegResNet (Renal Structures CECT, 148 layers)"
             neural_meta["kidneys_volume_cm3"] = recist["total_volume_cm3"]
-        elif model_name in ("liver_lesion_segmenter", "liver_ct"):
-            f_path = kwargs.get("file_path")
-            mask_np, neural_meta = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[6])
-            if np.sum(mask_np) < 10:
-                l_tissue = (volume >= 40.0) & (volume <= 75.0)
-                mask_np = extract_largest_component(l_tissue.astype(np.uint8))
-            lesion_label = "肝脏实质与局灶病灶 (MONAI SwinUNETR / UNet 真实神经分割)"
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            neural_meta["neural_architecture"] = "MONAI SwinUNETR / UNet (Liver Parenchyma & Lesions)"
-            neural_meta["liver_volume_cm3"] = recist["total_volume_cm3"]
         elif model_name in ("prostate_mri_segmenter", "prostate_mri"):
             f_path = kwargs.get("file_path")
             mask_np, neural_meta = self.neural_pipeline.infer_prostate(f_path or volume, spacing=spacing)
@@ -1281,94 +1271,26 @@ class MONAIEngine:
             lesion_label = "脑胶质瘤全肿瘤区 (MONAI SegResNet 真实神经分割)"
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
-        elif model_name in ("brain_subcortical_segmenter", "wholebrainseg_large_unest"):
-            b_tissue = (volume >= 20.0) & (volume <= 45.0) if np.min(volume) < -100 else (volume > np.mean(volume) * 0.5)
-            mask_np = extract_largest_component(b_tissue.astype(np.uint8))
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            lesion_label = "全脑灰白质与皮层下核团解剖 (MONAI Large UNEST 真实神经分割)"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI Large UNEST (Whole Brain 133 Structures, 332MB)",
-                "weights_source": "Official MONAI Model Zoo",
-                "brain_parenchyma_cm3": recist["total_volume_cm3"],
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
-        elif model_name == "stroke_ischemic_lesion":
-            core = (volume >= 18.0) & (volume <= 32.0)
-            mask_np = extract_largest_component(core.astype(np.uint8))
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            recist["stroke"] = {
-                "aspects_score": 8 if recist["total_volume_cm3"] < 25.0 else 5,
-                "infarct_volume_cm3": recist["total_volume_cm3"],
-                "vessel_territory": "大脑中动脉 (MCA) 供血区",
-                "mismatch_ratio": 2.1
-            }
-            lesion_label = f"急性脑梗死缺血核心与半暗带 (ASPECTS: {recist['stroke']['aspects_score']})"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI UNet (Acute Ischemic Infarct Core Segmentation)",
-                "weights_source": "Official MONAI Model Zoo",
-                "infarct_volume_cm3": recist["total_volume_cm3"],
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
-        elif model_name == "intracranial_hemorrhage_ct":
-            hem = (volume >= 50.0) & (volume <= 95.0)
-            mask_np = extract_largest_component(hem.astype(np.uint8))
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            active_slices = max(1, int(np.sum(np.sum(mask_np > 0, axis=(1, 2)) > 0)))
-            abc2_vol = round((recist["longest_diameter_mm"] * recist["short_axis_mm"] * (spacing[0] * active_slices)) / 2000.0, 2)
-            recist["hemorrhage"] = {
-                "abc2_volume_cm3": abc2_vol if abc2_vol > 0 else recist["total_volume_cm3"],
-                "hematoma_hu_mean": round(float(np.mean(volume[mask_np > 0])), 1) if np.sum(mask_np > 0) > 0 else 68.0,
-                "mass_effect": recist["total_volume_cm3"] > 15.0
-            }
-            lesion_label = f"急性颅内出血血肿灶 (ABC/2 体积: {recist['hemorrhage']['abc2_volume_cm3']} cm³)"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI DenseNet (Acute Intracranial Hemorrhage Detection)",
-                "weights_source": "Official MONAI Model Zoo",
-                "hematoma_volume_cm3": recist["total_volume_cm3"],
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
         elif model_name in ("cardiac_mri_segmentation", "ventricular_short_axis"):
             f_path = kwargs.get("file_path")
             mask_np, neural_meta = self.neural_pipeline.infer_cardiac(f_path or volume, spacing=spacing)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
+            dz, dy, dx = spacing
+            voxel_ml = (dz * dy * dx) / 1000.0
+            lv_vox = int(np.sum(mask_np == 1))
+            myo_vox = int(np.sum(mask_np == 2))
+            rv_vox = int(np.sum(mask_np == 3))
+            lv_vol = round(lv_vox * voxel_ml, 1) if lv_vox > 0 else round(recist["total_volume_cm3"], 1)
+            myo_mass = round(myo_vox * voxel_ml * 1.05, 1) if myo_vox > 0 else round(recist["total_volume_cm3"] * 1.05, 1)
+            rv_vol = round(rv_vox * voxel_ml, 1) if rv_vox > 0 else 0.0
             recist["cardiac"] = {
-                "lvef_percent": 58.5,
-                "lv_edv_ml": round(recist["total_volume_cm3"], 1),
-                "lv_esv_ml": round(recist["total_volume_cm3"] * 0.415, 1),
-                "stroke_volume_ml": round(recist["total_volume_cm3"] * 0.585, 1),
-                "myocardial_mass_g": round(recist["total_volume_cm3"] * 1.05, 1)
+                "lv_cavity_volume_ml": lv_vol,
+                "rv_cavity_volume_ml": rv_vol,
+                "myocardial_mass_g": myo_mass,
+                "cine_phase_notice": "单期相短轴磁共振；精确射血分数 (LVEF) 需载入完整心动周期双期相 (ED/ES) 序列计算"
             }
-            lesion_label = f"心脏左心室/右心室与心肌 (LVEF: {recist['cardiac']['lvef_percent']}%)"
-        elif model_name == "valve_landmarks":
-            c_mask = (volume >= 30.0) & (volume <= 120.0)
-            mask_np = extract_largest_component(c_mask.astype(np.uint8))
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            d = recist["longest_diameter_mm"] if recist["longest_diameter_mm"] > 0 else 23.5
-            recist["valve"] = {
-                "annulus_diameter_mm": d,
-                "perimeter_mm": round(d * np.pi, 1),
-                "coronary_ostium_height_mm": 14.2,
-                "tavr_recommendation": "26mm Edwards SAPIEN 3 / Evolut PRO"
-            }
-            lesion_label = f"主动脉瓣与二尖瓣关键铰链地标 (瓣环直径: {d}mm)"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI Heatmap-UNet (Valve Anatomic Landmarks Regression, 174 layers)",
-                "weights_source": "Official MONAI Model Zoo",
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
+            lesion_label = f"心脏短轴心室腔与心肌分割 (左室腔: {lv_vol} mL, 心肌质量: {myo_mass} g)"
         elif model_name == "coronary_artery_calcification":
             c_plaque = (volume >= 130.0) & (volume <= 1200.0)
             mask_np = extract_largest_component(c_plaque.astype(np.uint8))
@@ -1398,9 +1320,9 @@ class MONAIEngine:
             }
             lesion_label = f"冠状动脉钙化斑块 (Agatston CAC: {agatston}, {risk_str})"
             neural_meta = {
-                "real_neural_inference": True,
+                "real_neural_inference": False,
                 "neural_architecture": "Quantitative CT (Coronary Artery Calcification / Agatston CAC)",
-                "weights_source": "Official MONAI Model Zoo",
+                "weights_source": "Standard Agatston Radiomics (HU > 130)",
                 "agatston_score": agatston,
                 "positive_voxels": vox_cnt,
                 "accelerator": str(self.device)
@@ -1422,101 +1344,14 @@ class MONAIEngine:
             recist["spine"] = {
                 "mean_bmd_hu": mean_bmd,
                 "t_score_estimate": t_score,
-                "bmd_diagnosis": bmd_diag,
-                "vertebral_height_loss_pct": 3.8
+                "bmd_diagnosis": bmd_diag
             }
             lesion_label = f"全脊柱椎骨骨皮质与松质骨 (BMD: {mean_bmd} HU, {bmd_diag})"
             neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI Spine-Segmenter (24 Vertebrae & BMD Assessment)",
-                "weights_source": "Official MONAI Model Zoo",
+                "real_neural_inference": False,
+                "neural_architecture": "Quantitative CT (QCT) Trabecular Bone Mineral Density",
+                "weights_source": "Quantitative CT Cancellous Bone Attenuation",
                 "vertebra_volume_cm3": recist["total_volume_cm3"],
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
-        elif model_name == "breast_density":
-            fgt = (volume > np.mean(volume)) & (volume < np.max(volume) * 0.95)
-            mask_np = extract_largest_component(fgt.astype(np.uint8))
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            total_breast = max(1.0, float(np.sum(volume > np.min(volume) + 5.0)))
-            fgt_pct = round(min(100.0, float(np.sum(mask_np > 0)) / total_breast * 100.0), 1)
-            if fgt_pct < 25.0:
-                b_cat, b_zh = "a", "几乎完全为脂肪型 (Fatty, <25%)"
-            elif fgt_pct < 50.0:
-                b_cat, b_zh = "b", "散在纤维腺体型 (Scattered, 25-50%)"
-            elif fgt_pct < 75.0:
-                b_cat, b_zh = "c", "不均匀致密型 (Heterogeneously dense, 51-75%)"
-            else:
-                b_cat, b_zh = "d", "极度致密型 (Extremely dense, >75%)"
-            recist["birads"] = {
-                "density_category": b_cat,
-                "fgt_percentage": fgt_pct,
-                "category_name": b_zh
-            }
-            lesion_label = f"乳腺钼靶纤维腺体致密度 (BI-RADS {b_cat}: {b_zh})"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI DenseNet-2D (ACR BI-RADS 5th Edition Breast Density, 580 layers)",
-                "weights_source": "Official MONAI Model Zoo",
-                "fgt_percentage": fgt_pct,
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
-        elif model_name == "pathology_tumor_detection":
-            hi_dens = (volume > np.median(volume)).astype(np.uint8)
-            mask_np = extract_largest_component(hi_dens)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            recist["pathology"] = {
-                "micrometastasis_detected": recist["has_lesion"],
-                "tumor_cellularity_percent": 84.5,
-                "margin_clearance_mm": 2.8,
-                "lymph_node_status": "pN1mi (微转移检出)" if recist["has_lesion"] else "pN0"
-            }
-            lesion_label = "数字病理全视野 (WSI) 肿瘤微转移浸润灶 (MONAI ResNet/FPN)"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI ResNet-FPN (Digital Pathology Micrometastasis, 122 layers)",
-                "weights_source": "Official MONAI Model Zoo",
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
-        elif model_name == "pathology_nuclei":
-            nuc = (volume > np.percentile(volume, 65)).astype(np.uint8)
-            mask_np = extract_largest_component(nuc)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            recist["nuclei"] = {
-                "til_density_per_mm2": 360,
-                "nuclear_atypia_grade": "Grade 2 (中度核异型性)",
-                "nc_ratio": 0.66,
-                "neoplastic_nuclei_count": int(np.sum(mask_np > 0) // 10)
-            }
-            lesion_label = "病理细胞核精细分割与表型分类 (MONAI HoVer-Net)"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI HoVer-Net (Nuclear Phenotyping & TILs Density, 797 layers)",
-                "weights_source": "Official MONAI Model Zoo",
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
-        elif model_name == "endoscopic_tool":
-            tool_specular = (volume > np.percentile(volume, 80)).astype(np.uint8)
-            mask_np = extract_largest_component(tool_specular)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            recist["endoscopy"] = {
-                "tool_present": recist["has_lesion"],
-                "instrument_type": "微创腹腔镜抓持钳/超声止血刀",
-                "tool_coverage_percent": 4.9,
-                "shaft_angle_deg": 38.5
-            }
-            lesion_label = "微创内窥镜手术器械动态语义分割 (MONAI ToolNet)"
-            neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI ToolNet (Laparoscopic Surgical Instrument Segmentation, 570 layers)",
-                "weights_source": "Official MONAI Model Zoo",
                 "positive_voxels": int(np.sum(mask_np > 0)),
                 "accelerator": str(self.device)
             }
@@ -1538,28 +1373,21 @@ class MONAIEngine:
                 mask_np = extract_largest_component(fg)
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
-            lesion_label = "医生交互提示点选万物分割 (MONAI VISTA-3D Foundation Model)"
+            lesion_label = "医生交互提示点选分割 (种子点区域生长与密度自适应)"
             neural_meta = {
-                "real_neural_inference": True,
-                "neural_architecture": "MONAI VISTA-3D (Interactive Foundation Model, 832MB, 259 layers)",
-                "weights_source": "Official MONAI Model Zoo",
+                "real_neural_inference": False,
+                "neural_architecture": "Interactive Seeded Region Growing & HU Intensity Adaptive Contouring",
+                "weights_source": "Heurion Interactive Radiomics Engine",
                 "prompt_point": prompt_pt,
                 "positive_voxels": int(np.sum(mask_np > 0)),
                 "accelerator": str(self.device)
             }
         else:
-            fg = (volume > np.median(volume)).astype(np.uint8)
-            mask_np = extract_largest_component(fg)
-            recist = calculate_recist_metrics(mask_np, spacing=spacing)
-            key_slice_idx = recist["key_slice_index"]
-            lesion_label = f"解剖区域自适应分割 ({model_name})"
-            neural_meta = {
-                "real_neural_inference": False,
-                "neural_architecture": f"Adaptive Anatomical Component ({model_name})",
-                "weights_source": "Heurion Adaptive Engine",
-                "positive_voxels": int(np.sum(mask_np > 0)),
-                "accelerator": str(self.device)
-            }
+            raise RuntimeError(
+                f"模型 '{model_name}' 的真实深度学习神经网络权重尚未安装。"
+                "为确保医疗准确性与合规性，系统已严格禁止算法层退化为启发式规则伪造输出。"
+                "请先通过模型管理中心安装该模型的官方 MONAI 权重后再次运行。"
+            )
         
         # Prepare 2D key slice image with windowing
         ct_windowed = apply_ct_window(volume, window_name=window_preset)
@@ -1622,31 +1450,15 @@ class MONAIEngine:
                 neural_md += f"- **冠脉钙化评分 (CAC)**: Agatston `{ag['agatston_score']}` 分 ({ag['risk_stratum']})，斑块容积 `{ag['plaque_volume_mm3']} mm³`\n"
             if "cardiac" in recist:
                 card = recist["cardiac"]
-                neural_md += f"- **心脏功能测定**: 射血分数 (LVEF) `{card['lvef_percent']}%`，左室舒张末 `{card['lv_edv_ml']} mL`，心肌质量 `{card['myocardial_mass_g']} g`\n"
-            if "hemorrhage" in recist:
-                hem = recist["hemorrhage"]
-                neural_md += f"- **颅内出血定量**: ABC/2 血肿容积 `{hem['abc2_volume_cm3']} cm³` (平均衰减: `{hem['hematoma_hu_mean']} HU`)\n"
-            if "stroke" in recist:
-                stk = recist["stroke"]
-                neural_md += f"- **急性脑梗死量化**: ASPECTS 评分 `{stk['aspects_score']} 分`，梗死灶容积 `{stk['infarct_volume_cm3']} cm³`\n"
+                lv_v = card.get("lv_cavity_volume_ml", "--")
+                rv_v = card.get("rv_cavity_volume_ml", "--")
+                myo_g = card.get("myocardial_mass_g", "--")
+                notice = card.get("cine_phase_notice", "")
+                notice_str = f" ({notice})" if notice else ""
+                neural_md += f"- **心脏解剖量化**: 左室腔容积 `{lv_v} mL`，右室腔 `{rv_v} mL`，心肌质量 `{myo_g} g`{notice_str}\n"
             if "spine" in recist:
                 sp = recist["spine"]
                 neural_md += f"- **脊柱骨密度量化**: 椎骨小梁 BMD `{sp['mean_bmd_hu']} HU` (T-score 估算: `{sp['t_score_estimate']}`，{sp['bmd_diagnosis']})\n"
-            if "birads" in recist:
-                bi = recist["birads"]
-                neural_md += f"- **乳腺致密度分类**: ACR BI-RADS `{bi['density_category']}` ({bi['category_name']})，FGT 致密占比 `{bi['fgt_percentage']}%`\n"
-            if "pathology" in recist:
-                path = recist["pathology"]
-                neural_md += f"- **数字病理微观形态**: 细胞异型性占比 `{path['tumor_cellularity_percent']}%`，淋巴结状态: `{path['lymph_node_status']}`\n"
-            if "nuclei" in recist:
-                nuc = recist["nuclei"]
-                neural_md += f"- **细胞核表型分类**: TILs 浸润密度 `{nuc['til_density_per_mm2']}/mm²`，核质比 (N:C): `{nuc['nc_ratio']}`\n"
-            if "endoscopy" in recist:
-                endo = recist["endoscopy"]
-                neural_md += f"- **手术器械语义分割**: `{endo['instrument_type']}`，器械视野遮挡率 `{endo['tool_coverage_percent']}%`\n"
-            if "valve" in recist:
-                vlv = recist["valve"]
-                neural_md += f"- **瓣膜解剖铰链地标**: 瓣环最大外径 `{vlv['annulus_diameter_mm']} mm`，周长 `{vlv['perimeter_mm']} mm`\n"
 
         return {
             "status": "success",

@@ -367,7 +367,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "肝实质体积、原发性肝癌 (HCC) 与转移瘤靶病灶",
             "recommended_window": "abdomen",
             "compatible_samples": ["spleen_test"],
-            "is_ready": True
+            "is_ready": False
         },
 
         # 3. 颅脑与中枢神经系统 (Brain & Neurology)
@@ -393,7 +393,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "双侧海马体、杏仁核、丘脑体积与阿尔茨海默病量化",
             "recommended_window": "brain",
             "compatible_samples": [],
-            "is_ready": reg_map.get("wholebrainseg_large_unest", {}).get("is_ready", False)
+            "is_ready": False
         },
         {
             "id": "stroke_ischemic_lesion",
@@ -405,7 +405,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "急性脑梗死缺血半暗带与核心梗死容积",
             "recommended_window": "brain",
             "compatible_samples": [],
-            "is_ready": True
+            "is_ready": False
         },
         {
             "id": "intracranial_hemorrhage_ct",
@@ -417,7 +417,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "硬膜下、硬膜外、脑实质内及蛛网膜下腔出血",
             "recommended_window": "brain",
             "compatible_samples": [],
-            "is_ready": True
+            "is_ready": False
         },
 
         # 4. 心血管系统 (Cardiovascular)
@@ -443,7 +443,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "主动脉瓣与二尖瓣解剖关键铰链点与瓣尖 3D 热图地标定位",
             "recommended_window": "mediastinum",
             "compatible_samples": [],
-            "is_ready": reg_map.get("valve_landmarks", {}).get("is_ready", False)
+            "is_ready": False
         },
         {
             "id": "coronary_artery_calcification",
@@ -507,7 +507,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "符合 ACR BI-RADS 第 5 版标准的乳腺数字化 X 射线摄影腺体致密度四分类",
             "recommended_window": "abdomen",
             "compatible_samples": [],
-            "is_ready": reg_map.get("breast_density", {}).get("is_ready", False)
+            "is_ready": False
         },
         {
             "id": "pathology_tumor_detection",
@@ -519,7 +519,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "前哨淋巴结转移、微浸润灶与肿瘤细胞团全自动检出",
             "recommended_window": "abdomen",
             "compatible_samples": [],
-            "is_ready": reg_map.get("pathology_tumor_detection", {}).get("is_ready", False)
+            "is_ready": False
         },
         {
             "id": "pathology_nuclei",
@@ -531,7 +531,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "肿瘤浸润淋巴细胞 (TILs)、核异型性、核质比与细胞增殖指数",
             "recommended_window": "abdomen",
             "compatible_samples": [],
-            "is_ready": reg_map.get("pathology_nuclei", {}).get("is_ready", False)
+            "is_ready": False
         },
         {
             "id": "endoscopic_tool",
@@ -543,7 +543,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "抓持钳、超声刀、电凝钩与吸引器等器械实时像素级分割与遮蔽",
             "recommended_window": "abdomen",
             "compatible_samples": [],
-            "is_ready": reg_map.get("endoscopic_tool", {}).get("is_ready", False)
+            "is_ready": False
         },
 
         # 7. 交互式万物分割 (Interactive)
@@ -879,15 +879,32 @@ def run_sample_analysis(req: SampleRequest = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
+def validate_safe_medical_path(file_path: Optional[str]) -> Optional[str]:
+    """Validates that file_path does not traverse into prohibited system paths."""
+    if not file_path:
+        return None
+    real_p = os.path.realpath(file_path)
+    sensitive_prefixes = ("/etc", "/var/root", "/root", "/proc", "/sys", "/dev", "/usr/bin", "/bin", "/sbin")
+    if any(real_p.startswith(p) for p in sensitive_prefixes):
+        raise HTTPException(status_code=403, detail="Access denied: prohibited path")
+    if not os.path.exists(real_p):
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    if os.path.isfile(real_p):
+        lower = real_p.lower()
+        if not (lower.endswith((".nii", ".nii.gz", ".dcm", ".zip", ".tar.gz", ".npz", ".npy"))):
+            raise HTTPException(status_code=400, detail="Invalid medical image file format")
+    return real_p
+
 @app.post("/api/v1/analyze/file")
 def run_file_analysis(req: FileAnalysisRequest = Body(...)):
     """Runs MONAI inference on a specified local file path."""
-    if not os.path.exists(req.file_path):
-        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
+    safe_path = validate_safe_medical_path(req.file_path)
+    if not safe_path:
+        raise HTTPException(status_code=400, detail="file_path is required")
     try:
         with INFERENCE_SEMAPHORE:
             return engine.analyze_file(
-                file_path=req.file_path,
+                file_path=safe_path,
                 model_name=req.model_name or "spleen_segmenter",
                 window_preset=req.window_preset,
                 prompt_point=req.click_point,

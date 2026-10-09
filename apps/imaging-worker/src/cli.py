@@ -28,7 +28,7 @@ except (ImportError, ValueError):
 
 def run_benchmark():
     print("=" * 65)
-    print("🏥 Heurion 2.0 MONAI Medical Imaging Benchmark")
+    print("Heurion 2.0 MONAI Medical Imaging Benchmark")
     print("=" * 65)
     
     info = get_device_info()

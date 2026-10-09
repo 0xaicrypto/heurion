@@ -813,7 +813,8 @@ export class Store {
   }
 
   updateTenant(id: string, patch: Partial<Pick<TenantRow, 'name' | 'status' | 'settings' | 'kind'>>): void {
-    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    const ALLOWED = ['name', 'status', 'settings', 'kind'] as const
+    const keys = (Object.keys(patch) as Array<keyof typeof patch>).filter(k => (ALLOWED as readonly string[]).includes(k))
     if (keys.length) this.db.prepare(`UPDATE tenants SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string), id)
   }
 
@@ -1015,7 +1016,8 @@ export class Store {
   }
 
   updateKbFile(id: string, patch: Partial<Pick<KbFileRow, 'status' | 'note' | 'pages' | 'chunks' | 'embedded' | 'doi' | 'pmid' | 'project_id' | 'name'>>): void {
-    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    const ALLOWED = ['status', 'note', 'pages', 'chunks', 'embedded', 'doi', 'pmid', 'project_id', 'name'] as const
+    const keys = (Object.keys(patch) as Array<keyof typeof patch>).filter(k => (ALLOWED as readonly string[]).includes(k))
     if (keys.length === 0) return
     this.db.prepare(`UPDATE kb_files SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string | number | null), id)
   }
@@ -1205,7 +1207,8 @@ export class Store {
   }
 
   updateMemory(id: string, patch: Partial<Pick<MemoryRow, 'scope' | 'project_id' | 'kind' | 'content' | 'status' | 'explicit' | 'reason'>> & { norm?: string }): void {
-    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    const ALLOWED = ['scope', 'project_id', 'kind', 'content', 'status', 'explicit', 'reason', 'norm'] as const
+    const keys = (Object.keys(patch) as Array<keyof typeof patch>).filter(k => (ALLOWED as readonly string[]).includes(k))
     if (keys.length === 0) return
     this.db.prepare(`UPDATE memories SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map(k => patch[k] as never), now(), id)
   }
@@ -1275,7 +1278,8 @@ export class Store {
   }
 
   updateTenantTemplate(id: string, patch: Partial<Pick<TenantTemplateRow, 'label' | 'description' | 'org_name' | 'footer' | 'base' | 'colors' | 'fonts' | 'logo' | 'logo_mime'>>): void {
-    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    const ALLOWED = ['label', 'description', 'org_name', 'footer', 'base', 'colors', 'fonts', 'logo', 'logo_mime'] as const
+    const keys = (Object.keys(patch) as Array<keyof typeof patch>).filter(k => (ALLOWED as readonly string[]).includes(k))
     if (keys.length === 0) return
     this.db.prepare(`UPDATE tenant_templates SET ${[...keys.map(k => `${k} = ?`), 'updated_at = ?'].join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string | Uint8Array | null), now(), id)
   }
@@ -1374,7 +1378,12 @@ export class Store {
   }
 
   updateClaim(id: string, patch: Partial<PhrClaimRow>): void {
-    const keys = Object.keys(patch).filter(k => k !== 'id')
+    const ALLOWED = [
+      'code', 'tenant_id', 'patient_id', 'created_by', 'expires_at', 'status',
+      'claimant_user_id', 'claimant_patient_id', 'requested_at',
+      'confirmed_by', 'confirmed_at', 'revoked_by', 'revoked_at', 'created_at',
+    ] as const
+    const keys = Object.keys(patch).filter(k => (ALLOWED as readonly string[]).includes(k))
     if (keys.length === 0) return
     const sets = keys.map(k => `${k} = ?`).join(', ')
     const vals = keys.map(k => (patch as Record<string, any>)[k])
@@ -1465,7 +1474,9 @@ export class Store {
   }
 
   updateStudy(id: string, patch: Partial<Pick<StudyRow, 'title' | 'design' | 'status' | 'summary'>>): void {
-    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    const ALLOWED = ['title', 'design', 'status', 'summary'] as const
+    const keys = (Object.keys(patch) as Array<keyof typeof patch>).filter(k => (ALLOWED as readonly string[]).includes(k))
+    if (keys.length === 0) return
     this.db.prepare(`UPDATE studies SET ${[...keys.map(k => `${k} = ?`), 'updated_at = ?'].join(', ')} WHERE id = ?`).run(...keys.map(k => patch[k] as string | null), now(), id)
   }
 
@@ -1534,7 +1545,8 @@ export class Store {
   }
 
   updateDataset(id: string, patch: Partial<Pick<DatasetRow, 'name' | 'status' | 'rows' | 'cols' | 'profile' | 'labels' | 'error' | 'version' | 'origin'>>): void {
-    const keys = Object.keys(patch) as Array<keyof typeof patch>
+    const ALLOWED = ['name', 'status', 'rows', 'cols', 'profile', 'labels', 'error', 'version', 'origin'] as const
+    const keys = (Object.keys(patch) as Array<keyof typeof patch>).filter(k => (ALLOWED as readonly string[]).includes(k))
     if (keys.length === 0) return
     this.db.prepare(`UPDATE datasets SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map(k => patch[k] as never), now(), id)
   }
@@ -2225,13 +2237,19 @@ export class Store {
   updateCalendarEvent(userId: string, id: string, patch: Partial<CalendarEventRow>): CalendarEventRow | undefined {
     const existing = this.getCalendarEvent(userId, id)
     if (!existing) return undefined
+    const ALLOWED = [
+      'tenant_id', 'title', 'description', 'start_time', 'end_time',
+      'all_day', 'category', 'status', 'patient_id', 'patient_code',
+      'study_id', 'study_title', 'location', 'mail_id',
+    ] as const
     const fields: string[] = []
     const values: any[] = []
     for (const [k, v] of Object.entries(patch)) {
-      if (k === 'id' || k === 'user_id' || k === 'created_at') continue
+      if (!(ALLOWED as readonly string[]).includes(k)) continue
       fields.push(`${k} = ?`)
       values.push(v)
     }
+    if (!fields.length) return existing
     fields.push('updated_at = ?')
     values.push(now())
     values.push(userId, id)

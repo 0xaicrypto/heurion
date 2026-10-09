@@ -21,9 +21,9 @@ if iptables -w -L OUTPUT >/dev/null 2>&1; then
     $t -w -A HEURION_SBX -o lo -p tcp --dport "${PORT:-8787}" -j ACCEPT
     $t -w -A HEURION_SBX -j REJECT
     $t -w -A OUTPUT -m owner --uid-owner $SBX -j HEURION_SBX
-  done 2>/dev/null && echo "AI 代码出站白名单：只允许连本机 ${PORT:-8787}" || echo "⚠️  AI 代码出站白名单设置失败"
+  done 2>/dev/null && echo "AI 代码出站白名单：只允许连本机 ${PORT:-8787}" || echo "[WARN] AI 代码出站白名单设置失败"
 else
-  echo "⚠️  容器没有 NET_ADMIN：AI 代码的出站网络没有限制（compose 里加 cap_add: [NET_ADMIN]）"
+  echo "[WARN] 容器没有 NET_ADMIN：AI 代码的出站网络没有限制（compose 里加 cap_add: [NET_ADMIN]）"
 fi
 # 平台新建的文件默认组可读、其他人不可读
 export HOME=/home/node USER=node

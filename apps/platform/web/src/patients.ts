@@ -6,6 +6,7 @@ import { photoFigure } from './photos.ts'
 import { askConfirm, askText } from './dialogs.ts'
 import { icon } from './icons.ts'
 import { openHelpGuide, importHelpAsDoc } from './help.ts'
+import { esc } from './dom.ts'
 
 type Api = <T = any>(path: string, opts?: RequestInit) => Promise<T>
 type Notice = (msg: string, error?: boolean) => void
@@ -74,7 +75,6 @@ export interface PatientHooks {
   openStudy?(id: string): Promise<void>
 }
 
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
 const KIND: Record<string, string> = { lab_report: '化验', discharge: '出院小结', pathology: '病理', imaging: '影像', note: '记录', other: '报告' }
 const SEX: Record<string, string> = { M: '男', F: '女' }
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.txt'
@@ -791,7 +791,18 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       : '计算节点离线 (端口 8004 未连接)'
 
     const samples: Array<{ id: string; name: string; modality: string; size_mb?: number }> = samplesData.samples || []
-    const modelsList: Array<{ id: string; name: string; category?: string; modality?: string; target?: string; recommended_window?: string }> = modelsData.models || []
+    const modelsList: Array<{
+      id: string
+      name: string
+      category?: string
+      modality?: string
+      target?: string
+      recommended_window?: string
+      engine_type?: string
+      body_part?: string
+      is_ready?: boolean
+      compatible_samples?: string[]
+    }> = modelsData.models || []
 
     const dlModels = modelsList.filter(m => (m.engine_type || 'deep_learning') !== 'quantitative_ct')
     const qcModels = modelsList.filter(m => m.engine_type === 'quantitative_ct')
@@ -1091,7 +1102,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         else if (/prostat/.test(fn)) preferredModelId = 'prostate_mri_segmenter'
         else if (/brain|brats/.test(fn)) preferredModelId = 'brain_tumor_segmenter'
       }
-      if (!preferredModelId && filtered.length > 0) preferredModelId = filtered[0].id
+      if (!preferredModelId && filtered.length > 0 && filtered[0]) preferredModelId = filtered[0].id
 
       // Separate into quantitative and deep learning
       const qc = filtered.filter(m => m.engine_type === 'quantitative_ct')
@@ -1323,7 +1334,22 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         </div>
       </div>`
     dlg.hidden = false
-    const close = () => { dlg.hidden = true; dlg.innerHTML = '' }
+    let nvInstance: any = null
+    const cleanupNv = () => {
+      if (nvInstance) {
+        try {
+          if (typeof nvInstance.destroy === 'function') {
+            nvInstance.destroy()
+          }
+        } catch {}
+        nvInstance = null
+      }
+    }
+    const close = () => {
+      cleanupNv()
+      dlg.hidden = true
+      dlg.innerHTML = ''
+    }
     dlg.onclick = ev => { if (ev.target === dlg || (ev.target as HTMLElement).closest('[data-close]')) close() }
 
     const imgData = (r?.imaging_data as any) || {}
@@ -1828,7 +1854,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     })
 
     let currentEngine = 'slice'
-    let nvInstance: any = null
+    nvInstance = null
     const savedSlices: Array<{ label: string; assetId: string; mdText: string }> = []
 
     async function initNiivue() {
