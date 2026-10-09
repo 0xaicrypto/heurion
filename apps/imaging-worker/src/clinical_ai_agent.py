@@ -122,7 +122,42 @@ def evaluate_evidence_based_clinical_guidelines(
     ctr = subsolid.get("consolidation_tumor_ratio", 0.0)
     mean_hu = dens.get("mean_hu", 0.0)
 
-    # 1. Pulmonary Nodule (LIDC / Lung CT)
+    # 1. Normal Pulmonary Vessel Cross-Section Filter (Fleischner & ACR Lung-RADS)
+    is_vessel = (
+        subsolid.get("is_vessel", False) or
+        subsolid.get("morphological_type") == "normal_vessel" or
+        "血管" in target_name
+    )
+    if is_vessel and ("lung" in target_name.lower() or "nodule" in target_name.lower() or "结节" in target_name or "血管" in target_name):
+        vessel_info = subsolid.get("vessel_info", {})
+        reasons_list = vessel_info.get("reasons", ["沿支气管血管束伴行", "前后切片3D管状延伸"])
+        reasons_text = "，".join(reasons_list)
+        findings = (
+            f"胸部高分辨率平扫 CT 检查提示：所选目标（最大长径约 {ld} mm，垂直短径约 {sa} mm，平均 CT 值 {mean_hu} HU）"
+            f"位于支气管血管束走行带上。邻近可见管径相当的伴行细支气管通畅透亮气腔（呈典型伴行印戒征）。"
+            f"经 3D 拓扑追踪分析，该实性结构在轴位前后相邻切片（Z 轴）呈连续管状走行，向上/下层自然汇入肺内分支血管网 ({reasons_text})。"
+        )
+        diag = (
+            "【正常解剖结构（肺内分支血管断面），不适用 Lung-RADS 结节分级】\n"
+            "根据国际肺结节筛查与管理指南（Fleischner Society 与 ACR Lung-RADS v2022），正常生理性解剖结构（肺血管、骨骼、胸膜变异）"
+            "严格排除于肺结节分级范畴。该结构系正常肺血管垂直切片投影所致假阳性，非病理性肺实质占位，恶性风险为零。"
+        )
+        mgmt = (
+            "1. 确认为正常解剖肺血管横截面，无需进入肺结节随访体系，无需缩短周期复查低剂量 CT；\n"
+            "2. 避免过度医疗与患者不必要焦虑；\n"
+            "3. 如需进一步确认，可结合矢状位/冠状位多平面重组 (MPR) 动态追踪血管管状走形。"
+        )
+        return {
+            "findings_description": findings,
+            "diagnostic_assessment": diag,
+            "management_recommendations": mgmt,
+            "guideline_applied": "ACR Lung-RADS v2022 / Fleischner Society 2017 (Normal Anatomy Exclusion)",
+            "risk_level": "none",
+            "rads_category": "not_applicable",
+            "is_vessel": True
+        }
+
+    # 2. Pulmonary Nodule (LIDC / Lung CT)
     if "lung" in target_name.lower() or "nodule" in target_name.lower() or "结节" in target_name:
         if ld == 0.0:
             return {

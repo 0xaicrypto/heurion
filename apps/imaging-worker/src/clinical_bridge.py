@@ -6,9 +6,11 @@ from scipy.spatial.distance import pdist, squareform
 try:
     from .dicom_io import apply_ct_window
     from .renderer import render_key_slice_png, png_to_base64
+    from .recist import detect_pulmonary_vessel_cross_section
 except (ImportError, ValueError):
     from dicom_io import apply_ct_window
     from renderer import render_key_slice_png, png_to_base64
+    from recist import detect_pulmonary_vessel_cross_section
 
 
 def calculate_convex_hull_diameters(
@@ -242,7 +244,19 @@ def extract_clinical_features(
 
         ctr = round(min(1.0, float(s_ld / max(longest_d_mm, 0.01))), 2)
 
-        if solid_vox_count == 0 or s_ld == 0.0:
+        vessel_check = detect_pulmonary_vessel_cross_section(
+            volume=volume,
+            mask=mask,
+            spacing=spacing,
+            key_slice_idx=key_slice_idx
+        )
+        is_vessel = vessel_check.get("is_vessel", False)
+
+        if is_vessel:
+            morphology = "normal_vessel"
+            morphology_zh = "正常肺血管分支断面 (非肺结节)"
+            target_name = "正常肺血管分支断面 (伴行血管, 非肺结节)"
+        elif solid_vox_count == 0 or s_ld == 0.0:
             morphology = "pure_ggo"
             morphology_zh = "纯磨玻璃结节 (pGGN)"
         elif calc_pct >= 50.0:
@@ -263,6 +277,8 @@ def extract_clinical_features(
             "solid_core_volume_cm3": solid_vol_cm3,
             "consolidation_tumor_ratio": ctr,
             "solid_caliper": s_caliper,
+            "is_vessel": is_vessel,
+            "vessel_info": vessel_check,
         }
 
     # 4. Key Slice Overlay Rendering
@@ -290,6 +306,11 @@ def extract_clinical_features(
         "consolidation_tumor_ratio": subsolid_metrics.get("consolidation_tumor_ratio") if subsolid_metrics else None,
         "solid_core_diameter_mm": subsolid_metrics.get("solid_core_diameter_mm") if subsolid_metrics else None,
         "quality_control": qc_info,
+        "is_vessel": subsolid_metrics.get("is_vessel", False) if subsolid_metrics else False,
+        "lung_rads": {
+            "category": "not_applicable",
+            "name": "正常解剖结构 (非肺结节)"
+        } if (subsolid_metrics and subsolid_metrics.get("is_vessel")) else None,
         "has_lesion": True,
     }
 

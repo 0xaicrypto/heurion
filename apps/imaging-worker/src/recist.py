@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.ndimage as ndi
 from typing import Dict, Any, Tuple, Optional
 from scipy.spatial import ConvexHull
 from scipy.spatial.distance import pdist, squareform
@@ -116,11 +117,151 @@ def calculate_recist_metrics(
     }
 
 
+def detect_pulmonary_vessel_cross_section(
+    volume: np.ndarray,
+    mask: np.ndarray,
+    spacing: Tuple[float, float, float] = (1.5, 0.8, 0.8),
+    key_slice_idx: Optional[int] = None,
+    search_radius_mm: float = 18.0
+) -> Dict[str, Any]:
+    """
+    Rigorously detects whether a segmented structure in thoracic CT is a cross-section
+    of a normal pulmonary blood vessel rather than a pathological solitary nodule.
+
+    Radiological Criteria (Fleischner Society & ACR Lung-RADS v2022 Normal Anatomy Exclusion):
+    1. Caliber: In-plane diameter <= 7.0 mm (typical peripheral branching vessels 2-6mm).
+    2. Companion Bronchus (Signet-Ring Sign / 印戒征):
+       In normal lung anatomy, pulmonary arteries travel in parallel with a companion bronchus.
+       In cross-section, this produces the classic "Signet-Ring" appearance: the opaque artery dot
+       is immediately adjacent (within 1.2mm to 8.5mm) to a round patent air lumen (HU <= -780) of comparable caliber.
+    3. Longitudinal Z-Axis Continuity & Branching:
+       Unlike isolated nodules (which terminate in lung air within 2-4 slices), blood vessels continue
+       continuously across adjacent slices (Z-span) and merge into the pulmonary vascular tree.
+    4. Tubularity / Branching Tree Connection:
+       Connects towards the hilar vascular trunk or displays 3D continuous tubular flow.
+    """
+    dz, dy, dx = [float(s) for s in spacing]
+    is_lung = float(np.min(volume)) < -500.0 and float(np.mean(volume)) < -150.0
+    if not is_lung:
+        return {"is_vessel": False, "reasons": []}
+
+    z_pts, y_pts, x_pts = np.where(mask > 0)
+    if len(z_pts) == 0:
+        return {"is_vessel": False, "reasons": []}
+
+    cz = int(key_slice_idx) if key_slice_idx is not None else int(np.median(z_pts))
+    slice_mask = mask[cz] > 0
+    if not np.any(slice_mask):
+        cz = int(np.median(z_pts))
+        slice_mask = mask[cz] > 0
+    if not np.any(slice_mask):
+        return {"is_vessel": False, "reasons": []}
+
+    # Isolate the target 2D connected component on key slice (avoiding multi-component inflation)
+    lbl2d, n_comp = ndi.label(slice_mask)
+    c_counts = np.bincount(lbl2d.flat)
+    c_counts[0] = 0
+    target_comp_idx = int(np.argmax(c_counts))
+    target_slice_mask = (lbl2d == target_comp_idx)
+
+    sy_pts, sx_pts = np.where(target_slice_mask)
+    cy = int(np.mean(sy_pts))
+    cx = int(np.mean(sx_pts))
+
+    in_plane_area_mm2 = float(np.sum(target_slice_mask) * dy * dx)
+    in_plane_d = round(float(2.0 * np.sqrt(in_plane_area_mm2 / np.pi)), 1) if in_plane_area_mm2 > 0 else 0.0
+
+    # Genuine solitary nodules > 9.5mm are virtually never simple normal branching vessel cross-sections
+    if in_plane_d > 9.5:
+        return {"is_vessel": False, "in_plane_diameter_mm": in_plane_d, "reasons": []}
+
+    rz = max(3, int(np.ceil(search_radius_mm / dz)))
+    ry = max(8, int(np.ceil(search_radius_mm / dy)))
+    rx = max(8, int(np.ceil(search_radius_mm / dx)))
+
+    z_lo, z_hi = max(0, cz - rz), min(volume.shape[0], cz + rz + 1)
+    y_lo, y_hi = max(0, cy - ry), min(volume.shape[1], cy + ry + 1)
+    x_lo, x_hi = max(0, cx - rx), min(volume.shape[2], cx + rx + 1)
+
+    sub_vol = volume[z_lo:z_hi, y_lo:y_hi, x_lo:x_hi]
+    local_cz = cz - z_lo
+    local_cy = cy - y_lo
+    local_cx = cx - x_lo
+
+    soft_tissue = (sub_vol >= -150.0) & (sub_vol <= 250.0)
+    lbl, n_components = ndi.label(soft_tissue)
+    seed_lbl = lbl[local_cz, local_cy, local_cx]
+
+    if seed_lbl == 0:
+        window = lbl[max(0, local_cz-1):local_cz+2, max(0, local_cy-1):local_cy+2, max(0, local_cx-1):local_cx+2]
+        nz = window[window > 0]
+        if len(nz) > 0:
+            seed_lbl = int(np.bincount(nz).argmax())
+
+    if seed_lbl == 0:
+        return {"is_vessel": False, "in_plane_diameter_mm": in_plane_d, "reasons": []}
+
+    comp = (lbl == seed_lbl)
+    cz_pts, cy_pts, cx_pts = np.where(comp)
+    z_span = float((cz_pts.max() - cz_pts.min() + 1) * dz)
+
+    touches_z_boundary = bool((cz_pts.min() == 0) or (cz_pts.max() == sub_vol.shape[0] - 1))
+    touches_xy_boundary = bool((cy_pts.min() == 0) or (cy_pts.max() == sub_vol.shape[1] - 1) or (cx_pts.min() == 0) or (cx_pts.max() == sub_vol.shape[2] - 1))
+
+    # Check companion bronchus air lumen within 1.2mm to 8.5mm on key slice
+    sl = sub_vol[local_cz]
+    yy, xx = np.ogrid[:sl.shape[0], :sl.shape[1]]
+    dist_map = np.sqrt(((yy - local_cy) * dy)**2 + ((xx - local_cx) * dx)**2)
+    ring_mask = (dist_map >= 1.2) & (dist_map <= 8.5)
+    air_lumens = (sl <= -780.0) & ring_mask
+    air_lbl, n_air = ndi.label(air_lumens)
+    has_companion_bronchus = False
+    bronchus_caliber_mm = 0.0
+
+    if n_air > 0:
+        for a_idx in range(1, n_air + 1):
+            a_area = float(np.sum(air_lbl == a_idx) * (dy * dx))
+            # Typical companion bronchus lumen area: 2.0 to 45 mm2 (diam 1.6 to 7.5 mm)
+            if 2.0 <= a_area <= 45.0:
+                has_companion_bronchus = True
+                bronchus_caliber_mm = round(float(2.0 * np.sqrt(a_area / np.pi)), 1)
+                break
+
+    is_vessel = False
+    reasons = []
+
+    # 1. Signet ring sign: Companion bronchus next to small dot (classic pulmonary artery branch)
+    if has_companion_bronchus and in_plane_d <= 9.0:
+        is_vessel = True
+        reasons.append(f"伴行支气管印戒征 (气道内径 {bronchus_caliber_mm}mm)")
+
+    # 2. Longitudinal Z-span continuity (3D through-flow across slices)
+    if (touches_z_boundary or z_span >= 7.5) and in_plane_d <= 8.5:
+        is_vessel = True
+        reasons.append(f"3D纵向跨切片延伸 (Z跨度 {z_span:.1f}mm, 连续贯通)")
+
+    # 3. Connection to branching vascular trunk
+    if touches_xy_boundary and in_plane_d <= 7.5:
+        is_vessel = True
+        reasons.append("向肺门主干血管分叉延伸")
+
+    return {
+        "is_vessel": is_vessel,
+        "in_plane_diameter_mm": in_plane_d,
+        "z_span_mm": z_span,
+        "has_companion_bronchus": has_companion_bronchus,
+        "bronchus_caliber_mm": bronchus_caliber_mm,
+        "touches_z_boundary": touches_z_boundary,
+        "reasons": reasons
+    }
+
+
 def calculate_subsolid_metrics(
     volume: np.ndarray,
     mask: np.ndarray,
     spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-    solid_hu_threshold: float = -150.0
+    solid_hu_threshold: float = -150.0,
+    key_slice_idx: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Calculates dual-channel subsolid / GGO quantitative metrics according to
@@ -197,6 +338,42 @@ def calculate_subsolid_metrics(
 
     total_ld = total_metrics["longest_diameter_mm"]
     total_vol = total_metrics["total_volume_cm3"]
+
+    # 0. Normal Anatomical Structure Exclusion: Pulmonary Vessel Cross-Section Filter
+    # In accordance with Fleischner Society & ACR Lung-RADS v2022 guidelines,
+    # normal anatomical structures (vessels, bones, pleura) must NOT be misclassified as lung nodules.
+    target_slice = key_slice_idx if key_slice_idx is not None else total_metrics.get("key_slice_index")
+    vessel_check = detect_pulmonary_vessel_cross_section(
+        volume=volume,
+        mask=mask,
+        spacing=spacing,
+        key_slice_idx=target_slice
+    )
+    if vessel_check.get("is_vessel", False):
+        reasons_str = "，".join(vessel_check.get("reasons", ["伴行支气管印戒征", "3D管状连续延伸"]))
+        total_metrics["is_vessel"] = True
+        total_metrics["vessel_info"] = vessel_check
+        total_metrics["nodule_type"] = "normal_vessel"
+        total_metrics["nodule_type_zh"] = "正常肺血管截面 (非结节)"
+        total_metrics["solid_core_diameter_mm"] = total_ld
+        total_metrics["solid_core_volume_cm3"] = total_vol
+        total_metrics["solid_core_caliper"] = total_metrics.get("caliper_longest")
+        total_metrics["consolidation_tumor_ratio"] = 1.0
+        total_metrics["lung_rads"] = {
+            "category": "not_applicable",
+            "name": "正常解剖结构 (非肺结节)",
+            "description": f"正常肺血管分支断面 (管径 {total_ld}mm，{reasons_str})",
+            "recommendation": "确认为正常肺血管解剖投影，严格排除于肺结节范畴，无需进行 Lung-RADS 随访或过度复查"
+        }
+        total_metrics["pathology_risk"] = {
+            "risk_level": "none",
+            "risk_level_en": "None (Normal Vasculature)",
+            "tendency": "正常肺血管分支 (伴行动脉/静脉)",
+            "tendency_en": "Normal Pulmonary Vasculature",
+            "rationale": f"该高密度点位于支气管血管束，经 3D 拓扑分析见纵向管状延伸与伴行气道 ({reasons_str})，确认为正常血管横截面，恶性风险为零。"
+        }
+        total_metrics["quality_control"] = quality_control
+        return total_metrics
 
     # Attenuation statistics
     attenuations = volume[nodule_voxels]

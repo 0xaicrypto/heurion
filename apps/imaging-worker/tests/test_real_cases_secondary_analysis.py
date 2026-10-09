@@ -285,3 +285,47 @@ class TestRealCasesSecondaryAnalysis:
         assert "【影像所见描述】" in md
         assert "【影像分级与恶性风险判断】" in md
         assert "【下一步临床处置与随访建议】" in md
+
+    def test_vessel_cross_section_exclusion_from_lung_rads(self):
+        """
+        Validates clinical guideline rule (Fleischner 2017 & ACR Lung-RADS v2022):
+        Normal anatomical structures (pulmonary vessel cross-sections) must NOT be misclassified
+        as pulmonary nodules and must NOT receive a Lung-RADS nodule category.
+        
+        Uses the exact clinical scenario reported: Slice #122 at (z=122, y=240, x=315)
+        accompanied by the signet-ring bronchus lumen.
+        """
+        ct_file = DATA_DIR / "chest_lung_ct.nii.gz"
+        assert ct_file.exists(), f"Missing chest CT: {ct_file}"
+
+        res = self.engine.analyze_file(
+            file_path=str(ct_file),
+            model_name="lung_nodule_segmenter",
+            window_preset="lung",
+            prompt_point={"z": 122, "y": 240, "x": 315}
+        )
+
+        assert res["status"] == "success"
+        recist = res["recist_metrics"]
+        
+        # 1. Structural anatomy identification
+        assert recist.get("is_vessel") is True
+        assert recist["nodule_type"] == "normal_vessel"
+        assert "正常肺血管" in recist["nodule_type_zh"]
+        assert recist["vessel_info"]["has_companion_bronchus"] is True
+
+        # 2. ACR Lung-RADS exclusion
+        rads = recist["lung_rads"]
+        assert rads["category"] == "not_applicable"
+        assert "正常解剖结构" in rads["name"]
+
+        # 3. Multimodal Clinical AI agent reasoning
+        ai_rep = res["clinical_ai_report"]
+        assert ai_rep["risk_level"] == "none"
+        assert "正常解剖结构" in ai_rep["diagnostic_assessment"]
+        assert "不适用 Lung-RADS" in ai_rep["diagnostic_assessment"]
+        assert any(k in ai_rep["management_recommendations"] for k in ("无需", "正常", "生理性", "过度"))
+
+        # 4. Key slice overlay generated
+        assert len(res["key_slice_png_base64"]) > 1000
+

@@ -50,21 +50,27 @@ def render_key_slice_png(
     ctr = recist.get("consolidation_tumor_ratio")
     rads = recist.get("lung_rads")
     
+    is_vessel = recist.get("is_vessel", False)
     clean_lesion_name = sanitize_text(lesion_name, supports_cjk)
     hud_lines = [
         "HEURION IMAGING // MONAI 3D",
         f"Modality: {modality} | Slice: #{key_slice}",
         f"Target: {clean_lesion_name}",
     ]
-    if ctr is not None and recist.get("solid_core_diameter_mm", 0.0) > 0:
+    if is_vessel:
+        hud_lines.append(f"Vessel Caliber: {ld} mm | Normal Vasculature")
+        hud_lines.append("ACR Lung-RADS: Normal Anatomy (Not a Nodule)")
+    elif ctr is not None and recist.get("solid_core_diameter_mm", 0.0) > 0:
         solid_ld = recist.get("solid_core_diameter_mm", 0.0)
         hud_lines.append(f"RECIST LD: {ld} mm | Solid: {solid_ld} mm (CTR: {int(ctr*100)}%)")
+        if rads and isinstance(rads, dict):
+            rads_name = sanitize_text(rads.get('name', ''), supports_cjk)
+            hud_lines.append(f"ACR Lung-RADS: {rads_name}")
     else:
         hud_lines.append(f"RECIST LD: {ld} mm | Vol: {vol} cm3")
-    
-    if rads and isinstance(rads, dict):
-        rads_name = sanitize_text(rads.get('name', ''), supports_cjk)
-        hud_lines.append(f"ACR Lung-RADS: {rads_name}")
+        if rads and isinstance(rads, dict):
+            rads_name = sanitize_text(rads.get('name', ''), supports_cjk)
+            hud_lines.append(f"ACR Lung-RADS: {rads_name}")
 
     qc = recist.get("quality_control")
     if qc and isinstance(qc, dict):
@@ -133,27 +139,31 @@ def render_key_slice_png(
             # Midpoint text
             mx = int((p1[0] + p2[0]) / 2)
             my = int((p1[1] + p2[1]) / 2) - 16
-            label = f"Total LD: {length_mm} mm"
+            if is_vessel:
+                label = f"Vessel: {length_mm} mm (Normal)"
+            else:
+                label = f"Total LD: {length_mm} mm"
             draw.text((mx, my), label, fill=(0, 240, 255, 255), font=font_caliper)
 
-    # Inner solid core caliper if subsolid nodule
-    solid_caliper = recist.get("solid_core_caliper")
-    solid_ld = recist.get("solid_core_diameter_mm", 0.0)
-    if solid_caliper and "p1" in solid_caliper and "p2" in solid_caliper and solid_ld > 0:
-        sp1 = tuple(solid_caliper["p1"])
-        sp2 = tuple(solid_caliper["p2"])
-        draw.line([sp1, sp2], fill=(251, 146, 60, 255), width=2)
-        sdx = sp2[0] - sp1[0]
-        sdy = sp2[1] - sp1[1]
-        sdist = np.hypot(sdx, sdy)
-        if sdist > 0:
-            snx = -sdy / sdist * 4
-            sny = sdx / sdist * 4
-            draw.line([(sp1[0] - snx, sp1[1] - sny), (sp1[0] + snx, sp1[1] + sny)], fill=(251, 146, 60, 255), width=2)
-            draw.line([(sp2[0] - snx, sp2[1] - sny), (sp2[0] + snx, sp2[1] + sny)], fill=(251, 146, 60, 255), width=2)
-            smx = int((sp1[0] + sp2[0]) / 2)
-            smy = int((sp1[1] + sp2[1]) / 2) + 6
-            draw.text((smx, smy), f"Solid: {solid_ld} mm", fill=(253, 186, 116, 255), font=font_caliper)
+    # Inner solid core caliper if subsolid nodule (suppressed for normal blood vessels)
+    if not is_vessel:
+        solid_caliper = recist.get("solid_core_caliper")
+        solid_ld = recist.get("solid_core_diameter_mm", 0.0)
+        if solid_caliper and "p1" in solid_caliper and "p2" in solid_caliper and solid_ld > 0:
+            sp1 = tuple(solid_caliper["p1"])
+            sp2 = tuple(solid_caliper["p2"])
+            draw.line([sp1, sp2], fill=(251, 146, 60, 255), width=2)
+            sdx = sp2[0] - sp1[0]
+            sdy = sp2[1] - sp1[1]
+            sdist = np.hypot(sdx, sdy)
+            if sdist > 0:
+                snx = -sdy / sdist * 4
+                sny = sdx / sdist * 4
+                draw.line([(sp1[0] - snx, sp1[1] - sny), (sp1[0] + snx, sp1[1] + sny)], fill=(251, 146, 60, 255), width=2)
+                draw.line([(sp2[0] - snx, sp2[1] - sny), (sp2[0] + snx, sp2[1] + sny)], fill=(251, 146, 60, 255), width=2)
+                smx = int((sp1[0] + sp2[0]) / 2)
+                smy = int((sp1[1] + sp2[1]) / 2) + 6
+                draw.text((smx, smy), f"Solid: {solid_ld} mm", fill=(253, 186, 116, 255), font=font_caliper)
 
     # Scale bar (lower right corner)
     scale_px = int(scale_bar_mm / max(pixel_spacing_mm, 0.01))

@@ -123,18 +123,38 @@ def segment_pulmonary_nodules(
             from .interactive import interactive_segment_3d
         except (ImportError, ValueError):
             from interactive import interactive_segment_3d
+
+        pz = int(prompt_point["z"])
+        py = int(prompt_point["y"])
+        px = int(prompt_point["x"])
+
+        # Focal nodule / target bounding box constraint (radius 18mm XY, 12mm Z)
+        # In thoracic imaging, solitary nodules are defined as <= 30mm diameter (Fleischner Society).
+        # Bounding the interactive seed prevents unbounded flood-fill across the whole vascular tree.
+        rz = max(3, int(np.ceil(12.0 / dz)))
+        ry = max(8, int(np.ceil(18.0 / dy)))
+        rx = max(8, int(np.ceil(18.0 / dx)))
+        focal_bbox = {
+            "z_min": max(0, pz - rz), "z_max": min(z_dim - 1, pz + rz),
+            "y_min": max(0, py - ry), "y_max": min(y_dim - 1, py + ry),
+            "x_min": max(0, px - rx), "x_max": min(x_dim - 1, px + rx),
+        }
+
         res = interactive_segment_3d(
             volume=volume,
             spacing=spacing,
-            points=[{"z": int(prompt_point["z"]), "y": int(prompt_point["y"]), "x": int(prompt_point["x"]), "is_positive": True}]
+            points=[{"z": pz, "y": py, "x": px, "is_positive": True}],
+            bbox=focal_bbox
         )
         mask = res["mask"]
-        recist = calculate_subsolid_metrics(volume, mask, spacing=spacing)
+        recist = calculate_subsolid_metrics(volume, mask, spacing=spacing, key_slice_idx=pz)
         ld = recist["longest_diameter_mm"]
         solid_d = recist.get("solid_core_diameter_mm", 0.0)
+        solid_desc = f", 实性核心 {solid_d}mm" if solid_d > 0 else ""
         nodule_type_zh = recist.get("nodule_type_zh", "靶结节")
         rads = recist.get("lung_rads", {})
-        solid_desc = f", 实性核心 {solid_d}mm" if solid_d > 0 else ""
+        if recist.get("is_vessel"):
+            return mask, recist, f"正常肺血管分支断面 (伴行血管, 非肺结节, {ld}mm)"
         return mask, recist, f"交互式靶结节测量 ({nodule_type_zh}, {rads.get('name', '')}, {ld}mm{solid_desc})"
 
     # Mode B: Automatic anatomical lung envelope screening
