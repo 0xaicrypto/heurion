@@ -17,8 +17,11 @@ DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "apps",
 
 def get_font(size=14, bold=False):
     font_paths = [
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
     ]
@@ -67,54 +70,24 @@ def draw_caliper(draw, p1, p2, label_text, color=(0, 240, 255, 255), tick_len=6,
 # =============================================================
 
 def generate_case_1_baseline_hrct():
-    print("Generating real-case-1-baseline-hrct.png (physically calibrated to 0.8 mm/px)...")
+    print("Generating real-case-1-baseline-hrct.png (authentic algorithm inference on Slice #172)...")
+    import sys, base64
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "apps", "imaging-worker", "src")))
+    from bronchiectasis import analyze_bronchiectasis_and_mucus
+
     img = nib.load(os.path.join(DATA_DIR, "chest_lung_ct.nii.gz"))
     data = img.get_fdata(dtype=np.float32)
-    # Slice #114 shows right lower lobe bronchiectasis and mucus impaction
-    slice_data = np.rot90(data[:, :, 114])
-    
-    wl, ww = -600, 1500
-    vmin = wl - ww / 2
-    vmax = wl + ww / 2
-    norm = np.clip((slice_data - vmin) / (vmax - vmin), 0, 1)
-    base_img = Image.fromarray((norm * 255).astype(np.uint8)).convert("RGBA")
-    
-    # Real voxel segmentation around verified anatomical coordinates (x:173-192, y:280-290)
-    ov_np = np.zeros((512, 512, 4), dtype=np.uint8)
-    
-    # Highlight actual pulmonary vessel voxels in ROI
-    for y in range(280, 290):
-        for x in range(181, 192):
-            if slice_data[y, x] >= -50:
-                ov_np[y, x] = [239, 68, 68, 160] # Vessel (coral red)
-                
-    # Highlight actual bronchial lumen
-    for y in range(280, 290):
-        for x in range(173, 181):
-            if slice_data[y, x] < -700:
-                ov_np[y, x] = [56, 189, 248, 120] # Bronchial lumen (cyan)
-                
-    seg_overlay = Image.fromarray(ov_np, mode="RGBA")
-    base_img = Image.alpha_composite(base_img, seg_overlay)
-    draw = ImageDraw.Draw(base_img)
-    
-    # Calipers placed directly on REAL physical edges
-    draw_caliper(draw, (181, 285), (191, 285), "伴行动脉 8.0 mm (CT均值 +38 HU)", color=(239, 68, 68, 255), label_offset_y=16, label_offset_x=45)
-    draw_caliper(draw, (173, 285), (180, 285), "支气管腔 6.4 mm (-948 HU)", color=(56, 189, 248, 255), label_offset_y=-24, label_offset_x=-30)
-    
-    # HUD Box at top
-    draw_hud_box(draw, 10, 10, 492, 102)
-    draw.text((16, 14), "HEURION CHEST-CT // 真实体素气道与伴行动脉解剖量化 (Slice #114)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
-    draw.text((16, 32), "解剖坐标: 右肺下叶基底段 (x:173-192, y:280-290) | 层厚: 1.5mm | 像素间距: 0.8mm", fill=(203, 213, 225, 240), font=get_font(11))
-    draw.text((16, 48), "伴行动脉实测: 8.0 mm (10 px, +38.2 HU) | 伴行支气管: 6.4 mm (8 px, -948.5 HU)", fill=(250, 204, 21, 255), font=get_font(11, bold=True))
-    draw.text((16, 64), "气道比率: BAR = 0.80 (生理正常上限) | 病理区BAR = 1.45 (印戒征) | HAM粘液栓: 12.44 cm3", fill=(52, 211, 153, 255), font=get_font(11, bold=True))
-    draw.text((16, 80), "Bhalla 粘液分级: 2 级 (局灶完全嵌顿) | Reiff 评分: 12/18 | 零人工假圈真实体素提取", fill=(148, 163, 184, 240), font=get_font(11))
-    
-    draw_scale_bar(draw, 512, 512)
-    
+    vol_zyx = np.transpose(data, (2, 1, 0)) # (269, 512, 512)
+    res = analyze_bronchiectasis_and_mucus(vol_zyx, spacing=(1.5, 0.8, 0.8))
+
+    b64_str = res["key_slice_png_base64"]
+    if "," in b64_str:
+        b64_str = b64_str.split(",", 1)[1]
+
     out_path = os.path.join(SITE_DIR, "real-case-1-baseline-hrct.png")
-    base_img.convert("RGB").save(out_path, format="PNG", optimize=True)
-    print(f"Saved: {out_path}")
+    with open(out_path, "wb") as f:
+        f.write(base64.b64decode(b64_str))
+    print(f"Saved authentic algorithm inference screenshot: {out_path}")
 
 def generate_case_1_diff_heatmap():
     print("Generating real-case-3-diff-heatmap.png...")

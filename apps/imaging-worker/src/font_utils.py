@@ -20,12 +20,12 @@ CJK_CANDIDATE_PATHS = [
     "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
     "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Regular.otf",
     # macOS
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    "/System/Library/Fonts/STHeiti Medium.ttc",
-    "/System/Library/Fonts/STHeiti Light.ttc",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
     "/System/Library/Fonts/Supplemental/Songti.ttc",
     # Windows
     "C:/Windows/Fonts/msyh.ttc",

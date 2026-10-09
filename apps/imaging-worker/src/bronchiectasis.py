@@ -263,9 +263,9 @@ def extract_mucus_locations(
         for l_name, l_vol in sorted_lobes:
             if l_vol > 0:
                 pct = round((l_vol / total_mucus_vol) * 100, 1)
-                predominant_lobes.append(f"{l_name.split(' ')[0]} ({pct}%, {l_vol}cm³)")
+                predominant_lobes.append(f"{l_name.split(' ')[0]} ({pct}%, {l_vol} cm3)")
 
-    summary_text = "、".join(predominant_lobes[:3]) if predominant_lobes else "双肺散在"
+    summary_text = "、".join(predominant_lobes[:2]) if predominant_lobes else "双肺散在"
     return cluster_info_list[:6], lobar_vols, summary_text
 
 def analyze_bronchiectasis_and_mucus(
@@ -517,11 +517,17 @@ def analyze_bronchiectasis_and_mucus(
         draw.line([(cx + callout_dx, cy + callout_dy), (end_x, cy + callout_dy)], fill=(255, 215, 0, 240), width=2)
         text_x = cx + callout_dx + 4 if callout_dx > 0 else cx + callout_dx - 90
         caliper_bar_str = sanitize_text(f"BAR: {bar_ratio} ({phenotype.split(' ')[0]})", supports_cjk)
-        draw.text((text_x, cy + callout_dy - 18), caliper_bar_str, fill=(255, 235, 59, 255), font=font_caliper)
         caliper_mucus_desc = f"粘液栓: {occlusion_rate_pct}% 阻塞"
         if mucus_nodule_locations:
             caliper_mucus_desc += f" ({mucus_nodule_locations[0]['segment']})"
         caliper_mucus_str = sanitize_text(caliper_mucus_desc, supports_cjk)
+        
+        # High contrast badge behind callout text
+        bbox1 = font_caliper.getbbox(caliper_bar_str)
+        bbox2 = font_caliper.getbbox(caliper_mucus_str)
+        bw = max(bbox1[2] - bbox1[0], bbox2[2] - bbox2[0])
+        draw.rectangle([text_x - 4, cy + callout_dy - 20, text_x + bw + 6, cy + callout_dy + 18], fill=(15, 23, 42, 220), outline=(255, 215, 0, 180), width=1)
+        draw.text((text_x, cy + callout_dy - 18), caliper_bar_str, fill=(255, 235, 59, 255), font=font_caliper)
         draw.text((text_x, cy + callout_dy + 2), caliper_mucus_str, fill=(255, 120, 120, 255), font=font_caliper)
     elif np.any(key_patent):
         lbl_p, n_p = label(key_patent)
@@ -540,8 +546,12 @@ def analyze_bronchiectasis_and_mucus(
             draw.line([(cx + callout_dx, cy + callout_dy), (end_x, cy + callout_dy)], fill=(255, 215, 0, 240), width=2)
             text_x = cx + callout_dx + 4 if callout_dx > 0 else cx + callout_dx - 90
             caliper_bar_str = sanitize_text(f"BAR: {bar_ratio} ({phenotype.split(' ')[0]})", supports_cjk)
-            draw.text((text_x, cy + callout_dy - 18), caliper_bar_str, fill=(255, 235, 59, 255), font=font_caliper)
             caliper_lumen_str = sanitize_text("支气管管腔通畅", supports_cjk)
+            bbox1 = font_caliper.getbbox(caliper_bar_str)
+            bbox2 = font_caliper.getbbox(caliper_lumen_str)
+            bw = max(bbox1[2] - bbox1[0], bbox2[2] - bbox2[0])
+            draw.rectangle([text_x - 4, cy + callout_dy - 20, text_x + bw + 6, cy + callout_dy + 18], fill=(15, 23, 42, 220), outline=(255, 215, 0, 180), width=1)
+            draw.text((text_x, cy + callout_dy - 18), caliper_bar_str, fill=(255, 235, 59, 255), font=font_caliper)
             draw.text((text_x, cy + callout_dy + 2), caliper_lumen_str, fill=(56, 189, 248, 255), font=font_caliper)
 
     # Scale Bar (lower right)
@@ -553,12 +563,13 @@ def analyze_bronchiectasis_and_mucus(
 
     # Diagnostic HUD
     draw.text((12, 6), f"HEURION CHEST-CT // BRONCHIECTASIS & MUCUS AI", fill=(56, 189, 248, 255), font=font_hud_title)
+    dist_short = distribution_summary if len(distribution_summary) <= 32 else distribution_summary[:30] + "..."
     hud_lines = [
         f"计算加速: {dev_info.get('accelerator', str(device))} | 关键断面: 第 #{key_slice_idx} 层",
         f"形态分型: {phenotype}",
-        f"BAR 扩张比: {bar_ratio} (参考 <=1.0) | 管壁厚度比: {wall_to_lumen_ratio}",
-        f"粘液栓体积: {mucus_vol_cm3} cm³ (HAM高密度: {ham_vol_cm3} cm³) | 阻塞率: {occlusion_rate_pct}%",
-        f"优势分布: {distribution_summary}",
+        f"BAR 扩张比: {bar_ratio} (支气管: {bronchus_caliber_mm}mm / 伴行动脉: {artery_caliber_mm}mm) | 管壁厚度比: {wall_to_lumen_ratio}",
+        f"粘液栓体积: {mucus_vol_cm3} cm3 (HAM高密度: {ham_vol_cm3} cm3) | 阻塞率: {occlusion_rate_pct}%",
+        f"优势分布: {dist_short}",
         f"Bhalla 粘液分级: {bhalla_score} | Reiff 严重度评分: {reiff_score}/18"
     ]
     y_pos = 24 if h >= 400 else 18
