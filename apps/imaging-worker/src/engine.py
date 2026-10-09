@@ -177,15 +177,13 @@ def segment_pulmonary_nodules(
     vols_mm3 = counts[1:] * voxel_vol_mm3
     d_equivs_mm = 2.0 * ((3.0 * vols_mm3) / (4.0 * np.pi)) ** (1.0 / 3.0)
 
-    # Clinically meaningful nodule diameter range: 3mm to 30mm (or mass up to 50mm)
-    valid_indices = np.where((d_equivs_mm >= 3.0) & (d_equivs_mm <= 30.0))[0] + 1
-    if len(valid_indices) == 0:
-        valid_indices = np.where((d_equivs_mm > 30.0) & (d_equivs_mm <= 50.0))[0] + 1
-
+    # Clinically meaningful nodule diameter range: 4mm to 30mm (Fleischner Society & ACR Lung-RADS)
+    valid_indices = np.where((d_equivs_mm >= 4.0) & (d_equivs_mm <= 30.0))[0] + 1
     if len(valid_indices) == 0:
         return np.zeros_like(volume, dtype=np.uint8), empty_recist, "未见高危肺结节 (Lung-RADS 1 类 阴性)"
 
     # Distinguish spherical nodules from branching tubular blood vessels
+    # Real nodules: compact, solid/subsolid (solidity >= 0.20), non-branching (aspect ratio <= 2.5), max box dimension <= 32mm
     all_boxes = ndi.find_objects(lbl, max_label=n_feats)
     candidates = []
     for idx in valid_indices:
@@ -196,13 +194,23 @@ def segment_pulmonary_nodules(
         sy = (sl_box[1].stop - sl_box[1].start) * dy
         sx = (sl_box[2].stop - sl_box[2].start) * dx
         dims = [sz, sy, sx]
-        aspect_ratio = max(dims) / (min(dims) + 1e-4)
+        max_dim = max(dims)
+        min_dim = min(dims)
+        aspect_ratio = max_dim / (min_dim + 1e-4)
         vol_i = counts[idx] * voxel_vol_mm3
+        vol_box = sz * sy * sx
+        solidity = vol_i / (vol_box + 1e-4)
         d_i = d_equivs_mm[idx - 1]
-        # Penalize branch-like vessels with high aspect ratio
-        score = vol_i / (aspect_ratio ** 1.5)
-        candidates.append((idx, score, d_i, vol_i, aspect_ratio))
 
+        # Clinical nodule discriminators:
+        # 1. Bounding box max dimension must be <= 32mm (a nodule cannot span centimeters across the lung)
+        # 2. 3D Solidity must be >= 0.20 (spherical/ellipsoid lesions have solidity 0.25-0.55; hollow branching vessels have < 0.05)
+        # 3. Aspect ratio must be <= 2.5 (cylindrical/branching vessels exceed 3.0)
+        if max_dim <= 32.0 and solidity >= 0.20 and aspect_ratio <= 2.5:
+            score = vol_i * solidity / (aspect_ratio ** 1.2)
+            candidates.append((idx, score, d_i, vol_i, aspect_ratio, solidity))
+
+    # Genuine negative exit: if no candidates pass compactness criteria, return Lung-RADS 1 negative!
     if not candidates:
         return np.zeros_like(volume, dtype=np.uint8), empty_recist, "未见高危肺结节 (Lung-RADS 1 类 阴性)"
 
@@ -852,13 +860,11 @@ class MONAIEngine:
         if model_name in ("copd_emphysema_analyzer", "copd_emphysema"):
             lung_mask = (volume >= -980.0) & (volume <= -400.0)
             em_mask = (lung_mask & (volume <= -950.0)).astype(np.uint8)
-            return em_mask if np.sum(em_mask) > 0 else lung_mask.astype(np.uint8)
+            return em_mask
 
         if model_name in ("covid19_lung_infection", "covid19"):
             lung_mask = (volume >= -950.0) & (volume <= -100.0)
             inf_mask = ((volume >= -700.0) & (volume <= 50.0) & lung_mask).astype(np.uint8)
-            if np.sum(inf_mask) < 10:
-                inf_mask = extract_largest_component(((volume >= -800.0) & (volume <= -200.0)).astype(np.uint8))
             return inf_mask
 
         if model_name in ("spleen_segmenter", "spleen_ct"):
@@ -871,20 +877,14 @@ class MONAIEngine:
 
         if model_name in ("pancreas_tumor_segmenter", "pancreas_ct_dints"):
             mask, _ = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[11])
-            if np.sum(mask) < 10:
-                mask = extract_largest_component(((volume >= 28.0) & (volume <= 55.0)).astype(np.uint8))
             return mask.astype(np.uint8)
 
         if model_name in ("kidney_tumor_segmenter", "renal_structures_cect"):
             mask, _ = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[2, 3])
-            if np.sum(mask) < 10:
-                mask = extract_largest_component(((volume >= 25.0) & (volume <= 60.0)).astype(np.uint8))
             return mask.astype(np.uint8)
 
         if model_name in ("liver_lesion_segmenter", "liver_ct"):
             mask, _ = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[6])
-            if np.sum(mask) < 10:
-                mask = extract_largest_component(((volume >= 40.0) & (volume <= 75.0)).astype(np.uint8))
             return mask.astype(np.uint8)
 
         if model_name in ("prostate_mri_segmenter", "prostate_mri"):
@@ -916,8 +916,22 @@ class MONAIEngine:
             return extract_largest_component(c_mask.astype(np.uint8))
 
         if model_name == "coronary_artery_calcification":
-            c_plaque = (volume >= 130.0) & (volume <= 1200.0)
-            return extract_largest_component(c_plaque.astype(np.uint8))
+            z_dim, y_dim, x_dim = volume.shape
+            cardiac_roi = np.zeros_like(volume, dtype=bool)
+            cardiac_roi[int(0.20 * z_dim):int(0.80 * z_dim), int(0.25 * y_dim):int(0.62 * y_dim), int(0.28 * x_dim):int(0.72 * x_dim)] = True
+            cardiac_roi = cardiac_roi & (volume > -100.0)
+            c_cands = (volume >= 130.0) & (volume <= 1200.0) & cardiac_roi
+            lbl, n_feats = ndi.label(c_cands)
+            if n_feats == 0:
+                return np.zeros_like(volume, dtype=np.uint8)
+            dz, dy, dx = spacing
+            c_counts = np.bincount(lbl.flat)
+            c_counts[0] = 0
+            vols_mm3 = c_counts[1:] * (dz * dy * dx)
+            plaque_indices = np.where((vols_mm3 >= 2.0) & (vols_mm3 <= 600.0))[0] + 1
+            if len(plaque_indices) == 0:
+                return np.zeros_like(volume, dtype=np.uint8)
+            return np.isin(lbl, plaque_indices).astype(np.uint8)
 
         if model_name in ("monai_wholebody_ct", "wholebody_ct"):
             mask, _ = self.neural_pipeline.infer_wholebody(f_path or volume, spacing=spacing)
@@ -1241,9 +1255,10 @@ class MONAIEngine:
             f_path = kwargs.get("file_path")
             mask_np, neural_meta = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[11])
             if np.sum(mask_np) < 10:
-                p_retro = (volume >= 28.0) & (volume <= 55.0)
-                mask_np = extract_largest_component(p_retro.astype(np.uint8))
-            lesion_label = "胰腺实质与占位病灶 (MONAI DiNTS / SwinUNETR 真实神经分割)"
+                mask_np = np.zeros_like(volume, dtype=np.uint8)
+                lesion_label = "胰腺实质 (当前扫描视野未包含完整胰腺解剖或未见明确病灶)"
+            else:
+                lesion_label = "胰腺实质与占位病灶 (MONAI DiNTS / SwinUNETR 真实神经分割)"
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
             neural_meta["neural_architecture"] = "MONAI DiNTS (Pancreas CT, 498 layers)"
@@ -1252,9 +1267,10 @@ class MONAIEngine:
             f_path = kwargs.get("file_path")
             mask_np, neural_meta = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing, target_classes=[2, 3])
             if np.sum(mask_np) < 10:
-                k_tissue = (volume >= 25.0) & (volume <= 60.0)
-                mask_np = extract_largest_component(k_tissue.astype(np.uint8))
-            lesion_label = "双肾实质精细解剖与占位病灶 (MONAI SegResNet CECT / SwinUNETR)"
+                mask_np = np.zeros_like(volume, dtype=np.uint8)
+                lesion_label = "双肾实质 (当前扫描视野未包含完整双肾解剖或未见明确病灶)"
+            else:
+                lesion_label = "双肾实质精细解剖与占位病灶 (MONAI SegResNet CECT / SwinUNETR)"
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
             neural_meta["neural_architecture"] = "MONAI SegResNet (Renal Structures CECT, 148 layers)"
@@ -1292,33 +1308,58 @@ class MONAIEngine:
             }
             lesion_label = f"心脏短轴心室腔与心肌分割 (左室腔: {lv_vol} mL, 心肌质量: {myo_mass} g)"
         elif model_name == "coronary_artery_calcification":
-            c_plaque = (volume >= 130.0) & (volume <= 1200.0)
-            mask_np = extract_largest_component(c_plaque.astype(np.uint8))
+            # Isolate anterior cardiac mediastinum (strictly exclude posterior spine, ribs, and sternum)
+            z_dim, y_dim, x_dim = volume.shape
+            cardiac_roi = np.zeros_like(volume, dtype=bool)
+            z_min, z_max = int(0.20 * z_dim), int(0.80 * z_dim)
+            y_min, y_max = int(0.25 * y_dim), int(0.62 * y_dim)
+            x_min, x_max = int(0.28 * x_dim), int(0.72 * x_dim)
+            cardiac_roi[z_min:z_max, y_min:y_max, x_min:x_max] = True
+            cardiac_roi = cardiac_roi & (volume > -100.0)
+
+            c_cands = (volume >= 130.0) & (volume <= 1200.0) & cardiac_roi
+            lbl, n_feats = ndi.label(c_cands)
+            mask_np = np.zeros_like(volume, dtype=np.uint8)
+            agatston = 0.0
+
+            if n_feats > 0:
+                dz, dy, dx = spacing
+                vox_mm3 = dz * dy * dx
+                c_counts = np.bincount(lbl.flat)
+                c_counts[0] = 0
+                vols_mm3 = c_counts[1:] * vox_mm3
+                # Coronary plaques are focal (typically 2 mm3 to 600 mm3). Anything >= 800 mm3 is sternum/spine bone!
+                plaque_indices = np.where((vols_mm3 >= 2.0) & (vols_mm3 <= 600.0))[0] + 1
+                if len(plaque_indices) > 0:
+                    mask_np = np.isin(lbl, plaque_indices).astype(np.uint8)
+                    mean_plaque_hu = float(np.mean(volume[mask_np > 0]))
+                    factor = 1 if mean_plaque_hu < 200 else (2 if mean_plaque_hu < 300 else (3 if mean_plaque_hu < 400 else 4))
+                    agatston = round(float(np.sum(mask_np) * vox_mm3 / 1000.0) * 10.0 * factor, 1)
+
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
             vox_cnt = int(np.sum(mask_np > 0))
-            if vox_cnt > 0:
-                mean_plaque_hu = float(np.mean(volume[mask_np > 0]))
-                factor = 1 if mean_plaque_hu < 200 else (2 if mean_plaque_hu < 300 else (3 if mean_plaque_hu < 400 else 4))
-                agatston = round(float(recist["total_volume_cm3"]) * 10.0 * factor, 1)
-            else:
-                agatston = 0.0
             if agatston == 0.0:
                 risk_str = "极低心血管事件风险 (0分)"
+                lesion_label = "冠状动脉未见确切钙化斑块 (Agatston CAC: 0分, 极低心血管事件风险)"
             elif agatston <= 10.0:
                 risk_str = "微量钙化 / 极低风险 (1-10分)"
+                lesion_label = f"冠状动脉钙化斑块 (Agatston CAC: {agatston}, {risk_str})"
             elif agatston <= 100.0:
                 risk_str = "轻度斑块 / 轻度狭窄可能 (11-100分)"
+                lesion_label = f"冠状动脉钙化斑块 (Agatston CAC: {agatston}, {risk_str})"
             elif agatston <= 400.0:
                 risk_str = "中度斑块 / 中度病变风险 (101-400分)"
+                lesion_label = f"冠状动脉钙化斑块 (Agatston CAC: {agatston}, {risk_str})"
             else:
                 risk_str = "重度广泛钙化 / 冠心病高危 (>400分)"
+                lesion_label = f"冠状动脉钙化斑块 (Agatston CAC: {agatston}, {risk_str})"
+
             recist["agatston"] = {
                 "agatston_score": agatston,
                 "plaque_volume_mm3": round(recist["total_volume_cm3"] * 1000.0, 1),
                 "risk_stratum": risk_str
             }
-            lesion_label = f"冠状动脉钙化斑块 (Agatston CAC: {agatston}, {risk_str})"
             neural_meta = {
                 "real_neural_inference": False,
                 "neural_architecture": "Quantitative CT (Coronary Artery Calcification / Agatston CAC)",
