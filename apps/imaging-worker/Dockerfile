@@ -53,21 +53,7 @@ ENV HEURION_MODEL_DIR=/app/models
 
 # 预先下载核心基座临床模型（脾脏、脑胶质瘤、肺结节、全身多器官、前列腺、SwinUNETR）
 # 确保生产环境容器无需等待网络拉取即可立即执行真实 3D 卷积推理
-RUN python3 -c "\
-import sys, time; \
-sys.path.insert(0, '/app/apps/imaging-worker/src'); \
-from model_registry import pull_model; \
-for m in ['spleen_ct', 'brats_mri', 'lung_nodule_ct', 'wholebody_ct', 'prostate_mri']: \
-    for attempt in range(3): \
-        try: \
-            print(f'Baking model {m} (attempt {attempt+1})...'); \
-            pull_model(m); \
-            break; \
-        except Exception as e: \
-            if attempt == 2: \
-                print(f'Warning: failed to bake {m} during build ({e}), will be pulled at runtime/deploy'); \
-            else: \
-                time.sleep(2)"
+RUN python3 /app/apps/imaging-worker/src/bake_models.py
 
 WORKDIR /app/apps/imaging-worker
 
