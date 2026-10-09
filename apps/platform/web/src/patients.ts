@@ -870,6 +870,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           </label>
           <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="display: none">
           <div id="imgUploadFileName" class="muted small" style="margin-top: 6px; display: none; color: var(--teal)"></div>
+          <div class="muted small" style="margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; display: flex; align-items: flex-start; gap: 5px">
+            ${icon('info', { size: 13, style: 'margin-top: 2px; color: var(--blue); flex-shrink: 0' })}
+            <span><b>交互提示：</b>选定影像后，系统智能推荐适配专科。因 3D 影像体量大且消耗 GPU 算力，选定文件不会自动立即分析；请确认下方模型参数后，点击弹窗底部<b>「开始 MONAI 3D 量化推理」</b>按钮启动运算。</span>
+          </div>
         </div>
       </div>
 
@@ -1007,6 +1011,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const filterModelsForSample = () => {
       const isUpload = radioUpload?.checked
       const sid = isUpload ? null : (sampleSelect ? sampleSelect.value : 'chest_lung_ct')
+      const uploadedFile = fileInputEl?.files?.[0]
+      const fn = uploadedFile?.name?.toLowerCase() || ''
 
       // Sync active state of sample chips
       body.querySelectorAll('.pt-sample-chip').forEach(btn => {
@@ -1015,15 +1021,45 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       })
 
       let matchedCategory = currentSpecialty
+      let autoMatchedLabel = ''
       if (currentSpecialty === 'auto') {
-        if (sid === 'chest_lung_ct' || sid === 'nsclc_lung_ct') {
-          matchedCategory = 'chest'
-        } else if (sid === 'spleen_test') {
-          matchedCategory = 'abdomen'
-        } else if (sid === 'prostate_mri') {
-          matchedCategory = 'abdomen'
+        if (!isUpload) {
+          if (sid === 'chest_lung_ct' || sid === 'nsclc_lung_ct') {
+            matchedCategory = 'chest'
+            autoMatchedLabel = '胸部与呼吸'
+          } else if (sid === 'spleen_test') {
+            matchedCategory = 'abdomen'
+            autoMatchedLabel = '腹部与泌尿'
+          } else if (sid === 'prostate_mri') {
+            matchedCategory = 'abdomen'
+            autoMatchedLabel = '前列腺与盆腔'
+          } else {
+            matchedCategory = 'all'
+          }
         } else {
-          matchedCategory = 'all'
+          // Smart inference from uploaded filename
+          if (/lung|chest|thorax|pulm|hrct|bronch|nodule|copd|abpa|pneumo/.test(fn)) {
+            matchedCategory = 'chest'
+            autoMatchedLabel = '胸部与呼吸'
+          } else if (/abdom|spleen|liver|pancrea|kidney|renal|kits/.test(fn)) {
+            matchedCategory = 'abdomen'
+            autoMatchedLabel = '腹部与泌尿'
+          } else if (/prostat|pelvi|tz|bph/.test(fn)) {
+            matchedCategory = 'abdomen'
+            autoMatchedLabel = '前列腺与盆腔'
+          } else if (/brain|neuro|head|cranial|brats|glioma|stroke/.test(fn)) {
+            matchedCategory = 'brain'
+            autoMatchedLabel = '颅脑与神经'
+          } else if (/cardiac|heart|cine|valve|coronary|lvef/.test(fn)) {
+            matchedCategory = 'brain'
+            autoMatchedLabel = '心血管'
+          } else if (/whole|total|body|spine|bone|vertebra/.test(fn)) {
+            matchedCategory = 'whole_body'
+            autoMatchedLabel = '全身与骨骼'
+          } else {
+            matchedCategory = 'all'
+            if (uploadedFile) autoMatchedLabel = '全专科覆盖'
+          }
         }
       }
 
@@ -1040,11 +1076,20 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       // Determine default selected model
       let preferredModelId = ''
-      if (sid === 'chest_lung_ct') preferredModelId = 'bronchiectasis_mucus_analyzer'
-      else if (sid === 'nsclc_lung_ct') preferredModelId = 'nsclc_recist_analyzer'
-      else if (sid === 'spleen_test') preferredModelId = 'multi_organ_ct'
-      else if (sid === 'prostate_mri') preferredModelId = 'prostate_mri_segmenter'
-      else if (filtered.length > 0) preferredModelId = filtered[0].id
+      if (!isUpload) {
+        if (sid === 'chest_lung_ct') preferredModelId = 'bronchiectasis_mucus_analyzer'
+        else if (sid === 'nsclc_lung_ct') preferredModelId = 'nsclc_recist_analyzer'
+        else if (sid === 'spleen_test') preferredModelId = 'multi_organ_ct'
+        else if (sid === 'prostate_mri') preferredModelId = 'prostate_mri_segmenter'
+      } else {
+        if (/bronch|mucus|ham|abpa/.test(fn)) preferredModelId = 'bronchiectasis_mucus_analyzer'
+        else if (/nodule/.test(fn)) preferredModelId = 'lung_nodule_segmenter'
+        else if (/copd|emphysema/.test(fn)) preferredModelId = 'copd_emphysema_analyzer'
+        else if (/spleen/.test(fn)) preferredModelId = 'spleen_segmenter'
+        else if (/prostat/.test(fn)) preferredModelId = 'prostate_mri_segmenter'
+        else if (/brain|brats/.test(fn)) preferredModelId = 'brain_tumor_segmenter'
+      }
+      if (!preferredModelId && filtered.length > 0) preferredModelId = filtered[0].id
 
       // Separate into quantitative and deep learning
       const qc = filtered.filter(m => m.engine_type === 'quantitative_ct')
@@ -1072,7 +1117,11 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
       const countEl = body.querySelector('#imgModelCount')
       if (countEl) {
-        countEl.textContent = `${filtered.length} 款适配模型就绪`
+        if (autoMatchedLabel) {
+          countEl.textContent = `智能匹配: ${autoMatchedLabel} (${filtered.length} 款模型就绪)`
+        } else {
+          countEl.textContent = `${filtered.length} 款适配模型就绪`
+        }
       }
 
       updateModelUI()
@@ -1120,16 +1169,59 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       })
     })
 
-    // File upload change listener
+    // File upload change listener & drag-and-drop
     const fileInputEl = body.querySelector('#imgFileInput') as HTMLInputElement
     const fileNameEl = body.querySelector('#imgUploadFileName') as HTMLElement
-    fileInputEl?.addEventListener('change', () => {
+    const dropZone = body.querySelector('#imgUploadBox label') as HTMLElement
+
+    const handleFileSelected = () => {
       const f = fileInputEl.files?.[0]
       if (f && fileNameEl) {
         fileNameEl.style.display = 'block'
-        fileNameEl.innerHTML = `${icon('file', { size: 12 })} 已选文件: <b>${esc(f.name)}</b> (${(f.size / (1024 * 1024)).toFixed(1)} MB)`
+        const fn = f.name.toLowerCase()
+        let inferredHint = ''
+        if (/lung|chest|thorax|pulm|hrct|bronch|nodule|copd|abpa/.test(fn)) {
+          inferredHint = ` · 智能识别专科: <b>胸部与呼吸</b>`
+        } else if (/abdom|spleen|liver|pancrea|kidney|renal/.test(fn)) {
+          inferredHint = ` · 智能识别专科: <b>腹部与消化</b>`
+        } else if (/prostat|pelvi|bph/.test(fn)) {
+          inferredHint = ` · 智能识别专科: <b>前列腺与盆腔</b>`
+        } else if (/brain|neuro|head|brats/.test(fn)) {
+          inferredHint = ` · 智能识别专科: <b>颅脑与神经</b>`
+        } else if (/cardiac|heart|valve/.test(fn)) {
+          inferredHint = ` · 智能识别专科: <b>心血管</b>`
+        } else if (/whole|total|spine/.test(fn)) {
+          inferredHint = ` · 智能识别专科: <b>全身与骨骼</b>`
+        } else {
+          inferredHint = ` · 序列已选定 (将在点击底部【开始推理】上传并执行分析)`
+        }
+        fileNameEl.innerHTML = `${icon('file', { size: 12 })} 已选文件: <b>${esc(f.name)}</b> (${(f.size / (1024 * 1024)).toFixed(1)} MB)${inferredHint}`
+        filterModelsForSample()
       }
-    })
+    }
+
+    fileInputEl?.addEventListener('change', handleFileSelected)
+
+    if (dropZone) {
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault()
+        dropZone.style.borderColor = 'var(--blue)'
+        dropZone.style.background = 'rgba(56, 189, 248, 0.08)'
+      })
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.style.borderColor = 'var(--line-strong)'
+        dropZone.style.background = 'var(--hover)'
+      })
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault()
+        dropZone.style.borderColor = 'var(--line-strong)'
+        dropZone.style.background = 'var(--hover)'
+        if (e.dataTransfer?.files?.length) {
+          fileInputEl.files = e.dataTransfer.files
+          handleFileSelected()
+        }
+      })
+    }
 
     // Initial trigger to sync UI
     filterModelsForSample()
