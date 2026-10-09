@@ -16,6 +16,8 @@ try:
     from .interactive import interactive_segment_3d
     from .totalsegmentator import analyze_whole_body_ct, generate_synthetic_whole_body_ct
     from .font_utils import get_cjk_font, get_sans_font, sanitize_text
+    from .clinical_bridge import extract_clinical_features
+    from .clinical_ai_agent import generate_clinical_ai_report
 except (ImportError, ValueError):
     from device import get_optimal_device, get_device_info
     from dicom_io import apply_ct_window, CT_WINDOWS
@@ -25,6 +27,8 @@ except (ImportError, ValueError):
     from interactive import interactive_segment_3d
     from totalsegmentator import analyze_whole_body_ct, generate_synthetic_whole_body_ct
     from font_utils import get_cjk_font, get_sans_font, sanitize_text
+    from clinical_bridge import extract_clinical_features
+    from clinical_ai_agent import generate_clinical_ai_report
 
 def generate_synthetic_ct_volume(
     shape: Tuple[int, int, int] = (48, 128, 128),
@@ -1513,6 +1517,57 @@ class MONAIEngine:
                 sp = recist["spine"]
                 neural_md += f"- **脊柱骨密度量化**: 椎骨小梁 BMD `{sp['mean_bmd_hu']} HU` (T-score 估算: `{sp['t_score_estimate']}`，{sp['bmd_diagnosis']})\n"
 
+        # Step 2: Clinical Feature Structural Extraction
+        b64_key_slice = png_to_base64(png_bytes)
+        try:
+            clinical_feats = extract_clinical_features(
+                volume=volume,
+                mask=mask_np,
+                spacing=spacing,
+                modality=modality,
+                target_name=lesion_label,
+                window_preset=window_preset
+            )
+        except Exception:
+            clinical_feats = {
+                "has_lesion": bool(np.sum(mask_np > 0) > 0),
+                "target_name": lesion_label,
+                "modality": modality,
+                "physical_metrics": recist,
+                "density_metrics": None,
+                "subsolid_metrics": None,
+                "quality_control": recist.get("quality_control", {}),
+                "key_slice_png_base64": b64_key_slice
+            }
+
+        # Step 3: Multimodal AI Clinical Reasoning Agent
+        patient_ctx = kwargs.get("patient_context")
+        try:
+            clinical_ai = generate_clinical_ai_report(
+                features=clinical_feats,
+                patient_context=patient_ctx,
+                key_slice_png_base64=b64_key_slice
+            )
+        except Exception as e:
+            clinical_ai = {
+                "findings_description": f"检出目标病灶，RECIST 1.1 长径 {recist.get('longest_diameter_mm')}mm，三维体积 {recist.get('total_volume_cm3')}cm³。",
+                "diagnostic_assessment": f"评估分级: {rads_info.get('name') if rads_info else '常规病灶'}",
+                "management_recommendations": rads_info.get('recommendation', '建议专科随访') if rads_info else "建议结合临床会诊",
+                "guideline_applied": "Clinical Radiomics Standard",
+                "risk_level": "moderate",
+                "reasoning_engine": "fallback"
+            }
+
+        ai_report_md = (
+            f"\n\n### 多模态 AI 临床会诊意见 ({clinical_ai.get('guideline_applied', '')})\n"
+            f"#### 1. 【影像所见描述】\n"
+            f"{clinical_ai.get('findings_description', '')}\n\n"
+            f"#### 2. 【影像分级与恶性风险判断】\n"
+            f"{clinical_ai.get('diagnostic_assessment', '')}\n\n"
+            f"#### 3. 【下一步临床处置与随访建议】\n"
+            f"{clinical_ai.get('management_recommendations', '')}\n"
+        )
+
         return {
             "status": "success",
             "model_name": model_name,
@@ -1525,7 +1580,9 @@ class MONAIEngine:
             "volume_dimensions": list(volume.shape),
             "voxel_spacing_mm": list(spacing),
             "recist_metrics": recist,
-            "key_slice_png_base64": png_to_base64(png_bytes),
+            "clinical_features": clinical_feats,
+            "clinical_ai_report": clinical_ai,
+            "key_slice_png_base64": b64_key_slice,
             "key_slice_png_size_bytes": len(png_bytes),
             "summary_markdown": (
                 f"**MONAI 3D 影像分析报告**\n"
@@ -1539,6 +1596,7 @@ class MONAIEngine:
                 f"- **垂直短径**: `{recist['short_axis_mm']} mm`\n"
                 f"- **病灶总体积**: `{recist['total_volume_cm3']} cm³`\n"
                 f"{rads_md}"
+                f"{ai_report_md}"
             )
         }
 
