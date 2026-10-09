@@ -464,105 +464,105 @@
             <tr>
               <td class="col-dim" data-i18n="comp_f1_title">医学文献与引证真实性</td>
               <td class="col-heurion">
-                <span class="badge-check">真实核验</span><br>
+                <span class="badge-check" data-i18n="comp_b1_heurion">真实核验</span><br>
                 <span data-i18n="comp_f1_heurion">NCBI PubMed、Europe PMC 与 Crossref 实时交叉验证，严格杜绝虚假文献与假 DOI/PMID。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">高幻觉率</span><br>
+                <span class="badge-cross" data-i18n="comp_b1_generic">高幻觉率</span><br>
                 <span data-i18n="comp_f1_generic">频繁凭空捏造不存在的文献篇名、伪造作者与虚假统计效应量。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">完全手动</span><br>
+                <span class="badge-cross" data-i18n="comp_b1_legacy">完全手动</span><br>
                 <span data-i18n="comp_f1_legacy">无文献网络关联，全靠研究者在外部浏览器逐篇手动检索与排版。</span>
               </td>
             </tr>
             <tr>
               <td class="col-dim" data-i18n="comp_f2_title">3D 医学影像量化 (CT/MRI)</td>
               <td class="col-heurion">
-                <span class="badge-check">原生 3D 体素</span><br>
+                <span class="badge-check" data-i18n="comp_b2_heurion">原生 3D 体素</span><br>
                 <span data-i18n="comp_f2_heurion">深度集成 MONAI 与 PyTorch，支持 RECIST 1.1 靶病灶三维量化、TotalSegmentator 104 类解剖与 3D MPR 正交切片。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">仅限 2D 截图</span><br>
+                <span class="badge-cross" data-i18n="comp_b2_generic">仅限 2D 截图</span><br>
                 <span data-i18n="comp_f2_generic">仅能识别单张静态截图，无法加载或解析三维 DICOM / NIfTI 空间体素。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">流程割裂</span><br>
+                <span class="badge-cross" data-i18n="comp_b2_legacy">流程割裂</span><br>
                 <span data-i18n="comp_f2_legacy">需在第三方 PACS 或 3D Slicer 中测量，手动抄写截面数据到表格。</span>
               </td>
             </tr>
             <tr>
               <td class="col-dim" data-i18n="comp_f3_title">患者健康隐私安全 (PHI)</td>
               <td class="col-heurion">
-                <span class="badge-check">安全闭环</span><br>
+                <span class="badge-check" data-i18n="comp_b3_heurion">安全闭环</span><br>
                 <span data-i18n="comp_f3_heurion">自动分配 S001... 学术代号，内置 PHI 敏感词拦截器，代码在独立受限沙箱运行，数据绝不出院。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">隐私外泄</span><br>
+                <span class="badge-cross" data-i18n="comp_b3_generic">隐私外泄</span><br>
                 <span data-i18n="comp_f3_generic">直接向公网商业大模型 API 发送患者病历，存在严重的医疗法规违规风险。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">缺乏审计</span><br>
+                <span class="badge-cross" data-i18n="comp_b3_legacy">缺乏审计</span><br>
                 <span data-i18n="comp_f3_legacy">保存在本地散乱表格中，缺乏自动化脱敏、分权机制与合规审计日志。</span>
               </td>
             </tr>
             <tr>
               <td class="col-dim" data-i18n="comp_f4_title">受试者纳排与入组流向图</td>
               <td class="col-heurion">
-                <span class="badge-check">一键生成</span><br>
+                <span class="badge-check" data-i18n="comp_b4_heurion">一键生成</span><br>
                 <span data-i18n="comp_f4_heurion">多维组合圈定队列，自动导出宽表长表数据集与符合 CONSORT 2010 / STROBE 规范的矢量流向图。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">无法直连</span><br>
+                <span class="badge-cross" data-i18n="comp_b4_generic">无法直连</span><br>
                 <span data-i18n="comp_f4_generic">仅能提供文字建议，无法直接查询真实病历库并输出符合统计标准的流程图。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">耗时数周</span><br>
+                <span class="badge-cross" data-i18n="comp_b4_legacy">耗时数周</span><br>
                 <span data-i18n="comp_f4_legacy">需编写繁杂的 SQL 查询或 Excel 多表嵌套匹配，手动使用绘图软件作图。</span>
               </td>
             </tr>
             <tr>
               <td class="col-dim" data-i18n="comp_f5_title">发表级 Table 1 基线表</td>
               <td class="col-heurion">
-                <span class="badge-check">原生 Word .docx</span><br>
+                <span class="badge-check" data-i18n="comp_b5_heurion">原生 Word .docx</span><br>
                 <span data-i18n="comp_f5_heurion">1.5pt/0.5pt 学术标准边线、宋体/Times 规范排版、精确组间 p 值检验与统计学脚注。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">格式崩塌</span><br>
+                <span class="badge-cross" data-i18n="comp_b5_generic">格式崩塌</span><br>
                 <span data-i18n="comp_f5_generic">仅生成纯文本 Markdown 或网页 HTML，粘贴进 Word 格式混乱，需重新制表。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">手工组装</span><br>
+                <span class="badge-cross" data-i18n="comp_b5_legacy">手工组装</span><br>
                 <span data-i18n="comp_f5_legacy">在 SPSS 计算均值与百分比后，研究者逐项复制粘贴填入 Word 表格中。</span>
               </td>
             </tr>
             <tr>
               <td class="col-dim" data-i18n="comp_f6_title">因果推断与审稿人抗辩</td>
               <td class="col-heurion">
-                <span class="badge-check">全证据链</span><br>
+                <span class="badge-check" data-i18n="comp_b6_heurion">全证据链</span><br>
                 <span data-i18n="comp_f6_heurion">自动化生成 Love Plot 混杂均衡图与 VanderWeele E-value 未测混杂敏感度双语学术抗辩。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">空洞套话</span><br>
+                <span class="badge-cross" data-i18n="comp_b6_generic">空洞套话</span><br>
                 <span data-i18n="comp_f6_generic">只能生成泛化的审稿应答模板，缺乏基于具体实际入组数据的精确量化证据。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">门槛极高</span><br>
+                <span class="badge-cross" data-i18n="comp_b6_legacy">门槛极高</span><br>
                 <span data-i18n="comp_f6_legacy">需熟练编写 R (MatchIt/EValue) 脚本，临床医生自学与排错成本高昂。</span>
               </td>
             </tr>
             <tr>
               <td class="col-dim" data-i18n="comp_f7_title">课题自主记忆与共识演进</td>
               <td class="col-heurion">
-                <span class="badge-check">知识沉淀</span><br>
+                <span class="badge-check" data-i18n="comp_b7_heurion">知识沉淀</span><br>
                 <span data-i18n="comp_f7_heurion">自动从交互与修改中提炼变量定义、研究假设与团队偏好，经人类确认后随课题持续生长。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">会话即忘</span><br>
+                <span class="badge-cross" data-i18n="comp_b7_generic">会话即忘</span><br>
                 <span data-i18n="comp_f7_generic">单次会话长度受限，新开窗口或团队成员接手必须重新交代全部研究背景。</span>
               </td>
               <td class="col-other">
-                <span class="badge-cross">无记忆机制</span><br>
+                <span class="badge-cross" data-i18n="comp_b7_legacy">无记忆机制</span><br>
                 <span data-i18n="comp_f7_legacy">研究规范与定义零散记录在微信群或随手笔记中，极易发生版本混乱。</span>
               </td>
             </tr>
@@ -927,6 +927,27 @@
       comp_f7_heurion: "自动从交互与修改中提炼变量定义、研究假设与团队偏好，经人类确认后随课题持续生长。",
       comp_f7_generic: "单次会话长度受限，新开窗口或团队成员接手必须重新交代全部研究背景。",
       comp_f7_legacy: "研究规范与定义零散记录在微信群或随手笔记中，极易发生版本混乱。",
+      comp_b1_heurion: "真实核验",
+      comp_b1_generic: "高幻觉率",
+      comp_b1_legacy: "完全手动",
+      comp_b2_heurion: "原生 3D 体素",
+      comp_b2_generic: "仅限 2D 截图",
+      comp_b2_legacy: "流程割裂",
+      comp_b3_heurion: "安全闭环",
+      comp_b3_generic: "隐私外泄",
+      comp_b3_legacy: "缺乏审计",
+      comp_b4_heurion: "一键生成",
+      comp_b4_generic: "无法直连",
+      comp_b4_legacy: "耗时数周",
+      comp_b5_heurion: "原生 Word .docx",
+      comp_b5_generic: "格式崩塌",
+      comp_b5_legacy: "手工组装",
+      comp_b6_heurion: "全证据链",
+      comp_b6_generic: "空洞套话",
+      comp_b6_legacy: "门槛极高",
+      comp_b7_heurion: "知识沉淀",
+      comp_b7_generic: "会话即忘",
+      comp_b7_legacy: "无记忆机制",
       faq_h: "<span class=\"nw\">关于 Heurion，</span><span class=\"nw\">临床研究者常问的问题。</span>",
       faq_lead: "了解 Heurion 的技术架构、医学影像能力、隐私合规保障以及与通用大模型的本质区别。",
       faq_q1: "Heurion 是什么？与普通通用大模型（如 ChatGPT / Claude）有什么本质区别？",
@@ -1100,6 +1121,27 @@
       comp_f7_heurion: "Synthesizes variable definitions, hypotheses, and team consensus from interactions; continuously evolves with human approval.",
       comp_f7_generic: "Stateless amnesia: context windows expire; users must re-explain entire clinical study designs in new chats.",
       comp_f7_legacy: "No memory mechanism: study criteria are scattered across emails and chat apps, causing version drift.",
+      comp_b1_heurion: "Verified Citations",
+      comp_b1_generic: "High Hallucination",
+      comp_b1_legacy: "Manual Process",
+      comp_b2_heurion: "Native 3D Voxels",
+      comp_b2_generic: "2D Screenshots Only",
+      comp_b2_legacy: "Fragmented Workflow",
+      comp_b3_heurion: "Isolated & Secure",
+      comp_b3_generic: "Privacy Exposure",
+      comp_b3_legacy: "No Audit Trail",
+      comp_b4_heurion: "Automated Generation",
+      comp_b4_generic: "No Direct Data Link",
+      comp_b4_legacy: "Weeks of Effort",
+      comp_b5_heurion: "Native Word .docx",
+      comp_b5_generic: "Formatting Drift",
+      comp_b5_legacy: "Manual Assembly",
+      comp_b6_heurion: "Full Evidence Chain",
+      comp_b6_generic: "Boilerplate Output",
+      comp_b6_legacy: "High Learning Curve",
+      comp_b7_heurion: "Self-Evolving Memory",
+      comp_b7_generic: "Stateless Amnesia",
+      comp_b7_legacy: "No Memory Engine",
       faq_h: "<span class=\"nw\">Frequently Asked Questions</span><br><span class=\"nw\">from Clinical Researchers.</span>",
       faq_lead: "Learn about Heurion's architecture, 3D medical imaging engine, data privacy boundaries, and how it differs from generic LLMs.",
       faq_q1: "What is Heurion, and how does it differ fundamentally from generic LLMs like ChatGPT or Claude?",
