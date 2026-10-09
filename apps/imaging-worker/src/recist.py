@@ -496,9 +496,11 @@ def calculate_emphysema_metrics(
             "total_lung_volume_liters": 0.0,
             "emphysema_volume_liters": 0.0,
             "laa_percent": 0.0,
+            "gold_stage": "GOLD 0",
             "gold_grade": "indeterminate",
             "gold_grade_zh": "未检测到有效双肺野 (数据不足)",
             "clinical_impression": "CT 数据未能有效提取完整双肺实质，请确认扫描范围包含全胸廓。",
+            "recommendation": "CT 数据未能有效提取完整双肺实质，请确认扫描范围包含全胸廓。",
             "mean_lung_attenuation_hu": 0.0,
             "quality_control": quality_control
         }

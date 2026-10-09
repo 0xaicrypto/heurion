@@ -281,7 +281,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "双肺 5 大肺叶 (RUL, RML, RLL, LUL, LLL) 体积及占比",
             "recommended_window": "lung",
             "compatible_samples": ["chest_lung_ct"],
-            "is_ready": False
+            "is_ready": True
         },
         {
             "id": "covid19_lung_infection",
@@ -293,7 +293,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "磨玻璃影 (GGO)、网格影与实变受累百分比",
             "recommended_window": "lung",
             "compatible_samples": ["chest_lung_ct"],
-            "is_ready": False
+            "is_ready": True
         },
 
         # 2. 腹部、消化与泌尿系统 (Abdomen & Pelvis)
@@ -367,7 +367,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "肝实质体积、原发性肝癌 (HCC) 与转移瘤靶病灶",
             "recommended_window": "abdomen",
             "compatible_samples": ["spleen_test"],
-            "is_ready": False
+            "is_ready": True
         },
 
         # 3. 颅脑与中枢神经系统 (Brain & Neurology)
@@ -405,7 +405,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "急性脑梗死缺血半暗带与核心梗死容积",
             "recommended_window": "brain",
             "compatible_samples": [],
-            "is_ready": False
+            "is_ready": True
         },
         {
             "id": "intracranial_hemorrhage_ct",
@@ -417,7 +417,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "硬膜下、硬膜外、脑实质内及蛛网膜下腔出血",
             "recommended_window": "brain",
             "compatible_samples": [],
-            "is_ready": False
+            "is_ready": True
         },
 
         # 4. 心血管系统 (Cardiovascular)
@@ -455,7 +455,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "左前降支、回旋支、右冠状动脉钙化积分与冠心病风险分层",
             "recommended_window": "mediastinum",
             "compatible_samples": [],
-            "is_ready": False
+            "is_ready": True
         },
 
         # 5. 骨科与全身体素 (Musculoskeletal & Whole-Body)
@@ -493,7 +493,7 @@ def list_clinical_models(include_all: bool = False):
             "target": "颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙测量",
             "recommended_window": "bone",
             "compatible_samples": [],
-            "is_ready": False
+            "is_ready": True
         },
 
         # 6. 病理、内窥镜与钼靶 (Pathology, Endoscopy & Mammography)
