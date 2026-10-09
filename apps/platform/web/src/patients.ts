@@ -885,9 +885,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           <div class="pt-sample-chips" style="margin-top: 8px">
             <span class="muted small">快捷选择：</span>
             <button type="button" class="pt-sample-chip active" data-sid="chest_lung_ct">${icon('lung', { size: 12 })} 全胸部 HRCT</button>
-            <button type="button" class="pt-sample-chip" data-sid="nsclc_lung_ct">${icon('nsclc', { size: 12 })} 非小细胞肺癌 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="lidc_lung_nodule_ct">${icon('lung', { size: 12 })} LIDC 肺结节 CT</button>
             <button type="button" class="pt-sample-chip" data-sid="spleen_test">${icon('abdomen', { size: 12 })} 腹部增强 CT</button>
             <button type="button" class="pt-sample-chip" data-sid="prostate_mri">${icon('scan', { size: 12 })} 前列腺 T2-MRI</button>
+            <button type="button" class="pt-sample-chip" data-sid="brats_brain_mri">${icon('scan', { size: 12 })} BraTS 脑胶质瘤 MRI</button>
           </div>
           <div class="muted small" style="margin-top: 6px; font-size: 11.5px">预置真实临床三维体素扫描数据。系统将完整 3D 原始体素序列加密归档至该患者档案。</div>
         </div>
@@ -1041,7 +1042,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       let autoMatchedLabel = ''
       if (currentSpecialty === 'auto') {
         if (!isUpload) {
-          if (sid === 'chest_lung_ct' || sid === 'nsclc_lung_ct') {
+          if (sid === 'chest_lung_ct' || sid === 'lidc_lung_nodule_ct' || sid === 'nsclc_lung_ct') {
             matchedCategory = 'chest'
             autoMatchedLabel = '胸部与呼吸'
           } else if (sid === 'spleen_test') {
@@ -1050,6 +1051,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           } else if (sid === 'prostate_mri') {
             matchedCategory = 'abdomen'
             autoMatchedLabel = '前列腺与盆腔'
+          } else if (sid === 'brats_brain_mri') {
+            matchedCategory = 'brain'
+            autoMatchedLabel = '颅脑多模态 MRI'
           } else {
             matchedCategory = 'all'
           }
@@ -1095,6 +1099,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       let preferredModelId = ''
       if (!isUpload) {
         if (sid === 'chest_lung_ct') preferredModelId = 'bronchiectasis_mucus_analyzer'
+        else if (sid === 'lidc_lung_nodule_ct') preferredModelId = 'lung_nodule_segmenter'
+        else if (sid === 'brats_brain_mri') preferredModelId = 'brain_tumor_brats'
         else if (sid === 'nsclc_lung_ct') preferredModelId = 'nsclc_recist_analyzer'
         else if (sid === 'spleen_test') preferredModelId = 'multi_organ_ct'
         else if (sid === 'prostate_mri') preferredModelId = 'prostate_mri_segmenter'

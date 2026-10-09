@@ -600,6 +600,16 @@ def list_samples():
             "default_window": "lung",
             "size_mb": round(chest_path.stat().st_size / (1024 * 1024), 1)
         })
+    lidc_path = DATA_DIR / "lidc_lung_nodule_ct.nii.gz"
+    if lidc_path.exists():
+        samples.append({
+            "id": "lidc_lung_nodule_ct",
+            "name": "真实临床 LIDC 肺孤立性实性结节胸部 CT (TCIA 金标准病例 0001)",
+            "modality": "Chest CT",
+            "default_model": "lung_nodule_segmenter",
+            "default_window": "lung",
+            "size_mb": round(lidc_path.stat().st_size / (1024 * 1024), 1)
+        })
     if spleen_path.exists():
         samples.append({
             "id": "spleen_test",
@@ -614,9 +624,19 @@ def list_samples():
             "id": "prostate_mri",
             "name": "真实临床前列腺 T2 加权 MRI (19层 320x320)",
             "modality": "Pelvic MRI",
-            "default_model": "liver_lesion_segmenter",
+            "default_model": "prostate_mri_segmenter",
             "default_window": "abdomen",
             "size_mb": round(mri_path.stat().st_size / (1024 * 1024), 1)
+        })
+    brats_path = DATA_DIR / "brats_brain_mri.nii.gz"
+    if brats_path.exists():
+        samples.append({
+            "id": "brats_brain_mri",
+            "name": "真实临床 BraTS 脑胶质母细胞瘤多模态 MRI (4通道 T1/T1c/T2/FLAIR)",
+            "modality": "Brain MRI",
+            "default_model": "brain_tumor_brats",
+            "default_window": "brain",
+            "size_mb": round(brats_path.stat().st_size / (1024 * 1024), 1)
         })
     return {"samples": samples}
  
