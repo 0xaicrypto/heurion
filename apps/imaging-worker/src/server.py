@@ -142,6 +142,7 @@ class InteractiveSegmentRequest(BaseModel):
     window_preset: Optional[str] = "lung"
     plane: Optional[str] = "axial"
     slice_index: Optional[int] = None
+    mode: Optional[str] = "deep"
 
 class WholeBodyAnalysisRequest(BaseModel):
     sample_id: Optional[str] = "chest_lung_ct"
@@ -1008,6 +1009,7 @@ def run_interactive_segmentation_endpoint(req: InteractiveSegmentRequest = Body(
             window_preset=req.window_preset,
             plane=req.plane or "axial",
             slice_index=req.slice_index,
+            mode=req.mode or "deep",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Interactive segmentation failed: {str(e)}")

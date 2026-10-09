@@ -157,23 +157,33 @@ def segment_pulmonary_nodules(
             return mask, recist, f"正常肺血管分支断面 (伴行血管, 非肺结节, {ld}mm)"
         return mask, recist, f"交互式靶结节测量 ({nodule_type_zh}, {rads.get('name', '')}, {ld}mm{solid_desc})"
 
-    # Mode B: Automatic anatomical lung envelope screening
-    lung_cands_3d = np.zeros(volume.shape, dtype=bool)
-    for z in range(z_dim):
-        sl = volume[z]
-        # Body threshold (-450 HU)
-        body = ndi.binary_fill_holes(sl > -450.0)
-        if np.sum(body) < 1000:
-            continue
-        lung_air = (sl >= -980.0) & (sl <= -450.0) & body
-        if lung_air.sum() > 300:
-            # Internal structures (nodules & vessels) are enclosed in lung air
-            env = ndi.binary_fill_holes(lung_air)
-            # Erode to eliminate chest wall pleura / ribs / subcutaneous fat spillover
-            env_clean = ndi.binary_erosion(env, iterations=2)
-            # Soft tissue candidates inside lung interior (-150 to +120 HU)
-            cands = (sl >= -150.0) & (sl <= 120.0) & env_clean
-            lung_cands_3d[z] = cands
+    # Mode B: Automatic anatomical atlas lung envelope screening
+    try:
+        from .totalsegmentator import extract_anatomical_compartments_3d
+    except (ImportError, ValueError):
+        from totalsegmentator import extract_anatomical_compartments_3d
+
+    compartments = extract_anatomical_compartments_3d(volume, spacing=spacing)
+    lung_mask = compartments["lung_parenchyma"]
+    bone_mask = compartments["bone_skeleton"]
+    mediastinum_mask = compartments["mediastinum_central"]
+
+    if np.any(lung_mask):
+        intraparenchymal_zone = lung_mask & (~bone_mask) & (~mediastinum_mask)
+        lung_cands_3d = (volume >= -150.0) & (volume <= 120.0) & intraparenchymal_zone
+    else:
+        lung_cands_3d = np.zeros(volume.shape, dtype=bool)
+        for z in range(z_dim):
+            sl = volume[z]
+            body = ndi.binary_fill_holes(sl > -450.0)
+            if np.sum(body) < 1000:
+                continue
+            lung_air = (sl >= -980.0) & (sl <= -450.0) & body
+            if lung_air.sum() > 300:
+                env = ndi.binary_fill_holes(lung_air)
+                env_clean = ndi.binary_erosion(env, iterations=2)
+                cands = (sl >= -150.0) & (sl <= 120.0) & env_clean
+                lung_cands_3d[z] = cands
 
     lbl, n_feats = ndi.label(lung_cands_3d)
     empty_recist = {
@@ -231,6 +241,18 @@ def segment_pulmonary_nodules(
         # 2. 3D Solidity must be >= 0.20 (spherical/ellipsoid lesions have solidity 0.25-0.55; hollow branching vessels have < 0.05)
         # 3. Aspect ratio must be <= 2.5 (cylindrical/branching vessels exceed 3.0)
         if max_dim <= 32.0 and solidity >= 0.20 and aspect_ratio <= 2.5:
+            # Anatomical atlas boundary check: reject candidates overlapping dense bone or central mediastinum
+            cand_mask_i = (lbl == idx)
+            cand_voxels = counts[idx]
+            if cand_voxels > 0 and np.any(bone_mask):
+                bone_overlap = np.sum(cand_mask_i & bone_mask) / cand_voxels
+                if bone_overlap > 0.15:
+                    continue
+            if cand_voxels > 0 and np.any(mediastinum_mask):
+                med_overlap = np.sum(cand_mask_i & mediastinum_mask) / cand_voxels
+                if med_overlap > 0.25:
+                    continue
+
             score = vol_i * solidity / (aspect_ratio ** 1.2)
             candidates.append((idx, score, d_i, vol_i, aspect_ratio, solidity))
 
@@ -2047,12 +2069,16 @@ class MONAIEngine:
         window_preset: Optional[str] = "lung",
         plane: str = "axial",
         slice_index: Optional[int] = None,
+        mode: str = "deep",
     ) -> Dict[str, Any]:
         """
         Executes interactive click/prompt-based segmentation (VISTA-3D paradigm):
         Takes foreground/background prompt points and/or bounding boxes,
         extracts the 3D lesion mask, computes RECIST 1.1 metrics,
         and renders a high-definition 2D slice with contour and prompt point markers.
+        Supports dual-track execution:
+        - "deep": MedSAM / VISTA-3D semantic geodesic likelihood with anatomical boundaries
+        - "fast": Fast heuristic EDT for sub-50ms CPU interaction
         """
         modality = "CT"
         if volume is None:
@@ -2068,12 +2094,25 @@ class MONAIEngine:
         if spacing is None:
             spacing = (1.5, 0.8, 0.8)
 
+        # Anatomical prior extraction (TotalSegmentator atlas mask)
+        anatomical_prior = None
+        if window_preset in ("lung", "mediastinum") or (sample_id_or_path and "lung" in str(sample_id_or_path)):
+            try:
+                from .totalsegmentator import extract_anatomical_compartments_3d
+            except (ImportError, ValueError):
+                from totalsegmentator import extract_anatomical_compartments_3d
+            comps = extract_anatomical_compartments_3d(volume, spacing=spacing)
+            if np.any(comps.get("lung_parenchyma", False)):
+                anatomical_prior = comps["lung_parenchyma"] & (~comps["bone_skeleton"])
+
         seg_res = interactive_segment_3d(
             volume=volume,
             spacing=spacing,
             points=points,
             bbox=bbox,
             current_mask=current_mask,
+            mode=mode,
+            anatomical_prior=anatomical_prior,
         )
 
         mask = seg_res["mask"]
@@ -2100,6 +2139,7 @@ class MONAIEngine:
         return {
             "status": "success",
             "model_name": "vista3d_interactive_segmenter",
+            "engine_mode": seg_res.get("engine_mode", mode),
             "voxel_count": seg_res["voxel_count"],
             "volume_cm3": seg_res["volume_cm3"],
             "key_slice_index": key_slice_idx,

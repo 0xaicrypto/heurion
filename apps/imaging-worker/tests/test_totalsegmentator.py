@@ -113,3 +113,21 @@ def test_api_whole_body_endpoint():
     assert "body_composition" in data
     assert data["body_composition"]["skeletal_muscle_index_cm2_m2"] > 0
     assert data["key_slice_png_base64"].startswith("data:image/png;base64,")
+
+
+def test_extract_anatomical_compartments_3d():
+    from totalsegmentator import extract_anatomical_compartments_3d
+    vol, _ = generate_synthetic_whole_body_ct(shape=(32, 64, 64), spacing=(2.0, 1.0, 1.0))
+    comps = extract_anatomical_compartments_3d(vol, spacing=(2.0, 1.0, 1.0))
+    
+    assert "body_mask" in comps
+    assert "bone_skeleton" in comps
+    assert "lung_parenchyma" in comps
+    assert "mediastinum_central" in comps
+    assert "thoracic_cage" in comps
+    
+    # Critical anatomical invariance: lung parenchyma strictly excludes bone skeleton
+    assert not np.any(comps["lung_parenchyma"] & comps["bone_skeleton"])
+    # Bones are present in the volume
+    assert np.any(comps["bone_skeleton"])
+

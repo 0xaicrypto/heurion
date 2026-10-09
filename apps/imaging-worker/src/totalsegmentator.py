@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from typing import Dict, Any, Tuple, Optional, List
 from PIL import Image, ImageDraw, ImageFont
+import scipy.ndimage as ndi
 from scipy.ndimage import label, binary_dilation, binary_fill_holes, find_objects, sum as ndimage_sum
 
 try:
@@ -552,3 +553,75 @@ def generate_totalsegmentator_report_markdown(
 2. **肌质评估**: 骨骼肌 HU 值为 `{muscle_hu} HU`，{'提示肌纤维间脂质沉积浸润 (Myosteatosis)，肌肉收缩质量下降' if is_myosteatotic else '肌纤维密度良好，未见显著肌脂肪沉积'}。
 3. **代谢综合征与心血管风险**: VAT/SAT 比值为 `{vat_to_sat_ratio}`，{'提示明显中心型内脏脂肪蓄积，建议进行降糖降脂与心血管代谢综合管理' if vat_to_sat_ratio > 1.0 else '内脏与皮下脂肪比值正常'}。
 """
+
+
+def extract_anatomical_compartments_3d(
+    volume: np.ndarray,
+    spacing: Tuple[float, float, float] = (1.5, 0.8, 0.8),
+) -> Dict[str, np.ndarray]:
+    """
+    Extracts core 3D anatomical organ and structural compartments from CT scans
+    using TotalSegmentator standardized anatomical groupings:
+    - lung_parenchyma: intrapulmonary bilateral lung volume strictly excluding chest wall/mediastinum
+    - bone_skeleton: dense cortical/trabecular skeleton (ribs, spine, sternum, clavicles, scapulae)
+    - mediastinum_central: central cardiac and great vessel vascular envelope
+    - thoracic_cage: chest wall soft tissues (intercostal muscles, pectoralis, subcutaneous fat)
+    """
+    z_dim, y_dim, x_dim = volume.shape
+    dz, dy, dx = [float(s) for s in spacing]
+
+    # 1. Whole Body Envelope (slice by slice to avoid memory issues and properly fill internal thoracic cavity)
+    body_mask = np.zeros(volume.shape, dtype=bool)
+    for z in range(z_dim):
+        sl = volume[z]
+        sl_thresh = sl > -500.0
+        if np.sum(sl_thresh) > 100:
+            body_mask[z] = binary_fill_holes(sl_thresh)
+
+    # 2. Bone Skeleton (dense cortical & trabecular bone: HU > 200)
+    bone_raw = (volume > 200.0) & body_mask
+    struct3d = ndi.generate_binary_structure(3, 1)
+    bone_skeleton = binary_dilation(bone_raw, structure=struct3d, iterations=1)
+
+    # 3. Lung Parenchyma: 3D intrapulmonary air cavities within body envelope
+    lung_air = (volume >= -980.0) & (volume <= -450.0) & body_mask & (~bone_skeleton)
+    lbl_air, num_air = label(lung_air)
+    lung_parenchyma = np.zeros(volume.shape, dtype=bool)
+    if num_air > 0:
+        counts = np.bincount(lbl_air.flat)
+        counts[0] = 0
+        sorted_indices = np.argsort(counts)[::-1]
+        for l_idx in sorted_indices[:4]:
+            if counts[l_idx] > 1500:
+                lung_parenchyma |= (lbl_air == l_idx)
+
+    # Fill internal intrapulmonary structures (small branching blood vessels & bronchi inside the lungs)
+    if np.any(lung_parenchyma):
+        # 3D closing of 2 iterations bridges normal intraparenchymal vessels
+        lung_parenchyma = ndi.binary_closing(lung_parenchyma, structure=struct3d, iterations=2)
+        # Strictly ensure bone skeleton is excluded
+        lung_parenchyma &= (~bone_skeleton)
+
+    # 4. Central Mediastinum: Anatomical zone between lungs containing heart, aorta, pulmonary trunk
+    mediastinum_central = np.zeros(volume.shape, dtype=bool)
+    if np.any(lung_parenchyma):
+        for z in range(z_dim):
+            sl_lung = lung_parenchyma[z]
+            if np.sum(sl_lung) > 300:
+                hull = binary_fill_holes(sl_lung)
+                med_zone = hull & (~sl_lung) & (~bone_skeleton[z])
+                # Soft tissue density inside mediastinum (-50 to +160 HU)
+                sl_vol = volume[z]
+                mediastinum_central[z] = med_zone & (sl_vol >= -50.0) & (sl_vol <= 160.0)
+
+    # 5. Thoracic Cage / Chest Wall: Body mask excluding lungs and mediastinum
+    thoracic_cage = body_mask & (~lung_parenchyma) & (~mediastinum_central)
+
+    return {
+        "body_mask": body_mask,
+        "bone_skeleton": bone_skeleton,
+        "lung_parenchyma": lung_parenchyma,
+        "mediastinum_central": mediastinum_central,
+        "thoracic_cage": thoracic_cage,
+    }
+

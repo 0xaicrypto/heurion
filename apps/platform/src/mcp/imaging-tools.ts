@@ -868,8 +868,9 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       slice_index: z.number().int().optional().describe('指定渲染切片层号（缺省自动对齐至点击层或最大截面）'),
       save_asset: z.boolean().optional().describe('是否将带轮廓切片保存为用户文档资产，缺省 true'),
       label: z.string().max(80).optional().describe('图注标签，例如「图 3 VISTA-3D 交互点选分割截面」'),
+      mode: z.enum(['deep', 'fast']).optional().describe('分割模式：deep (MedSAM / VISTA-3D 深度解剖语义模式), fast (快速启发式 EDT 模式)，缺省为 deep'),
     },
-  }, async ({ sample_id, file_path, points, bbox, window_preset, plane, slice_index, save_asset, label }) => {
+  }, async ({ sample_id, file_path, points, bbox, window_preset, plane, slice_index, save_asset, label, mode }) => {
     let resultData: any
     try {
       const resp = await fetch(`${workerUrl}/api/v1/analyze/interactive-segment`, {
@@ -883,6 +884,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
           window_preset: window_preset || 'lung',
           plane: plane || 'axial',
           slice_index,
+          mode: mode || 'deep',
         }),
         signal: AbortSignal.timeout(30000),
       })

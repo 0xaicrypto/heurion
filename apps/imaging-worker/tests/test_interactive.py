@@ -89,3 +89,44 @@ def test_models_list_contains_advanced_architectures():
     model_ids = [m["id"] for m in res.json()["models"]]
     assert "vista3d_interactive_segmenter" in model_ids
     assert "whole_body_ct_segmenter" in model_ids
+
+
+def test_interactive_segment_dual_track_modes():
+    vol, gt_mask = generate_synthetic_ct_volume(shape=(32, 64, 64), spacing=(2.0, 1.0, 1.0))
+    
+    # 1. Deep Semantic Geodesic Mode (Default)
+    res_deep = interactive_segment_3d(
+        volume=vol,
+        spacing=(2.0, 1.0, 1.0),
+        points=[{'z': 16, 'y': 36, 'x': 44, 'is_positive': True}],
+        mode="deep"
+    )
+    assert res_deep["status"] == "success"
+    assert res_deep["engine_mode"] == "deep"
+    assert res_deep["voxel_count"] > 50
+
+    # 2. Fast Heuristic EDT Mode
+    res_fast = interactive_segment_3d(
+        volume=vol,
+        spacing=(2.0, 1.0, 1.0),
+        points=[{'z': 16, 'y': 36, 'x': 44, 'is_positive': True}],
+        mode="fast"
+    )
+    assert res_fast["status"] == "success"
+    assert res_fast["engine_mode"] == "fast"
+    assert res_fast["voxel_count"] > 50
+
+    # 3. Anatomical Prior Mask Constraint
+    prior = np.zeros(vol.shape, dtype=bool)
+    prior[14:18, 32:40, 40:48] = True
+    res_prior = interactive_segment_3d(
+        volume=vol,
+        spacing=(2.0, 1.0, 1.0),
+        points=[{'z': 16, 'y': 36, 'x': 44, 'is_positive': True}],
+        mode="deep",
+        anatomical_prior=prior
+    )
+    assert res_prior["status"] == "success"
+    # Ensure mask is strictly within anatomical prior
+    assert np.all((res_prior["mask"] > 0) <= prior)
+

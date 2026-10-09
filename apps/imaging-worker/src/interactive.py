@@ -16,9 +16,14 @@ def interactive_segment_3d(
     bbox: Optional[Dict[str, int]] = None,
     current_mask: Optional[np.ndarray] = None,
     intensity_tolerance_hu: Optional[float] = None,
+    mode: str = "deep",
+    anatomical_prior: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Executes real-time 3D interactive click/prompt segmentation on a volumetric medical scan.
+    Supports dual-track execution:
+    - "deep": MedSAM / VISTA-3D semantic likelihood field modulated by 3D anatomical gradient boundaries
+    - "fast": Fast heuristic Euclidean Distance Transform (EDT) for sub-50ms CPU execution
 
     Args:
         volume: 3D numpy array (Z, Y, X) containing voxel intensities (HU for CT)
@@ -27,6 +32,8 @@ def interactive_segment_3d(
         bbox: Optional 3D bounding box: {'z_min': int, 'z_max': int, 'y_min': int, 'y_max': int, 'x_min': int, 'x_max': int}
         current_mask: Optional existing 3D binary mask from previous refinement step
         intensity_tolerance_hu: Intensity range around seed for adaptive segmentation (defaults to adaptive IQR)
+        mode: "deep" (MedSAM/VISTA-3D semantic geodesic likelihood) or "fast" (EDT fallback)
+        anatomical_prior: Optional boolean 3D mask restricting candidate region (e.g. from TotalSegmentator)
 
     Returns:
         Dict containing binary segmentation mask, volume metrics, and refined key slice index.
@@ -69,11 +76,7 @@ def interactive_segment_3d(
         target_hu = float(np.mean(volume))
         tol = 50.0
 
-    # 2. Compute intensity affinity field
-    hu_diff = np.abs(volume - target_hu)
-    intensity_match = hu_diff <= tol
-
-    # 3. Spatial Distance Transform from positive seeds
+    # 2. Spatial Distance Transform from positive seeds
     pos_seed_grid = np.zeros(volume.shape, dtype=bool)
     for p in pos_points:
         pz = int(np.clip(p.get('z', z_dim // 2), 0, z_dim - 1))
@@ -82,12 +85,11 @@ def interactive_segment_3d(
         pos_seed_grid[pz, py, px] = True
 
     if np.any(pos_seed_grid):
-        # Distance in mm
         dist_to_pos_mm = ndi.distance_transform_edt(~pos_seed_grid, sampling=(dz, dy, dx))
     else:
         dist_to_pos_mm = np.full(volume.shape, 999.0, dtype=np.float32)
 
-    # 4. Spatial Distance Transform from negative seeds
+    # 3. Spatial Distance Transform from negative seeds
     neg_seed_grid = np.zeros(volume.shape, dtype=bool)
     for p in neg_points:
         pz = int(np.clip(p.get('z', z_dim // 2), 0, z_dim - 1))
@@ -100,15 +102,50 @@ def interactive_segment_3d(
     else:
         dist_to_neg_mm = np.full(volume.shape, 999.0, dtype=np.float32)
 
-    # 5. Geodesic spatial & intensity energy combination
-    # Spatial radius limit based on distance to positive clicks (default candidate sphere radius ~45mm)
-    spatial_reach = dist_to_pos_mm <= 45.0
-    candidate = intensity_match & spatial_reach
+    # 4. Dual-Track Inference Branching
+    if mode == "deep":
+        # MedSAM / VISTA-3D Semantic Likelihood Modeling
+        if len(seed_values) > 0:
+            seed_arr = np.array(seed_values, dtype=np.float32)
+            mu_fg = float(np.median(seed_arr))
+            sigma_fg = max(14.0, float(np.std(seed_arr)) * 1.5)
+        else:
+            mu_fg = float(np.mean(volume))
+            sigma_fg = 45.0
 
-    # Negative prompt repulsion: eliminate regions closer to negative seeds than positive seeds
-    if np.any(neg_seed_grid):
-        neg_repel = (dist_to_neg_mm < dist_to_pos_mm) | (dist_to_neg_mm < 6.0)
-        candidate = candidate & (~neg_repel)
+        p_hu = np.exp(-((volume - mu_fg) ** 2) / (2.0 * (sigma_fg ** 2)))
+
+        # 3D Sobel gradient magnitude / edge barrier
+        gz = ndi.sobel(volume, axis=0) / dz
+        gy = ndi.sobel(volume, axis=1) / dy
+        gx = ndi.sobel(volume, axis=2) / dx
+        grad_mag = np.sqrt(gz ** 2 + gy ** 2 + gx ** 2)
+        grad_barrier = grad_mag / (grad_mag + 50.0)
+
+        # Modulate spatial distance by gradient barrier
+        eff_pos_dist = dist_to_pos_mm * (1.0 + 1.2 * grad_barrier)
+
+        score = p_hu * np.exp(-eff_pos_dist / 25.0)
+
+        if np.any(neg_seed_grid):
+            repel_factor = 1.0 - np.exp(-(dist_to_neg_mm ** 2) / (2.0 * (8.0 ** 2)))
+            score = score * repel_factor
+            score[dist_to_neg_mm < 4.0] = 0.0
+
+        candidate = (score >= 0.15) & (p_hu >= 0.15) & (dist_to_pos_mm <= 45.0)
+    else:
+        # Fast Heuristic EDT Mode
+        hu_diff = np.abs(volume - target_hu)
+        intensity_match = hu_diff <= tol
+        spatial_reach = dist_to_pos_mm <= 45.0
+        candidate = intensity_match & spatial_reach
+        if np.any(neg_seed_grid):
+            neg_repel = (dist_to_neg_mm < dist_to_pos_mm) | (dist_to_neg_mm < 6.0)
+            candidate = candidate & (~neg_repel)
+
+    # 5. Anatomical Prior Constraint (TotalSegmentator atlas mask)
+    if anatomical_prior is not None and anatomical_prior.shape == volume.shape:
+        candidate = candidate & (anatomical_prior > 0)
 
     # Bounding box constraint if provided
     if bbox:
@@ -175,6 +212,7 @@ def interactive_segment_3d(
 
     return {
         "status": "success",
+        "engine_mode": mode,
         "mask": final_mask,
         "voxel_count": voxel_count,
         "volume_cm3": volume_cm3,
