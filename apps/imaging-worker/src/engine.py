@@ -819,7 +819,7 @@ class MONAIEngine:
             else:
                 window_preset = "abdomen"
 
-        if model_name in ("bronchiectasis_mucus_analyzer", "bronchiectasis"):
+        if model_name in ("bronchiectasis_mucus_analyzer", "bronchiectasis", "lung_airway_segmenter", "airway_unet", "airway", "lung_lobe_segmenter"):
             try:
                 from .bronchiectasis import analyze_bronchiectasis_and_mucus
             except (ImportError, ValueError):
@@ -831,10 +831,28 @@ class MONAIEngine:
             }
             for k in ("mucus_min_hu", "mucus_max_hu", "ham_threshold_hu", "bar_cutoff"):
                 if k in kwargs and kwargs[k] is not None:
-                    b_args[k] = float(kwargs[k])
+                    try:
+                        b_args[k] = float(str(kwargs[k]).replace(",", "."))
+                    except (ValueError, TypeError):
+                        pass
             b_res = analyze_bronchiectasis_and_mucus(**b_args)
-            b_res["model_name"] = "bronchiectasis_mucus_analyzer"
-            b_res["modality"] = "Chest HRCT"
+            if model_name in ("lung_airway_segmenter", "airway_unet", "airway"):
+                b_res["model_name"] = "lung_airway_segmenter"
+                b_res["modality"] = "Chest HRCT"
+                b_res["summary_markdown"] = (
+                    b_res.get("summary_markdown", "")
+                    .replace("支气管扩张与气道粘液栓定量分析", "全气道树三维拓扑重建与支气管管壁量化")
+                )
+            elif model_name == "lung_lobe_segmenter":
+                b_res["model_name"] = "lung_lobe_segmenter"
+                b_res["modality"] = "Chest CT"
+                b_res["summary_markdown"] = (
+                    b_res.get("summary_markdown", "")
+                    .replace("支气管扩张与气道粘液栓定量分析", "双肺 5 大解剖肺叶容积与气道拓扑分布量化")
+                )
+            else:
+                b_res["model_name"] = "bronchiectasis_mucus_analyzer"
+                b_res["modality"] = "Chest HRCT"
             b_res["recist_metrics"] = {
                 "longest_diameter_mm": b_res["metrics"]["bronchus_caliber_mm"],
                 "short_axis_mm": b_res["metrics"]["artery_caliber_mm"],

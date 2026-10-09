@@ -230,20 +230,34 @@ def load_nifti(path_or_bytes: Union[str, bytes, io.BytesIO]) -> Tuple[np.ndarray
 def load_dicom_series(folder_path: str) -> Tuple[np.ndarray, Tuple[float, float, float], Dict[str, Any]]:
     """
     Reads a folder of DICOM slices, sorts them by spatial position, and returns (Z, Y, X) volume and spacing.
+    Automatically handles embedded NIfTI archives, multi-series folders, and scout image separation.
     """
     import pydicom
+    # 1. Check if the folder contains any extracted NIfTI archives
+    nii_candidates = []
+    for root, _, filenames in os.walk(folder_path):
+        if "__MACOSX" in root:
+            continue
+        for f in filenames:
+            if f.lower().endswith((".nii", ".nii.gz")):
+                nii_candidates.append(os.path.join(root, f))
+    if nii_candidates:
+        vol, spacing = load_nifti(nii_candidates[0])
+        modality = "MRI" if "mri" in nii_candidates[0].lower() else "CT"
+        return vol, spacing, {"modality": modality, "slices_count": vol.shape[0], "rows": vol.shape[1], "cols": vol.shape[2]}
+
     files = []
     for root, _, filenames in os.walk(folder_path):
         if "__MACOSX" in root:
             continue
         for f in filenames:
-            if f.startswith(".") or "/._" in os.path.join(root, f):
+            if f.startswith(".") or "/._" in os.path.join(root, f) or f.lower().endswith(".zip"):
                 continue
             fl = f.lower()
-            if fl.endswith(('.dcm', '.dicom', '.ima')) or (not '.' in f and not f.startswith('.')):
+            if fl.endswith(('.dcm', '.dicom', '.ima')) or ('.' not in f and not f.startswith('.')):
                 files.append(os.path.join(root, f))
     if not files:
-        files = [p for p in glob.glob(os.path.join(folder_path, "*")) if not os.path.basename(p).startswith(".")]
+        files = [p for p in glob.glob(os.path.join(folder_path, "*")) if not os.path.basename(p).startswith(".") and not p.lower().endswith(".zip")]
     
     slices = []
     for f in files:
@@ -255,7 +269,7 @@ def load_dicom_series(folder_path: str) -> Tuple[np.ndarray, Tuple[float, float,
             continue
             
     if not slices:
-        raise ValueError(f"No valid DICOM slices found in {folder_path}")
+        raise ValueError(f"在影像路径 ({folder_path}) 中未找到合法的 DICOM 切片文件")
         
     return _build_volume_from_slices(slices)
 
@@ -266,6 +280,16 @@ def load_dicom_from_zip(zip_source: Union[str, bytes, io.BytesIO]) -> Tuple[np.n
     """
     import pydicom
     zf = zipfile.ZipFile(zip_source)
+    # Check for contained NIfTI files first
+    for name in zf.namelist():
+        if "__MACOSX" in name or "/._" in name or name.split("/")[-1].startswith("."):
+            continue
+        if name.lower().endswith((".nii", ".nii.gz")):
+            raw_nii = zf.read(name)
+            vol, spacing = load_nifti(raw_nii)
+            modality = "MRI" if "mri" in name.lower() else "CT"
+            return vol, spacing, {"modality": modality, "slices_count": vol.shape[0], "rows": vol.shape[1], "cols": vol.shape[2]}
+
     slices = []
     for name in zf.namelist():
         if "__MACOSX" in name or "/._" in name or name.split("/")[-1].startswith("."):
@@ -281,7 +305,7 @@ def load_dicom_from_zip(zip_source: Union[str, bytes, io.BytesIO]) -> Tuple[np.n
                 continue
 
     if not slices:
-        raise ValueError("No valid DICOM slices found in zip archive")
+        raise ValueError("ZIP 序列包中未解析出合法的 DICOM 影像切片")
 
     return _build_volume_from_slices(slices)
 
@@ -294,14 +318,23 @@ def load_dicom_file(file_source: Union[str, bytes, io.BytesIO]) -> Tuple[np.ndar
         file_source = io.BytesIO(file_source)
     ds = pydicom.dcmread(file_source, force=True)
     if not hasattr(ds, "pixel_array"):
-        raise ValueError("DICOM file has no pixel array")
+        raise ValueError("DICOM 文件不包含体素矩阵数据 (pixel_array)")
 
     pixel_array = ds.pixel_array
-    slope = float(getattr(ds, "RescaleSlope", 1.0))
-    intercept = float(getattr(ds, "RescaleIntercept", 0.0))
-    pixel_spacing = getattr(ds, "PixelSpacing", [1.0, 1.0])
-    slice_thickness = float(getattr(ds, "SliceThickness", 1.0))
-    spacing = (slice_thickness, float(pixel_spacing[0]), float(pixel_spacing[1]))
+    slope = float(str(getattr(ds, "RescaleSlope", 1.0)).replace(",", "."))
+    intercept = float(str(getattr(ds, "RescaleIntercept", 0.0)).replace(",", "."))
+    raw_spacing = getattr(ds, "PixelSpacing", [1.0, 1.0])
+    try:
+        dy = float(str(raw_spacing[0]).replace(",", "."))
+        dx = float(str(raw_spacing[1]).replace(",", "."))
+    except Exception:
+        dy, dx = 1.0, 1.0
+    raw_thick = getattr(ds, "SliceThickness", 1.0)
+    try:
+        dz = float(str(raw_thick).replace(",", "."))
+    except Exception:
+        dz = 1.0
+    spacing = (dz, dy, dx)
 
     if pixel_array.ndim == 3:
         vol = pixel_array.astype(np.float32) * slope + intercept
@@ -320,27 +353,115 @@ def load_dicom_file(file_source: Union[str, bytes, io.BytesIO]) -> Tuple[np.ndar
 
 def _build_volume_from_slices(slices: list) -> Tuple[np.ndarray, Tuple[float, float, float], Dict[str, Any]]:
     """
-    Sorts slice objects by physical Z-coordinate or InstanceNumber and stacks into 3D volume.
+    Robustly groups slices by SeriesInstanceUID and matrix dimensions, selects dominant 3D series,
+    sorts slices by physical Z-coordinate, and stacks into a 3D NumPy array.
     """
+    if not slices:
+        raise ValueError("未检测到有效 DICOM 切片")
+
+    # 1. Group slices by SeriesInstanceUID to isolate Scout / Localizer / Secondary Captures
+    series_groups: Dict[str, list] = {}
+    for s in slices:
+        uid = str(getattr(s, "SeriesInstanceUID", "default_series"))
+        series_groups.setdefault(uid, []).append(s)
+
+    # Dominant series with the largest number of slices
+    best_series = max(series_groups.values(), key=len)
+
+    # 2. Filter out slices with inconsistent matrix shapes
+    shape_groups: Dict[Tuple[int, int], list] = {}
+    for s in best_series:
+        try:
+            arr = s.pixel_array
+            if arr.ndim == 2:
+                shape_groups.setdefault(arr.shape, []).append(s)
+            elif arr.ndim == 3 and arr.shape[0] == 1:
+                shape_groups.setdefault(arr.shape[1:], []).append(s)
+        except Exception:
+            continue
+
+    if not shape_groups:
+        raise ValueError("无法从选定 DICOM 序列中读取 2D 体素切片矩阵")
+
+    valid_slices = max(shape_groups.values(), key=len)
+
+    # 3. Sort slices by physical coordinates
+    def slice_sort_key(s):
+        try:
+            pos = getattr(s, "ImagePositionPatient", None)
+            if pos is not None and len(pos) >= 3:
+                return (0, float(str(pos[2]).replace(",", ".")))
+        except Exception:
+            pass
+        try:
+            loc = getattr(s, "SliceLocation", None)
+            if loc is not None:
+                return (1, float(str(loc).replace(",", ".")))
+        except Exception:
+            pass
+        try:
+            inst = getattr(s, "InstanceNumber", None)
+            if inst is not None:
+                return (2, int(inst))
+        except Exception:
+            pass
+        return (3, 0)
+
+    valid_slices.sort(key=slice_sort_key)
+
+    first = valid_slices[0]
+    raw_spacing = getattr(first, "PixelSpacing", [1.0, 1.0])
     try:
-        slices.sort(key=lambda s: float(s.ImagePositionPatient[2]))
+        if isinstance(raw_spacing, (list, tuple)) and len(raw_spacing) >= 2:
+            dy = float(str(raw_spacing[0]).replace(",", "."))
+            dx = float(str(raw_spacing[1]).replace(",", "."))
+        else:
+            dy, dx = 1.0, 1.0
     except Exception:
-        slices.sort(key=lambda s: getattr(s, "InstanceNumber", 0))
+        dy, dx = 1.0, 1.0
 
-    first = slices[0]
-    pixel_spacing = getattr(first, "PixelSpacing", [1.0, 1.0])
-    slice_thickness = getattr(first, "SliceThickness", 1.0)
-    spacing = (float(slice_thickness), float(pixel_spacing[0]), float(pixel_spacing[1]))
+    raw_thick = getattr(first, "SliceThickness", 1.0)
+    try:
+        dz = float(str(raw_thick).replace(",", "."))
+    except Exception:
+        dz = 1.0
 
-    slope = float(getattr(first, "RescaleSlope", 1.0))
-    intercept = float(getattr(first, "RescaleIntercept", 0.0))
+    spacing = (dz, dy, dx)
 
-    vol = np.stack([s.pixel_array.astype(np.float32) * slope + intercept for s in slices], axis=0)
+    default_slope = 1.0
+    default_intercept = 0.0
+    try:
+        default_slope = float(str(getattr(first, "RescaleSlope", 1.0)).replace(",", "."))
+    except Exception:
+        pass
+    try:
+        default_intercept = float(str(getattr(first, "RescaleIntercept", 0.0)).replace(",", "."))
+    except Exception:
+        pass
+
+    slice_arrays = []
+    for s in valid_slices:
+        arr = s.pixel_array.astype(np.float32)
+        if arr.ndim == 3 and arr.shape[0] == 1:
+            arr = arr[0]
+        try:
+            s_slope = float(str(getattr(s, "RescaleSlope", default_slope)).replace(",", "."))
+        except Exception:
+            s_slope = default_slope
+        try:
+            s_intercept = float(str(getattr(s, "RescaleIntercept", default_intercept)).replace(",", "."))
+        except Exception:
+            s_intercept = default_intercept
+        slice_arrays.append(arr * s_slope + s_intercept)
+
+    vol = np.stack(slice_arrays, axis=0)
     meta = {
-        "modality": getattr(first, "Modality", "CT"),
-        "slices_count": len(slices),
-        "rows": first.Rows,
-        "cols": first.Columns,
+        "modality": str(getattr(first, "Modality", "CT")),
+        "slices_count": len(valid_slices),
+        "rows": vol.shape[1],
+        "cols": vol.shape[2],
+        "series_description": str(getattr(first, "SeriesDescription", "")),
+        "body_part_examined": str(getattr(first, "BodyPartExamined", "")),
     }
     return vol, spacing, scrub_dicom_metadata(meta, "ANON-STUDY")
 

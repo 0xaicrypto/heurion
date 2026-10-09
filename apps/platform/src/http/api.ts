@@ -950,15 +950,21 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
       let fileBuffer: Buffer | null = null
       let fileName = ''
 
+      const parseSafeNum = (v: any): number | undefined => {
+        if (v === undefined || v === null || v === '') return undefined
+        const n = Number(String(v).replace(',', '.'))
+        return isNaN(n) ? undefined : n
+      }
+
       if (contentType.includes('multipart/form-data')) {
         const form = await c.req.parseBody()
         sampleId = typeof form.sample_id === 'string' ? form.sample_id : undefined
         modelId = typeof form.model_id === 'string' ? form.model_id : undefined
         windowPreset = typeof form.window_preset === 'string' ? form.window_preset : undefined
-        barCutoff = form.bar_cutoff ? Number(form.bar_cutoff) : undefined
-        mucusMinHu = form.mucus_min_hu ? Number(form.mucus_min_hu) : undefined
-        mucusMaxHu = form.mucus_max_hu ? Number(form.mucus_max_hu) : undefined
-        hamThresholdHu = form.ham_threshold_hu ? Number(form.ham_threshold_hu) : undefined
+        barCutoff = parseSafeNum(form.bar_cutoff)
+        mucusMinHu = parseSafeNum(form.mucus_min_hu)
+        mucusMaxHu = parseSafeNum(form.mucus_max_hu)
+        hamThresholdHu = parseSafeNum(form.ham_threshold_hu)
         reportDate = typeof form.report_date === 'string' ? form.report_date : undefined
         title = typeof form.title === 'string' ? form.title : undefined
         if (form.auto_tag !== undefined) autoTag = String(form.auto_tag) !== 'false'
@@ -971,10 +977,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         sampleId = body.sample_id
         modelId = body.model_id
         windowPreset = body.window_preset
-        barCutoff = body.bar_cutoff
-        mucusMinHu = body.mucus_min_hu
-        mucusMaxHu = body.mucus_max_hu
-        hamThresholdHu = body.ham_threshold_hu
+        barCutoff = parseSafeNum(body.bar_cutoff)
+        mucusMinHu = parseSafeNum(body.mucus_min_hu)
+        mucusMaxHu = parseSafeNum(body.mucus_max_hu)
+        hamThresholdHu = parseSafeNum(body.ham_threshold_hu)
         reportDate = body.report_date
         title = body.title
         if (body.auto_tag !== undefined) autoTag = Boolean(body.auto_tag)
@@ -990,6 +996,10 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
         formData.append('file', blob, fileName || 'scan.nii.gz')
         formData.append('model_name', modelId || 'bronchiectasis_mucus_analyzer')
         if (windowPreset) formData.append('window_preset', windowPreset)
+        if (barCutoff !== undefined && !isNaN(barCutoff)) formData.append('bar_cutoff', String(barCutoff))
+        if (mucusMinHu !== undefined && !isNaN(mucusMinHu)) formData.append('mucus_min_hu', String(mucusMinHu))
+        if (mucusMaxHu !== undefined && !isNaN(mucusMaxHu)) formData.append('mucus_max_hu', String(mucusMaxHu))
+        if (hamThresholdHu !== undefined && !isNaN(hamThresholdHu)) formData.append('ham_threshold_hu', String(hamThresholdHu))
 
         const resp = await fetch(`${imagingWorkerUrl}/api/v1/analyze/upload`, {
           method: 'POST',

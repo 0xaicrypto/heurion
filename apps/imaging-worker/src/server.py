@@ -4,7 +4,15 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
+
+def parse_flexible_float(v: Any, default: Optional[float] = None) -> Optional[float]:
+    if v is None or v == "" or str(v).lower() == "none":
+        return default
+    try:
+        return float(str(v).strip().replace(",", "."))
+    except (ValueError, TypeError):
+        return default
 
 try:
     from .device import get_device_info
@@ -58,10 +66,10 @@ class BenchmarkRequest(BaseModel):
     z_slices: Optional[int] = 48
     y_dim: Optional[int] = 128
     x_dim: Optional[int] = 128
-    mucus_min_hu: Optional[float] = 10.0
-    mucus_max_hu: Optional[float] = 75.0
-    ham_threshold_hu: Optional[float] = 70.0
-    bar_cutoff: Optional[float] = 1.10
+    mucus_min_hu: Optional[Union[float, str]] = 10.0
+    mucus_max_hu: Optional[Union[float, str]] = 75.0
+    ham_threshold_hu: Optional[Union[float, str]] = 70.0
+    bar_cutoff: Optional[Union[float, str]] = 1.10
 
 class SampleRequest(BaseModel):
     sample_id: Optional[str] = "spleen_test"
@@ -69,20 +77,20 @@ class SampleRequest(BaseModel):
     click_point: Optional[Dict[str, int]] = None
     model_name: Optional[str] = "spleen_segmenter"
     window_preset: Optional[str] = None
-    mucus_min_hu: Optional[float] = 10.0
-    mucus_max_hu: Optional[float] = 75.0
-    ham_threshold_hu: Optional[float] = 70.0
-    bar_cutoff: Optional[float] = 1.10
+    mucus_min_hu: Optional[Union[float, str]] = 10.0
+    mucus_max_hu: Optional[Union[float, str]] = 75.0
+    ham_threshold_hu: Optional[Union[float, str]] = 70.0
+    bar_cutoff: Optional[Union[float, str]] = 1.10
 
 class FileAnalysisRequest(BaseModel):
     file_path: str
     model_name: Optional[str] = "spleen_segmenter"
     window_preset: Optional[str] = None
     click_point: Optional[Dict[str, int]] = None
-    mucus_min_hu: Optional[float] = 10.0
-    mucus_max_hu: Optional[float] = 75.0
-    ham_threshold_hu: Optional[float] = 70.0
-    bar_cutoff: Optional[float] = 1.10
+    mucus_min_hu: Optional[Union[float, str]] = 10.0
+    mucus_max_hu: Optional[Union[float, str]] = 75.0
+    ham_threshold_hu: Optional[Union[float, str]] = 70.0
+    bar_cutoff: Optional[Union[float, str]] = 1.10
 
 class MprInfoRequest(BaseModel):
     sample_id: Optional[str] = "chest_lung_ct"
@@ -255,13 +263,13 @@ def list_clinical_models(include_all: bool = False):
             "id": "lung_airway_segmenter",
             "name": "全气道树三维拓扑重建 (MONAI AirwayUNet)",
             "category": "胸部与呼吸科",
-            "engine_type": "deep_learning",
+            "engine_type": "quantitative_ct",
             "body_part": "chest",
             "modality": "Chest HRCT",
             "target": "主气管至亚段细支气管管腔三维骨架与管壁厚度",
             "recommended_window": "lung",
             "compatible_samples": ["chest_lung_ct"],
-            "is_ready": False
+            "is_ready": True
         },
         {
             "id": "lung_lobe_segmenter",
@@ -1037,14 +1045,19 @@ async def run_upload_analysis(
     file: UploadFile = File(...),
     model_name: str = Form("bronchiectasis_mucus_analyzer"),
     window_preset: Optional[str] = Form(None),
-    mucus_min_hu: Optional[float] = Form(None),
-    mucus_max_hu: Optional[float] = Form(None),
-    ham_threshold_hu: Optional[float] = Form(None),
-    bar_cutoff: Optional[float] = Form(None),
+    mucus_min_hu: Optional[str] = Form(None),
+    mucus_max_hu: Optional[str] = Form(None),
+    ham_threshold_hu: Optional[str] = Form(None),
+    bar_cutoff: Optional[str] = Form(None),
 ):
     """Uploads a .nii, .nii.gz, .dcm, or .zip (DICOM series archive) file and executes MONAI inference."""
     fn_lower = file.filename.lower() if file.filename else ""
     content = await file.read()
+
+    f_mucus_min = parse_flexible_float(mucus_min_hu)
+    f_mucus_max = parse_flexible_float(mucus_max_hu)
+    f_ham_thresh = parse_flexible_float(ham_threshold_hu)
+    f_bar_cutoff = parse_flexible_float(bar_cutoff)
 
     if fn_lower.endswith(".zip"):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1063,15 +1076,17 @@ async def run_upload_analysis(
                     if total_uncompressed > max_uncompressed:
                         raise HTTPException(status_code=400, detail="解压体积超过上限 (Max 500MB)")
                 zf.extractall(tmp_dir)
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
             with INFERENCE_SEMAPHORE:
                 return engine.analyze_file(
                     file_path=tmp_dir,
                     model_name=model_name,
                     window_preset=window_preset,
-                    mucus_min_hu=mucus_min_hu,
-                    mucus_max_hu=mucus_max_hu,
-                    ham_threshold_hu=ham_threshold_hu,
-                    bar_cutoff=bar_cutoff
+                    mucus_min_hu=f_mucus_min,
+                    mucus_max_hu=f_mucus_max,
+                    ham_threshold_hu=f_ham_thresh,
+                    bar_cutoff=f_bar_cutoff
                 )
     elif fn_lower.endswith((".dcm", ".dicom")):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1083,10 +1098,10 @@ async def run_upload_analysis(
                     file_path=tmp_dir,
                     model_name=model_name,
                     window_preset=window_preset,
-                    mucus_min_hu=mucus_min_hu,
-                    mucus_max_hu=mucus_max_hu,
-                    ham_threshold_hu=ham_threshold_hu,
-                    bar_cutoff=bar_cutoff
+                    mucus_min_hu=f_mucus_min,
+                    mucus_max_hu=f_mucus_max,
+                    ham_threshold_hu=f_ham_thresh,
+                    bar_cutoff=f_bar_cutoff
                 )
     else:
         suffix = ".nii.gz" if fn_lower.endswith(".nii.gz") else ".nii"
@@ -1099,10 +1114,10 @@ async def run_upload_analysis(
                     file_path=tmp_path,
                     model_name=model_name,
                     window_preset=window_preset,
-                    mucus_min_hu=mucus_min_hu,
-                    mucus_max_hu=mucus_max_hu,
-                    ham_threshold_hu=ham_threshold_hu,
-                    bar_cutoff=bar_cutoff
+                    mucus_min_hu=f_mucus_min,
+                    mucus_max_hu=f_mucus_max,
+                    ham_threshold_hu=f_ham_thresh,
+                    bar_cutoff=f_bar_cutoff
                 )
         finally:
             if os.path.exists(tmp_path):

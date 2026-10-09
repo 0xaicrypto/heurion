@@ -801,6 +801,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       const engineTag = m.engine_type === 'quantitative_ct' ? '[物理测量]' : '[深度学习]'
       const modalityTag = `[${esc(m.modality || 'CT')}]`
       const selectedAttr = isSelected ? 'selected' : ''
+      const disabledAttr = !ready ? 'disabled style="color: var(--text-muted)"' : ''
       return `
         <option value="${esc(m.id)}"
           data-engine="${esc(m.engine_type || 'deep_learning')}"
@@ -809,8 +810,9 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           data-target="${esc(m.target || '')}"
           data-ready="${ready ? 'true' : 'false'}"
           data-samples="${esc((m.compatible_samples || []).join(','))}"
-          ${selectedAttr}>
-          ${esc(m.name)} ${modalityTag} ${engineTag}
+          ${selectedAttr}
+          ${disabledAttr}>
+          ${esc(m.name)} ${modalityTag} ${engineTag}${!ready ? ' (权重待部署)' : ''}
         </option>`
     }
 
@@ -1234,12 +1236,17 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     btnRun?.addEventListener('click', async () => {
       const isUpload = radioUpload?.checked
       const sampleId = (body.querySelector('#imgSampleSelect') as HTMLSelectElement)?.value
-      const modelId = (body.querySelector('#imgModelSelect') as HTMLSelectElement)?.value
+      const modelId = (body.querySelector('#imgModelSelect') as HTMLSelectElement)?.value || 'bronchiectasis_mucus_analyzer'
       const windowPreset = (body.querySelector('#imgWindowSelect') as HTMLSelectElement)?.value
-      const barCutoff = Number((body.querySelector('#imgBarCutoff') as HTMLInputElement)?.value || 1.10)
-      const mucusMin = Number((body.querySelector('#imgMucusMin') as HTMLInputElement)?.value || 10.0)
-      const mucusMax = Number((body.querySelector('#imgMucusMax') as HTMLInputElement)?.value || 75.0)
-      const hamThresh = Number((body.querySelector('#imgHamThreshold') as HTMLInputElement)?.value || 70.0)
+      const parseSafeInput = (val: string | undefined, def: number): number => {
+        if (!val) return def
+        const n = parseFloat(String(val).trim().replace(',', '.'))
+        return isNaN(n) ? def : n
+      }
+      const barCutoff = parseSafeInput((body.querySelector('#imgBarCutoff') as HTMLInputElement)?.value, 1.10)
+      const mucusMin = parseSafeInput((body.querySelector('#imgMucusMin') as HTMLInputElement)?.value, 10.0)
+      const mucusMax = parseSafeInput((body.querySelector('#imgMucusMax') as HTMLInputElement)?.value, 75.0)
+      const hamThresh = parseSafeInput((body.querySelector('#imgHamThreshold') as HTMLInputElement)?.value, 70.0)
       const reportDate = (body.querySelector('#imgReportDate') as HTMLInputElement)?.value
       const autoTag = (body.querySelector('#imgAutoTag') as HTMLInputElement)?.checked
 
