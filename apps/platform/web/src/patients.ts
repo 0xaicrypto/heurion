@@ -798,8 +798,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
 
     const renderOption = (m: any, isSelected: boolean) => {
       const ready = m.is_ready !== false
-      const prefix = ready ? '' : '⚠️ [未下载权重] '
-      const disabledAttr = ready ? '' : 'disabled'
+      const engineTag = m.engine_type === 'quantitative_ct' ? '[物理测量]' : '[深度学习]'
+      const modalityTag = `[${esc(m.modality || 'CT')}]`
       const selectedAttr = isSelected ? 'selected' : ''
       return `
         <option value="${esc(m.id)}"
@@ -809,8 +809,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           data-target="${esc(m.target || '')}"
           data-ready="${ready ? 'true' : 'false'}"
           data-samples="${esc((m.compatible_samples || []).join(','))}"
-          ${disabledAttr} ${selectedAttr}>
-          ${esc(prefix + m.name)} [${esc(m.modality || 'CT')}]
+          ${selectedAttr}>
+          ${esc(m.name)} ${modalityTag} ${engineTag}
         </option>`
     }
 
@@ -832,7 +832,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         <label><b>影像数据来源</b></label>
         <div class="row" style="gap: 16px; margin: 4px 0 8px">
           <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
-            <input type="radio" name="imgSource" value="sample" checked> 预置高分辨临床扫描（一键分析）
+            <input type="radio" name="imgSource" value="sample" checked> 临床标准测试样本（一键分析）
           </label>
           <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
             <input type="radio" name="imgSource" value="upload"> 上传本地 CT/MRI (.nii / .nii.gz / .dcm / .zip 序列包)
@@ -846,51 +846,47 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
                 ${esc(s.name)} [${esc(s.modality)}] ${s.size_mb ? `(${s.size_mb} MB)` : ''}
               </option>
             `).join('') : `
-              <option value="chest_lung_ct" selected>真实临床全胸部 HRCT 扫描 (269层 512x512，83.6MB)</option>
-              <option value="nsclc_lung_ct">真实临床晚期非小细胞肺癌 (NSCLC) 靶向随访增强 CT (180层 512x512，62.4MB)</option>
-              <option value="spleen_test">真实临床腹部增强 CT 扫描 (96层 512x512，29.6MB)</option>
-              <option value="prostate_mri">真实临床前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
+              <option value="chest_lung_ct" selected>全胸部 HRCT 扫描 (269层 512x512，83.6MB)</option>
+              <option value="nsclc_lung_ct">非小细胞肺癌随访增强 CT (180层 512x512，62.4MB)</option>
+              <option value="spleen_test">腹部增强 CT 扫描 (96层 512x512，29.6MB)</option>
+              <option value="prostate_mri">前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
             `}
           </select>
-          <div class="muted small" style="margin-top: 4px">预置真实临床三维体素扫描数据。系统会将完整 3D 原始体素序列加密归档至该患者档案，作为永久保存的医学影像资料。</div>
+          <div class="pt-sample-chips">
+            <span class="muted small">快捷选择：</span>
+            <button type="button" class="pt-sample-chip active" data-sid="chest_lung_ct">全胸部 HRCT</button>
+            <button type="button" class="pt-sample-chip" data-sid="nsclc_lung_ct">非小细胞肺癌 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="spleen_test">腹部增强 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="prostate_mri">前列腺 T2-MRI</button>
+          </div>
+          <div class="muted small" style="margin-top: 6px">预置真实临床三维体素扫描数据。系统将完整 3D 原始体素序列加密归档至该患者档案。</div>
         </div>
 
         <div id="imgUploadBox" hidden>
           <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="width: 100%; border: 1px dashed var(--line-strong); padding: 14px; border-radius: 4px; background: var(--hover)">
-          <div class="muted small" style="margin-top: 4px">支持高分辨率 CT/MRI 序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或包含整套 DICOM 序列切片的 ZIP 压缩包 (.zip)。上传后流式递归解压、加密归档并自动调度 MONAI 3D 进行量化。</div>
+          <div class="muted small" style="margin-top: 4px">支持高分辨率 CT/MRI 序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或包含整套 DICOM 序列切片的 ZIP 压缩包 (.zip)。上传后自动解压与 3D 空间坐标重构。</div>
         </div>
       </div>
 
-      <div class="field">
-        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 4px">
+      <div class="field" style="margin-top: 12px">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 6px">
           <label><b>选择临床影像分析算法与模型</b></label>
-          <span class="muted small">${modelsList.length || 18} 款分科临床模型</span>
+          <span class="muted small" id="imgModelCount">${modelsList.length || 19} 款专科模型就绪</span>
         </div>
+
+        <div class="pt-specialty-tabs" id="imgSpecialtyTabs">
+          <button type="button" class="pt-specialty-tab active" data-cat="auto">智能匹配</button>
+          <button type="button" class="pt-specialty-tab" data-cat="chest">胸部与呼吸</button>
+          <button type="button" class="pt-specialty-tab" data-cat="abdomen">腹部与泌尿</button>
+          <button type="button" class="pt-specialty-tab" data-cat="brain">颅脑与心血管</button>
+          <button type="button" class="pt-specialty-tab" data-cat="whole_body">全身与骨骼</button>
+          <button type="button" class="pt-specialty-tab" data-cat="interactive">交互式分割</button>
+          <button type="button" class="pt-specialty-tab" data-cat="all">全部专科</button>
+        </div>
+
         <select id="imgModelSelect" class="pt-dlg-select" style="width: 100%; padding: 7px 10px">
-          ${dlModels.length || qcModels.length ? `
-            <optgroup label="🔬 MONAI 深度学习神经网络 (Deep Learning · PyTorch 真实权重)">
-              ${dlModels.map(m => renderOption(m, m.id === 'bronchiectasis_mucus_analyzer')).join('')}
-            </optgroup>
-            <optgroup label="📐 定量放射学物理测量 (Quantitative CT / Radiomics · 几何拓扑与阈值)">
-              ${qcModels.map(m => renderOption(m, m.id === 'bronchiectasis_mucus_analyzer')).join('')}
-            </optgroup>
-          ` : `
-            <optgroup label="📐 定量放射学物理测量 (Quantitative CT / Radiomics)">
-              <option value="bronchiectasis_mucus_analyzer" data-engine="quantitative_ct" data-body="chest" data-window="lung" data-target="支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征" data-ready="true" selected>支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM) [Chest HRCT]</option>
-              <option value="copd_emphysema" data-engine="quantitative_ct" data-body="chest" data-window="lung" data-target="LAA-950 低衰减区百分比、吸气/呼气相气体陷闭、Goddard 评分" data-ready="true">COPD 慢性阻塞性肺疾病与肺气肿定量 (LAA-950) [Chest CT]</option>
-              <option value="totalsegmentator" data-engine="quantitative_ct" data-body="whole_body" data-window="bone" data-target="全身体素 104 类解剖结构器官与骨骼测量" data-ready="true">全身体素 104 类解剖结构量化 (TotalSegmentator) [Whole-Body CT]</option>
-            </optgroup>
-            <optgroup label="🔬 MONAI 深度学习神经网络 (Deep Learning)">
-              <option value="multi_organ_ct" data-engine="deep_learning" data-body="abdomen" data-window="abdomen" data-target="全腹部 13 大器官多任务分割与体积积分" data-ready="true">全腹部 13 器官多任务分割 (BTCV SwinUNETR) [Abdominal CT]</option>
-              <option value="spleen_segmenter" data-engine="deep_learning" data-body="abdomen" data-window="abdomen" data-target="脾脏三维体积、脾肿大定量与创伤破裂评估" data-ready="true">腹部实质脏器与脾脏分割 (MONAI 3D SegResNet) [Abdominal CT]</option>
-              <option value="prostate_mri_segmenter" data-engine="deep_learning" data-body="pelvis" data-window="abdomen" data-target="前列腺外周带、移行带与体积测量" data-ready="true">前列腺 T2 加权 MRI 腺体分割 (MONAI UNet) [Pelvic MRI]</option>
-              <option value="brain_tumor_brats" data-engine="deep_learning" data-body="brain" data-window="brain" data-target="脑胶质瘤水肿区、非增强坏死核心与增强肿瘤区" data-ready="true">脑胶质瘤多亚区多序列分割 (BraTS SegResNet) [Brain MRI]</option>
-              <option value="lung_nodule_segmenter" data-engine="deep_learning" data-body="chest" data-window="lung" data-target="肺实质实性/磨玻璃结节 (RECIST 1.1 最大径与三维体积)" data-ready="true">肺结节与肺实变自动分割 (MONAI 3D SegResNet) [Chest CT]</option>
-              <option value="nsclc_recist_analyzer" data-engine="deep_learning" data-body="chest" data-window="lung" data-target="非小细胞肺癌靶向随访 RECIST 1.1 疗效评估" data-ready="true">非小细胞肺癌 (NSCLC) 靶向/免疫 RECIST 1.1 疗效评估 [Chest CT]</option>
-            </optgroup>
-          `}
         </select>
-        <div id="imgModelDesc" class="muted small" style="margin-top: 5px; color: var(--blue)">临床靶目标：${esc(defaultDesc)}</div>
+        <div id="imgModelDesc" class="muted small" style="margin-top: 6px; color: var(--blue)">临床靶目标：${esc(defaultDesc)}</div>
       </div>
 
       <details class="pt-dlg-params" open>
@@ -957,26 +953,12 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const radioUpload = body.querySelector('input[value="upload"]') as HTMLInputElement
     const sampleBox = body.querySelector('#imgSampleBox') as HTMLElement
     const uploadBox = body.querySelector('#imgUploadBox') as HTMLElement
-
-    radioSample?.addEventListener('change', () => {
-      if (radioSample.checked) {
-        sampleBox.hidden = false
-        uploadBox.hidden = true
-        filterModelsForSample()
-      }
-    })
-    radioUpload?.addEventListener('change', () => {
-      if (radioUpload.checked) {
-        sampleBox.hidden = true
-        uploadBox.hidden = false
-        filterModelsForSample()
-      }
-    })
-
     const modelSelect = body.querySelector('#imgModelSelect') as HTMLSelectElement
     const windowSelect = body.querySelector('#imgWindowSelect') as HTMLSelectElement
     const modelDesc = body.querySelector('#imgModelDesc') as HTMLElement
     const sampleSelect = body.querySelector('#imgSampleSelect') as HTMLSelectElement
+
+    let currentSpecialty = 'auto'
 
     const updateModelUI = () => {
       const opt = modelSelect.selectedOptions[0]
@@ -990,12 +972,12 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       if (win && windowSelect) windowSelect.value = win
 
       const engineBadge = engine === 'quantitative_ct'
-        ? `<span class="pt-imaging-badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.3)">📐 定量放射学物理测量</span>`
-        : `<span class="pt-imaging-badge" style="background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3)">🔬 MONAI 深度学习</span>`
+        ? `<span class="pt-imaging-badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.3)">定量物理测量</span>`
+        : `<span class="pt-imaging-badge" style="background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3)">深度学习</span>`
 
       const readyBadge = ready
-        ? `<span class="pt-imaging-badge" style="background: rgba(56, 189, 248, 0.12); color: var(--blue)">✅ 算法与权重就绪</span>`
-        : `<span class="pt-imaging-badge alert" style="background: rgba(239, 68, 68, 0.15); color: #ef4444">⚠️ 未下载权重 (不可用)</span>`
+        ? `<span class="pt-imaging-badge" style="background: rgba(56, 189, 248, 0.12); color: var(--blue)">算法权重已就绪</span>`
+        : `<span class="pt-imaging-badge alert" style="background: rgba(239, 68, 68, 0.15); color: #ef4444">算法待安装</span>`
 
       if (modelDesc) {
         modelDesc.innerHTML = `
@@ -1020,40 +1002,118 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const filterModelsForSample = () => {
       const isUpload = radioUpload?.checked
       const sid = isUpload ? null : (sampleSelect ? sampleSelect.value : 'chest_lung_ct')
-      if (sid === 'chest_lung_ct') {
-        modelSelect.value = 'bronchiectasis_mucus_analyzer'
-      } else if (sid === 'nsclc_lung_ct') {
-        modelSelect.value = 'nsclc_recist_analyzer'
-      } else if (sid === 'spleen_test') {
-        modelSelect.value = 'multi_organ_ct'
-      } else if (sid === 'prostate_mri') {
-        modelSelect.value = 'prostate_mri_segmenter'
+
+      // Sync active state of sample chips
+      body.querySelectorAll('.pt-sample-chip').forEach(btn => {
+        const el = btn as HTMLElement
+        el.classList.toggle('active', !isUpload && el.dataset.sid === sid)
+      })
+
+      let matchedCategory = currentSpecialty
+      if (currentSpecialty === 'auto') {
+        if (sid === 'chest_lung_ct' || sid === 'nsclc_lung_ct') {
+          matchedCategory = 'chest'
+        } else if (sid === 'spleen_test') {
+          matchedCategory = 'abdomen'
+        } else if (sid === 'prostate_mri') {
+          matchedCategory = 'abdomen'
+        } else {
+          matchedCategory = 'all'
+        }
       }
 
-      Array.from(modelSelect.options).forEach(opt => {
-        const samplesStr = opt.dataset.samples || ''
-        const ready = opt.dataset.ready === 'true'
-        const compatibleSamples = samplesStr ? samplesStr.split(',') : []
-        const isCompatible = isUpload || compatibleSamples.length === 0 || (!sid || compatibleSamples.includes(sid))
-
-        if (!ready) {
-          opt.disabled = true
-        } else if (!isCompatible && sid) {
-          opt.disabled = true
-          if (!opt.textContent?.includes('不适用')) {
-            opt.textContent = `🚫 [不适用当前扫描] ${opt.textContent}`
-          }
-        } else {
-          opt.disabled = false
-          opt.textContent = opt.textContent?.replace(/^🚫 \[不适用当前扫描\] /, '') || ''
-        }
+      // Filter models based on matchedCategory
+      const filtered = modelsList.filter(m => {
+        if (matchedCategory === 'all') return true
+        if (matchedCategory === 'chest') return m.body_part === 'chest' || m.body_part === 'whole_body' || m.body_part === 'general'
+        if (matchedCategory === 'abdomen') return m.body_part === 'abdomen' || m.body_part === 'pelvis' || m.body_part === 'whole_body' || m.body_part === 'general'
+        if (matchedCategory === 'brain') return m.body_part === 'brain' || m.body_part === 'cardiac'
+        if (matchedCategory === 'whole_body') return m.body_part === 'whole_body' || m.body_part === 'bone'
+        if (matchedCategory === 'interactive') return m.body_part === 'general' || m.id.includes('vista') || m.id.includes('interactive')
+        return true
       })
+
+      // Determine default selected model
+      let preferredModelId = ''
+      if (sid === 'chest_lung_ct') preferredModelId = 'bronchiectasis_mucus_analyzer'
+      else if (sid === 'nsclc_lung_ct') preferredModelId = 'nsclc_recist_analyzer'
+      else if (sid === 'spleen_test') preferredModelId = 'multi_organ_ct'
+      else if (sid === 'prostate_mri') preferredModelId = 'prostate_mri_segmenter'
+      else if (filtered.length > 0) preferredModelId = filtered[0].id
+
+      // Separate into quantitative and deep learning
+      const qc = filtered.filter(m => m.engine_type === 'quantitative_ct')
+      const dl = filtered.filter(m => (m.engine_type || 'deep_learning') !== 'quantitative_ct')
+
+      let html = ''
+      if (qc.length > 0) {
+        html += `<optgroup label="定量放射学物理测量 (几何拓扑与阈值)">`
+        html += qc.map(m => renderOption(m, m.id === preferredModelId)).join('')
+        html += `</optgroup>`
+      }
+      if (dl.length > 0) {
+        html += `<optgroup label="MONAI 深度学习模型 (PyTorch 神经架构)">`
+        html += dl.map(m => renderOption(m, m.id === preferredModelId)).join('')
+        html += `</optgroup>`
+      }
+      if (!html && filtered.length > 0) {
+        html = filtered.map(m => renderOption(m, m.id === preferredModelId)).join('')
+      }
+
+      modelSelect.innerHTML = html
+      if (preferredModelId) {
+        modelSelect.value = preferredModelId
+      }
+
+      const countEl = body.querySelector('#imgModelCount')
+      if (countEl) {
+        countEl.textContent = `${filtered.length} 款适配模型就绪`
+      }
 
       updateModelUI()
     }
 
+    radioSample?.addEventListener('change', () => {
+      if (radioSample.checked) {
+        sampleBox.hidden = false
+        uploadBox.hidden = true
+        filterModelsForSample()
+      }
+    })
+    radioUpload?.addEventListener('change', () => {
+      if (radioUpload.checked) {
+        sampleBox.hidden = true
+        uploadBox.hidden = false
+        filterModelsForSample()
+      }
+    })
+
     sampleSelect?.addEventListener('change', filterModelsForSample)
     modelSelect?.addEventListener('change', updateModelUI)
+
+    // Specialty tabs event delegation
+    body.querySelectorAll('.pt-specialty-tab').forEach(tabBtn => {
+      tabBtn.addEventListener('click', () => {
+        body.querySelectorAll('.pt-specialty-tab').forEach(b => b.classList.remove('active'))
+        tabBtn.classList.add('active')
+        currentSpecialty = (tabBtn as HTMLElement).dataset.cat || 'auto'
+        filterModelsForSample()
+      })
+    })
+
+    // Sample quick chips
+    body.querySelectorAll('.pt-sample-chip').forEach(chipBtn => {
+      chipBtn.addEventListener('click', () => {
+        const sid = (chipBtn as HTMLElement).dataset.sid
+        if (sid && sampleSelect) {
+          sampleSelect.value = sid
+          radioSample.checked = true
+          sampleBox.hidden = false
+          uploadBox.hidden = true
+          filterModelsForSample()
+        }
+      })
+    })
 
     // Initial trigger to sync UI
     filterModelsForSample()
