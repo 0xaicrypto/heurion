@@ -959,10 +959,18 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const uploadBox = body.querySelector('#imgUploadBox') as HTMLElement
 
     radioSample?.addEventListener('change', () => {
-      if (radioSample.checked) { sampleBox.hidden = false; uploadBox.hidden = true }
+      if (radioSample.checked) {
+        sampleBox.hidden = false
+        uploadBox.hidden = true
+        filterModelsForSample()
+      }
     })
     radioUpload?.addEventListener('change', () => {
-      if (radioUpload.checked) { sampleBox.hidden = true; uploadBox.hidden = false }
+      if (radioUpload.checked) {
+        sampleBox.hidden = true
+        uploadBox.hidden = false
+        filterModelsForSample()
+      }
     })
 
     const modelSelect = body.querySelector('#imgModelSelect') as HTMLSelectElement
@@ -1010,7 +1018,8 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     }
 
     const filterModelsForSample = () => {
-      const sid = sampleSelect ? sampleSelect.value : 'chest_lung_ct'
+      const isUpload = radioUpload?.checked
+      const sid = isUpload ? null : (sampleSelect ? sampleSelect.value : 'chest_lung_ct')
       if (sid === 'chest_lung_ct') {
         modelSelect.value = 'bronchiectasis_mucus_analyzer'
       } else if (sid === 'nsclc_lung_ct') {
@@ -1025,7 +1034,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         const samplesStr = opt.dataset.samples || ''
         const ready = opt.dataset.ready === 'true'
         const compatibleSamples = samplesStr ? samplesStr.split(',') : []
-        const isCompatible = compatibleSamples.length === 0 || compatibleSamples.includes(sid)
+        const isCompatible = isUpload || compatibleSamples.length === 0 || (!sid || compatibleSamples.includes(sid))
 
         if (!ready) {
           opt.disabled = true

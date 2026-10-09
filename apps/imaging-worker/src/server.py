@@ -209,7 +209,7 @@ def health_check():
     }
 
 @app.get("/api/v1/models")
-def list_clinical_models():
+def list_clinical_models(include_all: bool = False):
     reg = list_registered_models()
     reg_map = {m["name"]: m for m in reg}
 
@@ -553,11 +553,14 @@ def list_clinical_models():
         }
     ]
 
+    active_models = [m for m in raw_models if m.get("is_ready") is True] if not include_all else raw_models
+
     return {
         "status": "success",
         "registry": reg,
-        "total": len(raw_models),
-        "models": raw_models
+        "total": len(active_models),
+        "models": active_models,
+        "planned_models": [m for m in raw_models if m.get("is_ready") is not True]
     }
 
 @app.get("/api/v1/samples")

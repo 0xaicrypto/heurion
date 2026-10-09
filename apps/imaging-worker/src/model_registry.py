@@ -337,17 +337,16 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         name="vista3d",
         display_name="MONAI VISTA-3D 医生交互式点选/涂抹通用分割基座模型",
         modality="Multi-modality (CT / MRI)",
-        version="v1.0.0",
-        size_mb=312.4,
-        sha256="d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0",
+        version="v0.5.7",
+        size_mb=831.57,
+        sha256="c92bab26d00b4a5d89fa8a383900cdeb88302fd318e5e816df0bbec7106d9a1b",
         urls=[
-            "https://github.com/Project-MONAI/VISTA/releases/download/v0.1.0/vista3d_v1.0.0.pt",
-            "https://huggingface.co/monai/vista3d/resolve/main/model.pt"
+            "https://api.ngc.nvidia.com/v2/models/nvidia/monaihosting/vista3d/versions/0.5.7/files/vista3d_v0.5.7.zip"
         ],
         description="支持医生在 MPR 画布上实时点选（正负提示点）或 ROI 框选，实现毫秒级自适应 3D 边界区域生长与 RECIST 测算。",
         architecture="VISTA-3D-Transformer",
         clinical_targets=["任意未知靶病灶", "淋巴结转移灶", "软组织肉瘤", "囊实性混合占位"],
-        file_name="vista3d_v1.0.0.pt",
+        file_name="vista3d_v0.5.7.pt",
         engine_type="deep_learning",
         body_part="general",
         category="交互式万物分割"
