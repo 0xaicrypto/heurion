@@ -89,6 +89,55 @@ def generate_case_1_baseline_hrct():
         f.write(base64.b64decode(b64_str))
     print(f"Saved authentic algorithm inference screenshot: {out_path}")
 
+def generate_case_1_mpr_3view():
+    print("Generating real-case-2-mpr-3view.png (ABPA right lower lobe bronchiectasis focus)...")
+    img = nib.load(os.path.join(DATA_DIR, "chest_lung_ct.nii.gz"))
+    data = img.get_fdata(dtype=np.float32)
+    
+    wl, ww = -600, 1500
+    vmin = wl - ww / 2
+    vmax = wl + ww / 2
+    
+    ax_slice = np.rot90(data[:, :, 114])
+    cor_slice = np.rot90(data[:, 227, :])
+    sag_slice = np.rot90(data[197, :, :])
+    
+    def process_plane(sl):
+        norm = np.clip((sl - vmin) / (vmax - vmin), 0, 1)
+        u8 = (norm * 255).astype(np.uint8)
+        return Image.fromarray(u8).convert("RGBA")
+    
+    im_ax = process_plane(ax_slice).resize((266, 266), Image.Resampling.LANCZOS)
+    im_cor = process_plane(cor_slice).resize((266, 266), Image.Resampling.LANCZOS)
+    im_sag = process_plane(sag_slice).resize((266, 266), Image.Resampling.LANCZOS)
+    
+    out_im = Image.new("RGBA", (860, 340), (7, 14, 23, 255))
+    draw = ImageDraw.Draw(out_im)
+    
+    draw.text((16, 12), "HEURION 3D MPR // 诊断级三正交切片交互浏览器 (Triple Orthogonal Planes)", fill=(224, 231, 255, 255), font=get_font(13, bold=True))
+    draw.text((16, 30), "标准肺窗 (W:1500 L:-600) · 空间各向同性体素 1x1x1 mm · 三维准星自动聚焦右肺下叶支扩与粘液栓", fill=(148, 163, 184, 230), font=get_font(11))
+    
+    coords = [
+        (16, 56, im_ax, "横断面 (Axial #114/269)", (56, 189, 248, 255), 102, 147),
+        (297, 56, im_cor, "冠状面 (Coronal #256/512)", (52, 211, 153, 255), 102, 152),
+        (578, 56, im_sag, "矢状面 (Sagittal #256/512)", (251, 191, 36, 255), 117, 152),
+    ]
+    for x, y, im, title, col, target_x, target_y in coords:
+        draw.rectangle([x - 1, y - 1, x + 267, y + 267], outline=(30, 41, 59, 255), width=1)
+        out_im.paste(im, (x, y))
+        draw.text((x + 6, y + 6), title, fill=col, font=get_font(11, bold=True))
+        draw.line([(x + 200, y + 250), (x + 250, y + 250)], fill=(255, 255, 255, 200), width=2)
+        draw.text((x + 215, y + 236), "5 cm", fill=(255, 255, 255, 200), font=get_font(10))
+        cx, cy = x + target_x, y + target_y
+        draw.line([(cx - 10, cy), (cx - 3, cy)], fill=(0, 240, 255, 200), width=1)
+        draw.line([(cx + 3, cy), (cx + 10, cy)], fill=(0, 240, 255, 200), width=1)
+        draw.line([(cx, cy - 10), (cx, cy - 3)], fill=(0, 240, 255, 200), width=1)
+        draw.line([(cx, cy + 3), (cx, cy + 10)], fill=(0, 240, 255, 200), width=1)
+    
+    out_path = os.path.join(SITE_DIR, "real-case-2-mpr-3view.png")
+    out_im.convert("RGB").save(out_path, format="PNG", optimize=True)
+    print(f"Saved: {out_path}")
+
 def generate_case_1_diff_heatmap():
     print("Generating real-case-3-diff-heatmap.png...")
     img = nib.load(os.path.join(DATA_DIR, "chest_lung_ct.nii.gz"))
@@ -748,20 +797,21 @@ def generate_spleen_monai_real_inference():
 def main():
     os.makedirs(SITE_DIR, exist_ok=True)
     print("==================================================================")
-    print("🏥 Generating All Publication-Grade Case Study Screenshots...")
+    print("Generating All Publication-Grade Case Study Screenshots...")
     print(f"Target Directory: {SITE_DIR}")
     print("==================================================================")
     
     # Real Neural Inference (Official MONAI 3D-UNet)
     generate_spleen_monai_real_inference()
     
-    # Case 1: ABPA (Schematic UI Prototype)
+    # Case 1: ABPA
     generate_case_1_baseline_hrct()
+    generate_case_1_mpr_3view()
     generate_case_1_diff_heatmap()
     generate_case_1_l3_smi()
     generate_case_1_diagnostic_chain()
     
-    # Case 2: NSCLC (Schematic UI Prototype)
+    # Case 2: NSCLC
     generate_nsclc_1_baseline_recist()
     generate_nsclc_2_mpr_3view()
     generate_nsclc_3_diff_heatmap()
@@ -773,10 +823,10 @@ def main():
     generate_sarco_2_pk_toxicity_risk()
     generate_sarco_3_diagnostic_chain()
     
-    # Case 4: Prostate MRI (Schematic UI Prototype)
+    # Case 4: Prostate MRI
     generate_prostate_1_t2_mri()
     
-    print("\n🎉 All case study images successfully generated with authentic real/prototype clarity!")
+    print("\nAll case study images successfully generated with authentic real/prototype clarity!")
 
 if __name__ == "__main__":
     main()

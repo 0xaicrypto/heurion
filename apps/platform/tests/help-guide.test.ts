@@ -61,6 +61,10 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
     expect(allHtml).toContain('PI-RADS')
     expect(allHtml).toContain('Agatston')
     expect(allHtml).toContain('TotalSegmentator')
+    expect(allHtml).toContain('VISTA-3D')
+    expect(allHtml).toContain('19 款')
+    expect(allHtml).toContain('智能匹配')
+    expect(allHtml).toContain('专科分类导航')
     expect(allHtml).toContain('骨骼肌指数 (SMI')
     expect(allHtml).toContain('肌少症')
     expect(allHtml).toContain('IBSI')
@@ -261,6 +265,10 @@ describe('产品使用手册与操作指南 (Product Help & Documentation)', () 
   it('7. 4 大典型临床标杆案例库与量化决策闭环完整覆盖', () => {
     const caseSec = HELP_SECTIONS.find(s => s.id === 'casestudy')
     expect(caseSec).toBeDefined()
+    expect(caseSec!.summary).toContain('全腹实质脏器/脾脏显著肿大')
+    expect(caseSec!.summary).toContain('盆腔前列腺多参数 T2-MRI')
+    expect(caseSec!.summary).not.toContain('特发性肺纤维化')
+    expect(caseSec!.summary).not.toContain('IPF')
     const html = caseSec!.contentHtml
 
     // 案例一：ABPA 变态反应性支气管肺曲霉病
