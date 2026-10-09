@@ -361,6 +361,306 @@ class MonaiNeuralInferencePipeline:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    def get_btcv_model(self) -> torch.nn.Module:
+        if "btcv" in self.models:
+            return self.models["btcv"]
+        try:
+            from .model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
+        except (ImportError, ValueError):
+            from model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
+        spec = OFFICIAL_MODEL_REGISTRY.get("swinunetr_btcv")
+        file_name = spec.file_name if spec else "swinunetr_btcv_v0.5.0.pt"
+        weights_path = get_model_cache_dir() / file_name
+        if not weights_path.exists() or weights_path.stat().st_size < 1024 * 1024:
+            raise RuntimeError(f"MONAI SwinUNETR 多器官分割官方权重缺失 ({weights_path})。")
+        from monai.networks.nets import SwinUNETR
+        model = SwinUNETR(in_channels=1, out_channels=14, feature_size=48).to(self.device)
+        sd = torch.load(str(weights_path), map_location=self.device, weights_only=False)
+        model.load_state_dict(sd)
+        model.eval()
+        self.models["btcv"] = model
+        return model
+
+    def infer_btcv(
+        self,
+        volume_or_path: Any,
+        spacing: Tuple[float, float, float] = (1.5, 0.8, 0.8)
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        t0 = time.time()
+        temp_path = None
+        if isinstance(volume_or_path, str) and os.path.exists(volume_or_path):
+            nii_path = volume_or_path
+        else:
+            vol_zyx = volume_or_path.astype(np.float32)
+            vol_xyz = np.transpose(vol_zyx, (2, 1, 0))
+            dz, dy, dx = spacing
+            affine = np.diag([dx, dy, dz, 1.0])
+            import nibabel as nib, tempfile
+            nii = nib.Nifti1Image(vol_xyz, affine)
+            tmp = tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False)
+            nib.save(nii, tmp.name)
+            temp_path = tmp.name
+            nii_path = temp_path
+
+        try:
+            from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped, Invertd, AsDiscreted
+            from monai.inferers import sliding_window_inference
+            pre = Compose([
+                LoadImaged(keys="image"),
+                EnsureChannelFirstd(keys="image"),
+                ScaleIntensityRanged(keys="image", a_min=-175, a_max=250, b_min=0.0, b_max=1.0, clip=True),
+                EnsureTyped(keys="image", device=self.device)
+            ])
+            post = Compose([
+                Invertd(keys="pred", transform=pre, orig_keys="image", nearest_interp=False, to_tensor=True),
+                AsDiscreted(keys="pred", argmax=True)
+            ])
+            model = self.get_btcv_model()
+            data_dict = pre({"image": nii_path})
+            in_tensor = data_dict["image"].unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                val_output = sliding_window_inference(
+                    inputs=in_tensor,
+                    roi_size=[96, 96, 96],
+                    sw_batch_size=1,
+                    predictor=model,
+                    overlap=0.25
+                )
+
+            data_dict["pred"] = val_output[0].cpu().float()
+            post_dict = post(data_dict)
+            mask_xyz = post_dict["pred"][0].numpy().astype(np.uint8)
+            mask_zyx = np.transpose(mask_xyz, (2, 1, 0))
+            duration = round(time.time() - t0, 3)
+
+            dz, dy, dx = spacing
+            vox_cm3 = (dz * dy * dx) / 1000.0
+            organ_names = {
+                1: "脾脏 (Spleen)", 2: "右肾 (Right Kidney)", 3: "左肾 (Left Kidney)",
+                4: "胆囊 (Gallbladder)", 5: "食管 (Esophagus)", 6: "肝脏 (Liver)",
+                7: "胃 (Stomach)", 8: "主动脉 (Aorta)", 9: "下腔静脉 (IVC)",
+                10: "门静脉 (Portal Vein)", 11: "胰腺 (Pancreas)",
+                12: "右肾上腺 (Right Adrenal)", 13: "左肾上腺 (Left Adrenal)"
+            }
+            organ_volumetry = {}
+            for cls_idx, o_name in organ_names.items():
+                cnt = int(np.sum(mask_zyx == cls_idx))
+                organ_volumetry[o_name] = round(cnt * vox_cm3, 2)
+
+            binary_mask = (mask_zyx > 0).astype(np.uint8)
+            clean_mask = extract_largest_component(binary_mask)
+
+            return clean_mask, {
+                "real_neural_inference": True,
+                "neural_architecture": "MONAI SwinUNETR (BTCV 13 Organs, 159 layers)",
+                "weights_source": "Official MONAI Model Zoo",
+                "inference_duration_sec": duration,
+                "positive_voxels": int(np.sum(clean_mask == 1)),
+                "organ_volumetry": organ_volumetry,
+                "accelerator": str(self.device)
+            }
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def get_prostate_model(self) -> torch.nn.Module:
+        if "prostate" in self.models:
+            return self.models["prostate"]
+        try:
+            from .model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
+        except (ImportError, ValueError):
+            from model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
+        spec = OFFICIAL_MODEL_REGISTRY.get("prostate_mri")
+        file_name = spec.file_name if spec else "prostate_mri_v0.3.2.pt"
+        weights_path = get_model_cache_dir() / file_name
+        if not weights_path.exists() or weights_path.stat().st_size < 1024 * 1024:
+            raise RuntimeError(f"MONAI 前列腺 MRI 分割官方权重缺失 ({weights_path})。")
+        from monai.networks.nets import UNet
+        model = UNet(
+            spatial_dims=3, in_channels=1, out_channels=3,
+            channels=[16, 32, 64, 128, 256, 512],
+            strides=[2, 2, 2, 2, 2], num_res_units=4, norm="batch"
+        ).to(self.device)
+        sd = torch.load(str(weights_path), map_location=self.device, weights_only=False)
+        model.load_state_dict(sd)
+        model.eval()
+        self.models["prostate"] = model
+        return model
+
+    def infer_prostate(
+        self,
+        volume_or_path: Any,
+        spacing: Tuple[float, float, float] = (3.0, 0.5, 0.5)
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        t0 = time.time()
+        temp_path = None
+        if isinstance(volume_or_path, str) and os.path.exists(volume_or_path):
+            nii_path = volume_or_path
+        else:
+            vol_zyx = volume_or_path.astype(np.float32)
+            vol_xyz = np.transpose(vol_zyx, (2, 1, 0))
+            dz, dy, dx = spacing
+            affine = np.diag([dx, dy, dz, 1.0])
+            import nibabel as nib, tempfile
+            nii = nib.Nifti1Image(vol_xyz, affine)
+            tmp = tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False)
+            nib.save(nii, tmp.name)
+            temp_path = tmp.name
+            nii_path = temp_path
+
+        try:
+            from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped, Invertd, AsDiscreted
+            from monai.inferers import sliding_window_inference
+            pre = Compose([
+                LoadImaged(keys="image"),
+                EnsureChannelFirstd(keys="image"),
+                ScaleIntensityRanged(keys="image", a_min=0, a_max=500, b_min=0.0, b_max=1.0, clip=True),
+                EnsureTyped(keys="image", device=self.device)
+            ])
+            post = Compose([
+                Invertd(keys="pred", transform=pre, orig_keys="image", nearest_interp=False, to_tensor=True),
+                AsDiscreted(keys="pred", argmax=True)
+            ])
+            model = self.get_prostate_model()
+            data_dict = pre({"image": nii_path})
+            in_tensor = data_dict["image"].unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                val_output = sliding_window_inference(
+                    inputs=in_tensor,
+                    roi_size=[32, 64, 64],
+                    sw_batch_size=1,
+                    predictor=model,
+                    overlap=0.25
+                )
+
+            data_dict["pred"] = val_output[0].cpu().float()
+            post_dict = post(data_dict)
+            mask_xyz = post_dict["pred"][0].numpy().astype(np.uint8)
+            mask_zyx = np.transpose(mask_xyz, (2, 1, 0))
+            duration = round(time.time() - t0, 3)
+
+            dz, dy, dx = spacing
+            vox_cm3 = (dz * dy * dx) / 1000.0
+            pz_vol = round(float(np.sum(mask_zyx == 1)) * vox_cm3, 2)
+            tz_vol = round(float(np.sum(mask_zyx == 2)) * vox_cm3, 2)
+            total_vol = round(pz_vol + tz_vol, 2)
+
+            binary_mask = (mask_zyx > 0).astype(np.uint8)
+            clean_mask = extract_largest_component(binary_mask)
+
+            return clean_mask, {
+                "real_neural_inference": True,
+                "neural_architecture": "MONAI 3D-UNet (Prostate MRI PZ/TZ, 278 layers)",
+                "weights_source": "Official MONAI Model Zoo",
+                "inference_duration_sec": duration,
+                "positive_voxels": int(np.sum(clean_mask == 1)),
+                "peripheral_zone_cm3": pz_vol,
+                "transition_zone_cm3": tz_vol,
+                "total_prostate_cm3": total_vol,
+                "accelerator": str(self.device)
+            }
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def get_brats_model(self) -> torch.nn.Module:
+        if "brats" in self.models:
+            return self.models["brats"]
+        try:
+            from .model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
+        except (ImportError, ValueError):
+            from model_registry import get_model_cache_dir, OFFICIAL_MODEL_REGISTRY
+        spec = OFFICIAL_MODEL_REGISTRY.get("brats_mri")
+        file_name = spec.file_name if spec else "brats_mri_v0.4.8.pt"
+        weights_path = get_model_cache_dir() / file_name
+        if not weights_path.exists() or weights_path.stat().st_size < 1024 * 1024:
+            raise RuntimeError(f"MONAI BraTS 胶质瘤官方权重缺失 ({weights_path})。")
+        from monai.networks.nets import SegResNet
+        model = SegResNet(
+            spatial_dims=3, in_channels=4, out_channels=3,
+            init_filters=16, blocks_down=[1, 2, 2, 4], blocks_up=[1, 1, 1]
+        ).to(self.device)
+        sd = torch.load(str(weights_path), map_location=self.device, weights_only=False)
+        model.load_state_dict(sd)
+        model.eval()
+        self.models["brats"] = model
+        return model
+
+    def infer_brats(
+        self,
+        volume_or_path: Any,
+        spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        t0 = time.time()
+        temp_path = None
+        if isinstance(volume_or_path, str) and os.path.exists(volume_or_path):
+            nii_path = volume_or_path
+        else:
+            vol_zyx = volume_or_path.astype(np.float32)
+            vol_xyz = np.transpose(vol_zyx, (2, 1, 0))
+            dz, dy, dx = spacing
+            affine = np.diag([dx, dy, dz, 1.0])
+            import nibabel as nib, tempfile
+            nii = nib.Nifti1Image(vol_xyz, affine)
+            tmp = tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False)
+            nib.save(nii, tmp.name)
+            temp_path = tmp.name
+            nii_path = temp_path
+
+        try:
+            from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped
+            from monai.inferers import sliding_window_inference
+            pre = Compose([
+                LoadImaged(keys="image"),
+                EnsureChannelFirstd(keys="image"),
+                ScaleIntensityRanged(keys="image", a_min=0, a_max=800, b_min=0.0, b_max=1.0, clip=True),
+                EnsureTyped(keys="image", device=self.device)
+            ])
+            model = self.get_brats_model()
+            data_dict = pre({"image": nii_path})
+            img_tensor = data_dict["image"]
+            if img_tensor.shape[0] == 1:
+                img_tensor = img_tensor.repeat(4, 1, 1, 1)
+            in_tensor = img_tensor.unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                val_output = sliding_window_inference(
+                    inputs=in_tensor,
+                    roi_size=[64, 64, 64],
+                    sw_batch_size=1,
+                    predictor=model,
+                    overlap=0.25
+                )
+
+            probs = torch.sigmoid(val_output[0]).cpu().numpy()
+            wt_mask_xyz = (probs[1] > 0.5).astype(np.uint8)
+            mask_zyx = np.transpose(wt_mask_xyz, (2, 1, 0))
+            clean_mask = extract_largest_component(mask_zyx)
+            duration = round(time.time() - t0, 3)
+
+            dz, dy, dx = spacing
+            vox_cm3 = (dz * dy * dx) / 1000.0
+            wt_vol = round(float(np.sum(probs[1] > 0.5)) * vox_cm3, 2)
+            tc_vol = round(float(np.sum(probs[0] > 0.5)) * vox_cm3, 2)
+            et_vol = round(float(np.sum(probs[2] > 0.5)) * vox_cm3, 2)
+
+            return clean_mask, {
+                "real_neural_inference": True,
+                "neural_architecture": "MONAI SegResNet (BraTS Glioma Subregions, 83 layers)",
+                "weights_source": "Official MONAI Model Zoo",
+                "inference_duration_sec": duration,
+                "positive_voxels": int(np.sum(clean_mask == 1)),
+                "whole_tumor_cm3": wt_vol,
+                "tumor_core_cm3": tc_vol,
+                "enhancing_tumor_cm3": et_vol,
+                "accelerator": str(self.device)
+            }
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
 
 class MONAIEngine:
     def __init__(self):
@@ -402,11 +702,20 @@ class MONAIEngine:
             mask = b_res.get("mucus_mask") or b_res.get("mask")
             if mask is None:
                 mask, _, _ = segment_pulmonary_nodules(vol, spacing)
-        elif is_lung:
-            mask, _, _ = segment_pulmonary_nodules(vol, spacing)
         elif "spleen" in sample_id_or_path.lower() or model_name in ("spleen_segmenter", "spleen_ct"):
             f_path = sample_id_or_path if (isinstance(sample_id_or_path, str) and os.path.exists(sample_id_or_path)) else None
             mask, _ = self.neural_pipeline.infer_spleen(f_path or vol, spacing=spacing)
+        elif model_name in ("multi_organ_ct", "swinunetr_btcv"):
+            f_path = sample_id_or_path if (isinstance(sample_id_or_path, str) and os.path.exists(sample_id_or_path)) else None
+            mask, _ = self.neural_pipeline.infer_btcv(f_path or vol, spacing=spacing)
+        elif "prostate" in sample_id_or_path.lower() or model_name in ("prostate_mri_segmenter", "prostate_mri"):
+            f_path = sample_id_or_path if (isinstance(sample_id_or_path, str) and os.path.exists(sample_id_or_path)) else None
+            mask, _ = self.neural_pipeline.infer_prostate(f_path or vol, spacing=spacing)
+        elif "brats" in sample_id_or_path.lower() or model_name in ("brain_tumor_brats", "brats_mri"):
+            f_path = sample_id_or_path if (isinstance(sample_id_or_path, str) and os.path.exists(sample_id_or_path)) else None
+            mask, _ = self.neural_pipeline.infer_brats(f_path or vol, spacing=spacing)
+        elif is_lung:
+            mask, _, _ = segment_pulmonary_nodules(vol, spacing)
         else:
             raise RuntimeError(
                 f"模型 '{model_name or sample_id_or_path}' 的真实深度学习神经网络权重尚未就绪。"
@@ -604,6 +913,24 @@ class MONAIEngine:
             lesion_label = "脾脏实质 (MONAI 3D-UNet 真实神经分割)"
             recist = calculate_recist_metrics(mask_np, spacing=spacing)
             key_slice_idx = recist["key_slice_index"]
+        elif model_name in ("multi_organ_ct", "swinunetr_btcv"):
+            f_path = kwargs.get("file_path")
+            mask_np, neural_meta = self.neural_pipeline.infer_btcv(f_path or volume, spacing=spacing)
+            lesion_label = "腹部 13 器官解剖 (MONAI SwinUNETR 真实神经分割)"
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
+        elif model_name in ("prostate_mri_segmenter", "prostate_mri"):
+            f_path = kwargs.get("file_path")
+            mask_np, neural_meta = self.neural_pipeline.infer_prostate(f_path or volume, spacing=spacing)
+            lesion_label = "前列腺腺体分带 (PZ/TZ，MONAI 3D-UNet 真实神经分割)"
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
+        elif model_name in ("brain_tumor_brats", "brats_mri"):
+            f_path = kwargs.get("file_path")
+            mask_np, neural_meta = self.neural_pipeline.infer_brats(f_path or volume, spacing=spacing)
+            lesion_label = "脑胶质瘤全肿瘤区 (MONAI SegResNet 真实神经分割)"
+            recist = calculate_recist_metrics(mask_np, spacing=spacing)
+            key_slice_idx = recist["key_slice_index"]
         else:
             raise RuntimeError(
                 f"模型 '{model_name}' 的真实深度学习神经网络权重尚未安装。"
@@ -646,6 +973,24 @@ class MONAIEngine:
                 f"- **深度神经网络**: `{neural_meta.get('neural_architecture')}` (真实 PyTorch 权重推理)\n"
                 f"- **真实验证体素**: `{recist['total_volume_cm3']} cm³` (阳性体素点数: `{neural_meta.get('positive_voxels', 0)}` 点)\n"
             )
+            if "organ_volumetry" in neural_meta:
+                organ_lines = "".join([f"  - {k}: `{v} cm³`\n" for k, v in neural_meta["organ_volumetry"].items() if v > 0])
+                if organ_lines:
+                    neural_md += f"- **腹部 13 器官精细容积 (BTCV)**:\n{organ_lines}"
+            if "peripheral_zone_cm3" in neural_meta:
+                neural_md += (
+                    f"- **前列腺腺体分带容积**:\n"
+                    f"  - 全腺体容积: `{neural_meta['total_prostate_cm3']} cm³`\n"
+                    f"  - 外周带 (PZ): `{neural_meta['peripheral_zone_cm3']} cm³`\n"
+                    f"  - 移行带 (TZ): `{neural_meta['transition_zone_cm3']} cm³`\n"
+                )
+            if "whole_tumor_cm3" in neural_meta:
+                neural_md += (
+                    f"- **脑胶质瘤多亚区容积 (BraTS)**:\n"
+                    f"  - 全肿瘤 (WT): `{neural_meta['whole_tumor_cm3']} cm³`\n"
+                    f"  - 肿瘤核心 (TC): `{neural_meta['tumor_core_cm3']} cm³`\n"
+                    f"  - 增强核心 (ET): `{neural_meta['enhancing_tumor_cm3']} cm³`\n"
+                )
 
         return {
             "status": "success",

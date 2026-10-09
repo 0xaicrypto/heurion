@@ -42,6 +42,7 @@ RUN uv pip install --no-cache --python /opt/venv/bin/python \
       "numpy>=1.26.0" \
       "pillow>=10.2.0" \
       "scipy>=1.12.0" \
+      "einops>=0.7.0" \
       "python-multipart>=0.0.32"
 
 # 3. 复制代码与创建模型和数据目录
@@ -50,13 +51,13 @@ RUN mkdir -p /app/apps/imaging-worker/data /app/models
 
 ENV HEURION_MODEL_DIR=/app/models
 
-# 预先下载核心基座临床模型（脾脏、脑胶质瘤、肺结节、全身多器官，约 188MB）
+# 预先下载核心基座临床模型（脾脏、脑胶质瘤、肺结节、全身多器官、前列腺、SwinUNETR）
 # 确保生产环境容器无需等待网络拉取即可立即执行真实 3D 卷积推理
 RUN python3 -c "\
 import sys, time; \
 sys.path.insert(0, '/app/apps/imaging-worker/src'); \
 from model_registry import pull_model; \
-for m in ['spleen_ct', 'brats_mri', 'lung_nodule_ct', 'wholebody_ct']: \
+for m in ['spleen_ct', 'brats_mri', 'lung_nodule_ct', 'wholebody_ct', 'prostate_mri']: \
     for attempt in range(3): \
         try: \
             print(f'Baking model {m} (attempt {attempt+1})...'); \

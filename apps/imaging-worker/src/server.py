@@ -211,212 +211,353 @@ def health_check():
 @app.get("/api/v1/models")
 def list_clinical_models():
     reg = list_registered_models()
+    reg_map = {m["name"]: m for m in reg}
+
+    raw_models = [
+        # 1. 胸部与呼吸系统 (Thoracic & Pulmonology)
+        {
+            "id": "bronchiectasis_mucus_analyzer",
+            "name": "支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM)",
+            "category": "胸部与呼吸科",
+            "engine_type": "quantitative_ct",
+            "body_part": "chest",
+            "modality": "Chest HRCT",
+            "target": "支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征",
+            "recommended_window": "lung",
+            "compatible_samples": ["chest_lung_ct", "nsclc_lung_ct"],
+            "is_ready": True
+        },
+        {
+            "id": "lung_nodule_segmenter",
+            "name": "肺结节与肺实变检出与分割 (MONAI 3D RetinaNet / UNet)",
+            "category": "胸部与呼吸科",
+            "engine_type": "deep_learning",
+            "body_part": "chest",
+            "modality": "Chest CT",
+            "target": "肺实质实性/磨玻璃结节 (RECIST 1.1 最大径与三维体积)",
+            "recommended_window": "lung",
+            "compatible_samples": ["chest_lung_ct", "nsclc_lung_ct"],
+            "is_ready": reg_map.get("lung_nodule_ct", {}).get("is_ready", False)
+        },
+        {
+            "id": "copd_emphysema_analyzer",
+            "name": "慢阻肺 GOLD 2024 肺气肿与双肺低衰减区 (LAA%) 定量分析",
+            "category": "胸部与呼吸科",
+            "engine_type": "quantitative_ct",
+            "body_part": "chest",
+            "modality": "Chest CT / HRCT",
+            "target": "全肺容积、低衰减区 (LAA-950%) 占比、GOLD 严重度分级",
+            "recommended_window": "lung",
+            "compatible_samples": ["chest_lung_ct", "nsclc_lung_ct"],
+            "is_ready": True
+        },
+        {
+            "id": "lung_airway_segmenter",
+            "name": "全气道树三维拓扑重建 (MONAI AirwayUNet)",
+            "category": "胸部与呼吸科",
+            "engine_type": "deep_learning",
+            "body_part": "chest",
+            "modality": "Chest HRCT",
+            "target": "主气管至亚段细支气管管腔三维骨架与管壁厚度",
+            "recommended_window": "lung",
+            "compatible_samples": ["chest_lung_ct"],
+            "is_ready": False
+        },
+        {
+            "id": "lung_lobe_segmenter",
+            "name": "5 大解剖肺叶分割与肺容积积分 (MONAI V-Net)",
+            "category": "胸部与呼吸科",
+            "engine_type": "deep_learning",
+            "body_part": "chest",
+            "modality": "Chest CT",
+            "target": "双肺 5 大肺叶 (RUL, RML, RLL, LUL, LLL) 体积及占比",
+            "recommended_window": "lung",
+            "compatible_samples": ["chest_lung_ct"],
+            "is_ready": False
+        },
+        {
+            "id": "covid19_lung_infection",
+            "name": "病毒性肺炎磨玻璃实变影定量 (MONAI COVID-Net)",
+            "category": "胸部与呼吸科",
+            "engine_type": "deep_learning",
+            "body_part": "chest",
+            "modality": "Chest CT",
+            "target": "磨玻璃影 (GGO)、网格影与实变受累百分比",
+            "recommended_window": "lung",
+            "compatible_samples": ["chest_lung_ct"],
+            "is_ready": False
+        },
+
+        # 2. 腹部、消化与泌尿系统 (Abdomen & Pelvis)
+        {
+            "id": "spleen_segmenter",
+            "name": "腹部实质脏器与脾脏分割 (MONAI 3D-UNet)",
+            "category": "腹部、消化与泌尿",
+            "engine_type": "deep_learning",
+            "body_part": "abdomen",
+            "modality": "Abdominal CT",
+            "target": "脾脏三维体积、脾肿大定量与创伤破裂评估",
+            "recommended_window": "abdomen",
+            "compatible_samples": ["spleen_test"],
+            "is_ready": reg_map.get("spleen_ct", {}).get("is_ready", False)
+        },
+        {
+            "id": "multi_organ_ct",
+            "name": "全腹部 13 器官多任务解剖分割 (MONAI SwinUNETR)",
+            "category": "腹部、消化与泌尿",
+            "engine_type": "deep_learning",
+            "body_part": "abdomen",
+            "modality": "Abdominal CT",
+            "target": "肝、脾、双肾、胰腺、胆囊、胃、主动脉、下腔静脉等 13 类解剖结构",
+            "recommended_window": "abdomen",
+            "compatible_samples": ["spleen_test"],
+            "is_ready": reg_map.get("swinunetr_btcv", {}).get("is_ready", False)
+        },
+        {
+            "id": "prostate_mri_segmenter",
+            "name": "前列腺外周带/移行带与 PI-RADS 3D 分带 (MONAI 3D-UNet)",
+            "category": "腹部、消化与泌尿",
+            "engine_type": "deep_learning",
+            "body_part": "pelvis",
+            "modality": "Pelvic MRI (T2/ADC)",
+            "target": "前列腺外周带 (PZ)、移行带 (TZ) 分割与体积测算",
+            "recommended_window": "abdomen",
+            "compatible_samples": ["prostate_mri"],
+            "is_ready": reg_map.get("prostate_mri", {}).get("is_ready", False)
+        },
+        {
+            "id": "pancreas_tumor_segmenter",
+            "name": "胰腺实质与胰腺肿瘤分割 (MONAI DiNTS)",
+            "category": "腹部、消化与泌尿",
+            "engine_type": "deep_learning",
+            "body_part": "abdomen",
+            "modality": "Abdominal CT",
+            "target": "胰腺实质、胰头/胰体/胰尾、胰腺导管腺癌与囊性占位",
+            "recommended_window": "abdomen",
+            "compatible_samples": ["spleen_test"],
+            "is_ready": reg_map.get("pancreas_ct_dints", {}).get("is_ready", False)
+        },
+        {
+            "id": "kidney_tumor_segmenter",
+            "name": "肾脏精细解剖与肿瘤分割 (MONAI SegResNet)",
+            "category": "腹部、消化与泌尿",
+            "engine_type": "deep_learning",
+            "body_part": "abdomen",
+            "modality": "Abdominal CECT",
+            "target": "肾实质、肾盂输尿管、肾血管与肾肿瘤/占位",
+            "recommended_window": "abdomen",
+            "compatible_samples": ["spleen_test"],
+            "is_ready": reg_map.get("renal_structures_cect", {}).get("is_ready", False)
+        },
+        {
+            "id": "liver_lesion_segmenter",
+            "name": "肝脏实质与局灶病灶/转移瘤分割 (MONAI UNet)",
+            "category": "腹部、消化与泌尿",
+            "engine_type": "deep_learning",
+            "body_part": "abdomen",
+            "modality": "Abdominal CT",
+            "target": "肝实质体积、原发性肝癌 (HCC) 与转移瘤靶病灶",
+            "recommended_window": "abdomen",
+            "compatible_samples": ["spleen_test"],
+            "is_ready": False
+        },
+
+        # 3. 颅脑与中枢神经系统 (Brain & Neurology)
+        {
+            "id": "brain_tumor_brats",
+            "name": "脑胶质瘤多序列亚区精细分割 (MONAI BraTS SegResNet)",
+            "category": "颅脑与神经系统",
+            "engine_type": "deep_learning",
+            "body_part": "brain",
+            "modality": "Brain MRI (T1, T1c, T2, FLAIR)",
+            "target": "强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR)",
+            "recommended_window": "brain",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("brats_mri", {}).get("is_ready", False)
+        },
+        {
+            "id": "brain_subcortical_segmenter",
+            "name": "全脑多结构 MRI 大规模分割 (MONAI Large UNEST)",
+            "category": "颅脑与神经系统",
+            "engine_type": "deep_learning",
+            "body_part": "brain",
+            "modality": "Brain T1 MRI",
+            "target": "双侧海马体、杏仁核、丘脑体积与阿尔茨海默病量化",
+            "recommended_window": "brain",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("wholebrainseg_large_unest", {}).get("is_ready", False)
+        },
+        {
+            "id": "stroke_ischemic_lesion",
+            "name": "急性脑卒中缺血梗死灶测定 (MONAI UNet)",
+            "category": "颅脑与神经系统",
+            "engine_type": "deep_learning",
+            "body_part": "brain",
+            "modality": "Brain MRI (DWI/FLAIR)",
+            "target": "急性脑梗死缺血半暗带与核心梗死容积",
+            "recommended_window": "brain",
+            "compatible_samples": [],
+            "is_ready": False
+        },
+        {
+            "id": "intracranial_hemorrhage_ct",
+            "name": "急诊颅内出血与血肿检出 (MONAI DenseNet)",
+            "category": "颅脑与神经系统",
+            "engine_type": "deep_learning",
+            "body_part": "brain",
+            "modality": "Brain Head CT",
+            "target": "硬膜下、硬膜外、脑实质内及蛛网膜下腔出血",
+            "recommended_window": "brain",
+            "compatible_samples": [],
+            "is_ready": False
+        },
+
+        # 4. 心血管系统 (Cardiovascular)
+        {
+            "id": "cardiac_mri_segmentation",
+            "name": "心脏短轴 Cine-MRI 心室腔室分割与射血分数 (MONAI UNet)",
+            "category": "心血管系统",
+            "engine_type": "deep_learning",
+            "body_part": "cardiac",
+            "modality": "Cardiac MRI (CINE)",
+            "target": "左心室舒张/收缩末容积、心肌质量与射血分数 (LVEF)",
+            "recommended_window": "mediastinum",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("ventricular_short_axis", {}).get("is_ready", False)
+        },
+        {
+            "id": "valve_landmarks",
+            "name": "心脏超声/CT 瓣膜关键解剖地标检测 (MONAI Heatmap-UNet)",
+            "category": "心血管系统",
+            "engine_type": "deep_learning",
+            "body_part": "cardiac",
+            "modality": "Cardiac CT/Echo",
+            "target": "主动脉瓣与二尖瓣解剖关键铰链点与瓣尖 3D 热图地标定位",
+            "recommended_window": "mediastinum",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("valve_landmarks", {}).get("is_ready", False)
+        },
+        {
+            "id": "coronary_artery_calcification",
+            "name": "冠状动脉钙化积分 (CAC / Agatston 评分)",
+            "category": "心血管系统",
+            "engine_type": "quantitative_ct",
+            "body_part": "cardiac",
+            "modality": "Cardiac CT",
+            "target": "左前降支、回旋支、右冠状动脉钙化积分与冠心病风险分层",
+            "recommended_window": "mediastinum",
+            "compatible_samples": [],
+            "is_ready": False
+        },
+
+        # 5. 骨科与全身体素 (Musculoskeletal & Whole-Body)
+        {
+            "id": "whole_body_ct_segmenter",
+            "name": "TotalSegmentator 全身体素 117 类解剖结构分割与 L3 肌少症评估",
+            "category": "骨科与全身体素",
+            "engine_type": "quantitative_ct",
+            "body_part": "whole_body",
+            "modality": "Whole-Body CT",
+            "target": "全身体素骨骼、主要内脏系统与主要肌群 (L3 SMI 骨骼肌指数)",
+            "recommended_window": "bone",
+            "compatible_samples": ["spleen_test"],
+            "is_ready": True
+        },
+        {
+            "id": "monai_wholebody_ct",
+            "name": "MONAI 全身 CT 多器官全景分割模型 (SegResNet-3D)",
+            "category": "骨科与全身体素",
+            "engine_type": "deep_learning",
+            "body_part": "whole_body",
+            "modality": "Whole-Body CT",
+            "target": "覆盖胸腹盆骨骼、大血管与内脏器官的全景 CT 快速分割",
+            "recommended_window": "bone",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("wholebody_ct", {}).get("is_ready", False)
+        },
+        {
+            "id": "vertebra_segmenter",
+            "name": "全脊柱 24 节椎骨与椎间盘分割 (Spine-Segmenter)",
+            "category": "骨科与全身体素",
+            "engine_type": "deep_learning",
+            "body_part": "bone",
+            "modality": "Spine CT",
+            "target": "颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙测量",
+            "recommended_window": "bone",
+            "compatible_samples": [],
+            "is_ready": False
+        },
+
+        # 6. 病理、内窥镜与钼靶 (Pathology, Endoscopy & Mammography)
+        {
+            "id": "breast_density",
+            "name": "MONAI 乳腺钼靶 X 射线致密度与 BI-RADS 分类 (DenseNet-2D)",
+            "category": "乳腺钼靶与妇科",
+            "engine_type": "deep_learning",
+            "body_part": "breast",
+            "modality": "Mammography (MG)",
+            "target": "符合 ACR BI-RADS 第 5 版标准的乳腺数字化 X 射线摄影腺体致密度四分类",
+            "recommended_window": "abdomen",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("breast_density", {}).get("is_ready", False)
+        },
+        {
+            "id": "pathology_tumor_detection",
+            "name": "MONAI 数字病理全视野切片 (WSI) 肿瘤微转移灶检出 (ResNet/FPN)",
+            "category": "病理与微观形态",
+            "engine_type": "deep_learning",
+            "body_part": "pathology",
+            "modality": "Digital Pathology (WSI)",
+            "target": "前哨淋巴结转移、微浸润灶与肿瘤细胞团全自动检出",
+            "recommended_window": "abdomen",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("pathology_tumor_detection", {}).get("is_ready", False)
+        },
+        {
+            "id": "pathology_nuclei",
+            "name": "MONAI 病理切片细胞核多类别精细分割与表型分类 (HoVer-Net)",
+            "category": "病理与微观形态",
+            "engine_type": "deep_learning",
+            "body_part": "pathology",
+            "modality": "Digital Pathology",
+            "target": "肿瘤浸润淋巴细胞 (TILs)、核异型性、核质比与细胞增殖指数",
+            "recommended_window": "abdomen",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("pathology_nuclei", {}).get("is_ready", False)
+        },
+        {
+            "id": "endoscopic_tool",
+            "name": "MONAI 微创腹腔镜/胸腔镜手术器械动态语义分割 (ToolNet)",
+            "category": "微创外科与内窥镜",
+            "engine_type": "deep_learning",
+            "body_part": "endoscopy",
+            "modality": "Endoscopic Video",
+            "target": "抓持钳、超声刀、电凝钩与吸引器等器械实时像素级分割与遮蔽",
+            "recommended_window": "abdomen",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("endoscopic_tool", {}).get("is_ready", False)
+        },
+
+        # 7. 交互式万物分割 (Interactive)
+        {
+            "id": "vista3d_interactive_segmenter",
+            "name": "MONAI VISTA-3D 医生交互式点选/提示万物分割 (Click-to-Segment)",
+            "category": "交互式万物分割",
+            "engine_type": "deep_learning",
+            "body_part": "general",
+            "modality": "CT / MRI / PET 通用",
+            "target": "任意解剖结构或病灶的正负点选提示与 3D 自适应区域生长分割",
+            "recommended_window": "lung",
+            "compatible_samples": [],
+            "is_ready": reg_map.get("vista3d", {}).get("is_ready", False)
+        }
+    ]
+
     return {
         "status": "success",
         "registry": reg,
-        "total": len(reg),
-        "models": [
-            # 1. 胸部与呼吸系统 (Thoracic & Pulmonology)
-            {
-                "id": "bronchiectasis_mucus_analyzer",
-                "name": "支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM)",
-                "category": "胸部与呼吸科",
-                "modality": "Chest HRCT",
-                "target": "支气管-动脉径比 (BAR)、粘液栓容积、解剖肺叶肺段定位、树芽征",
-                "recommended_window": "lung",
-                "is_ready": True
-            },
-            {
-                "id": "lung_nodule_segmenter",
-                "name": "肺结节与肺实变自动分割 (MONAI 3D SegResNet)",
-                "category": "胸部与呼吸科",
-                "modality": "Chest CT",
-                "target": "肺实质实性/磨玻璃结节 (RECIST 1.1 最大径与三维体积)",
-                "recommended_window": "lung",
-                "is_ready": True
-            },
-            {
-                "id": "lung_airway_segmenter",
-                "name": "全气道树三维拓扑重建 (MONAI AirwayUNet)",
-                "category": "胸部与呼吸科",
-                "modality": "Chest HRCT",
-                "target": "主气管至亚段细支气管管腔三维骨架与管壁厚度",
-                "recommended_window": "lung",
-                "is_ready": True
-            },
-            {
-                "id": "lung_lobe_segmenter",
-                "name": "5 大解剖肺叶分割与肺容积积分 (MONAI V-Net)",
-                "category": "胸部与呼吸科",
-                "modality": "Chest CT",
-                "target": "双肺 5 大肺叶 (RUL, RML, RLL, LUL, LLL) 体积及占比",
-                "recommended_window": "lung",
-                "is_ready": True
-            },
-            {
-                "id": "covid19_lung_infection",
-                "name": "病毒性肺炎磨玻璃实变影定量 (MONAI COVID-Net)",
-                "category": "胸部与呼吸科",
-                "modality": "Chest CT",
-                "target": "磨玻璃影 (GGO)、网格影与实变受累百分比",
-                "recommended_window": "lung",
-                "is_ready": True
-            },
-            {
-                "id": "copd_emphysema_analyzer",
-                "name": "慢阻肺 GOLD 2024 肺气肿与双肺低衰减区 (LAA%) 定量分析",
-                "category": "胸部与呼吸科",
-                "modality": "Chest CT / HRCT",
-                "target": "全肺容积、低衰减区 (LAA-950%) 占比、GOLD 严重度分级",
-                "recommended_window": "lung",
-                "is_ready": True
-            },
-
-            # 2. 腹部、消化与泌尿系统 (Abdomen & Pelvis)
-            {
-                "id": "spleen_segmenter",
-                "name": "腹部实质脏器与脾脏分割 (MONAI 3D SegResNet)",
-                "category": "腹部、消化与泌尿",
-                "modality": "Abdominal CT",
-                "target": "脾脏三维体积、脾肿大定量与创伤破裂评估",
-                "recommended_window": "abdomen",
-                "is_ready": True
-            },
-            {
-                "id": "multi_organ_ct",
-                "name": "全腹部 13 器官多任务分割 (MONAI SwinUNETR)",
-                "category": "腹部、消化与泌尿",
-                "modality": "Abdominal CT",
-                "target": "肝、脾、双肾、胰腺、胆囊、胃、主动脉、下腔静脉等",
-                "recommended_window": "abdomen",
-                "is_ready": True
-            },
-            {
-                "id": "liver_lesion_segmenter",
-                "name": "肝脏实质与局灶病灶/转移瘤分割 (MONAI UNet)",
-                "category": "腹部、消化与泌尿",
-                "modality": "Abdominal CT",
-                "target": "肝实质体积、原发性肝癌 (HCC) 与转移瘤靶病灶",
-                "recommended_window": "abdomen",
-                "is_ready": True
-            },
-            {
-                "id": "pancreas_tumor_segmenter",
-                "name": "胰腺实质与胰腺肿瘤分割 (MONAI UNet)",
-                "category": "腹部、消化与泌尿",
-                "modality": "Abdominal CT",
-                "target": "胰腺实质、胰腺导管腺癌与囊性占位病变",
-                "recommended_window": "abdomen",
-                "is_ready": True
-            },
-            {
-                "id": "kidney_tumor_segmenter",
-                "name": "肾脏与肾肿瘤/囊肿分割 (MONAI KiTS)",
-                "category": "腹部、消化与泌尿",
-                "modality": "Abdominal CT",
-                "target": "肾实质、肾肿瘤皮质实性占位与肾囊肿",
-                "recommended_window": "abdomen",
-                "is_ready": True
-            },
-            {
-                "id": "prostate_mri_segmenter",
-                "name": "前列腺外周带/移行带与 PI-RADS 病灶 (MONAI UNet)",
-                "category": "腹部、消化与泌尿",
-                "modality": "Pelvic MRI (T2/ADC)",
-                "target": "前列腺腺体分带与可疑癌灶 (PI-RADS 3-5分区)",
-                "recommended_window": "abdomen",
-                "is_ready": True
-            },
-
-            # 3. 颅脑与中枢神经系统 (Brain & Neurology)
-            {
-                "id": "brain_tumor_brats",
-                "name": "脑胶质瘤多序列分割 (MONAI BraTS DynUNet)",
-                "category": "颅脑与神经系统",
-                "modality": "Brain MRI (T1, T1c, T2, FLAIR)",
-                "target": "强化肿瘤 (ET)、瘤周水肿 (ED) 与坏死核心 (NCR)",
-                "recommended_window": "brain",
-                "is_ready": True
-            },
-            {
-                "id": "brain_subcortical_segmenter",
-                "name": "皮质下深部核团与海马体萎缩量化 (FastSurfer-like)",
-                "category": "颅脑与神经系统",
-                "modality": "Brain T1 MRI",
-                "target": "双侧海马体、杏仁核、丘脑体积与阿尔茨海默病量化",
-                "recommended_window": "brain",
-                "is_ready": True
-            },
-            {
-                "id": "stroke_ischemic_lesion",
-                "name": "急性脑卒中缺血梗死灶测定 (MONAI UNet)",
-                "category": "颅脑与神经系统",
-                "modality": "Brain MRI (DWI/FLAIR)",
-                "target": "急性脑梗死缺血半暗带与核心梗死容积",
-                "recommended_window": "brain",
-                "is_ready": True
-            },
-            {
-                "id": "intracranial_hemorrhage_ct",
-                "name": "急诊颅内出血与血肿检出 (MONAI DenseNet)",
-                "category": "颅脑与神经系统",
-                "modality": "Brain Head CT",
-                "target": "硬膜下、硬膜外、脑实质内及蛛网膜下腔出血",
-                "recommended_window": "brain",
-                "is_ready": True
-            },
-
-            # 4. 心血管系统 (Cardiovascular)
-            {
-                "id": "coronary_artery_calcification",
-                "name": "冠状动脉钙化积分 (CAC / Agatston 评分)",
-                "category": "心血管系统",
-                "modality": "Cardiac CT",
-                "target": "左前降支、回旋支、右冠状动脉钙化积分与冠心病风险分层",
-                "recommended_window": "mediastinum",
-                "is_ready": True
-            },
-            {
-                "id": "cardiac_mri_segmentation",
-                "name": "心脏多时相 CINE MRI 心室分割与射血分数",
-                "category": "心血管系统",
-                "modality": "Cardiac MRI (CINE)",
-                "target": "左心室舒张/收缩末容积、心肌质量与射血分数 (LVEF)",
-                "recommended_window": "mediastinum",
-                "is_ready": True
-            },
-
-            # 5. 骨科与全身体素 (Musculoskeletal & Whole-Body)
-            {
-                "id": "whole_body_ct_segmenter",
-                "name": "全身体素 104 类解剖结构分割 (TotalSegmentator)",
-                "category": "骨科与全身体素",
-                "modality": "Whole-Body CT",
-                "target": "全身体素骨骼、主要内脏系统与主要肌群",
-                "recommended_window": "bone",
-                "is_ready": True
-            },
-            {
-                "id": "vertebra_segmenter",
-                "name": "全脊柱 24 节椎骨与椎间盘分割 (Spine-Segmenter)",
-                "category": "骨科与全身体素",
-                "modality": "Spine CT",
-                "target": "颈椎、胸椎、腰椎各节椎体骨折压缩与椎间隙测量",
-                "recommended_window": "bone",
-                "is_ready": True
-            },
-
-            # 6. 交互式万物分割与自监督 (Interactive & Foundation Models)
-            {
-                "id": "vista3d_interactive_segmenter",
-                "name": "VISTA-3D 交互式点选/提示万物分割 (MONAI VISTA 3D / Click-to-Segment)",
-                "category": "交互式万物分割",
-                "modality": "CT / MRI / PET 通用",
-                "target": "任意解剖结构或病灶的正负点选提示 (Point Clicks) 与 3D 边界框即时自适应分割",
-                "recommended_window": "lung",
-                "is_ready": True
-            }
-        ]
+        "total": len(raw_models),
+        "models": raw_models
     }
 
 @app.get("/api/v1/samples")

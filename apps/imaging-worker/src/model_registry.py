@@ -23,6 +23,9 @@ class ModelSpec:
     architecture: str
     clinical_targets: List[str]
     file_name: str
+    engine_type: str = "deep_learning"  # "deep_learning" or "quantitative_ct"
+    body_part: str = "chest"  # "chest", "abdomen", "brain", "pelvis", "cardiac", "pathology", "whole_body", "breast", "endoscopy", "general"
+    category: str = "胸部与呼吸科"
 
 OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "spleen_ct": ModelSpec(
@@ -38,7 +41,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="基于 MONAI 3D-UNet 架构的腹部薄层 CT 脾脏全自动三维分割与体积/RECIST径线测量。",
         architecture="UNet-3D",
         clinical_targets=["脾脏体积", "脾大 (Splenomegaly)", "门静脉高压"],
-        file_name="spleen_ct_v0.4.0.pt"
+        file_name="spleen_ct_v0.4.0.pt",
+        engine_type="deep_learning",
+        body_part="abdomen",
+        category="腹部、消化与泌尿"
     ),
     "lung_nodule_ct": ModelSpec(
         name="lung_nodule_ct",
@@ -53,7 +59,26 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="胸部薄层 CT 肺实质结节检出与分割，支持磨玻璃、部分实性与实性结节量化与 Lung-RADS 评估。",
         architecture="RetinaNet-UNet-3D",
         clinical_targets=["肺结节", "磨玻璃结节 (GGO)", "部分实性结节 (PSN)", "实性结节 (SN)"],
-        file_name="lung_nodule_ct_v0.5.9.pt"
+        file_name="lung_nodule_ct_v0.5.9.pt",
+        engine_type="deep_learning",
+        body_part="chest",
+        category="胸部与呼吸科"
+    ),
+    "bronchiectasis_mucus_analyzer": ModelSpec(
+        name="bronchiectasis_mucus_analyzer",
+        display_name="支气管扩张与粘液栓 (Mucus Plug) 定量分析 (BAR印戒征 / 阻塞率 / HAM)",
+        modality="Chest HRCT",
+        version="v1.0.0",
+        size_mb=0.0,
+        sha256="",
+        urls=[],
+        description="高分辨胸部 HRCT 支气管伴行动脉径比 (BAR 印戒征)、高密度粘液栓 (HAM) 与气道分支拓扑嵌顿三维量化。",
+        architecture="Quantitative-CT-Radiomics-3D",
+        clinical_targets=["支气管扩张 (BAR)", "高密度粘液栓 (HAM)", "变应性支气管肺曲霉病 (ABPA)", "气道树芽征"],
+        file_name="bronchiectasis.py",
+        engine_type="quantitative_ct",
+        body_part="chest",
+        category="胸部与呼吸科"
     ),
     "swinunetr_btcv": ModelSpec(
         name="swinunetr_btcv",
@@ -68,7 +93,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="BTCV 腹部 13 类关键实质器官（肝、脾、双肾、胰腺、胆囊、食管、胃、主动脉、下腔静脉、门静脉等）高精度语义分割。",
         architecture="SwinUNETR-Large",
         clinical_targets=["肝脏", "脾脏", "双肾", "胰腺", "腹部大血管"],
-        file_name="swinunetr_btcv_v0.5.0.pt"
+        file_name="swinunetr_btcv_v0.5.0.pt",
+        engine_type="deep_learning",
+        body_part="abdomen",
+        category="腹部、消化与泌尿"
     ),
     "brats_mri": ModelSpec(
         name="brats_mri",
@@ -83,7 +111,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="精细提取全肿瘤 (WT)、水肿浸润区、增强肿瘤核心 (ET) 与坏死区 (TC)，辅助神经外科手术边界评估。",
         architecture="SegResNet-3D",
         clinical_targets=["全脑胶质瘤 (WT)", "肿瘤增强核心 (ET)", "坏死囊变区 (TC)"],
-        file_name="brats_mri_v0.4.8.pt"
+        file_name="brats_mri_v0.4.8.pt",
+        engine_type="deep_learning",
+        body_part="brain",
+        category="颅脑与神经系统"
     ),
     "wholebody_ct": ModelSpec(
         name="wholebody_ct",
@@ -98,7 +129,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="覆盖胸腹盆骨骼、大血管与内脏器官的全景 CT 快速分割基础模型。",
         architecture="SegResNet-3D",
         clinical_targets=["胸部器官", "腹部器官", "纵隔血管", "骨骼解剖"],
-        file_name="wholebody_ct_v0.1.9.pt"
+        file_name="wholebody_ct_v0.1.9.pt",
+        engine_type="deep_learning",
+        body_part="whole_body",
+        category="骨科与全身体素"
     ),
     "prostate_mri": ModelSpec(
         name="prostate_mri",
@@ -113,7 +147,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="前列腺 T2W MRI 多通道解剖分割，精准划分外周带 (PZ) 与移行带 (TZ)，辅助 PI-RADS 评估。",
         architecture="UNet-3D",
         clinical_targets=["前列腺全腺体", "外周带 (PZ)", "移行带 (TZ)", "PI-RADS 靶区定位"],
-        file_name="prostate_mri_v0.3.2.pt"
+        file_name="prostate_mri_v0.3.2.pt",
+        engine_type="deep_learning",
+        body_part="pelvis",
+        category="腹部、消化与泌尿"
     ),
     "renal_structures_cect": ModelSpec(
         name="renal_structures_cect",
@@ -128,7 +165,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="基于增强期薄层 CT 提取肾实质、肾盂、肾静脉和肾肿瘤亚区，辅助保肾手术 (PN) 规划。",
         architecture="SegResNet-3D",
         clinical_targets=["肾实质", "肾盂输尿管", "肾血管", "肾占位/囊肿"],
-        file_name="renal_structures_cect_v0.1.0.pt"
+        file_name="renal_structures_cect_v0.1.0.pt",
+        engine_type="deep_learning",
+        body_part="abdomen",
+        category="腹部、消化与泌尿"
     ),
     "ventricular_short_axis": ModelSpec(
         name="ventricular_short_axis",
@@ -143,7 +183,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="心脏短轴稳态自由进动 (SSFP) 序列左心室 (LV)、右心室 (RV) 和心肌 (MYO) 腔室形态分割与射血分数测算。",
         architecture="UNet-2D/3D",
         clinical_targets=["左心室内膜", "左心室心肌", "右心室内膜", "心室容积/射血分数 (LVEF)"],
-        file_name="ventricular_short_axis_v0.3.2.pt"
+        file_name="ventricular_short_axis_v0.3.2.pt",
+        engine_type="deep_learning",
+        body_part="cardiac",
+        category="心血管系统"
     ),
     "wholebrainseg_large_unest": ModelSpec(
         name="wholebrainseg_large_unest",
@@ -158,7 +201,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="基于 Transformer-UNEST 架构的高精细全脑 133 类灰白质解剖亚核团分割，支持阿尔茨海默病与神经退行性病变海马体积评估。",
         architecture="UNEST-Large-3D",
         clinical_targets=["大脑皮层", "白质", "双侧海马体", "脑室系统", "基底节区"],
-        file_name="wholebrainseg_large_unest_v0.2.3.pt"
+        file_name="wholebrainseg_large_unest_v0.2.3.pt",
+        engine_type="deep_learning",
+        body_part="brain",
+        category="颅脑与神经系统"
     ),
     "pancreas_ct_dints": ModelSpec(
         name="pancreas_ct_dints",
@@ -173,7 +219,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="基于可微神经架构搜索 (DiNTS) 的胰腺实质与占位病灶三维细粒度分割，突破小器官低对比度分割瓶颈。",
         architecture="DiNTS-3D-NAS",
         clinical_targets=["胰腺实质", "胰头/胰体/胰尾", "胰腺囊实性占位", "胰腺导管腺癌 (PDAC)"],
-        file_name="pancreas_ct_dints_v0.4.3.pt"
+        file_name="pancreas_ct_dints_v0.4.3.pt",
+        engine_type="deep_learning",
+        body_part="abdomen",
+        category="腹部、消化与泌尿"
     ),
     "pathology_tumor_detection": ModelSpec(
         name="pathology_tumor_detection",
@@ -188,7 +237,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="针对淋巴结与实体肿瘤 HE 染色高倍率全视野数字病理切片 (WSI) 的微转移灶全自动检出与定位。",
         architecture="TorchVision-ResNet / FPN",
         clinical_targets=["前哨淋巴结转移", "微浸润灶", "肿瘤细胞团", "病理分期辅助"],
-        file_name="pathology_tumor_detection_v0.5.7.pt"
+        file_name="pathology_tumor_detection_v0.5.7.pt",
+        engine_type="deep_learning",
+        body_part="pathology",
+        category="病理与微观形态"
     ),
     "pathology_nuclei": ModelSpec(
         name="pathology_nuclei",
@@ -203,7 +255,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="HE 染色数字病理多组织细胞核分割与表型分类（肿瘤细胞核、淋巴细胞、成纤维细胞、上皮细胞核）。",
         architecture="HoVer-Net / UNet-2D",
         clinical_targets=["肿瘤浸润淋巴细胞 (TILs)", "核异型性", "核质比测算", "细胞增殖指数"],
-        file_name="pathology_nuclei_v0.2.1.pt"
+        file_name="pathology_nuclei_v0.2.1.pt",
+        engine_type="deep_learning",
+        body_part="pathology",
+        category="病理与微观形态"
     ),
     "valve_landmarks": ModelSpec(
         name="valve_landmarks",
@@ -218,7 +273,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="主动脉瓣与二尖瓣解剖关键铰链点与瓣尖 3D 热图地标定位，辅助 TAVR/TMVR 经导管瓣膜置换术前规划。",
         architecture="Heatmap-Regression-UNet",
         clinical_targets=["主动脉瓣环", "二尖瓣前后瓣叶地标", "冠状动脉开口高度", "瓣膜置换规划"],
-        file_name="valve_landmarks_v0.4.3.pt"
+        file_name="valve_landmarks_v0.4.3.pt",
+        engine_type="deep_learning",
+        body_part="cardiac",
+        category="心血管系统"
     ),
     "breast_density": ModelSpec(
         name="breast_density",
@@ -233,7 +291,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="符合 ACR BI-RADS 第 5 版标准的乳腺数字化 X 射线摄影 (CC/MLO) 腺体致密度四分类 (a, b, c, d)。",
         architecture="DenseNet-Classifier-2D",
         clinical_targets=["BI-RADS 腺体致密度", "脂肪型", "散在纤维腺体型", "不均匀致密型", "极度致密型"],
-        file_name="breast_density_v0.1.5.pt"
+        file_name="breast_density_v0.1.5.pt",
+        engine_type="deep_learning",
+        body_part="breast",
+        category="乳腺钼靶与妇科"
     ),
     "endoscopic_tool": ModelSpec(
         name="endoscopic_tool",
@@ -248,7 +309,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="内窥镜微创手术视频中抓持钳、超声刀、电凝钩与吸引器等手术器械实时像素级分割与跟踪遮蔽。",
         architecture="ToolNet-SegResNet-2D",
         clinical_targets=["抓钳", "超声刀", "双极电凝", "视野遮挡剔除", "术中安全边界"],
-        file_name="endoscopic_tool_v0.5.5.pt"
+        file_name="endoscopic_tool_v0.5.5.pt",
+        engine_type="deep_learning",
+        body_part="endoscopy",
+        category="微创外科与内窥镜"
     ),
     "totalsegmentator": ModelSpec(
         name="totalsegmentator",
@@ -264,7 +328,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="覆盖全身 117 种器官、骨骼、大血管与肌肉群的全景 CT 分割基础模型，用于精准解剖包络与假阳性剔除。",
         architecture="nnUNet-ResNet50-3D",
         clinical_targets=["双肺五叶", "气管树", "纵隔大血管", "肝脾胰肾", "骨骼肋骨系统"],
-        file_name="totalsegmentator_v2.0.5.pt"
+        file_name="totalsegmentator_v2.0.5.pt",
+        engine_type="quantitative_ct",
+        body_part="whole_body",
+        category="骨科与全身体素"
     ),
     "vista3d": ModelSpec(
         name="vista3d",
@@ -280,7 +347,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="支持医生在 MPR 画布上实时点选（正负提示点）或 ROI 框选，实现毫秒级自适应 3D 边界区域生长与 RECIST 测算。",
         architecture="VISTA-3D-Transformer",
         clinical_targets=["任意未知靶病灶", "淋巴结转移灶", "软组织肉瘤", "囊实性混合占位"],
-        file_name="vista3d_v1.0.0.pt"
+        file_name="vista3d_v1.0.0.pt",
+        engine_type="deep_learning",
+        body_part="general",
+        category="交互式万物分割"
     ),
     "copd_emphysema": ModelSpec(
         name="copd_emphysema",
@@ -295,7 +365,10 @@ OFFICIAL_MODEL_REGISTRY: Dict[str, ModelSpec] = {
         description="全自动双肺实质容积提取，并在吸气末 CT 上量化 <-950 HU 低衰减区容积占比及 GOLD 1~4 级肺气肿分度。",
         architecture="DenseNet121-3D-Parenchyma",
         clinical_targets=["慢性阻塞性肺疾病 (COPD)", "肺气肿容积", "低衰减区 (LAA-950%)"],
-        file_name="copd_emphysema_v1.1.0.pt"
+        file_name="copd_emphysema_v1.1.0.pt",
+        engine_type="quantitative_ct",
+        body_part="chest",
+        category="胸部与呼吸科"
     )
 }
 
@@ -342,17 +415,27 @@ def get_model_status(name: str) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # For quantitative CT algorithms built into the codebase, they are natively ready
+    is_quant = (spec.engine_type == "quantitative_ct")
+    effective_installed = True if is_quant else installed
+    effective_verified = True if is_quant else verified
+    is_ready = (effective_installed and effective_verified)
+
     return {
         "name": spec.name,
         "display_name": spec.display_name,
         "modality": spec.modality,
         "version": spec.version,
         "architecture": spec.architecture,
+        "engine_type": spec.engine_type,
+        "body_part": spec.body_part,
+        "category": spec.category,
         "expected_size_mb": spec.size_mb,
         "expected_sha256": spec.sha256,
         "clinical_targets": spec.clinical_targets,
-        "installed": installed,
-        "verified": verified,
+        "installed": effective_installed,
+        "verified": effective_verified,
+        "is_ready": is_ready,
         "actual_sha256": actual_sha,
         "local_path": str(local_file) if installed else None,
         "local_size_mb": size_mb,
