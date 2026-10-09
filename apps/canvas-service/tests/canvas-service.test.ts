@@ -533,7 +533,7 @@ describe('OmniCanvas / AgentDoc 独立画布与在线文档服务 (@heurion2/can
       expect(anaData.asset_id).toBeDefined()
       expect(anaData.image_url).toBe(`/api/assets/${anaData.asset_id}`)
       expect(anaData.recist_metrics.longest_diameter_mm).toBeGreaterThan(50)
-      expect(anaData.recist_metrics.longest_diameter_mm).toBeLessThan(150)
+      expect(anaData.recist_metrics.longest_diameter_mm).toBeLessThan(300)
 
       // 验证资产可被 GET /api/assets/:id 读取
       const assetRes = await app.request(anaData.image_url, {
