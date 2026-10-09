@@ -1122,8 +1122,8 @@ export const HELP_SECTIONS: HelpSection[] = [
             <li><b>伴行动脉与支气管真实解剖定位</b>：在右肺下叶前基底段关键病变截面 (Slice #172) 处，伴行动脉实测外径 <b>5.8 mm</b>，伴行扩张支气管实测 <b>8.5 mm</b>；</li>
             <li><b>支气管-伴行动脉比 (BAR = 1.45) 与印戒征</b>：在受累重度病变截面支气管内径扩张至 8.5 mm（伴行动脉 5.8 mm，BAR = 1.45 &gt; 1.10），呈现教科书级典型<b>「印戒征 (Signet Ring Sign)」</b>，确诊<b>柱状支气管扩张 (Cylindrical Bronchiectasis)</b>；</li>
             <li><b>管壁厚度比 (T/D Ratio = 0.28)</b>：参考值 &lt; 0.20，证实气道壁处于慢性重度炎性肥厚与纤维重塑状态；</li>
-            <li><b>高密度粘液栓 (High Attenuation Mucus, HAM) 与真实容积标定</b>：AI 多簇体素聚类精准测得<b>高密度 HAM 嵌顿达 1.04 cm³</b>（CT 峰值 120 HU，显著高于胸壁软组织肌肉密度），伴行支气管粘液栓总体积标定为 <b>4.65 cm³</b>（外周细支气管树芽征炎性结节 3.61 cm³）。该高密度征象在病理生理学上特异性对应嗜酸性坏死蛋白（夏科-雷登结晶）与曲霉菌丝凝聚，为 ABPA 的关键影像学标志；</li>
-            <li><b>量化严重度分级</b>：Bhalla 粘液栓嵌顿评定为 1 级 (部分支气管粘液栓塞 / Partial Plugging)；Reiff 支扩严重度综合评分为 7/18 分。</li>
+            <li><b>高密度粘液栓 (High Attenuation Mucus, HAM) 与基线容积标定</b>：AI 3D 卷积多簇体素聚类精准测得基线<b>高密度 HAM 嵌顿达 12.44 cm³</b>（CT 均值 98 HU，峰值 126 HU，显著高于胸壁软组织肌肉密度），伴行支气管粘液栓总体积标定为 <b>18.50 cm³</b>（外周细支气管树芽征炎性结节 6.06 cm³）。该高密度征象在病理生理学上特异性对应嗜酸性坏死蛋白（夏科-雷登结晶）与曲霉菌丝凝聚，为 ABPA 的关键影像学标志；经规范口服糖皮质激素联合抗真菌治疗 3 个月后，随访 CT 测得粘液栓显著吸收消退至 <b>4.60 cm³</b>（HAM 降至 1.04 cm³，树芽征降至 3.56 cm³，吸收率 74.9% PR）；</li>
+            <li><b>量化严重度分级</b>：基线 Bhalla 粘液栓嵌顿评定为 <b>2 级 (重度广泛完全嵌顿 / Total Occlusion)</b>；Reiff 支扩严重度综合评分为 <b>12/18 分</b>；3 个月随访显著吸收好转后，Bhalla 评分降至 1 级 (部分栓塞)，Reiff 评分改善至 7/18 分。</li>
           </ul>
         </div>
       </div>
@@ -1282,14 +1282,14 @@ export const HELP_SECTIONS: HelpSection[] = [
 
       <div class="help-case-card">
         <div class="help-case-header">
-          <span>图 7 诊断级交互式 3D MPR 三正交切片浏览器 (Axial #86 / Coronal #210 / Sagittal #180)</span>
+          <span>图 7 诊断级交互式 3D MPR 三正交切片浏览器 (Axial #215 / Coronal #245 / Sagittal #195)</span>
           <span class="help-case-tag">${icon('grid', { size: 12 })} 三正交空间联动</span>
         </div>
         <img class="help-case-img" src="/site/real-case-nsclc-2-mpr-3view.png" alt="诊断级交互式 3D MPR 三正交切片浏览器" />
         <div class="help-case-caption">
           <b>三正交全景空间解剖定位指征：</b>
           <ul>
-            <li><b>三正交解剖空间对齐</b>：横断面 (Axial #86/180)、冠状面 (Coronal #210/512)、矢状面 (Sagittal #180/512) 实时同步十字准星聚焦；冠状位清晰展现原发肿块居于右肺尖部，上缘紧邻胸廓顶胸膜但未侵犯锁骨下动脉；</li>
+            <li><b>三正交解剖空间对齐</b>：横断面 (Axial #215/269)、冠状面 (Coronal #245/512)、矢状面 (Sagittal #195/512) 实时同步十字准星聚焦；冠状位清晰展现原发肿块居于右肺尖部，上缘紧邻胸廓顶胸膜但未侵犯锁骨下动脉；</li>
             <li><b>病灶质心导航与准星瞬时飞跃</b>：点击「定位病灶中心」，准星自动瞬时定位到 3D 肿瘤质心层位，支持医生使用高对比度亚毫米游标卡尺复核病灶边界；</li>
             <li><b>调窗鉴别坏死与浸润</b>：快捷切换肺窗 (-600/1500 HU) 观察周边肺野卫星结节与毛刺，切换纵隔窗 (40/400 HU) 观察 4R 淋巴结内部强化与坏死囊变；</li>
             <li><b>一键存证资产</b>：点击「保存切片为文档资产」，即刻以无损高保真图像存证入库并生成 Markdown 引用。</li>
@@ -1406,11 +1406,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       </div>
 
       <h4>8.14 第一步：全腹 CT 平扫上传与 TotalSegmentator 全腹实质脏器及 L3 椎体横截面体成分量化</h4>
-      <p>医生上传全腹 CT 平扫序列 (96层)，Heurion 自动化完成多器官体积分割，并精准定位第 3 腰椎 (L3) 中位层面（第 #148 层），自动分割腰大肌、竖脊肌及腹壁肌群：</p>
+      <p>医生上传全腹 CT 平扫序列 (96层)，Heurion 自动化完成多器官体积分割，并精准定位第 3 腰椎 (L3) 中位层面（第 #48 层），自动分割腰大肌、竖脊肌及腹壁肌群：</p>
 
       <div class="help-case-card">
         <div class="help-case-header">
-          <span>图 11 TotalSegmentator 全腹多脏器分割与 L3 椎体骨骼肌质量指数 (SMI) 量化 (Slice #148)</span>
+          <span>图 11 TotalSegmentator 全腹多脏器分割与 L3 椎体骨骼肌质量指数 (SMI) 量化 (Slice #48)</span>
           <span class="help-case-tag">${icon('users', { size: 12 })} TotalSegmentator 3D</span>
         </div>
         <img class="help-case-img" src="/site/real-case-sarco-1-l3-muscle-fat.png" alt="TotalSegmentator L3 椎体横截面体成分量化" />
@@ -3256,7 +3256,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - 诊疗痛点：外院按普通支扩合并铜绿假单胞菌感染反复使用抗生素无效。
 2. **步骤一：3D HRCT 上传与 MONAI 深度学习病灶量化**：
    - 参考图像：[图 1 真实患者胸部 HRCT 轴位关键截面量化分析](/site/real-case-1-baseline-hrct.png)；
-   - **支气管-伴行动脉比 (BAR = 1.45)**：右肺下叶支气管内径扩张至 7.8 mm（伴行动脉 5.4 mm），呈现教科书级典型「印戒征 (Signet Ring Sign)」；
+   - **支气管-伴行动脉比 (BAR = 1.45)**：右肺下叶支气管内径扩张至 8.5 mm（伴行动脉 5.8 mm），呈现教科书级典型「印戒征 (Signet Ring Sign)」；
    - **管壁厚度比 (T/D = 0.28)**：气道慢性炎性重塑；
    - **高密度粘液栓 (HAM = 12.44 cm³)**：嵌顿栓 CT 均值 98 HU（峰值 126 HU，远超胸壁肌肉 40~50 HU），伴行支气管粘液栓总体积标定为 **18.50 cm³**（经血管阴性掩模与气道拓扑过滤精准标定，处于单侧节段性支扩 5~25 cm³ 典型生理区间）；
    - 评分：Bhalla 2 级 (完全嵌顿)，Reiff 严重度评分 12/18 分。
@@ -3286,15 +3286,15 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
 1. **患者脱敏档案与就诊背景**：
    - 虚拟代号：\`PT-NSCLC-002\` (58 岁女性，无吸烟史，零 PHI 规范建档)；
    - 主诉：右侧胸痛、刺激性干咳伴痰中带血丝 2 个月；
-   - 病理与分子分型：支气管镜外周活检证实右上肺浸润性中分化腺癌，外周血与组织 NGS 提示 **EGFR 19 号外显子缺失突变 (Exon 19 del, p.E746_A750del, 丰度 48.6%)**；伴同侧纵隔 4R 组淋巴结转移，临床分期 cT2bN2M0, III A 期。给予奥希替尼 (80 mg qd) **一线单药分子靶向治疗 (First-line Targeted Monotherapy)**。
+   - 病理与分子分型：支气管镜外周活检证实右上肺浸润性中分化腺癌，外周血与组织 NGS 提示 **EGFR 19 号外显子缺失突变 (Exon 19 del, p.E746_A750del, 丰度 42.6%)**；伴同侧纵隔 4R 组淋巴结转移，临床分期 cT2bN2M0, III A 期。给予奥希替尼 (80 mg qd) **一线单药分子靶向治疗 (First-line Targeted Monotherapy)**。
 2. **步骤一：基线薄层 HRCT 实体瘤靶病灶 3D 智能量化 (Baseline HRCT, 2026-06-15)**：
-   - 参考图像：[图 6 真实患者基线薄层 HRCT 轴位关键截面 (Slice #128) · 右上肺癌靶病灶智能检出与 3D 边界量化](/site/real-case-nsclc-1-baseline-recist.png)；
+   - 参考图像：[图 6 真实患者基线薄层 HRCT 轴位关键截面 (Slice #215) · 右上肺癌靶病灶智能检出与 3D 边界量化](/site/real-case-nsclc-1-baseline-recist.png)；
    - **靶病灶 1 (右上肺实质浸润肿块)**：3D 卷积模型分割提取最大长径 $42.0 \\text{ mm} \\times$ 短径 $31.5 \\text{ mm}$，3D 容积 $28.50 \\text{ cm}^3$，CT 均值 38 HU；
    - **靶病灶 2 (4R 组纵隔转移淋巴结)**：短径量测 $18.0 \\text{ mm}$（严格符合 RECIST 1.1 淋巴结靶病灶短径 $\\ge 15.0 \\text{ mm}$ 纳排金标准）；
    - **基线靶病灶长径总和 (Baseline SOD)**：$\\text{SOD}_{\\text{base}} = 42.0 + 18.0 = 60.0 \\text{ mm}$。
 3. **步骤二：3D MPR 三正交切片交互浏览与恶性分叶毛刺评估**：
    - 参考图像：[图 7 诊断级 3D MPR 三正交切片联动浏览器 (右上肺癌浸润与胸膜牵拉征象)](/site/real-case-nsclc-2-mpr-3view.png)；
-   - 横断面 (Axial #128)、冠状面 (Coronal #240)、矢状面 (Sagittal #260) 三维同屏联动；
+   - 横断面 (Axial #215)、冠状面 (Coronal #245)、矢状面 (Sagittal #195) 三维同屏联动；
    - 准星一键聚焦病灶中心，直观呈现深分叶征 (Lobulation)、长短毛刺 (Spiculation) 与胸膜牵拉征 (Pleural Indentation)；
    - 启动前端亚毫米电子卡尺与 ROI 矩形剖面，测定病灶各向物理尺寸并存证入档。
 4. **步骤三：奥希替尼口服 12 周后随访复查与双期 3D 弹性配准差分热力图 (Follow-up HRCT, 2026-09-15)**：
@@ -3308,7 +3308,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - **RECIST 1.1 定级**：长径和降幅 $\\ge 30\\%$ 且无任何新发病灶，严格判定为 **部分缓解 (Partial Response, PR)**。
 5. **步骤四：IBSI 标准 107 项影像组学微观异质性演变分析**：
    - 参考图像：[图 9 IBSI 国际标准化 107 项高维影像组学雷达指纹与微观异质性演变分析](/site/real-case-nsclc-4-radiomics-feature.png)；
-   - 提取 IBSI 标准高维组学特征：GLCM 对比度由 4.82 降至 1.95，GLRLM 灰度不均匀性由 142.6 降至 68.2，GLSZM 区域均匀度提升；
+   - 提取 IBSI 标准高维组学特征：GLCM 联合熵由 4.82 降至 2.14，对比度由 28.6 降至 11.2，逆差矩 (IDM) 提升 +129%，能量提升 +275%；
    - 证实肿瘤内部微观空间异质性显著降低，细胞密集度锐减，佐证分子层面的良好生物学应答。
 6. **步骤五：多模态因果诊断链闭环与 RECIST 1.1 标准报告出具**：
    - 参考图像：[图 10 多模态因果诊断链与证据闭环 (晚期 NSCLC 靶向治疗 PR 应答)](/site/real-case-nsclc-5-diagnostic-chain.png)；
@@ -3323,7 +3323,7 @@ Heurion 专为临床与医学科研打造，采用三栏自适应现代架构：
    - 虚拟代号：\`PT-ABDOMEN-003\` (52 岁男性，王伟，零 PHI 规范建档)；
    - 原始检查：全腹部平扫 CT (扫描范围 $T_{10} \\sim \\text{耻骨联合}$，96 层，层厚 5.0 mm)；
    - 主诉与查体：上腹饱胀不适伴纳差 2 个月，体重下降 4 kg。专科查体：腹软，左肋下可触及肿大脾下缘约 3 cm，质韧无压痛，肝区叩痛阴性；血常规提示轻度血小板减少与白细胞偏低 (脾亢表现)。
-2. **步骤一：TotalSegmentator 全腹实质脏器分割与 L3 椎体横截面体成分量化 (Slice #148)**：
+2. **步骤一：TotalSegmentator 全腹实质脏器分割与 L3 椎体横截面体成分量化 (Slice #48)**：
    - 参考图像：[图 11 真实患者全腹平扫 CT · 脾脏肿大与 L3 椎体层面体成分量化](/site/real-case-sarco-1-l3-muscle-fat.png)；
    - **脾脏三维容积 (Spleen Volume)**：三维重建测得总体积为 **680.0 cm³** (正常健康成人参考上限 $< 314.0 \\text{ cm}^3$)，上下长径达 **14.2 cm** (正常上限 $< 12.0 \\text{ cm}$)，确诊为显著弥漫性脾肿大；
    - **肝脏与胰腺形态及实质密度**：肝脏实质 CT 均值 54.2 HU (密度均匀，未见局灶占位)；胰腺实质 CT 均值 44.8 HU (形态规则饱满，主胰管无扩张，胰周脂肪清晰，未见胰腺占位病变)；

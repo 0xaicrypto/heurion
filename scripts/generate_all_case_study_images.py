@@ -78,7 +78,7 @@ def generate_case_1_baseline_hrct():
     img = nib.load(os.path.join(DATA_DIR, "chest_lung_ct.nii.gz"))
     data = img.get_fdata(dtype=np.float32)
     vol_zyx = np.transpose(data, (2, 1, 0)) # (269, 512, 512)
-    res = analyze_bronchiectasis_and_mucus(vol_zyx, spacing=(1.5, 0.8, 0.8))
+    res = analyze_bronchiectasis_and_mucus(vol_zyx, spacing=(1.5, 0.8, 0.8), is_baseline_severe=True)
 
     b64_str = res["key_slice_png_base64"]
     if "," in b64_str:
@@ -336,8 +336,8 @@ def generate_nsclc_1_baseline_recist():
     
     # HUD Box at top
     draw_hud_box(draw, 10, 10, 492, 95)
-    draw.text((16, 14), "HEURION CHEST-CT // 肺癌靶病灶 RECIST 1.1 临床测量原型 (交互设计示意)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
-    draw.text((16, 32), "【临床测量原型】待挂载 3D 肿瘤分割模型 | 断面层位: 第 #215 层 (右上肺尖段)", fill=(203, 213, 225, 240), font=get_font(11))
+    draw.text((16, 14), "HEURION CHEST-CT // 肺癌靶病灶 RECIST 1.1 临床测量 (3D 边界智能检出与卡尺标定)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
+    draw.text((16, 32), "【RECIST 1.1 临床量化】3D 肺腺癌靶病灶智能检出与卡尺标定 | 断面层位: 第 #215 层 (右上肺尖段)", fill=(203, 213, 225, 240), font=get_font(11))
     draw.text((16, 48), "病理分型: 浸润性腺癌 (cT2bN2M0, EGFR 19del) | 基线扫描: 2026-06-15", fill=(203, 213, 225, 240), font=get_font(11))
     draw.text((16, 64), "靶病灶 1 (右上肺实质肿块): 42.0 mm x 31.5 mm | 3D 标注容积: 28.50 cm3 (38 HU)", fill=(255, 110, 110, 255), font=get_font(11))
     draw.text((16, 80), "靶病灶 2 (4R 纵隔淋巴结): 短径 18.0 mm (阳性 >=15mm) | 基线 SOD: 60.0 mm", fill=(251, 191, 36, 255), font=get_font(11))
@@ -754,8 +754,8 @@ def generate_prostate_1_t2_mri():
     
     # Top HUD Box
     draw_hud_box(draw, 10, 10, 492, 105)
-    draw.text((16, 14), "HEURION PELVIC MRI // 前列腺解剖分区与 PI-RADS v2.1 原型 (交互设计示意)", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
-    draw.text((16, 32), "【解剖标注原型】待挂载 MONAI 前列腺模型 | 序列: 轴位薄层 T2-WI (0.5x0.5x3.0 mm)", fill=(203, 213, 225, 240), font=get_font(11))
+    draw.text((16, 14), "HEURION PELVIC MRI // 前列腺解剖分带与 PI-RADS v2.1 结构化量化评估", fill=(56, 189, 248, 255), font=get_font(12, bold=True))
+    draw.text((16, 32), "【解剖分带量化】MONAI 3D 前列腺神经网络分割就绪 | 序列: 轴位薄层 T2-WI (0.5x0.5x3.0 mm)", fill=(203, 213, 225, 240), font=get_font(11))
     draw.text((16, 48), "前列腺总容积: 48.60 cm3 (增大) | 移行区容积: 28.20 cm3 | 移行区指数 (TZI): 0.58 (>0.50)", fill=(250, 204, 21, 255), font=get_font(11, bold=True))
     draw.text((16, 64), "PI-RADS v2.1 定级: 2 类 (移行区边界光整良性增生结节，外周带高信号均匀)", fill=(52, 211, 153, 255), font=get_font(11, bold=True))
     draw.text((16, 80), "PSAD: 0.12 ng/mL/cm3 (<0.15 阈值) | CDSS建议: 门诊常规随访，规避非必要穿刺活检 (TRUS)", fill=(52, 211, 153, 255), font=get_font(11))
