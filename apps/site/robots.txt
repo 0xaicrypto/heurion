@@ -1,0 +1,39 @@
+# robots.txt for Heurion (https://heurion.org)
+# Explicitly welcome general search crawlers and AI search bots
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /mcp/
+
+# Major AI Bots and Search Engines
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Meta-ExternalAgent
+Allow: /
+
+# Sitemaps & Structured LLM Feeds
+Sitemap: https://heurion.org/sitemap.xml
+Sitemap: https://heurion.org/llms.txt

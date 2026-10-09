@@ -178,7 +178,16 @@ const app = buildApi({ docs, ops, turns, postcheck, crossref, pubmed, renderer, 
 
 // 页面：web/ 的构建产物（pnpm --filter @heurion2/platform build）；开发时用 vite（dev:web）
 const DIST = fileURLToPath(new URL('../dist-web/', import.meta.url))
-const MIME: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2' }
+const MIME: Record<string, string> = {
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+}
 app.get('/assets/:file', c => {
   const file = join(DIST, 'assets', basename(c.req.param('file')))
   if (!existsSync(file)) return c.notFound()
@@ -203,6 +212,22 @@ const SITE = fileURLToPath(new URL('../../site/', import.meta.url))
 app.get('/', c => c.html(readFileSync(join(SITE, 'index.html'), 'utf8')))
 app.get('/en', c => c.html(readFileSync(join(SITE, 'index.html'), 'utf8')))
 app.get('/en/', c => c.redirect('/en'))
+app.get('/robots.txt', c => {
+  const file = join(SITE, 'robots.txt')
+  return existsSync(file) ? c.body(readFileSync(file), 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }) : c.notFound()
+})
+app.get('/llms.txt', c => {
+  const file = join(SITE, 'llms.txt')
+  return existsSync(file) ? c.body(readFileSync(file), 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }) : c.notFound()
+})
+app.get('/llms-full.txt', c => {
+  const file = join(SITE, 'llms-full.txt')
+  return existsSync(file) ? c.body(readFileSync(file), 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }) : c.notFound()
+})
+app.get('/sitemap.xml', c => {
+  const file = join(SITE, 'sitemap.xml')
+  return existsSync(file) ? c.body(readFileSync(file), 200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }) : c.notFound()
+})
 app.get('/site/:file', c => {
   const file = join(SITE, basename(c.req.param('file')))
   if (!existsSync(file) || !MIME[extname(file)]) return c.notFound()

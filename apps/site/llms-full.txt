@@ -1,0 +1,77 @@
+# Heurion Technical Specification and Architecture Manual (llms-full.txt)
+
+## Architecture Overview
+
+Heurion is structured as a modular medical AI and clinical research operating system composed of:
+1. `@heurion2/platform`: TypeScript/Node/Hono platform server orchestrating real-time Yjs CRDT documents, SQLite/WAL storage, user sessions, study management, and MCP bridges.
+2. `@heurion2/canvas-service`: Standalone OmniCanvas / AgentDoc canvas service with pure generic document manipulation and MCP server tools.
+3. `apps/imaging-worker`: High-performance Python/FastAPI medical computing microservice running MONAI, PyTorch, Nibabel, Pydicom, and TotalSegmentator.
+4. `apps/embedder`: Local embedding service using GTE-multilingual for vector retrieval and memory deduplication.
+5. Web Client (`apps/platform/web`): Vanilla TypeScript client featuring real-time collaborative Prosemirror rich-text editing, SVG mechanism chart design, 2D/3D MPR medical viewer with NiiVue WebGL2 integration.
+
+## Clinical Imaging Capabilities (apps/imaging-worker)
+
+The imaging microservice (`127.0.0.1:8004`) exposes standardized REST and MCP endpoints for volumetric radiology and oncology quantification:
+
+### Supported Physical and Deep-Learning Models
+1. `spleen_segmenter`: MONAI spleen deep-learning segmentation model trained on Medical Segmentation Decathlon (MSD) spleen dataset. Generates binary segmentation masks, RECIST 1.1 dimensions, and 3D volume.
+2. `prostate_mri_segmenter`: Multi-channel T2/ADC/DWI prostate gland and peripheral/transition zone segmentation.
+3. `bronchiectasis_mucus_analyzer`: High-resolution chest CT (HRCT) morphological and densitometric analyzer computing Bronchial-Arterial Ratio (BAR), Signet Ring Sign, Mucus Plug Volume (cm3), High-Attenuation Mucus (HAM, >70HU), and Airway Occlusion Rate (%).
+4. `nsclc_recist_analyzer`: Non-Small Cell Lung Cancer targeted lesion analyzer computing RECIST 1.1 unidimensional baseline, perpendicular short axis, 3D volume, and key slice index.
+5. `whole_body_ct_segmenter`: TotalSegmentator integration dividing full-body or abdominal CT into 104 anatomical classes, with L3 vertebral slice skeletal muscle area (SMA cm2) and skeletal muscle index (SMI cm2/m2).
+6. `copd_emphysema_analyzer`: Low Attenuation Area percentage (LAA% < -950HU) for pulmonary emphysema staging.
+7. `coronary_artery_calcification`: Agatston-based coronary artery calcium (CAC) scoring.
+8. `radiomics_ibsi_extractor`: Image Biomarker Standardisation Initiative (IBSI) compliant feature extractor (GLCM, GLRLM, GLSZM, First-Order Statistics).
+9. `deformable_registration`: 3D voxel deformation and mutual information alignment.
+
+### REST Endpoints
+- `GET /health`: Health status and GPU/Metal device telemetry.
+- `GET /models`: Registry of installed models, supported modalities, and readiness flags.
+- `GET /samples`: List of clinical reference samples (DICOM/NIfTI).
+- `POST /segment`: End-to-end 3D volumetric inference.
+- `POST /mpr/slice`: 2D multi-planar reconstruction (Axial, Coronal, Sagittal) with windowing presets (`lung`, `mediastinum`, `abdomen`, `bone`, `brain`).
+- `POST /mpr/diff-slice`: Longitudinal follow-up subtraction heatmap and 3D change statistics.
+- `POST /interactive/segment`: VISTA-3D positive and negative click-prompt interactive lesion sculpting.
+
+## Biostatistics and Sandbox Execution
+
+Heurion executes statistical calculations within a strictly partitioned Unix execution environment:
+- Environment Isolation: Processes run under an isolated unprivileged operating system user account (`sandboxUid`) with no outbound internet access.
+- Execution Languages: Sandboxed Python/R (Python 3 with pandas, numpy, scipy, statsmodels, lifelines, scikit-learn; R with survival, tableone, MatchIt).
+- Data Protection: The sandbox communicates strictly via stdio/pipes; cannot read the platform database, platform JWT secrets, or another tenant's files.
+- Table 1 Export: Native Word (.docx) generation producing true academic three-line tables with standard font sizing (Songti / Times New Roman), 1.5pt outer rules, 0.5pt inner rules, and explicit statistical test annotations (Chi-square, Fisher's exact, Student's t-test, Mann-Whitney U).
+- Flowcharts: Standardized CONSORT 2010 and STROBE participant flow diagram generator tracing enrolled, excluded (with explicit exclusion rationales), randomized, allocated, lost to follow-up, and analyzed counts.
+
+## Literature Citation Verification and Anti-Hallucination
+
+All literature citations undergo rigorous real-time verification:
+- Primary Source: NCBI PubMed E-Utilities REST API.
+- Secondary Sources: Europe PMC, Crossref REST API, and OpenAlex scholarly index.
+- Verification Logic:
+  1. Extraction of DOI, PMID, journal name, publication year, author list, and clinical findings.
+  2. Direct query against NCBI PubMed to fetch the authoritative XML record.
+  3. Strict matching of reported statistical estimates (Hazard Ratios, Odds Ratios, Confidence Intervals, p-values).
+  4. Marking citations as `supported`, `unsupported`, `unclear`, or `missing_citation` with inline rationale badges.
+
+## Model Context Protocol (MCP) Integration
+
+Heurion exposes compliant Anthropic Model Context Protocol (MCP) servers allowing autonomous agents (such as Claude Desktop, Cursor, and Cline) to directly orchestrate clinical workflows:
+- Protocol Version: 2024-11-05 (stdio & SSE transport).
+- Endpoint: `/mcp` on platform server and standalone canvas MCP at `canvas-service/src/mcp-server.ts`.
+- Available Tools:
+  - `imaging_models`: Query registered MONAI and PyTorch models and device health.
+  - `imaging_analyze`: Run volumetric inference on NIfTI/DICOM series and return quantitative biomarkers.
+  - `imaging_slice`: Extract 2D orthogonal MPR key slices (Axial/Coronal/Sagittal) with HU windowing.
+  - `imaging_radiomics`: Compute IBSI standard 3D texture and shape features.
+  - `imaging_whole_body_segment`: Execute TotalSegmentator 104-class volumetric segmentation.
+  - `search_literature`: Federated query over PubMed, Europe PMC, and OpenAlex.
+  - `verify_citation`: Validate extracted clinical claims against authentic PubMed XML.
+  - `canvas_create_doc` / `canvas_batch_ops`: Programmatically compose and edit structured research manuscripts.
+
+## Security, Tenancy, and Compliance
+
+- Multitenancy: Strict hospital organization (`org`) and personal space (`personal`) isolation. Users belonging to Hospital A cannot access studies, patients, documents, or memory signals of Hospital B.
+- PHI Redaction: Active Regex and NLP pattern scanning intercepting Chinese Resident Identity Cards (18 digits), National Health Insurance numbers, phone numbers, and clinical record identifiers.
+- Cryptographic Sharing: Time-limited, scope-restricted cryptographic claim codes (`PhrClaim`) for secure patient-to-hospital data transmission without persistent shared credentials.
+- Zero External Data Training: Clinical data, patient metrics, and research drafts are never used to train external public foundation models.
+

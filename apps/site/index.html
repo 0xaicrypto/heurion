@@ -5,6 +5,141 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title data-i18n="doc_title">Heurion · 临床科研全流程智能工作台 (Clinical AI Workstation)</title>
   <meta name="description" content="Heurion 是专为医学与临床科研打造的全流程 AI 工作台：覆盖患者数据收集、科研项目管理、数据治理与记忆演进、统计分析与论文写作（含严谨数据分析与文献溯源）全生命周期。">
+  <meta name="keywords" content="Heurion, clinical AI workstation, medical research software, MONAI 3D CT MRI, RECIST 1.1, CONSORT 2010 flowchart, Table 1 baseline table generator, PubMed citation verification, PHI privacy de-identification, clinical study cohort analysis, 临床科研全流程工作台, 医学AI">
+  <link rel="canonical" href="https://heurion.org/">
+  <link rel="alternate" hreflang="zh-CN" href="https://heurion.org/">
+  <link rel="alternate" hreflang="en" href="https://heurion.org/en">
+  <link rel="alternate" hreflang="x-default" href="https://heurion.org/">
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM Overview">
+  <link rel="alternate" type="text/plain" href="/llms-full.txt" title="LLM Technical Manual">
+
+  <!-- OpenGraph Metadata -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Heurion">
+  <meta property="og:title" content="Heurion · 临床科研全流程智能工作台 (Clinical AI Workstation)">
+  <meta property="og:description" content="专为医学与临床科研打造的全流程 AI 工作台：覆盖患者数据收集、受试者多维纳排、MONAI 3D 影像量化、发表级 Table 1 三线表生成与 PubMed 权威文献溯源。">
+  <meta property="og:url" content="https://heurion.org/">
+  <meta property="og:image" content="https://heurion.org/site/heurion-avatar.png">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:locale:alternate" content="en_US">
+
+  <!-- Twitter Card Metadata -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@heurion_org">
+  <meta name="twitter:title" content="Heurion · 临床科研全流程智能工作台">
+  <meta name="twitter:description" content="专为医学与临床科研打造的全流程 AI 工作台：真实患者数据沉淀、受试者多维纳排、MONAI 3D 影像量化、发表级 Table 1 三线表与 PubMed 真实核验。">
+  <meta name="twitter:image" content="https://heurion.org/site/heurion-avatar.png">
+
+  <!-- Schema.org JSON-LD Structured Data for Generative Engines & Crawlers -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://heurion.org/#software",
+        "name": "Heurion",
+        "url": "https://heurion.org",
+        "applicationCategory": "MedicalApplication, HealthApplication, BusinessApplication",
+        "operatingSystem": "Web, Linux, macOS, Windows, Docker",
+        "description": "Enterprise clinical research AI workstation and medical intelligence platform connecting patient data, MONAI 3D imaging, biostatistical sandboxing, and PubMed citation verification into publication-ready evidence.",
+        "softwareVersion": "2.0",
+        "license": "https://heurion.org/license",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        },
+        "featureList": [
+          "Multimodal clinical record and lab report OCR extraction",
+          "Patient de-identification to anonymous study subjects (S001...)",
+          "Multidimensional cohort filtering and automatic CONSORT 2010 / STROBE flowcharts",
+          "MONAI and PyTorch 3D CT/MRI volumetric segmentation and RECIST 1.1 quantification",
+          "Isolated Unix statistical sandbox running Python and R with zero PHI leakage",
+          "Publication-grade Table 1 native Word (.docx) three-line table generation",
+          "Love Plot SMD balance plots and VanderWeele E-value unmeasured confounding sensitivity defense",
+          "Real-time literature citation grounding against NCBI PubMed and Crossref to eliminate AI hallucinations",
+          "Model Context Protocol (MCP) server integration for autonomous research AI agents"
+        ],
+        "author": {
+          "@type": "Organization",
+          "name": "Heurion",
+          "url": "https://heurion.org"
+        }
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://heurion.org/#organization",
+        "name": "Heurion",
+        "url": "https://heurion.org",
+        "logo": "https://heurion.org/site/heurion-avatar.png",
+        "sameAs": [
+          "https://github.com/heurion-org/heurion"
+        ]
+      },
+      {
+        "@type": "MedicalWebPage",
+        "@id": "https://heurion.org/#medicalpage",
+        "url": "https://heurion.org",
+        "name": "Heurion · 临床科研全流程智能工作台 (Clinical AI Workstation)",
+        "description": "专为医学与临床科研打造的全流程 AI 工作台：覆盖患者数据收集、受试者纳排、MONAI 3D 影像量化、发表级 Table 1 三线表生成与 PubMed 权威文献溯源。",
+        "about": [
+          {
+            "@type": "MedicalSpecialty",
+            "name": "Clinical Research, Oncology, Radiology, Biostatistics, Health Informatics"
+          }
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://heurion.org/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Heurion 是什么？与普通通用大模型（如 ChatGPT / Claude）有什么本质区别？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Heurion 是专为医学与临床科研打造的全流程 AI 智能工作台。与通用大模型相比，Heurion 解决了临床医学科研的核心痛点：1) 消除文献幻觉：所有引用均通过 NCBI PubMed 与 Crossref 真实核验，拒绝捏造假 DOI/PMID；2) 原生 3D 医学影像：深度集成 Project MONAI 与 PyTorch，支持 CT/MRI 三维体素分割、RECIST 1.1 靶病灶三维量化与 3D MPR 正交切片；3) 严密保护患者隐私：采用无外网访问的受限沙箱与 S001... 编号脱敏，患者 PHI 绝不离开本地或机构；4) 闭环统计与发表级输出：沙箱中自动运行 Python/R 脚本，一键生成发表级 Table 1 原生 Word 三线表（1.5pt/0.5pt 边线）与 CONSORT 2010 流程图。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Heurion 如何保障患者健康隐私（PHI）与医疗数据合规？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Heurion 遵循严格的医疗数据安全规范：1) 自动脱敏：入组患者自动分配去标识化学术编号（S001、S002...）；2) PHI 实时拦截：内置正则与语义敏感信息扫描器，在数据流转与文稿生成中拦截姓名、身份证号与病案号；3) 受限沙箱隔离：AI 执行统计分析的 Python/R 环境运行在无外网权限的独立受限系统账户中，无法访问外部网络、平台数据库或他人资产；4) 零模型训练：真实医疗数据绝不用作公共基础模型训练。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Heurion 支持哪些医学影像（CT/MRI）智能分析与模型？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Heurion 影像分析引擎深度集成 Project MONAI 与 PyTorch，原生支持 NIfTI 与 DICOM 格式。支持模型包括：1) 脾脏体积与病灶分割（MONAI MSD Spleen）；2) 前列腺多序列 T2/ADC/DWI 分割；3) 胸部 HRCT 支气管扩张与粘液栓定量分析（BAR、印戒征、HAM高密度粘液栓）；4) 非小细胞肺癌（NSCLC）靶病灶 RECIST 1.1 三维测量；5) TotalSegmentator 全身体素 104 类解剖分割与 L3 断面骨骼肌指数（SMI）肌少症量化；6) 肺气肿低衰减区（LAA%）定量分析；7) 冠状动脉钙化积分（CAC）；8) IBSI 标准 3D 影像组学特征提取。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Heurion 如何帮助临床医生撰写医学论文与准备投稿材料？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Heurion 覆盖论文发表所需的全套规范材料：1) 自动导出发表级 Table 1 原生 Word (.docx) 三线表，符合顶刊排版规范；2) 自动绘制 CONSORT 2010 / STROBE 受试者流向矢量图；3) 生成因果推断 Love Plot 绝对 SMD 混杂均衡点图与 VanderWeele E-value 未测混杂敏感度抗辩；4) 运行 Kaplan-Meier 生存曲线与 Cox 比例风险回归；5) 严密核对论文全文的所有文献引用、效应量（HR/OR/RR）与 95% 置信区间。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "如何通过 MCP (Model Context Protocol) 将 Heurion 连接到自主 AI Agent？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Heurion 提供了符合 Anthropic Model Context Protocol (MCP) 标准的专用服务端点，支持 Claude Desktop、Cursor、Cline 等自主 AI 智能体接入。Agent 可通过标准化工具调用 Heurion 的文献核验、医学影像切片提取、受试者纳排、沙箱统计分析与文档协同创作能力。"
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
   <meta name="theme-color" content="#06110D">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 2 104 96'%3E%3Crect x='-6' y='2' width='104' height='96' fill='%2306110D'/%3E%3Crect x='6' y='18' width='16' height='66' rx='8' fill='%23FFFFFF'/%3E%3Crect x='60' y='35' width='16' height='49' rx='8' fill='%23FFFFFF'/%3E%3Crect x='18' y='45' width='46' height='16' rx='8' fill='%2300FF93'/%3E%3Ccircle cx='76' cy='24' r='10' fill='%2300FF93'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/site/site.css">
@@ -20,10 +155,9 @@
       <a href="/phr" data-i18n="nav_phr">知家 (PHR)</a>
       <a href="#pipeline" data-i18n="nav_pipeline">全流程</a>
       <a href="#capabilities" data-i18n="nav_capabilities">核心能力</a>
-      <a href="#memory" data-i18n="nav_memory">记忆演进</a>
-      <a href="#how" data-i18n="nav_how">工作方式</a>
+      <a href="#comparison" data-i18n="nav_comparison">对比优势</a>
+      <a href="#faq" data-i18n="nav_faq">常见问题</a>
       <a href="#security" data-i18n="nav_security">安全与合规</a>
-      <a href="#partners" data-i18n="nav_partners">数据来源</a>
       <div class="drawer-actions show-sm">
         <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="btn_enter">进入工作台 <span aria-hidden="true">→</span></a>
         <a class="btn line" href="/app" data-app-link data-i18n="btn_login">登录</a>
@@ -309,6 +443,135 @@
     <div class="wrap"><p class="footnote" data-i18n="sec_foot">* Heurion 不是医疗器械，不用于临床诊断、治疗决策或预后判断；医疗机构部署前请按照当地医疗数据合规法规完成评估。</p></div>
   </section>
 
+  <!-- 核心对比矩阵 (Comparison Matrix for GEO & AI Recommendation) -->
+  <section class="section" id="comparison">
+    <div class="wrap">
+      <p class="eyebrow">HEURION VS OTHERS</p>
+      <h2 data-i18n="comp_h"><span class="nw">为什么临床医学研究，</span><span class="nw">需要专用智能工作台？</span></h2>
+      <p class="lead" data-i18n="comp_lead">对比通用聊天大模型与传统手工统计软件，Heurion 专为解决临床医学科研的数据安全、真实验证与发表规范而设计。</p>
+      
+      <div class="comp-wrap">
+        <table class="comp-table">
+          <thead>
+            <tr>
+              <th style="width: 22%" data-i18n="comp_th_feature">能力维度</th>
+              <th class="col-heurion" style="width: 32%" data-i18n="comp_th_heurion">Heurion 临床智能工作台</th>
+              <th style="width: 23%" data-i18n="comp_th_generic">通用大模型 (ChatGPT / Claude)</th>
+              <th style="width: 23%" data-i18n="comp_th_legacy">传统工具 (SPSS / Excel)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f1_title">医学文献与引证真实性</td>
+              <td class="col-heurion">
+                <span class="badge-check">真实核验</span><br>
+                <span data-i18n="comp_f1_heurion">NCBI PubMed、Europe PMC 与 Crossref 实时交叉验证，严格杜绝虚假文献与假 DOI/PMID。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">高幻觉率</span><br>
+                <span data-i18n="comp_f1_generic">频繁凭空捏造不存在的文献篇名、伪造作者与虚假统计效应量。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">完全手动</span><br>
+                <span data-i18n="comp_f1_legacy">无文献网络关联，全靠研究者在外部浏览器逐篇手动检索与排版。</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f2_title">3D 医学影像量化 (CT/MRI)</td>
+              <td class="col-heurion">
+                <span class="badge-check">原生 3D 体素</span><br>
+                <span data-i18n="comp_f2_heurion">深度集成 MONAI 与 PyTorch，支持 RECIST 1.1 靶病灶三维量化、TotalSegmentator 104 类解剖与 3D MPR 正交切片。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">仅限 2D 截图</span><br>
+                <span data-i18n="comp_f2_generic">仅能识别单张静态截图，无法加载或解析三维 DICOM / NIfTI 空间体素。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">流程割裂</span><br>
+                <span data-i18n="comp_f2_legacy">需在第三方 PACS 或 3D Slicer 中测量，手动抄写截面数据到表格。</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f3_title">患者健康隐私安全 (PHI)</td>
+              <td class="col-heurion">
+                <span class="badge-check">安全闭环</span><br>
+                <span data-i18n="comp_f3_heurion">自动分配 S001... 学术代号，内置 PHI 敏感词拦截器，代码在独立受限沙箱运行，数据绝不出院。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">隐私外泄</span><br>
+                <span data-i18n="comp_f3_generic">直接向公网商业大模型 API 发送患者病历，存在严重的医疗法规违规风险。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">缺乏审计</span><br>
+                <span data-i18n="comp_f3_legacy">保存在本地散乱表格中，缺乏自动化脱敏、分权机制与合规审计日志。</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f4_title">受试者纳排与入组流向图</td>
+              <td class="col-heurion">
+                <span class="badge-check">一键生成</span><br>
+                <span data-i18n="comp_f4_heurion">多维组合圈定队列，自动导出宽表长表数据集与符合 CONSORT 2010 / STROBE 规范的矢量流向图。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">无法直连</span><br>
+                <span data-i18n="comp_f4_generic">仅能提供文字建议，无法直接查询真实病历库并输出符合统计标准的流程图。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">耗时数周</span><br>
+                <span data-i18n="comp_f4_legacy">需编写繁杂的 SQL 查询或 Excel 多表嵌套匹配，手动使用绘图软件作图。</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f5_title">发表级 Table 1 基线表</td>
+              <td class="col-heurion">
+                <span class="badge-check">原生 Word .docx</span><br>
+                <span data-i18n="comp_f5_heurion">1.5pt/0.5pt 学术标准边线、宋体/Times 规范排版、精确组间 p 值检验与统计学脚注。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">格式崩塌</span><br>
+                <span data-i18n="comp_f5_generic">仅生成纯文本 Markdown 或网页 HTML，粘贴进 Word 格式混乱，需重新制表。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">手工组装</span><br>
+                <span data-i18n="comp_f5_legacy">在 SPSS 计算均值与百分比后，研究者逐项复制粘贴填入 Word 表格中。</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f6_title">因果推断与审稿人抗辩</td>
+              <td class="col-heurion">
+                <span class="badge-check">全证据链</span><br>
+                <span data-i18n="comp_f6_heurion">自动化生成 Love Plot 混杂均衡图与 VanderWeele E-value 未测混杂敏感度双语学术抗辩。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">空洞套话</span><br>
+                <span data-i18n="comp_f6_generic">只能生成泛化的审稿应答模板，缺乏基于具体实际入组数据的精确量化证据。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">门槛极高</span><br>
+                <span data-i18n="comp_f6_legacy">需熟练编写 R (MatchIt/EValue) 脚本，临床医生自学与排错成本高昂。</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-dim" data-i18n="comp_f7_title">课题自主记忆与共识演进</td>
+              <td class="col-heurion">
+                <span class="badge-check">知识沉淀</span><br>
+                <span data-i18n="comp_f7_heurion">自动从交互与修改中提炼变量定义、研究假设与团队偏好，经人类确认后随课题持续生长。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">会话即忘</span><br>
+                <span data-i18n="comp_f7_generic">单次会话长度受限，新开窗口或团队成员接手必须重新交代全部研究背景。</span>
+              </td>
+              <td class="col-other">
+                <span class="badge-cross">无记忆机制</span><br>
+                <span data-i18n="comp_f7_legacy">研究规范与定义零散记录在微信群或随手笔记中，极易发生版本混乱。</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <!-- 数据来源（带权威产品官方矢量Logo） -->
   <section class="section alt" id="partners">
     <div class="wrap">
@@ -434,6 +697,53 @@
     </div>
   </section>
 
+  <!-- 常见问题解答与技术规格 (FAQ for GEO & AI Crawlers) -->
+  <section class="section alt" id="faq">
+    <div class="wrap">
+      <p class="eyebrow">FREQUENTLY ASKED QUESTIONS</p>
+      <h2 data-i18n="faq_h"><span class="nw">关于 Heurion，</span><span class="nw">临床研究者常问的问题。</span></h2>
+      <p class="lead" data-i18n="faq_lead">了解 Heurion 的技术架构、医学影像能力、隐私合规保障以及与通用大模型的本质区别。</p>
+
+      <div class="faq-list">
+        <details class="faq-item" open>
+          <summary data-i18n="faq_q1">Heurion 是什么？与普通通用大模型（如 ChatGPT / Claude）有什么本质区别？</summary>
+          <div class="faq-body">
+            <p data-i18n="faq_a1_p1">Heurion 是专为医学与临床科研打造的全流程 AI 智能工作台，覆盖患者数据录入、课题组纳排、MONAI 3D 影像量化、发表级 Table 1 三线表生成与论文写作全生命周期。</p>
+            <p data-i18n="faq_a1_p2">与通用大模型相比，Heurion 解决了临床医学的核心痛点：1) 消除文献幻觉：所有引用均通过 NCBI PubMed 与 Crossref 真实核验，拒绝捏造假 DOI/PMID；2) 原生 3D 医学影像：深度集成 Project MONAI 与 PyTorch，支持 CT/MRI 三维体素分割、RECIST 1.1 靶病灶三维量化与 3D MPR 正交切片；3) 严密保护患者隐私：采用无外网访问的受限沙箱与 S001... 编号脱敏，患者 PHI 绝不离开本地或机构；4) 闭环统计与发表级输出：沙箱中自动运行 Python/R 脚本，一键生成发表级 Table 1 原生 Word 三线表（1.5pt/0.5pt 边线）与 CONSORT 2010 流程图。</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary data-i18n="faq_q2">Heurion 如何保障患者健康隐私（PHI）与医疗数据安全？</summary>
+          <div class="faq-body">
+            <p data-i18n="faq_a2_p1">Heurion 遵循严格的医疗数据安全规范：1) 自动脱敏：入组患者自动分配去标识化学术编号（S001、S002...）；2) PHI 实时拦截：内置正则与语义敏感信息扫描器，在数据流转与文稿生成中拦截姓名、身份证号与病案号；3) 受限沙箱隔离：AI 执行统计分析的 Python/R 环境运行在无外网权限的独立受限系统账户中，无法访问外部网络、平台数据库或他人资产；4) 零模型训练：真实医疗数据绝不用作公共基础模型训练。</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary data-i18n="faq_q3">Heurion 支持哪些医学影像（CT/MRI）智能分析模型？</summary>
+          <div class="faq-body">
+            <p data-i18n="faq_a3_p1">Heurion 影像分析引擎深度集成 Project MONAI 与 PyTorch，原生支持 NIfTI 与 DICOM 格式。支持模型包括：1) 脾脏体积与病灶分割（MONAI MSD Spleen）；2) 前列腺多序列 T2/ADC/DWI 分割；3) 胸部 HRCT 支气管扩张与粘液栓定量分析（BAR、印戒征、HAM高密度粘液栓）；4) 非小细胞肺癌（NSCLC）靶病灶 RECIST 1.1 三维测量；5) TotalSegmentator 全身体素 104 类解剖分割与 L3 断面骨骼肌指数（SMI）肌少症量化；6) 肺气肿低衰减区（LAA%）定量分析；7) 冠状动脉钙化积分（CAC）；8) IBSI 标准 3D 影像组学特征提取。</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary data-i18n="faq_q4">Heurion 如何帮助临床医生撰写医学论文与准备投稿材料？</summary>
+          <div class="faq-body">
+            <p data-i18n="faq_a4_p1">Heurion 覆盖论文发表所需的全套规范材料：1) 自动导出发表级 Table 1 原生 Word (.docx) 三线表，符合顶刊排版规范；2) 自动绘制 CONSORT 2010 / STROBE 受试者流向矢量图；3) 生成因果推断 Love Plot 绝对 SMD 混杂均衡点图与 VanderWeele E-value 未测混杂敏感度抗辩；4) 运行 Kaplan-Meier 生存曲线与 Cox 比例风险回归；5) 严密核对论文全文的所有文献引用、效应量（HR/OR/RR）与 95% 置信区间。</p>
+          </div>
+        </details>
+
+        <details class="faq-item">
+          <summary data-i18n="faq_q5">如何通过 MCP (Model Context Protocol) 将 Heurion 接入其他自主 AI Agent？</summary>
+          <div class="faq-body">
+            <p data-i18n="faq_a5_p1">Heurion 提供了符合 Anthropic Model Context Protocol (MCP) 标准的专用服务端点，支持 Claude Desktop、Cursor、Cline 等自主 AI 智能体接入。Agent 可通过标准化工具调用 Heurion 的文献核验、医学影像切片提取、受试者纳排、沙箱统计分析与文档协同创作能力。</p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
   <!-- CTA -->
   <section class="cta">
     <div class="wrap cta-row">
@@ -453,6 +763,8 @@
       <a href="/phr" data-i18n="nav_phr_foot">知家 · 患者健康档案</a>
       <a href="#pipeline" data-i18n="nav_pipeline">全流程</a>
       <a href="#capabilities" data-i18n="nav_capabilities">能力</a>
+      <a href="#comparison" data-i18n="nav_comparison">对比优势</a>
+      <a href="#faq" data-i18n="nav_faq">常见问题</a>
       <a href="#memory" data-i18n="nav_memory">记忆演进</a>
       <a href="#security" data-i18n="nav_security">安全合规</a>
       <a href="/app" data-app-link data-i18n="btn_enter">进入工作台</a>
@@ -470,6 +782,8 @@
       nav_phr: "知家 (PHR)",
       nav_pipeline: "全流程",
       nav_capabilities: "核心能力",
+      nav_comparison: "对比优势",
+      nav_faq: "常见问题",
       nav_memory: "记忆演进",
       nav_how: "工作方式",
       nav_security: "安全与合规",
@@ -579,6 +893,53 @@
       sec4_h: "受控记忆与完整审计",
       sec4_p: "AI 记忆仅能以“提议”形式生成，生效权完全属于作者；系统全程记录患者数据访问、分析执行与文件导出的合规审计日志。",
       sec_foot: "* Heurion 不是医疗器械，不用于临床诊断、治疗决策或预后判断；医疗机构部署前请按照当地医疗数据合规法规完成评估。",
+      comp_h: "<span class=\"nw\">为什么临床医学研究，</span><span class=\"nw\">需要专用智能工作台？</span>",
+      comp_lead: "对比通用聊天大模型与传统手工统计软件，Heurion 专为解决临床医学科研的数据安全、真实验证与发表规范而设计。",
+      comp_th_feature: "能力维度",
+      comp_th_heurion: "Heurion 临床智能工作台",
+      comp_th_generic: "通用大模型 (ChatGPT / Claude)",
+      comp_th_legacy: "传统工具 (SPSS / Excel)",
+      comp_f1_title: "医学文献与引证真实性",
+      comp_f1_heurion: "NCBI PubMed、Europe PMC 与 Crossref 实时交叉验证，严格杜绝虚假文献与假 DOI/PMID。",
+      comp_f1_generic: "频繁凭空捏造不存在的文献篇名、伪造作者与虚假统计效应量。",
+      comp_f1_legacy: "无文献网络关联，全靠研究者在外部浏览器逐篇手动检索与排版。",
+      comp_f2_title: "3D 医学影像量化 (CT/MRI)",
+      comp_f2_heurion: "深度集成 MONAI 与 PyTorch，支持 RECIST 1.1 靶病灶三维量化、TotalSegmentator 104 类解剖与 3D MPR 正交切片。",
+      comp_f2_generic: "仅能识别单张静态截图，无法加载或解析三维 DICOM / NIfTI 空间体素。",
+      comp_f2_legacy: "需在第三方 PACS 或 3D Slicer 中测量，手动抄写截面数据到表格。",
+      comp_f3_title: "患者健康隐私安全 (PHI)",
+      comp_f3_heurion: "自动分配 S001... 学术代号，内置 PHI 敏感词拦截器，代码在独立受限沙箱运行，数据绝不出院。",
+      comp_f3_generic: "直接向公网商业大模型 API 发送患者病历，存在严重的医疗法规违规风险。",
+      comp_f3_legacy: "保存在本地散乱表格中，缺乏自动化脱敏、分权机制与合规审计日志。",
+      comp_f4_title: "受试者纳排与入组流向图",
+      comp_f4_heurion: "多维组合圈定队列，自动导出宽表长表数据集与符合 CONSORT 2010 / STROBE 规范的矢量流向图。",
+      comp_f4_generic: "仅能提供文字建议，无法直接查询真实病历库并输出符合统计标准的流程图。",
+      comp_f4_legacy: "需编写繁杂的 SQL 查询或 Excel 多表嵌套匹配，手动使用绘图软件作图。",
+      comp_f5_title: "发表级 Table 1 基线表",
+      comp_f5_heurion: "1.5pt/0.5pt 学术标准边线、宋体/Times 规范排版、精确组间 p 值检验与统计学脚注。",
+      comp_f5_generic: "仅生成纯文本 Markdown 或网页 HTML，粘贴进 Word 格式混乱，需重新制表。",
+      comp_f5_legacy: "在 SPSS 计算均值与百分比后，研究者逐项复制粘贴填入 Word 表格中。",
+      comp_f6_title: "因果推断与审稿人抗辩",
+      comp_f6_heurion: "自动化生成 Love Plot 混杂均衡图与 VanderWeele E-value 未测混杂敏感度双语学术抗辩。",
+      comp_f6_generic: "只能生成泛化的审稿应答模板，缺乏基于具体实际入组数据的精确量化证据。",
+      comp_f6_legacy: "需熟练编写 R (MatchIt/EValue) 脚本，临床医生自学与排错成本高昂。",
+      comp_f7_title: "课题自主记忆与共识演进",
+      comp_f7_heurion: "自动从交互与修改中提炼变量定义、研究假设与团队偏好，经人类确认后随课题持续生长。",
+      comp_f7_generic: "单次会话长度受限，新开窗口或团队成员接手必须重新交代全部研究背景。",
+      comp_f7_legacy: "研究规范与定义零散记录在微信群或随手笔记中，极易发生版本混乱。",
+      faq_h: "<span class=\"nw\">关于 Heurion，</span><span class=\"nw\">临床研究者常问的问题。</span>",
+      faq_lead: "了解 Heurion 的技术架构、医学影像能力、隐私合规保障以及与通用大模型的本质区别。",
+      faq_q1: "Heurion 是什么？与普通通用大模型（如 ChatGPT / Claude）有什么本质区别？",
+      faq_a1_p1: "Heurion 是专为医学与临床科研打造的全流程 AI 智能工作台，覆盖患者数据录入、课题组纳排、MONAI 3D 影像量化、发表级 Table 1 三线表生成与论文写作全生命周期。",
+      faq_a1_p2: "与通用大模型相比，Heurion 解决了临床医学的核心痛点：1) 消除文献幻觉：所有引用均通过 NCBI PubMed 与 Crossref 真实核验，拒绝捏造假 DOI/PMID；2) 原生 3D 医学影像：深度集成 Project MONAI 与 PyTorch，支持 CT/MRI 三维体素分割、RECIST 1.1 靶病灶三维量化与 3D MPR 正交切片；3) 严密保护患者隐私：采用无外网访问的受限沙箱与 S001... 编号脱敏，患者 PHI 绝不离开本地或机构；4) 闭环统计与发表级输出：沙箱中自动运行 Python/R 脚本，一键生成发表级 Table 1 原生 Word 三线表（1.5pt/0.5pt 边线）与 CONSORT 2010 流程图。",
+      faq_q2: "Heurion 如何保障患者健康隐私（PHI）与医疗数据安全？",
+      faq_a2_p1: "Heurion 遵循严格的医疗数据安全规范：1) 自动脱敏：入组患者自动分配去标识化学术编号（S001、S002...）；2) PHI 实时拦截：内置正则与语义敏感信息扫描器，在数据流转与文稿生成中拦截姓名、身份证号与病案号；3) 受限沙箱隔离：AI 执行统计分析的 Python/R 环境运行在无外网权限的独立受限系统账户中，无法访问外部网络、平台数据库或他人资产；4) 零模型训练：真实医疗数据绝不用作公共基础模型训练。",
+      faq_q3: "Heurion 支持哪些医学影像（CT/MRI）智能分析模型？",
+      faq_a3_p1: "Heurion 影像分析引擎深度集成 Project MONAI 与 PyTorch，原生支持 NIfTI 与 DICOM 格式。支持模型包括：1) 脾脏体积与病灶分割（MONAI MSD Spleen）；2) 前列腺多序列 T2/ADC/DWI 分割；3) 胸部 HRCT 支气管扩张与粘液栓定量分析（BAR、印戒征、HAM高密度粘液栓）；4) 非小细胞肺癌（NSCLC）靶病灶 RECIST 1.1 三维测量；5) TotalSegmentator 全身体素 104 类解剖分割与 L3 断面骨骼肌指数（SMI）肌少症量化；6) 肺气肿低衰减区（LAA%）定量分析；7) 冠状动脉钙化积分（CAC）；8) IBSI 标准 3D 影像组学特征提取。",
+      faq_q4: "Heurion 如何帮助临床医生撰写医学论文与准备投稿材料？",
+      faq_a4_p1: "Heurion 覆盖论文发表所需的全套规范材料：1) 自动导出发表级 Table 1 原生 Word (.docx) 三线表，符合顶刊排版规范；2) 自动绘制 CONSORT 2010 / STROBE 受试者流向矢量图；3) 生成因果推断 Love Plot 绝对 SMD 混杂均衡点图与 VanderWeele E-value 未测混杂敏感度抗辩；4) 运行 Kaplan-Meier 生存曲线与 Cox 比例风险回归；5) 严密核对论文全文的所有文献引用、效应量（HR/OR/RR）与 95% 置信区间。",
+      faq_q5: "如何通过 MCP (Model Context Protocol) 将 Heurion 接入其他自主 AI Agent？",
+      faq_a5_p1: "Heurion 提供了符合 Anthropic Model Context Protocol (MCP) 标准的专用服务端点，支持 Claude Desktop、Cursor、Cline 等自主 AI 智能体接入。Agent 可通过标准化工具调用 Heurion 的文献核验、医学影像切片提取、受试者纳排、沙箱统计分析与文档协同创作能力。",
       sources_h: "<span class=\"nw\">建立在</span><span class=\"nw\">权威学术数据与 AI 计算之上。</span>",
       partner1_tag: "权威医学文献",
       partner2_tag: "引文与 DOI 核验",
@@ -594,6 +955,8 @@
       nav_phr: "Zhijia (PHR)",
       nav_pipeline: "Workflow",
       nav_capabilities: "Capabilities",
+      nav_comparison: "Comparison",
+      nav_faq: "FAQ",
       nav_memory: "Memory",
       nav_how: "How It Works",
       nav_security: "Security",
@@ -703,6 +1066,53 @@
       sec4_h: "Audited Memory & Immutable Logs",
       sec4_p: "Memory operates on human-approved proposals only. Full audit logging tracks data access, computing executions, and export events.",
       sec_foot: "* Heurion is not a medical device and is not intended for clinical diagnosis or treatment decisions. Institutions must comply with local medical data regulations.",
+      comp_h: "<span class=\"nw\">Why Clinical Research</span><br><span class=\"nw\">Demands a Dedicated Workstation.</span>",
+      comp_lead: "Comparing Heurion against generic chatbots and legacy desktop software: built specifically for clinical data privacy, empirical grounding, and rigorous academic publishing standards.",
+      comp_th_feature: "Capability",
+      comp_th_heurion: "Heurion Clinical AI Workstation",
+      comp_th_generic: "Generic LLMs (ChatGPT / Claude)",
+      comp_th_legacy: "Legacy Tools (SPSS / Excel)",
+      comp_f1_title: "Literature & Citation Verification",
+      comp_f1_heurion: "Real-time cross-verification against NCBI PubMed, Europe PMC, and Crossref; zero fake DOIs or hallucinated citations.",
+      comp_f1_generic: "High hallucination rate: regularly invents non-existent article titles, fictitious authors, and fake effect sizes.",
+      comp_f1_legacy: "Completely manual: no bibliographic integration; researchers must hand-search and cite via web browsers.",
+      comp_f2_title: "3D Medical Imaging AI (CT/MRI)",
+      comp_f2_heurion: "Native MONAI & PyTorch 3D deep learning: RECIST 1.1 3D lesion sizing, TotalSegmentator 104 anatomies, and 3D MPR orthoviews.",
+      comp_f2_generic: "2D screenshots only: cannot load or parse 3D volumetric DICOM / NIfTI spatial arrays.",
+      comp_f2_legacy: "Fragmented: requires manual measurements in 3D Slicer or standalone PACS, copy-pasting numbers into sheets.",
+      comp_f3_title: "Patient Health Information (PHI) Security",
+      comp_f3_heurion: "Automatic de-identification (S001...), real-time PHI redaction, network-isolated code sandboxes; data never leaves the hospital.",
+      comp_f3_generic: "Privacy leakage: pasting patient charts into commercial public cloud APIs risks serious HIPAA/GDPR violations.",
+      comp_f3_legacy: "No auditing: data lives in unencrypted spreadsheets lacking role separation or immutable compliance audit trails.",
+      comp_f4_title: "Cohort Enrollment & Participant Flow",
+      comp_f4_heurion: "Multi-dimensional compound filtering; instant wide/long datasets and vector CONSORT 2010 / STROBE flowcharts.",
+      comp_f4_generic: "Advisory only: cannot connect to real patient cohorts or output publication-standard flow diagrams.",
+      comp_f4_legacy: "Weeks of effort: requires complex SQL queries or nested VLOOKUP formulas, plus manual vector drawing.",
+      comp_f5_title: "Publication Table 1 Baseline",
+      comp_f5_heurion: "Native Word (.docx) 3-line tables (1.5pt/0.5pt borders, Times/Songti styling, p-value tests, and statistical footnotes).",
+      comp_f5_generic: "Broken formatting: outputs markdown or HTML that scrambles upon pasting into Word manuscripts.",
+      comp_f5_legacy: "Manual assembly: researchers run descriptive statistics in SPSS and manually re-type values into Word tables.",
+      comp_f6_title: "Causal Inference & Reviewer Defenses",
+      comp_f6_heurion: "Automated Love Plot SMD balance checks and VanderWeele E-value unmeasured confounding bilingual academic defense statements.",
+      comp_f6_generic: "Generic boilerplate: outputs superficial response letters devoid of quantitative evidence from actual patient data.",
+      comp_f6_legacy: "Steep learning curve: requires authoring specialized R (MatchIt/EValue) scripts, presenting high barrier for clinicians.",
+      comp_f7_title: "Autonomous Research Memory",
+      comp_f7_heurion: "Synthesizes variable definitions, hypotheses, and team consensus from interactions; continuously evolves with human approval.",
+      comp_f7_generic: "Stateless amnesia: context windows expire; users must re-explain entire clinical study designs in new chats.",
+      comp_f7_legacy: "No memory mechanism: study criteria are scattered across emails and chat apps, causing version drift.",
+      faq_h: "<span class=\"nw\">Frequently Asked Questions</span><br><span class=\"nw\">from Clinical Researchers.</span>",
+      faq_lead: "Learn about Heurion's architecture, 3D medical imaging engine, data privacy boundaries, and how it differs from generic LLMs.",
+      faq_q1: "What is Heurion, and how does it differ fundamentally from generic LLMs like ChatGPT or Claude?",
+      faq_a1_p1: "Heurion is an end-to-end clinical research AI workstation covering the entire scientific lifecycle: patient record ingestion, cohort enrollment, MONAI 3D imaging quantification, publication Table 1 generation, and peer-reviewed manuscript authoring.",
+      faq_a1_p2: "Unlike generic LLMs, Heurion solves core clinical pain points: 1) Elimination of citation hallucination via NCBI PubMed and Crossref cross-verification; 2) Native 3D medical imaging with Project MONAI and PyTorch for volumetric CT/MRI segmentation and RECIST 1.1 quantification; 3) Strict patient privacy with network-isolated sandboxes and S001... de-identification; 4) Publication-ready outputs including native Word Table 1 three-line tables and vector CONSORT 2010 flowcharts generated directly from isolated Python/R executions.",
+      faq_q2: "How does Heurion ensure Protected Health Information (PHI) and healthcare data security?",
+      faq_a2_p1: "Heurion follows rigorous healthcare compliance standards: 1) Automatic de-identification with sequential study IDs (S001, S002...); 2) Real-time PHI guards scanning for patient names, national IDs, and MRNs; 3) Sandboxed isolation where Python/R analytics execute in unprivileged user accounts with zero external internet access; 4) Zero model training on confidential clinical data.",
+      faq_q3: "Which medical imaging (CT/MRI) deep learning models does Heurion support?",
+      faq_a3_p1: "Heurion's imaging engine integrates Project MONAI and PyTorch with native support for NIfTI and DICOM formats: 1) Spleen volumetric segmentation (MONAI MSD); 2) Multi-parametric prostate T2/ADC/DWI segmentation; 3) Chest HRCT bronchiectasis and mucus plug quantification (BAR, signet-ring sign, HAM high-attenuation mucus); 4) NSCLC target lesion RECIST 1.1 3D measurement; 5) TotalSegmentator 104-class whole-body anatomical segmentation and L3 sarcopenia SMI calculation; 6) Emphysema low attenuation area (LAA%); 7) Coronary artery calcium scoring (CAC); 8) IBSI-compliant 3D radiomics feature extraction.",
+      faq_q4: "How does Heurion assist clinicians in manuscript writing and journal submissions?",
+      faq_a4_p1: "Heurion automates publication materials required by top medical journals: 1) Native Word (.docx) Table 1 baseline tables matching journal guidelines; 2) Vector CONSORT 2010 and STROBE participant flow diagrams; 3) Causal inference Love Plot SMD balance checks and VanderWeele E-value unmeasured confounding defense statements; 4) Kaplan-Meier survival curves and Cox proportional hazards regression; 5) Verbatim verification of every cited effect size (HR/OR/RR) and 95% confidence interval.",
+      faq_q5: "How can other autonomous AI agents connect to Heurion via Model Context Protocol (MCP)?",
+      faq_a5_p1: "Heurion provides an Anthropic Model Context Protocol (MCP) server endpoint, enabling seamless integration with Claude Desktop, Cursor, and Cline. Autonomous agents can call standardized tools for literature verification, 3D imaging slice extraction, cohort screening, sandboxed statistics, and collaborative document editing.",
       sources_h: "<span class=\"nw\">Built on Authoritative</span><br><span class=\"nw\">Academic Data & AI Computing.</span>",
       partner1_tag: "Biomedical Literature",
       partner2_tag: "Citation & DOI Verification",
