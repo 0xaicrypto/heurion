@@ -66,6 +66,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       '自动生成带有半透明轮廓、测距卡尺与 5cm 标尺的高清 PNG，并自动保存为当前用户的文档资产。' +
       '返回 asset_id、RECIST 测量指标（长径、短径、体积）以及直接可插入 Markdown 的图片语法。',
     inputSchema: {
+      patient_id: z.string().optional().describe('患者 ID（指定时自动提取患者背景、关联最新扫描并在推理完成后自动归档为患者的新影像记录）'),
       model_id: z.string().optional().describe('指定的临床模型 ID，例如 bronchiectasis_mucus_analyzer (支气管扩张与粘液栓), spleen_segmenter, lung_nodule_segmenter, liver_lesion_segmenter, brain_tumor_brats'),
       sample_id: z.string().optional().describe('预置临床样本 ID，例如 chest_lung_ct (真实全胸部 HRCT 269层), spleen_test (真实人体腹部 CT 96层) 或 prostate_mri (真实人体前列腺 MRI)'),
       file_path: z.string().optional().describe('本地 DICOM 序列目录或 NIfTI (.nii/.nii.gz) 文件的绝对路径'),
@@ -78,8 +79,28 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       ham_threshold_hu: z.number().optional().describe('高密度粘液栓 (HAM) CT 阈值 (HU)，缺省 70.0 (提示 ABPA)'),
       label: z.string().max(60).optional().describe('生成的图注标签，例如「图 1 基线靶病灶 RECIST 截面」'),
     },
-  }, async ({ model_id, sample_id, file_path, window_preset, benchmark, z_slices, bar_cutoff, mucus_min_hu, mucus_max_hu, ham_threshold_hu, label }) => {
+  }, async ({ patient_id, model_id, sample_id, file_path, window_preset, benchmark, z_slices, bar_cutoff, mucus_min_hu, mucus_max_hu, ham_threshold_hu, label }) => {
     if (!claims.p.includes('write')) return fail('forbidden', '当前令牌没有写入或上传资产权限')
+
+    let patientRow: any = null
+    let patientAiActor: any = null
+    if (patient_id) {
+      if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+      patientAiActor = { userId: claims.u, via: 'ai' as const, space: 'work' as const }
+      try {
+        deps.patients.assertEditable(patientAiActor, patient_id)
+        patientRow = deps.patients.read(patientAiActor, patient_id)
+      } catch (err: any) {
+        return fail('patient_permission_denied', err.message || String(err))
+      }
+    }
+
+    if (patientRow && !sample_id && !file_path) {
+      const tags = patientRow.tags || []
+      const isAbdomen = (model_id && (model_id.includes('spleen') || model_id.includes('liver') || model_id.includes('abdomen'))) ||
+        tags.some((t: string) => t.includes('腹') || t.includes('肝') || t.includes('脾'))
+      sample_id = isAbdomen ? 'spleen_test' : 'chest_lung_ct'
+    }
     
     let resultData: any
     try {
@@ -96,9 +117,20 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
         ham_threshold_hu,
       }
 
+      if (patientRow) {
+        reqBody.patient_context = {
+          patient_id: patientRow.id,
+          patient_code: patientRow.code,
+          sex: patientRow.sex === 'M' ? '男' : patientRow.sex === 'F' ? '女' : '未知',
+          age: patientRow.birth_year ? new Date().getFullYear() - patientRow.birth_year : undefined,
+          tags: patientRow.tags,
+        }
+      }
+
       if (sample_id) {
         endpoint = `${workerUrl}/api/v1/analyze/sample`
         reqBody = {
+          ...reqBody,
           sample_id,
           model_name: model_id,
           window_preset,
@@ -110,6 +142,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       } else if (file_path) {
         endpoint = `${workerUrl}/api/v1/analyze/file`
         reqBody = {
+          ...reqBody,
           file_path,
           model_name: model_id,
           window_preset,
@@ -142,7 +175,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
     if (!b64Data) return fail('no_image_output', '推理完成但未返回关键切片图像')
     const pngBuffer = Buffer.from(b64Data, 'base64')
 
-    const assetName = `${label || 'monai-recist-slice'}.png`
+    const assetName = `${label || (patientRow ? `${patientRow.code}-imaging-slice` : 'monai-recist-slice')}.png`
     const asset = store.putAsset({
       owner: claims.u,
       mime: 'image/png',
@@ -160,8 +193,46 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       ? `图 1 胸部 CT 平扫解剖横截面（第 #${sliceIdx} 层，未检出 ≥ 3 mm 实质结节，Lung-RADS 1 类阴性）`
       : `图 1 3D MONAI CT 肿瘤靶病灶自动分割与最大横截面量化标尺（第 #${sliceIdx} 层，长径 ${ld} mm，短径 ${recist.short_axis_mm ?? 0} mm，总体积 ${vol} cm³${rads ? `，${rads.name}` : ''}）`
 
+    let savedRecordId: string | undefined
+    if (patientRow && deps.patients) {
+      const findings: string[] = []
+      if (recist.has_lesion && ld > 0) findings.push(`RECIST 1.1 靶病灶长径 ${ld} mm，体积 ${vol} cm³`)
+      if (rads?.name) findings.push(rads.name)
+      if (resultData.clinical_ai_report?.diagnostic_assessment) {
+        findings.push(resultData.clinical_ai_report.diagnostic_assessment.replace(/[【】]/g, '').trim())
+      }
+      const addTags: string[] = []
+      if (rads?.category === '4B' || rads?.category === '4A') addTags.push('肺结节待查')
+      if (resultData.metrics?.signet_ring_sign) addTags.push('支气管扩张')
+      if (resultData.metrics?.high_attenuation_mucus_ham) addTags.push('ABPA疑诊')
+
+      try {
+        const saved = deps.patients.addImagingRecord(patientAiActor, patientRow.id, {
+          title: label || `${resultData.modality || 'CT'} 影像量化分析 (${resultData.model_name || model_id || '靶病灶'})`,
+          report_date: new Date().toISOString().slice(0, 10),
+          model_id: model_id || resultData.model_name || 'lung_nodule_segmenter',
+          sample_id: sample_id || null,
+          modality: resultData.modality || 'CT',
+          metrics: {
+            ...recist,
+            inference_duration_sec: resultData.inference_duration_sec,
+            clinical_ai_report: resultData.clinical_ai_report,
+          },
+          findings,
+          key_slice_png: pngBuffer,
+          add_tags: addTags.length > 0 ? addTags : undefined,
+        })
+        savedRecordId = saved.record.id
+      } catch {
+        // Fallback if recording fails
+      }
+    }
+
     return json({
       status: 'success',
+      patient_id: patientRow?.id,
+      patient_code: patientRow?.code,
+      saved_record_id: savedRecordId,
       asset_id: asset.id,
       model_name: resultData.model_name,
       modality: resultData.modality,
@@ -373,6 +444,179 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
       return fail('imaging_compare_error', err.message || String(err))
     }
   })
+
+  // 7.1 患者 RECIST 1.1 疗效综合评估与论文级报告生成 (imaging_get_recist_summary)
+  const recistSummarySchema = {
+    patient_id: z.string().describe('患者 ID'),
+    baseline_record_id: z.string().optional().describe('基线影像记录 ID（如不提供则自动选择最早的基线影像）'),
+    followup_record_id: z.string().optional().describe('随访影像记录 ID（如不提供则自动选择最新的随访影像）'),
+    include_diff_slice: z.boolean().optional().describe('是否同时生成 3D 刚性配准差分吸收热力图切片并保存为图片资产，缺省为 true'),
+    label: z.string().max(80).optional().describe('生成的差分切片图注标签，例如「图 2 靶向治疗 3 个月随访 3D 差分热力图」'),
+  }
+
+  const handleRecistSummary = async ({
+    patient_id,
+    baseline_record_id,
+    followup_record_id,
+    include_diff_slice,
+    label,
+  }: {
+    patient_id: string
+    baseline_record_id?: string
+    followup_record_id?: string
+    include_diff_slice?: boolean
+    label?: string
+  }) => {
+    if (!deps.patients) return fail('patients_unavailable', '患者模块未启用')
+    let comp: any
+    try {
+      const aiActor = { userId: claims.u, via: 'ai' as const }
+      comp = deps.patients.compareImaging(aiActor, patient_id, {
+        baseline_record_id,
+        followup_record_id,
+      })
+    } catch (err: any) {
+      return fail('imaging_compare_error', err.message || String(err))
+    }
+
+    if (comp.is_single_baseline) {
+      const b = comp.baseline || {}
+      const bm = b.metrics || {}
+      const bLd = bm.longest_diameter_mm ?? '-'
+      const bVol = bm.total_volume_cm3 ?? '-'
+      const tableMd = [
+        '| 检查节点 | 检查日期 | 影像检查项目 | 靶病灶长径 (LD) | 靶病灶总体积 | 状态 |',
+        '| :--- | :--- | :--- | :--- | :--- | :--- |',
+        `| **基线 (Baseline)** | ${b.date || '-'} | ${b.title || '基线 CT'} | ${bLd} mm | ${bVol} cm³ | 已确立基线肿瘤负荷，待随访复查 |`,
+      ].join('\n')
+
+      const docMd = [
+        '### 实体瘤靶病灶基线负荷指标 (RECIST 1.1)',
+        '',
+        tableMd,
+        '',
+        `> **基线状态说明**：${comp.message || '患者当前仅有单期基线影像，已成功建立基线测值。'}`,
+      ].join('\n')
+
+      return json({
+        status: 'success',
+        patient_id: comp.patient_id,
+        patient_code: comp.patient_code,
+        is_single_baseline: true,
+        baseline: comp.baseline,
+        markdown_table: tableMd,
+        doc_section_markdown: docMd,
+        academic_statement: `患者于 ${b.date || '基线'} 完成初始影像检查，靶病灶长径为 ${bLd} mm，三维体积为 ${bVol} cm³，已建立 RECIST 1.1 基线肿瘤负荷指标。`,
+      })
+    }
+
+    const b = comp.baseline || {}
+    const f = comp.followup || {}
+    const bm = b.metrics || {}
+    const fm = f.metrics || {}
+    const rec = comp.recist || {}
+    const bLd = rec.baseline_ld_mm ?? bm.longest_diameter_mm ?? 0
+    const fLd = rec.followup_ld_mm ?? fm.longest_diameter_mm ?? 0
+    const bVol = rec.baseline_volume_cm3 ?? bm.total_volume_cm3 ?? 0
+    const fVol = rec.followup_volume_cm3 ?? fm.total_volume_cm3 ?? 0
+    const pctLd = rec.percent_change_ld !== undefined ? `${rec.percent_change_ld > 0 ? '+' : ''}${rec.percent_change_ld}%` : '-'
+    const pctVol = rec.percent_change_volume !== undefined ? `${rec.percent_change_volume > 0 ? '+' : ''}${rec.percent_change_volume}%` : '-'
+
+    const tableMd = [
+      '| 检查节点 | 检查日期 | 影像项目 | 靶病灶长径 (LD) | 靶病灶三维体积 | 疗效/变化 |',
+      '| :--- | :--- | :--- | :--- | :--- | :--- |',
+      `| **基线 (Baseline)** | ${b.date || '-'} | ${b.title || '基线影像'} | ${bLd} mm | ${bVol} cm³ | 基线测值 |`,
+      `| **随访 (Follow-up)** | ${f.date || '-'} | ${f.title || '随访影像'} | ${fLd} mm | ${fVol} cm³ | 随访复查 |`,
+      `| **动态演化** | 间隔 ${comp.interval_days ?? 0} 天 | RECIST 1.1: **${rec.category || 'SD'} (${rec.category_name || '疾病稳定'})** | **${pctLd}** | **${pctVol}** | ${rec.interpretation || ''} |`,
+    ].join('\n')
+
+    let diffAssetId: string | undefined
+    let diffMarkdownInsert: string | undefined
+
+    if (include_diff_slice !== false && claims.p.includes('write')) {
+      try {
+        const resp = await fetch(`${workerUrl}/api/v1/mpr/diff-slice`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseline_id: b.imaging_data?.sample_id || 'chest_lung_ct',
+            followup_id: f.imaging_data?.sample_id || 'chest_lung_ct',
+            plane: 'axial',
+            slice_index: fm.key_slice_index ?? bm.key_slice_index ?? 24,
+            threshold_hu: 50,
+          }),
+          signal: AbortSignal.timeout(15000),
+        })
+        if (resp.ok) {
+          const diffData = await resp.json()
+          const b64 = String(diffData.slice_png_base64 || '').replace(/^data:image\/png;base64,/, '')
+          if (b64) {
+            const pngBuf = Buffer.from(b64, 'base64')
+            const assetName = `${label || `${comp.patient_code}-recist-diff-slice`}.png`
+            const asset = store.putAsset({
+              owner: claims.u,
+              mime: 'image/png',
+              name: assetName,
+              bytes: pngBuf,
+            })
+            diffAssetId = asset.id
+            const figCaption = label || `图 靶病灶纵向随访 3D 刚性配准差分热力图 (${rec.category || 'RECIST 1.1'})`
+            const figNote = `3D 差分热力图（间隔 ${comp.interval_days ?? 0} 天，长径变化 ${pctLd}，体积变化 ${pctVol}，疗效评定: ${rec.category || 'SD'} ${rec.category_name || ''}）`
+            diffMarkdownInsert = `![${figCaption}](asset:${asset.id} "${figNote}")`
+          }
+        }
+      } catch {
+        // Fallback gracefully without diff image
+      }
+    }
+
+    const docMd = [
+      '### 实体瘤靶病灶随访疗效评估 (RECIST 1.1)',
+      '',
+      tableMd,
+      '',
+      `> **RECIST 1.1 疗效评定结论**：${rec.academic_statement || ''}`,
+      ...(diffMarkdownInsert ? ['', diffMarkdownInsert] : []),
+    ].join('\n')
+
+    return json({
+      status: 'success',
+      patient_id: comp.patient_id,
+      patient_code: comp.patient_code,
+      recist_category: rec.category,
+      recist_category_name: rec.category_name,
+      target_type: rec.target_type,
+      baseline_ld_mm: bLd,
+      followup_ld_mm: fLd,
+      percent_change_ld: pctLd,
+      baseline_volume_cm3: bVol,
+      followup_volume_cm3: fVol,
+      percent_change_volume: pctVol,
+      interval_days: comp.interval_days,
+      interpretation: rec.interpretation,
+      academic_statement: rec.academic_statement,
+      diff_asset_id: diffAssetId,
+      markdown_insert: diffMarkdownInsert,
+      markdown_table: tableMd,
+      doc_section_markdown: docMd,
+      baseline: comp.baseline,
+      followup: comp.followup,
+    })
+  }
+
+  server.registerTool('imaging_get_recist_summary', {
+    description:
+      '获取患者随访的 RECIST 1.1 疗效评估摘要、长径与三维体积变化百分比、学术陈述与差分吸收热力图：' +
+      '自主对比基线检查与随访检查，输出包含对比宽表、RECIST 等级 (CR/PR/SD/PD) 与出版级切片资产的 Markdown 片段，' +
+      '供 AI 智能体直接插入临床科研方案、病历观察或论文疗效讨论章节。',
+    inputSchema: recistSummarySchema,
+  }, handleRecistSummary)
+
+  server.registerTool('imaging_patient_recist_summary', {
+    description: '获取患者 RECIST 1.1 疗效评估总结及可直接插入科研文稿的 Markdown 宽表与差分热力图（同 imaging_get_recist_summary）。',
+    inputSchema: recistSummarySchema,
+  }, handleRecistSummary)
+
 
   // 8. 多模态因果诊断证据链分析 (imaging_evidence_chain)
   server.registerTool('imaging_evidence_chain', {

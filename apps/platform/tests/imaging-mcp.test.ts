@@ -822,7 +822,121 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
     expect(res.data.summary_markdown).toContain('放疗靶区')
   }, 30000)
+
+  it('18. imaging_analyze (绑定患者 patient_id): 自动关联患者档案、持久化量化记录并输出学术引用', async () => {
+    const { env, call } = await connectImagingMcp()
+    const a = { userId: (env as any).userId, via: 'user' as const }
+    const patient = env.patients.create(a, {
+      sex: 'M',
+      birth_year: 1965,
+      tags: ['肺结节待查'],
+    })
+
+    const res = await call('imaging_analyze', {
+      patient_id: patient.id,
+      sample_id: 'chest_lung_ct',
+      model_id: 'lung_nodule_segmenter',
+      label: '患者张某基线胸部 CT 靶病灶',
+    })
+
+    expect(res.isError).toBe(false)
+    expect(res.data.status).toBe('success')
+    expect(res.data.patient_id).toBe(patient.id)
+    expect(res.data.patient_code).toBe(patient.code)
+    expect(res.data.saved_record_id).toBeDefined()
+    expect(res.data.asset_id).toBeDefined()
+    expect(res.data.recist_metrics).toBeDefined()
+    expect(res.data.markdown_insert).toContain(`asset:${res.data.asset_id}`)
+
+    // 验证病历档案已真实记录并包含该次影像推理结果
+    const patientDetail = env.patients.read(a, patient.id)
+    const savedRec = patientDetail.records.find((r: any) => r.id === res.data.saved_record_id)
+    expect(savedRec).toBeDefined()
+    expect(savedRec?.kind).toBe('imaging')
+  }, 30000)
+
+  it('19. imaging_longitudinal_compare & imaging_get_recist_summary: 双期随访对比、RECIST 1.1 疗效评定与论文级 Markdown 宽表生成', async () => {
+    const { env, call } = await connectImagingMcp()
+    const a = { userId: (env as any).userId, via: 'user' as const }
+    const patient = env.patients.create(a, {
+      sex: 'F',
+      birth_year: 1970,
+      tags: ['肺腺癌靶向治疗'],
+    })
+
+    const dummyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+    // 19.1 仅单期基线时的 RECIST summary
+    env.patients.addImagingRecord(a, patient.id, {
+      title: '基线胸部增强 CT',
+      report_date: '2026-06-01',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 30.0,
+        short_axis_mm: 20.0,
+        total_volume_cm3: 15.0,
+        key_slice_index: 24,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    const singleRes = await call('imaging_get_recist_summary', {
+      patient_id: patient.id,
+    })
+    expect(singleRes.isError).toBe(false)
+    expect(singleRes.data.is_single_baseline).toBe(true)
+    expect(singleRes.data.markdown_table).toContain('基线 (Baseline)')
+    expect(singleRes.data.academic_statement).toContain('已建立 RECIST 1.1 基线肿瘤负荷指标')
+
+    // 19.2 录入第 2 期随访检查（长径从 30mm 缩小至 18mm，缩减 40% -> PR）
+    env.patients.addImagingRecord(a, patient.id, {
+      title: '靶向治疗 3 个月随访 CT',
+      report_date: '2026-09-01',
+      model_id: 'lung_nodule_segmenter',
+      metrics: {
+        longest_diameter_mm: 18.0,
+        short_axis_mm: 12.0,
+        total_volume_cm3: 5.4,
+        key_slice_index: 24,
+      },
+      key_slice_png: dummyPng,
+    })
+
+    // 19.3 调用底层纵向对比工具 imaging_longitudinal_compare
+    const compRes = await call('imaging_longitudinal_compare', {
+      patient_id: patient.id,
+    })
+    expect(compRes.isError).toBe(false)
+    expect(compRes.data.ok).toBe(true)
+    expect(compRes.data.recist.category).toBe('PR')
+    expect(compRes.data.recist.percent_change_ld).toBe(-40)
+
+    // 19.4 调用高层论文撰写工具 imaging_get_recist_summary
+    const summaryRes = await call('imaging_get_recist_summary', {
+      patient_id: patient.id,
+      include_diff_slice: true,
+      label: '图 2 靶向治疗 3 个月 RECIST 1.1 疗效评估差分图',
+    })
+
+    expect(summaryRes.isError).toBe(false)
+    expect(summaryRes.data.status).toBe('success')
+    expect(summaryRes.data.recist_category).toBe('PR')
+    expect(summaryRes.data.percent_change_ld).toBe('-40%')
+    expect(summaryRes.data.markdown_table).toContain('PR (部分缓解')
+    expect(summaryRes.data.doc_section_markdown).toContain('实体瘤靶病灶随访疗效评估 (RECIST 1.1)')
+    expect(summaryRes.data.academic_statement).toContain('部分缓解')
+    expect(summaryRes.data.diff_asset_id).toBeDefined()
+    expect(summaryRes.data.markdown_insert).toContain(`asset:${summaryRes.data.diff_asset_id}`)
+
+    // 19.5 同步验证同义别名工具 imaging_patient_recist_summary
+    const aliasRes = await call('imaging_patient_recist_summary', {
+      patient_id: patient.id,
+    })
+    expect(aliasRes.isError).toBe(false)
+    expect(aliasRes.data.recist_category).toBe('PR')
+  }, 30000)
 })
+
 
 
 
