@@ -842,17 +842,34 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       </div>
 
       <div class="field">
-        <label><b>影像数据来源</b></label>
-        <div class="row" style="gap: 16px; margin: 4px 0 8px">
-          <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
-            <input type="radio" name="imgSource" value="sample" checked> 临床标准测试样本（一键分析）
-          </label>
-          <label style="cursor: pointer; display: flex; align-items: center; gap: 6px">
-            <input type="radio" name="imgSource" value="upload"> 上传本地 CT/MRI (.nii / .nii.gz / .dcm / .zip 序列包)
-          </label>
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 6px">
+          <label><b>影像数据来源</b> <span class="muted small" style="font-weight: normal">（上传该患者的 CT/MR 影像文件）</span></label>
+          <button type="button" class="quiet small" id="btnToggleDemoSample" style="font-size: 11.5px; color: var(--blue); cursor: pointer; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--hover)">
+            ${icon('scan', { size: 12 })} 暂无影像？载入演示样本快速体验
+          </button>
         </div>
 
-        <div id="imgSampleBox">
+        <div id="imgUploadBox" style="margin-top: 4px">
+          <label for="imgFileInput" style="display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--line-strong); padding: 18px 14px; border-radius: 6px; background: var(--hover); cursor: pointer; text-align: center">
+            ${icon('upload', { size: 24, style: 'color: var(--blue); margin-bottom: 6px' })}
+            <span style="font-size: 13px; font-weight: 500">点击选择或拖拽医学影像文件至此</span>
+            <span class="muted small" style="margin-top: 4px">支持高分辨率序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或整套 DICOM 序列 ZIP 压缩包 (.zip)</span>
+          </label>
+          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="display: none">
+          <div id="imgUploadFileName" class="muted small" style="margin-top: 6px; display: none; color: var(--teal)"></div>
+          <div class="muted small" style="margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; display: flex; align-items: flex-start; gap: 5px">
+            ${icon('info', { size: 13, style: 'margin-top: 2px; color: var(--blue); flex-shrink: 0' })}
+            <span><b>交互提示：</b>选定影像后，系统智能推荐适配专科。因 3D 影像体量大且消耗 GPU 算力，选定文件不会自动立即分析；请确认下方模型参数后，点击弹窗底部<b>「开始 MONAI 3D 量化推理」</b>按钮启动运算。</span>
+          </div>
+        </div>
+
+        <div id="imgSampleBox" hidden style="margin-top: 4px; padding: 12px 14px; background: var(--hover); border: 1px solid var(--line); border-radius: 6px">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+            <span class="small" style="font-weight: 600; color: var(--text)">临床测试演示样本（一键体验）</span>
+            <button type="button" class="quiet small" id="btnBackToUpload" style="font-size: 11.5px; color: var(--blue); text-decoration: underline; cursor: pointer; padding: 0">
+              返回上传本地文件
+            </button>
+          </div>
           <select id="imgSampleSelect" class="pt-dlg-select" style="width: 100%; padding: 7px 10px">
             ${samples.length ? samples.map((s, idx) => `
               <option value="${esc(s.id)}" ${s.id === 'chest_lung_ct' || idx === 0 ? 'selected' : ''}>
@@ -865,28 +882,14 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
               <option value="prostate_mri">前列腺 T2 加权 MRI (19层 320x320，3.4MB)</option>
             `}
           </select>
-          <div class="pt-sample-chips">
+          <div class="pt-sample-chips" style="margin-top: 8px">
             <span class="muted small">快捷选择：</span>
             <button type="button" class="pt-sample-chip active" data-sid="chest_lung_ct">${icon('lung', { size: 12 })} 全胸部 HRCT</button>
             <button type="button" class="pt-sample-chip" data-sid="nsclc_lung_ct">${icon('nsclc', { size: 12 })} 非小细胞肺癌 CT</button>
             <button type="button" class="pt-sample-chip" data-sid="spleen_test">${icon('abdomen', { size: 12 })} 腹部增强 CT</button>
             <button type="button" class="pt-sample-chip" data-sid="prostate_mri">${icon('scan', { size: 12 })} 前列腺 T2-MRI</button>
           </div>
-          <div class="muted small" style="margin-top: 6px">预置真实临床三维体素扫描数据。系统将完整 3D 原始体素序列加密归档至该患者档案。</div>
-        </div>
-
-        <div id="imgUploadBox" hidden style="margin-top: 6px">
-          <label for="imgFileInput" style="display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--line-strong); padding: 18px 14px; border-radius: 6px; background: var(--hover); cursor: pointer; text-align: center">
-            ${icon('upload', { size: 24, style: 'color: var(--blue); margin-bottom: 6px' })}
-            <span style="font-size: 13px; font-weight: 500">点击选择或拖拽医学影像文件至此</span>
-            <span class="muted small" style="margin-top: 4px">支持高分辨率序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或整套 DICOM 序列 ZIP 压缩包 (.zip)</span>
-          </label>
-          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="display: none">
-          <div id="imgUploadFileName" class="muted small" style="margin-top: 6px; display: none; color: var(--teal)"></div>
-          <div class="muted small" style="margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; display: flex; align-items: flex-start; gap: 5px">
-            ${icon('info', { size: 13, style: 'margin-top: 2px; color: var(--blue); flex-shrink: 0' })}
-            <span><b>交互提示：</b>选定影像后，系统智能推荐适配专科。因 3D 影像体量大且消耗 GPU 算力，选定文件不会自动立即分析；请确认下方模型参数后，点击弹窗底部<b>「开始 MONAI 3D 量化推理」</b>按钮启动运算。</span>
-          </div>
+          <div class="muted small" style="margin-top: 6px; font-size: 11.5px">预置真实临床三维体素扫描数据。系统将完整 3D 原始体素序列加密归档至该患者档案。</div>
         </div>
       </div>
 
@@ -970,9 +973,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         </button>
       </div>`
 
-    // 绑定单选切换
-    const radioSample = body.querySelector('input[value="sample"]') as HTMLInputElement
-    const radioUpload = body.querySelector('input[value="upload"]') as HTMLInputElement
+    // 影像来源模式：默认优先本地上传 ('upload')，点击辅助链接可切换为临床测试样本 ('sample')
+    let currentSourceMode: 'upload' | 'sample' = 'upload'
+    const btnToggleDemo = body.querySelector('#btnToggleDemoSample') as HTMLButtonElement | null
+    const btnBackToUpload = body.querySelector('#btnBackToUpload') as HTMLButtonElement | null
     const sampleBox = body.querySelector('#imgSampleBox') as HTMLElement
     const uploadBox = body.querySelector('#imgUploadBox') as HTMLElement
     const modelSelect = body.querySelector('#imgModelSelect') as HTMLSelectElement
@@ -1022,7 +1026,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     }
 
     const filterModelsForSample = () => {
-      const isUpload = radioUpload?.checked
+      const isUpload = currentSourceMode === 'upload'
       const sid = isUpload ? null : (sampleSelect ? sampleSelect.value : 'chest_lung_ct')
       const uploadedFile = fileInputEl?.files?.[0]
       const fn = uploadedFile?.name?.toLowerCase() || ''
@@ -1140,19 +1144,20 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       updateModelUI()
     }
 
-    radioSample?.addEventListener('change', () => {
-      if (radioSample.checked) {
-        sampleBox.hidden = false
-        uploadBox.hidden = true
-        filterModelsForSample()
-      }
+    btnToggleDemo?.addEventListener('click', () => {
+      currentSourceMode = 'sample'
+      uploadBox.hidden = true
+      sampleBox.hidden = false
+      if (btnToggleDemo) btnToggleDemo.hidden = true
+      filterModelsForSample()
     })
-    radioUpload?.addEventListener('change', () => {
-      if (radioUpload.checked) {
-        sampleBox.hidden = true
-        uploadBox.hidden = false
-        filterModelsForSample()
-      }
+
+    btnBackToUpload?.addEventListener('click', () => {
+      currentSourceMode = 'upload'
+      uploadBox.hidden = false
+      sampleBox.hidden = true
+      if (btnToggleDemo) btnToggleDemo.hidden = false
+      filterModelsForSample()
     })
 
     sampleSelect?.addEventListener('change', filterModelsForSample)
@@ -1174,9 +1179,10 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         const sid = (chipBtn as HTMLElement).dataset.sid
         if (sid && sampleSelect) {
           sampleSelect.value = sid
-          radioSample.checked = true
+          currentSourceMode = 'sample'
           sampleBox.hidden = false
           uploadBox.hidden = true
+          if (btnToggleDemo) btnToggleDemo.hidden = true
           filterModelsForSample()
         }
       })
@@ -1245,7 +1251,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
     const progressMsg = body.querySelector('#imgProgressMsg') as HTMLElement
 
     btnRun?.addEventListener('click', async () => {
-      const isUpload = radioUpload?.checked
+      const isUpload = currentSourceMode === 'upload'
       const sampleId = (body.querySelector('#imgSampleSelect') as HTMLSelectElement)?.value
       const modelId = (body.querySelector('#imgModelSelect') as HTMLSelectElement)?.value || 'bronchiectasis_mucus_analyzer'
       const windowPreset = (body.querySelector('#imgWindowSelect') as HTMLSelectElement)?.value
@@ -1265,7 +1271,7 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
       const uploadedFile = fileInput?.files?.[0]
 
       if (isUpload && !uploadedFile) {
-        notice('请选择要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .dcm / .zip 序列包)', true)
+        notice('请先选择或拖拽要上传的 CT/MRI 影像文件 (.nii / .nii.gz / .dcm / .zip 序列包)，或点击右上角载入演示样本快速体验。', true)
         return
       }
 
