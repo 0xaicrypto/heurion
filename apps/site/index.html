@@ -161,9 +161,11 @@
       <div class="drawer-actions show-sm">
         <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="btn_enter">进入工作台 <span aria-hidden="true">→</span></a>
         <a class="btn line" href="/app" data-app-link data-i18n="btn_login">登录</a>
+        <a class="btn line" href="mailto:support@heurion.org" data-i18n="btn_contact">联系我们</a>
       </div>
     </nav>
     <div class="top-cta">
+      <a class="btn line hide-sm" href="mailto:support@heurion.org" data-i18n="btn_contact">联系我们</a>
       <button class="lang-btn" id="langBtn" aria-label="切换语言">
         <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm7.93 9h-3.18a15.9 15.9 0 0 0-1.37-5.06A8.04 8.04 0 0 1 19.93 11zM12 4a14 14 0 0 1 1.7 7H10.3A14 14 0 0 1 12 4zM4.07 13h3.18a15.9 15.9 0 0 0 1.37 5.06A8.04 8.04 0 0 1 4.07 13zm3.18-2H4.07a8.04 8.04 0 0 1 4.55-5.06A15.9 15.9 0 0 0 7.25 11zM12 20a14 14 0 0 1-1.7-7h3.4A14 14 0 0 1 12 20zm3.38-1.94A15.9 15.9 0 0 0 16.75 13h3.18a8.04 8.04 0 0 1-4.55 5.06z"/></svg>
         <span id="langText">EN</span>
@@ -749,7 +751,10 @@
     <div class="wrap cta-row">
       <h2 data-i18n="cta_h"><span class="nw">让临床数据、科研记忆与论文创作，</span><span class="nw">在同一个工作台无缝流转。</span></h2>
       <div class="cta-act">
-        <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="cta_btn">免费开启工作台 <span aria-hidden="true">→</span></a>
+        <div class="cta-btn-group">
+          <a class="btn mint lg" href="/app" data-app-link data-cta data-i18n="cta_btn">免费开启工作台 <span aria-hidden="true">→</span></a>
+          <a class="btn cta-contact lg" href="mailto:support@heurion.org" data-i18n="btn_contact">联系我们</a>
+        </div>
         <p data-i18n="cta_sub">开箱即用，支持多中心团队协同。</p>
       </div>
     </div>
@@ -767,11 +772,12 @@
       <a href="#faq" data-i18n="nav_faq">常见问题</a>
       <a href="#memory" data-i18n="nav_memory">记忆演进</a>
       <a href="#security" data-i18n="nav_security">安全合规</a>
+      <a href="mailto:support@heurion.org" data-i18n="btn_contact">联系我们</a>
       <a href="/app" data-app-link data-i18n="btn_enter">进入工作台</a>
       <a href="https://github.com/heurion-org/heurion" target="_blank" rel="noreferrer">GitHub</a>
     </nav>
   </div>
-  <div class="wrap foot-base"><span>© <span id="year">2026</span> Heurion</span><span data-i18n="foot_note">临床科研智能工作台 · 不提供诊疗建议</span></div>
+  <div class="wrap foot-base"><span>© <span id="year">2026</span> Heurion · <a href="mailto:support@heurion.org" style="color: var(--mint); text-decoration: underline; text-underline-offset: 3px;">support@heurion.org</a></span><span data-i18n="foot_note">临床科研智能工作台 · 不提供诊疗建议</span></div>
 </footer>
 
 <script>
@@ -791,6 +797,7 @@
       nav_phr_foot: "知家 · 患者健康档案",
       btn_login: "登录",
       btn_enter: "进入工作台",
+      btn_contact: "联系我们",
       hero_title: "临床科研，<br><span class=\"nw\">从数据沉淀到成果发表的</span><em class=\"nw\">全流程工作台。</em>",
       hero_lead: "Heurion 贯通临床科研全链路：从真实患者纳排入组（S001...受试者追踪）与课题组多角色协同，到队列宽表长表生成、发表级 Table 1 三线表与 CONSORT 流程图，再到因果推断敏感度抗辩、隔离沙箱分析与 PubMed 严谨引证。",
       hero_cta_start: "免费开启科研工作台 <span aria-hidden=\"true\">→</span>",
@@ -985,6 +992,7 @@
       nav_phr_foot: "Zhijia · Patient Health Records",
       btn_login: "Sign In",
       btn_enter: "Open Workstation",
+      btn_contact: "Contact",
       hero_title: "Clinical Research,<br>from Patient Data to Published Evidence,<br>in <em>One Unified Workstation.</em>",
       hero_lead: "Heurion unifies the clinical research lifecycle: from de-identified cohort enrollment (S001... tracking) and multi-role collaborative research teams, to wide/long dataset synthesis, publication-grade native Word Table 1 & CONSORT diagrams, causal sensitivity defenses, and verified citations.",
       hero_cta_start: "Launch Research Workstation <span aria-hidden=\"true\">→</span>",

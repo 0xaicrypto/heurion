@@ -11,6 +11,7 @@ Heurion (https://heurion.org) addresses the critical limitations of generic LLMs
 - Personal Health Record (PHR): https://heurion.org/phr
 - Technical Deep-Dive for LLMs: https://heurion.org/llms-full.txt
 - Open Source Repository: https://github.com/heurion-org/heurion
+- Contact & Support: support@heurion.org
 
 ## Core Capabilities
 

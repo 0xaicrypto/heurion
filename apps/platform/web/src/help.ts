@@ -3719,6 +3719,7 @@ export function openHelpGuide(initialSectionId = 'overview'): void {
           </nav>
           <div class="help-sidebar-footer">
             <div class="hsf-tip">${icon('info', { size: 13 })} 提示：按 <code>Esc</code> 键可快速关闭手册。</div>
+            <div class="hsf-contact" style="margin-top: 8px; font-size: 12px; color: var(--muted);"><a href="mailto:support@heurion.org" style="color: var(--mint); text-decoration: underline; text-underline-offset: 3px;">联系我们 support@heurion.org</a></div>
           </div>
         </aside>
         <main class="help-content-area" id="helpContentArea">

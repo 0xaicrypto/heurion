@@ -257,8 +257,11 @@ html[lang="en"] .pipe-step {
 .cta { position: relative; overflow: hidden; padding: 120px 0; background: var(--mint); color: var(--mint-ink); }
 .cta-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 48px; flex-wrap: wrap; }
 .cta h2 { color: var(--mint-ink); font-size: clamp(32px, 4.4vw, 60px); }
+.cta-btn-group { display: flex; gap: 12px; flex-wrap: wrap; }
 .cta .btn.mint { background: var(--mint-ink); color: var(--mint); }
 .cta .btn.mint:hover { background: #0d2a1e; }
+.cta .btn.cta-contact { border: 1.5px solid rgba(4, 23, 15, 0.35); color: var(--mint-ink); background: rgba(4, 23, 15, 0.05); }
+.cta .btn.cta-contact:hover { background: rgba(4, 23, 15, 0.12); border-color: var(--mint-ink); }
 .cta-act p { margin-top: 14px; font-size: 14px; opacity: .7; }
 
 /* 页脚 */
@@ -267,6 +270,12 @@ html[lang="en"] .pipe-step {
 .foot-links { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
 .foot-links a:hover { color: var(--mint); }
 .foot-base { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--line); font-size: 12px; color: var(--faint); }
+
+/* 中等桌面端防挤压 (961px - 1120px) */
+@media (max-width: 1120px) and (min-width: 961px) {
+  .top-row { gap: 16px; }
+  .links { gap: 18px; margin-left: 8px; }
+}
 
 /* 平板与移动端 (<= 960px) */
 @media (max-width: 960px) {
@@ -404,7 +413,8 @@ html[lang="en"] .pipe-step {
   .cta { padding: 64px 0; }
   .cta-row { gap: 28px; }
   .cta h2, html[lang="en"] .cta h2 { font-size: clamp(22px, 6vw, 32px); line-height: 1.25; }
-  .cta-act, .cta-act .btn { width: 100%; justify-content: center; }
+  .cta-act, .cta-act .btn, .cta-btn-group, .cta-btn-group .btn { width: 100%; justify-content: center; }
+  .cta-btn-group { flex-direction: column; gap: 10px; }
   .cta-act p { text-align: center; }
 
   .foot { padding: 44px 0 28px; }

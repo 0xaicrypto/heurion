@@ -74,4 +74,5 @@ Heurion exposes compliant Anthropic Model Context Protocol (MCP) servers allowin
 - PHI Redaction: Active Regex and NLP pattern scanning intercepting Chinese Resident Identity Cards (18 digits), National Health Insurance numbers, phone numbers, and clinical record identifiers.
 - Cryptographic Sharing: Time-limited, scope-restricted cryptographic claim codes (`PhrClaim`) for secure patient-to-hospital data transmission without persistent shared credentials.
 - Zero External Data Training: Clinical data, patient metrics, and research drafts are never used to train external public foundation models.
+- Official Support & Feedback: support@heurion.org
 
