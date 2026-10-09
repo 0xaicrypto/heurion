@@ -64,6 +64,14 @@ export type IconName =
   | 'paperclip'
   | 'archive'
   | 'bot'
+  | 'upload'
+  | 'lung'
+  | 'abdomen'
+  | 'brain'
+  | 'heart'
+  | 'bone'
+  | 'interactive'
+  | 'cube'
 
 const ICONS: Record<IconName, string> = {
   // 3D 医学影像、CT 扫描
@@ -233,6 +241,30 @@ const ICONS: Record<IconName, string> = {
 
   // 智能助手、AI 机器人
   bot: '<rect x="3.5" y="6" width="13" height="10" rx="2.5"/><path d="M10 2v4M2 11h1.5M16.5 11H18"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="12.5" cy="11" r="1" fill="currentColor"/>',
+
+  // 上传本地影像文件
+  upload: '<path d="M10 13V3.5M6 7.5l4-4 4 4M3.5 16.5h13"/>',
+
+  // 胸部与呼吸科、肺脏与气道树
+  lung: '<path d="M10 2.5v5M8.5 7.5L5.5 10M11.5 7.5L14.5 10M10 4.5h-.5M10 6h.5"/><path d="M5.5 10c-2.5.5-3.5 3-3.5 5.5s2 3 4.5 2c1.5-.6 2.5-2.5 2.5-4.5z"/><path d="M14.5 10c2.5.5 3.5 3 3.5 5.5s-2 3-4.5 2c-1.5-.6-2.5-2.5-2.5-4.5z"/>',
+
+  // 腹部与泌尿、实质内脏
+  abdomen: '<path d="M4.5 6.5c0-2.5 2.5-3 5.5-3s5.5.5 5.5 3c0 6-2 10.5-5.5 11-3.5-.5-5.5-5-5.5-11z"/><path d="M7 8.5c0 1.5 1 2.5 1 4s-1 1.5-1 0"/><path d="M13 8.5c0 1.5-1 2.5-1 4s1 1.5 1 0"/>',
+
+  // 颅脑与中枢神经系统
+  brain: '<path d="M10 3.5C7.5 3.5 5 4.8 4.5 7.2c-.8.5-1.5 1.5-1.5 2.8 0 1.8 1.2 3.2 2.5 3.5.3 1.8 1.8 3 3.5 3h1V3.5z"/><path d="M10 3.5C12.5 3.5 15 4.8 15.5 7.2c.8.5 1.5 1.5 1.5 2.8 0 1.8-1.2 3.2-2.5 3.5-.3 1.8-1.8 3-3.5 3h-1V3.5z"/><path d="M7 7.5a2 2 0 0 1 2 2v2M13 7.5a2 2 0 0 0-2 2v2"/>',
+
+  // 心脏与心血管系统
+  heart: '<path d="M10 5.5c-1.5-3-5.5-2.5-5.5.5 0 4 5.5 8.5 5.5 10.5 0-2 5.5-6.5 5.5-10.5 0-3-4-3.5-5.5-.5z"/><path d="M8.5 3.5v-1M11.5 3.5v-1M10 2.5h-1.5"/>',
+
+  // 骨科与全身体素、脊柱椎骨
+  bone: '<rect x="6.5" y="3" width="7" height="3" rx="1"/><rect x="5.5" y="7.5" width="9" height="3.5" rx="1"/><rect x="5" y="12.5" width="10" height="4" rx="1"/><path d="M10 1.5v17"/>',
+
+  // 交互式万物分割、点选提示与磁性吸附
+  interactive: '<path d="M4 3l5 13 2.5-4.5 4.5-2.5z"/><circle cx="14" cy="6" r="2.5" stroke-dasharray="1.5 1.5"/><path d="M14 2v1.5M14 8.5V10M10 6h1.5M16.5 6H18"/>',
+
+  // 3D 空间体素立方体
+  cube: '<path d="M10 2.5l7 4v7l-7 4-7-4v-7zM10 2.5v15M3 6.5l7 4 7-4"/>',
 }
 
 export interface IconOptions {

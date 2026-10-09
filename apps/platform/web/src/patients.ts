@@ -854,17 +854,22 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           </select>
           <div class="pt-sample-chips">
             <span class="muted small">快捷选择：</span>
-            <button type="button" class="pt-sample-chip active" data-sid="chest_lung_ct">全胸部 HRCT</button>
-            <button type="button" class="pt-sample-chip" data-sid="nsclc_lung_ct">非小细胞肺癌 CT</button>
-            <button type="button" class="pt-sample-chip" data-sid="spleen_test">腹部增强 CT</button>
-            <button type="button" class="pt-sample-chip" data-sid="prostate_mri">前列腺 T2-MRI</button>
+            <button type="button" class="pt-sample-chip active" data-sid="chest_lung_ct">${icon('lung', { size: 12 })} 全胸部 HRCT</button>
+            <button type="button" class="pt-sample-chip" data-sid="nsclc_lung_ct">${icon('nsclc', { size: 12 })} 非小细胞肺癌 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="spleen_test">${icon('abdomen', { size: 12 })} 腹部增强 CT</button>
+            <button type="button" class="pt-sample-chip" data-sid="prostate_mri">${icon('scan', { size: 12 })} 前列腺 T2-MRI</button>
           </div>
           <div class="muted small" style="margin-top: 6px">预置真实临床三维体素扫描数据。系统将完整 3D 原始体素序列加密归档至该患者档案。</div>
         </div>
 
-        <div id="imgUploadBox" hidden>
-          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="width: 100%; border: 1px dashed var(--line-strong); padding: 14px; border-radius: 4px; background: var(--hover)">
-          <div class="muted small" style="margin-top: 4px">支持高分辨率 CT/MRI 序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或包含整套 DICOM 序列切片的 ZIP 压缩包 (.zip)。上传后自动解压与 3D 空间坐标重构。</div>
+        <div id="imgUploadBox" hidden style="margin-top: 6px">
+          <label for="imgFileInput" style="display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--line-strong); padding: 18px 14px; border-radius: 6px; background: var(--hover); cursor: pointer; text-align: center">
+            ${icon('upload', { size: 24, style: 'color: var(--blue); margin-bottom: 6px' })}
+            <span style="font-size: 13px; font-weight: 500">点击选择或拖拽医学影像文件至此</span>
+            <span class="muted small" style="margin-top: 4px">支持高分辨率序列：NIfTI (.nii, .nii.gz)、单个 DICOM (.dcm) 或整套 DICOM 序列 ZIP 压缩包 (.zip)</span>
+          </label>
+          <input type="file" id="imgFileInput" accept=".nii,.nii.gz,.dcm,.zip" style="display: none">
+          <div id="imgUploadFileName" class="muted small" style="margin-top: 6px; display: none; color: var(--teal)"></div>
         </div>
       </div>
 
@@ -875,13 +880,13 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
         </div>
 
         <div class="pt-specialty-tabs" id="imgSpecialtyTabs">
-          <button type="button" class="pt-specialty-tab active" data-cat="auto">智能匹配</button>
-          <button type="button" class="pt-specialty-tab" data-cat="chest">胸部与呼吸</button>
-          <button type="button" class="pt-specialty-tab" data-cat="abdomen">腹部与泌尿</button>
-          <button type="button" class="pt-specialty-tab" data-cat="brain">颅脑与心血管</button>
-          <button type="button" class="pt-specialty-tab" data-cat="whole_body">全身与骨骼</button>
-          <button type="button" class="pt-specialty-tab" data-cat="interactive">交互式分割</button>
-          <button type="button" class="pt-specialty-tab" data-cat="all">全部专科</button>
+          <button type="button" class="pt-specialty-tab active" data-cat="auto">${icon('sparkles', { size: 12 })} 智能匹配</button>
+          <button type="button" class="pt-specialty-tab" data-cat="chest">${icon('lung', { size: 12 })} 胸部与呼吸</button>
+          <button type="button" class="pt-specialty-tab" data-cat="abdomen">${icon('abdomen', { size: 12 })} 腹部与泌尿</button>
+          <button type="button" class="pt-specialty-tab" data-cat="brain">${icon('brain', { size: 12 })} 颅脑与心血管</button>
+          <button type="button" class="pt-specialty-tab" data-cat="whole_body">${icon('bone', { size: 12 })} 全身与骨骼</button>
+          <button type="button" class="pt-specialty-tab" data-cat="interactive">${icon('interactive', { size: 12 })} 交互式分割</button>
+          <button type="button" class="pt-specialty-tab" data-cat="all">${icon('grid', { size: 12 })} 全部专科</button>
         </div>
 
         <select id="imgModelSelect" class="pt-dlg-select" style="width: 100%; padding: 7px 10px">
@@ -1113,6 +1118,17 @@ export function initPatients(api: Api, notice: Notice, hooks: PatientHooks) {
           filterModelsForSample()
         }
       })
+    })
+
+    // File upload change listener
+    const fileInputEl = body.querySelector('#imgFileInput') as HTMLInputElement
+    const fileNameEl = body.querySelector('#imgUploadFileName') as HTMLElement
+    fileInputEl?.addEventListener('change', () => {
+      const f = fileInputEl.files?.[0]
+      if (f && fileNameEl) {
+        fileNameEl.style.display = 'block'
+        fileNameEl.innerHTML = `${icon('file', { size: 12 })} 已选文件: <b>${esc(f.name)}</b> (${(f.size / (1024 * 1024)).toFixed(1)} MB)`
+      }
     })
 
     // Initial trigger to sync UI
