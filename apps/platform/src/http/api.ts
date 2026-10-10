@@ -2175,6 +2175,15 @@ export function buildApi(deps: ApiDeps): Hono<{ Variables: { user: string } }> {
   app.delete('/api/studies/:sid/cohort/:ptid', c => { try { return c.json(co().unenroll(me(c), c.req.param('sid'), c.req.param('ptid'))) } catch (err) { return cohortFailure(c, err) } })
   /** 生成 / 刷新研究数据集：{shape: wide | long, tests?, from?, to?} */
   app.post('/api/studies/:sid/cohort/dataset', async c => { try { return c.json(await co().dataset(me(c), c.req.param('sid'), await c.req.json()), 201) } catch (err) { return cohortFailure(c, err) } })
+  /** 队列级批量 3D 影像量化与科研宽表生成：{model_id?, patient_ids?, save_as_dataset?, dataset_name?} */
+  app.post('/api/studies/:sid/cohort/imaging-batch', async c => {
+    try {
+      const body = await c.req.json().catch(() => ({}))
+      return c.json(await co().imagingBatchAnalyze(me(c), c.req.param('sid'), body), 200)
+    } catch (err) {
+      return cohortFailure(c, err)
+    }
+  })
 
   /** CONSORT 2010 临床入组纳排流向图：获取默认流向图或通过 query 自定义参数 */
   app.get('/api/studies/:sid/cohort/consort', c => {

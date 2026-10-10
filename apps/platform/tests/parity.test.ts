@@ -55,6 +55,7 @@ const STUDY_PARITY: Record<string, string> = {
   'POST /api/studies/:sid/cohort': 'study_enroll',
   'DELETE /api/studies/:sid/cohort/:ptid': 'study_unenroll',
   'POST /api/studies/:sid/cohort/dataset': 'study_cohort_dataset',
+  'POST /api/studies/:sid/cohort/imaging-batch': 'imaging_cohort_batch_analyze',
   // 研究团队成员（研究团队协作）
   'GET /api/studies/:sid/members': 'study_members',
   'GET /api/studies/:sid/candidates': 'study_members',

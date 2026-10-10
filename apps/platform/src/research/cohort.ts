@@ -114,6 +114,106 @@ export class CohortService {
     try { this.studies.link(a.userId, studyId, { kind: 'dataset', ref_id: dataset.id }) } catch (err) { if (!(err instanceof StudyError && err.code === 'in_other_study')) throw err }
     return { dataset: this.datasets.get(a.userId, dataset.id), unchanged: duplicate, skipped: snap.skipped }
   }
+
+  /**
+   * 队列级批量 3D 医学影像量化与科研宽表生成流水线：
+   * 调取 MONAI Worker 进行高通量 3D 卷积 / RECIST 测量 / 全身解剖肌少症量化，
+   * 汇聚成宽表 CSV，并自动作为科研数据集归入研究。
+   */
+  async imagingBatchAnalyze(a: Actor, studyId: string, input: {
+    patient_ids?: string[]
+    model_id?: string
+    save_as_dataset?: boolean
+    dataset_name?: string
+  }): Promise<{
+    status: string
+    study_id: string
+    total_cases: number
+    successful_cases: number
+    failed_cases: number
+    columns: string[]
+    dataframe_rows: Array<Record<string, unknown>>
+    csv_content: string
+    dataset?: DatasetView
+    summary_markdown: string
+  }> {
+    const study = this.studies.get(a.userId, studyId, 'write')
+    const { subjects } = this.patients.enrollments(a, studyId)
+    const active = subjects.filter(s => s.status === 'active')
+    const modelName = input.model_id || 'lung_nodule_segmenter'
+
+    let pids = input.patient_ids
+    if (!pids || !pids.length) {
+      pids = active.map(s => s.patient_id)
+    }
+    if (!pids.length) throw new StudyError('empty_cohort', '该研究暂无活跃入组受试者')
+
+    const cases = pids.map(pid => {
+      const subj = active.find(s => s.patient_id === pid)
+      let sampleId = 'chest_lung_ct'
+      if (modelName.includes('whole_body') || modelName.includes('totalsegmentator')) {
+        sampleId = 'whole_body_ct'
+      } else if (modelName.includes('spleen') || modelName.includes('liver')) {
+        sampleId = 'spleen_test'
+      }
+      return {
+        subject_id: subj?.subject_id || pid,
+        patient_id: pid,
+        sample_id: sampleId,
+        model_name: modelName,
+        patient_sex: subj?.sex || 'M',
+        patient_height_m: 1.72,
+        patient_weight_kg: 68.0,
+      }
+    })
+
+    const imagingWorkerUrl = (process.env.IMAGING_WORKER_URL || 'http://127.0.0.1:8004').replace(/\/+$/, '')
+    const resp = await fetch(`${imagingWorkerUrl}/api/v1/cohort/batch-analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ study_id: studyId, cases }),
+      signal: AbortSignal.timeout(60000),
+    })
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '')
+      throw new StudyError('batch_analyze_failed', `队列影像批量分析失败 HTTP ${resp.status}: ${errText}`)
+    }
+    const res = await resp.json()
+
+    let datasetView: DatasetView | undefined
+    if (input.save_as_dataset !== false && this.datasets) {
+      const dName = input.dataset_name || `${study.title} · 队列影像量化宽表`
+      const { dataset } = this.datasets.upload(
+        a.userId,
+        `cohort-imaging-${studyId}.csv`,
+        Buffer.from(res.csv_content, 'utf8'),
+        {
+          name: dName,
+          origin: {
+            kind: 'cohort',
+            study_id: studyId,
+            shape: 'wide',
+            generated_at: new Date().toISOString(),
+            fingerprint: `${studyId}-${Date.now()}`,
+            subjects: cases.length,
+            trusted_columns: res.columns,
+          } as never
+        }
+      )
+      await this.datasets.idle()
+      try {
+        this.studies.link(a.userId, studyId, { kind: 'dataset', ref_id: dataset.id })
+      } catch (err) {
+        if (!(err instanceof StudyError && err.code === 'in_other_study')) throw err
+      }
+      datasetView = this.datasets.get(a.userId, dataset.id)
+    }
+
+    return {
+      ...res,
+      dataset: datasetView,
+    }
+  }
 }
 
 type Subject = ReturnType<PatientService['cohortSnapshot']>['subjects'][number]
@@ -148,6 +248,26 @@ function wide(subjects: Subject[], relativeDays = false) {
       header.push(col); labels[col] = lab
     }
   }
+
+  const hasImaging = subjects.some(s => s.imaging && s.imaging.length > 0)
+  if (hasImaging) {
+    const imgCols: Array<[string, string]> = [
+      ['longest_diameter_baseline_mm', 'RECIST 靶病灶长径基线 (mm)'],
+      ['longest_diameter_latest_mm', 'RECIST 靶病灶长径最近 (mm)'],
+      ['total_volume_baseline_cm3', '靶病灶三维体积基线 (cm³)'],
+      ['total_volume_latest_cm3', '靶病灶三维体积最近 (cm³)'],
+      ['lung_rads_latest', 'Lung-RADS 分级 (最近)'],
+      ['smi_baseline_cm2_m2', '骨骼肌指数 SMI 基线 (cm²/m²)'],
+      ['smi_latest_cm2_m2', '骨骼肌指数 SMI 最近 (cm²/m²)'],
+      ['sarcopenia_baseline', '肌少症阳性 (基线)'],
+      ['vat_to_sat_ratio_baseline', '内脏与皮下脂肪比 VAT/SAT (基线)'],
+      ['imaging_scans_n', '影像检查次数'],
+    ]
+    for (const [col, lab] of imgCols) {
+      header.push(col); labels[col] = lab
+    }
+  }
+
   const rows = subjects.map(s => {
     const r: unknown[] = [s.subject_id, s.sex, s.age_at_enroll, s.tags.join('; '), s.enrolled_on]
     for (const t of tests) {
@@ -159,6 +279,31 @@ function wide(subjects: Subject[], relativeDays = false) {
       if (relativeDays) r.push(daysDiff(last?.collected_on, s.enrolled_on))
       r.push(vals.length)
     }
+
+    if (hasImaging) {
+      const scans = s.imaging || []
+      const firstScan = scans[0]?.payload as any
+      const lastScan = scans[scans.length - 1]?.payload as any
+      const m1 = firstScan?.metrics || {}
+      const m2 = lastScan?.metrics || {}
+      const bc1 = m1.body_composition || {}
+      const bc2 = m2.body_composition || {}
+      const rads2 = m2.lung_rads || {}
+
+      r.push(
+        m1.longest_diameter_mm ?? null,
+        m2.longest_diameter_mm ?? null,
+        m1.total_volume_cm3 ?? null,
+        m2.total_volume_cm3 ?? null,
+        rads2.category ?? null,
+        bc1.skeletal_muscle_index_cm2_m2 ?? null,
+        bc2.skeletal_muscle_index_cm2_m2 ?? null,
+        bc1.sarcopenia_detected !== undefined ? (bc1.sarcopenia_detected ? 1 : 0) : null,
+        bc1.vat_to_sat_ratio ?? null,
+        scans.length
+      )
+    }
+
     return r
   })
   return { header, rows, labels }

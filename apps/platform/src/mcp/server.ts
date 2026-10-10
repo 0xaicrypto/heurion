@@ -1479,7 +1479,7 @@ export function buildMcpServer(deps: McpDeps, claims: TokenClaims): McpServer {
 
   registerCanvasTools(server, ctx)
   registerHealthcareTools(server, ctx)
-  registerImagingTools(server, { store, claims, patients: deps.patients })
+  registerImagingTools(server, { store, claims, patients: deps.patients, studies: deps.studies, datasets: deps.datasets, cohort: deps.cohort })
   registerAdminTools(server, { store, turns: deps.turns, invoke: deps.invoke, workspaceDir: deps.workspaceDir }, claims.u)
   return server
 }

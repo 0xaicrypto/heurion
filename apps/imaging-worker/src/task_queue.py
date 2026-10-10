@@ -178,3 +178,116 @@ class TaskManager:
 
 # Global singleton task manager for the imaging worker process
 task_manager = TaskManager(max_workers=int(os.environ.get("IMAGING_CONCURRENCY", "2")))
+
+
+def process_cohort_case(
+    engine: Any,
+    case: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Processes a single patient/subject scan within a cohort batch."""
+    subject_id = case.get("subject_id") or case.get("patient_id") or "SUBJ_001"
+    sample_id = case.get("sample_id")
+    file_path = case.get("file_path")
+    model_name = case.get("model_name", "lung_nodule_segmenter")
+    target = file_path or sample_id or "chest_lung_ct"
+
+    row: Dict[str, Any] = {
+        "subject_id": subject_id,
+        "model_name": model_name,
+        "status": "success",
+    }
+    try:
+        vol, spacing, modality = engine.load_volume_data(target)
+        if model_name in ("whole_body_ct_segmenter", "totalsegmentator"):
+            res = engine.analyze_volume(
+                volume=vol,
+                spacing=spacing,
+                model_name=model_name,
+                modality=modality,
+                patient_sex=case.get("patient_sex", "M"),
+                patient_height_m=case.get("patient_height_m", 1.72),
+                patient_weight_kg=case.get("patient_weight_kg", 68.0),
+            )
+            bc = res.get("body_composition", {})
+            ov = res.get("organ_volumetry_cm3", {})
+            row.update({
+                "sma_cm2": bc.get("skeletal_muscle_area_cm2"),
+                "smi_cm2_m2": bc.get("skeletal_muscle_index_cm2_m2"),
+                "sarcopenia": 1 if bc.get("sarcopenia_detected") else 0,
+                "vat_cm2": bc.get("visceral_adipose_cm2"),
+                "sat_cm2": bc.get("subcutaneous_adipose_cm2"),
+                "vat_to_sat_ratio": bc.get("vat_to_sat_ratio"),
+                "muscle_hu": bc.get("muscle_radiodensity_hu"),
+                "liver_volume_cm3": ov.get("liver"),
+                "spleen_volume_cm3": ov.get("spleen"),
+            })
+        else:
+            res = engine.analyze_volume(
+                volume=vol,
+                spacing=spacing,
+                model_name=model_name,
+                modality=modality,
+            )
+            rec = res.get("recist_metrics", {})
+            rads = rec.get("lung_rads", {})
+            row.update({
+                "longest_diameter_mm": rec.get("longest_diameter_mm"),
+                "short_axis_mm": rec.get("short_axis_mm"),
+                "total_volume_cm3": rec.get("total_volume_cm3"),
+                "has_lesion": 1 if rec.get("has_lesion") else 0,
+                "lung_rads": rads.get("category", "1"),
+            })
+    except Exception as exc:
+        row["status"] = "failed"
+        row["error"] = str(exc)
+
+    return row
+
+
+def batch_process_cohort(
+    engine: Any,
+    cases: List[Dict[str, Any]],
+    study_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Executes high-throughput batch processing for a cohort of patients.
+    Aggregates multi-modal 3D imaging metrics into a clean Wide-Format Research DataFrame.
+    """
+    import io
+    import csv
+
+    results = []
+    for c in cases:
+        row = process_cohort_case(engine, c)
+        results.append(row)
+
+    all_keys = []
+    priority = ["subject_id", "status", "longest_diameter_mm", "short_axis_mm", "total_volume_cm3", "lung_rads", "smi_cm2_m2", "sarcopenia", "vat_to_sat_ratio"]
+    for p in priority:
+        if any(p in r for r in results) and p not in all_keys:
+            all_keys.append(p)
+    for r in results:
+        for k in r.keys():
+            if k not in all_keys and k != "error":
+                all_keys.append(k)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=all_keys, extrasaction="ignore")
+    writer.writeheader()
+    for r in results:
+        writer.writerow(r)
+
+    csv_content = output.getvalue()
+
+    return {
+        "status": "success",
+        "study_id": study_id,
+        "total_cases": len(cases),
+        "successful_cases": sum(1 for r in results if r.get("status") == "success"),
+        "failed_cases": sum(1 for r in results if r.get("status") == "failed"),
+        "columns": all_keys,
+        "dataframe_rows": results,
+        "csv_content": csv_content,
+        "summary_markdown": f"### 临床研究队列影像特征批量流水线完成\n- **入组受试者数**: {len(cases)} 例\n- **提取特征列数**: {len(all_keys)} 列\n- **已生成科研宽表 DataFrame**，可直接用于 Table 1 基线表或生存分析。"
+    }
+

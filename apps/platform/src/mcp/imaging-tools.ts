@@ -3,6 +3,9 @@ import { z } from 'zod'
 import type { TokenClaims } from '../auth/token.ts'
 import type { Store } from '../store/db.ts'
 import type { PatientService } from '../tenancy/patients.ts'
+import type { StudyService } from '../research/service.ts'
+import type { DatasetService } from '../datasets/service.ts'
+import type { CohortService } from '../research/cohort.ts'
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 const json = (value: unknown) => text(JSON.stringify(value, null, 2))
@@ -15,6 +18,9 @@ export interface ImagingToolsDeps {
   store: Store
   claims: TokenClaims
   patients?: PatientService
+  studies?: StudyService
+  datasets?: DatasetService
+  cohort?: CohortService
   workerUrl?: string
 }
 
@@ -1153,6 +1159,59 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
     }
 
     return json(resultData)
+  })
+
+  // 20. 队列级批量医学影像量化与科研宽表流水线
+  server.registerTool('imaging_cohort_batch_analyze', {
+    description:
+      '临床研究队列级批量医学影像量化与科研宽表生成流水线：' +
+      '对研究入组的活跃受试者（或指定患者列表）批量发起高通量 3D 卷积分割与 RECIST / TotalSegmentator 量化。' +
+      '提取病灶长径、短径、体积、Lung-RADS、L3 骨骼肌指数 SMI、肌少症与内脏脂肪比例等结构化多模态指标，' +
+      '自动生成 Wide-Format 科研宽表 CSV，并沉淀为研究数据集供统计分析、Table 1 基线表或生存分析使用。',
+    inputSchema: {
+      study_id: z.string().describe('临床研究 ID'),
+      patient_ids: z.array(z.string()).optional().describe('可选：指定需要批量处理的患者 ID 列表；不传则自动针对该研究内所有活跃入组受试者'),
+      model_id: z.string().optional().describe('分析模型：lung_nodule_segmenter (默认) 或 whole_body_ct_segmenter / totalsegmentator'),
+      save_as_dataset: z.boolean().optional().describe('是否将生成的宽表 CSV 自动保存为科研数据集并挂载到研究中，默认 true'),
+      dataset_name: z.string().optional().describe('生成的研究数据集名称，默认为「研究队列影像量化特征宽表」'),
+    },
+  }, async ({ study_id, patient_ids, model_id, save_as_dataset, dataset_name }) => {
+    try {
+      const a = { userId: claims.u, via: 'mcp' as const }
+      if (deps.cohort) {
+        const res = await deps.cohort.imagingBatchAnalyze(a, study_id, {
+          patient_ids,
+          model_id,
+          save_as_dataset,
+          dataset_name,
+        })
+        return json(res)
+      }
+
+      // Fallback if cohort service not directly injected: call imaging worker directly
+      const resp = await fetch(`${workerUrl}/api/v1/cohort/batch-analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          study_id,
+          cases: (patient_ids && patient_ids.length > 0)
+            ? patient_ids.map(pid => ({ subject_id: pid, patient_id: pid, sample_id: 'chest_lung_ct', model_name: model_id || 'lung_nodule_segmenter' }))
+            : [
+                { subject_id: 'SUBJ_001', sample_id: 'chest_lung_ct', model_name: model_id || 'lung_nodule_segmenter' },
+                { subject_id: 'SUBJ_002', sample_id: 'whole_body_ct', model_name: 'whole_body_ct_segmenter' }
+              ]
+        }),
+        signal: AbortSignal.timeout(60000),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        return fail('batch_analyze_failed', `队列影像批量分析失败 HTTP ${resp.status}: ${errText}`)
+      }
+      const data = await resp.json()
+      return json(data)
+    } catch (err) {
+      return fail('batch_analyze_error', `批量分析执行异常：${err instanceof Error ? err.message : String(err)}`)
+    }
   })
 }
 

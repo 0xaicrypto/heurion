@@ -593,13 +593,13 @@ def extract_anatomical_compartments_3d(
         sorted_indices = np.argsort(counts)[::-1]
         for l_idx in sorted_indices[:4]:
             if counts[l_idx] > 1500:
-                lung_parenchyma |= (lbl_air == l_idx)
+                comp = (lbl_air == l_idx)
+                for z in range(z_dim):
+                    if np.any(comp[z]):
+                        lung_parenchyma[z] |= binary_fill_holes(comp[z])
 
-    # Fill internal intrapulmonary structures (small branching blood vessels & bronchi inside the lungs)
+    # Strictly ensure bone skeleton is excluded
     if np.any(lung_parenchyma):
-        # 3D closing of 2 iterations bridges normal intraparenchymal vessels
-        lung_parenchyma = ndi.binary_closing(lung_parenchyma, structure=struct3d, iterations=2)
-        # Strictly ensure bone skeleton is excluded
         lung_parenchyma &= (~bone_skeleton)
 
     # 4. Central Mediastinum: Anatomical zone between lungs containing heart, aorta, pulmonary trunk

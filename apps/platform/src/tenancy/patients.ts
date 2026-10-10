@@ -2497,7 +2497,7 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
     const c = this.ctx(a)
     const rows = c.db.db.prepare("SELECT e.subject_id, e.enrolled_at, p.* FROM enrollments e JOIN patients p ON p.id = e.patient_id WHERE e.study_id = ? AND e.status = 'active' ORDER BY e.subject_id").all(studyId) as Array<Record<string, unknown>>
     const keys = opts.tests?.length ? new Set(opts.tests.map(testKey)) : null
-    const subjects: Array<{ subject_id: string; sex: string | null; age_at_enroll: number | null; tags: string[]; enrolled_on: string; labs: LabRow[] }> = []
+    const subjects: Array<{ subject_id: string; sex: string | null; age_at_enroll: number | null; tags: string[]; enrolled_on: string; labs: LabRow[]; imaging?: Array<{ id: string; report_date: string | null; payload: Record<string, unknown> }> }> = []
     const skipped: string[] = []
     const fp = createHash('sha256')
     for (const r of rows) {
@@ -2510,10 +2510,24 @@ ${followAssetId ? `- **随访关键切片**: ![随访关键切片](asset:${follo
       if (opts.to && DATE.test(opts.to)) { where.push('collected_on <= ?'); args.push(opts.to) }
       let labs = (c.db.db.prepare(`SELECT * FROM labs WHERE ${where.join(' AND ')} ORDER BY test_key, collected_on, COALESCE(collected_at, collected_on), created_at`).all(...args) as Array<Record<string, unknown>>).map(labOf)
       if (keys) labs = labs.filter(l => keys.has(l.test_key))
+
+      const imgWhere = ["patient_id = ?", "kind = 'imaging'", "status = 'confirmed'"]
+      const imgArgs: string[] = [pid]
+      if (opts.from && DATE.test(opts.from)) { imgWhere.push('report_date >= ?'); imgArgs.push(opts.from) }
+      if (opts.to && DATE.test(opts.to)) { imgWhere.push('report_date <= ?'); imgArgs.push(opts.to) }
+      const imgRows = (c.db.db.prepare(`SELECT id, report_date, text_enc FROM records WHERE ${imgWhere.join(' AND ')} ORDER BY report_date ASC, created_at ASC`).all(...imgArgs) as Array<Record<string, unknown>>).map(ir => {
+        const enc = ir.text_enc as string | null
+        const dec = enc ? this.keys.decryptText(c.tenantId, enc) : null
+        let payload: Record<string, unknown> = {}
+        try { payload = dec ? JSON.parse(dec) : {} } catch {}
+        return { id: ir.id as string, report_date: ir.report_date as string | null, payload }
+      })
+
       const p = patientOf(r)
-      const s = { subject_id: r.subject_id as string, sex: p.sex, age_at_enroll: p.birth_year ? Number(String(r.enrolled_at).slice(0, 4)) - p.birth_year : null, tags: p.tags, enrolled_on: String(r.enrolled_at).slice(0, 10), labs }
+      const s = { subject_id: r.subject_id as string, sex: p.sex, age_at_enroll: p.birth_year ? Number(String(r.enrolled_at).slice(0, 4)) - p.birth_year : null, tags: p.tags, enrolled_on: String(r.enrolled_at).slice(0, 10), labs, imaging: imgRows }
       subjects.push(s)
       fp.update(JSON.stringify([s.subject_id, s.sex, p.birth_year, s.tags, labs.map(l => [l.id, l.value_num, l.unit, l.collected_on])]))
+      if (imgRows.length > 0) fp.update(JSON.stringify(imgRows.map(i => [i.id, i.report_date])))
       if (opts.log) this.log(c, a, pid, 'cohort_export', `研究 ${studyId} · ${s.subject_id}`)
     }
     fp.update(JSON.stringify(skipped))

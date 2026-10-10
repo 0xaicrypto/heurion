@@ -12,6 +12,9 @@ import { TurnRegistry } from '../src/mcp/turns.ts'
 import { TenantService } from '../src/auth/tenants.ts'
 import { kekFrom, TenantKeys } from '../src/tenancy/keys.ts'
 import { PatientService } from '../src/tenancy/patients.ts'
+import { StudyService } from '../src/research/service.ts'
+import { DatasetService } from '../src/datasets/service.ts'
+import { CohortService } from '../src/research/cohort.ts'
 import { setup } from './helpers.ts'
 
 const SECRET = 'test-secret'
@@ -318,6 +321,27 @@ beforeAll(async () => {
             findings: ['右肺下叶实性结节'],
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
+        if (u.pathname.includes('/cohort/batch-analyze')) {
+          const csvContent = [
+            'subject_id,status,longest_diameter_mm,short_axis_mm,total_volume_cm3,lung_rads',
+            'SUBJ_001,success,18.5,12.0,2.84,4B',
+            'SUBJ_002,success,14.2,9.8,1.65,3',
+          ].join('\n') + '\n'
+          return new Response(JSON.stringify({
+            status: 'success',
+            study_id: 'study_1',
+            total_cases: 2,
+            successful_cases: 2,
+            failed_cases: 0,
+            columns: ['subject_id', 'status', 'longest_diameter_mm', 'short_axis_mm', 'total_volume_cm3', 'lung_rads'],
+            dataframe_rows: [
+              { subject_id: 'SUBJ_001', status: 'success', longest_diameter_mm: 18.5, short_axis_mm: 12.0, total_volume_cm3: 2.84, lung_rads: '4B' },
+              { subject_id: 'SUBJ_002', status: 'success', longest_diameter_mm: 14.2, short_axis_mm: 9.8, total_volume_cm3: 1.65, lung_rads: '3' },
+            ],
+            csv_content: csvContent,
+            summary_markdown: '### 临床研究队列影像特征批量流水线完成',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
       }
       return originalFetch(input, init)
     }
@@ -339,6 +363,28 @@ async function connectImagingMcp() {
   const tenants = new TenantService(env.store, { devMode: false })
   const keys = new TenantKeys(env.store, kekFrom({ secret: SECRET }))
   const patients = new PatientService(mkdtempSync(join(tmpdir(), 'hr-pt-mcp-')), tenants, keys, env.store)
+  const studies = new StudyService(env.store)
+  const dsDir = mkdtempSync(join(tmpdir(), 'img-mcp-ds-'))
+  const datasets = new DatasetService(env.store, dsDir, async (_owner, src) => {
+    return {
+      csv: src,
+      cleanup: () => {},
+      profile: {
+        ok: true,
+        rows: 2,
+        truncated: false,
+        columns: [
+          { name: 'subject_id', type: 'categorical', missing: 0, unique: 2 },
+          { name: 'status', type: 'categorical', missing: 0, unique: 1 },
+          { name: 'longest_diameter_mm', type: 'numeric', missing: 0, unique: 2 },
+          { name: 'short_axis_mm', type: 'numeric', missing: 0, unique: 2 },
+          { name: 'total_volume_cm3', type: 'numeric', missing: 0, unique: 2 },
+          { name: 'lung_rads', type: 'categorical', missing: 0, unique: 2 },
+        ]
+      }
+    }
+  })
+  const cohort = new CohortService(studies, patients, datasets)
 
   const server = buildMcpServer({
     docs: env.docs,
@@ -352,6 +398,9 @@ async function connectImagingMcp() {
     workspaceDir: () => workspace,
     isLiveSession: () => true,
     patients,
+    studies,
+    datasets,
+    cohort,
   }, claims)
 
   const [a, b] = InMemoryTransport.createLinkedPair()
@@ -372,7 +421,7 @@ async function connectImagingMcp() {
     }
   }
 
-  return { env: { ...env, patients, userId: uRow.id }, client, call }
+  return { env: { ...env, patients, studies, datasets, cohort, userId: uRow.id }, client, call }
 }
 
 describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
@@ -935,6 +984,48 @@ describe('MONAI 医学影像分析 MCP 工具套件 (imaging_*)', () => {
     expect(aliasRes.isError).toBe(false)
     expect(aliasRes.data.recist_category).toBe('PR')
   }, 30000)
+
+  it('20. imaging_cohort_batch_analyze: 临床研究队列级高通量 3D 影像量化与科研宽表自动生成', async () => {
+    const { env, call } = await connectImagingMcp()
+    const a = { userId: env.userId, via: 'user' as const }
+
+    // 20.1 创建临床试验研究并入组 2 例患者
+    const study = env.studies.create(a.userId, {
+      title: 'EGFR-TKI 靶向治疗肺癌队列研究',
+      summary: '观察肿瘤 RECIST 测值与机体肌少症体质指数的多模态相关性',
+    })
+
+    const p1 = env.patients.create(a, { sex: 'M', birth_year: 1960, tags: ['肺腺癌', '入组靶向治疗组'] })
+    const p2 = env.patients.create(a, { sex: 'F', birth_year: 1965, tags: ['肺腺癌', '入组靶向治疗组'] })
+
+    env.cohort.enroll(a, study.id, { patient_ids: [p1.id, p2.id] })
+
+    // 20.2 调用 MCP 工具 imaging_cohort_batch_analyze 进行队列级批量分析
+    const batchRes = await call('imaging_cohort_batch_analyze', {
+      study_id: study.id,
+      model_id: 'lung_nodule_segmenter',
+      save_as_dataset: true,
+      dataset_name: '肺癌队列基线 3D 影像特征宽表',
+    })
+
+    expect(batchRes.isError).toBe(false)
+    expect(batchRes.data.status).toBe('success')
+    expect(batchRes.data.study_id).toBe(study.id)
+    expect(batchRes.data.total_cases).toBe(2)
+    expect(batchRes.data.successful_cases).toBe(2)
+    expect(batchRes.data.columns).toContain('subject_id')
+    expect(batchRes.data.columns).toContain('longest_diameter_mm')
+    expect(batchRes.data.columns).toContain('total_volume_cm3')
+    expect(batchRes.data.csv_content).toContain('S001')
+    expect(batchRes.data.csv_content).toContain('S002')
+    expect(batchRes.data.dataset).toBeDefined()
+    expect(batchRes.data.dataset.name).toBe('肺癌队列基线 3D 影像特征宽表')
+
+    // 20.3 验证研究已自动关联该数据集
+    const studyDetail = env.studies.read(a.userId, study.id)
+    const linkedDs = studyDetail.datasets.find((d: any) => d.dataset_id === batchRes.data.dataset.id)
+    expect(linkedDs).toBeDefined()
+  }, 45000)
 })
 
 

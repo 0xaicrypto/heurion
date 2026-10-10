@@ -20,7 +20,7 @@ try:
     from .recist import calculate_volume_doubling_time, calculate_subsolid_metrics, calculate_emphysema_metrics
     from .model_registry import list_registered_models, pull_model, verify_model, get_model_status
     from .dicom_io import anonymize_dicom_zip, anonymize_dicom_file
-    from .task_queue import task_manager, TaskStage
+    from .task_queue import task_manager, TaskStage, batch_process_cohort
     from .clinical_audit import run_all_clinical_audits
 except (ImportError, ValueError):
     from device import get_device_info
@@ -28,7 +28,7 @@ except (ImportError, ValueError):
     from recist import calculate_volume_doubling_time, calculate_subsolid_metrics, calculate_emphysema_metrics
     from model_registry import list_registered_models, pull_model, verify_model, get_model_status
     from dicom_io import anonymize_dicom_zip, anonymize_dicom_file
-    from task_queue import task_manager, TaskStage
+    from task_queue import task_manager, TaskStage, batch_process_cohort
     from clinical_audit import run_all_clinical_audits
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
@@ -180,6 +180,20 @@ class VolumeDoublingTimeRequest(BaseModel):
     followup_volume_cm3: float
     days_interval: float
 
+class CohortCaseItem(BaseModel):
+    subject_id: Optional[str] = None
+    patient_id: Optional[str] = None
+    sample_id: Optional[str] = None
+    file_path: Optional[str] = None
+    model_name: Optional[str] = "lung_nodule_segmenter"
+    patient_sex: Optional[str] = "M"
+    patient_height_m: Optional[float] = 1.72
+    patient_weight_kg: Optional[float] = 68.0
+
+class CohortBatchAnalysisRequest(BaseModel):
+    study_id: Optional[str] = None
+    cases: List[CohortCaseItem]
+
 
 @app.post("/api/v1/recist/volume-doubling-time")
 def compute_volume_doubling_time(req: VolumeDoublingTimeRequest = Body(...)):
@@ -189,6 +203,28 @@ def compute_volume_doubling_time(req: VolumeDoublingTimeRequest = Body(...)):
         followup_vol_cm3=req.followup_volume_cm3,
         days_interval=req.days_interval
     )
+
+
+@app.post("/api/v1/cohort/batch-analyze")
+def batch_analyze_cohort_endpoint(req: CohortBatchAnalysisRequest = Body(...)):
+    """
+    Executes high-throughput multi-modal 3D imaging batch analysis for a research cohort.
+    Extracts lesion diameters, volumetry, Lung-RADS, and body composition indices,
+    returning structured JSON and wide-format CSV for clinical trial data frames.
+    """
+    if not req.cases:
+        raise HTTPException(status_code=400, detail="队列受试者病例列表不能为空")
+    try:
+        cases_dicts = [c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in req.cases]
+        with INFERENCE_SEMAPHORE:
+            res = batch_process_cohort(
+                engine=engine,
+                cases=cases_dicts,
+                study_id=req.study_id,
+            )
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"队列批量分析执行失败: {str(exc)}")
 
 
 class EmphysemaRequest(BaseModel):
@@ -881,6 +917,10 @@ def run_sample_analysis(req: SampleRequest = Body(...)):
         model_name = req.model_name
         if not model_name:
             model_name = "lung_nodule_segmenter" if ("lung" in str(vol_id).lower() or "chest" in str(vol_id).lower()) else "spleen_segmenter"
+        sample_file = DATA_DIR / f"{vol_id}.nii.gz"
+        if not sample_file.exists():
+            sample_file = DATA_DIR / f"{vol_id}.nii"
+        f_path = str(sample_file) if sample_file.exists() else None
         with INFERENCE_SEMAPHORE:
             return engine.analyze_volume(
                 volume=vol,
@@ -892,7 +932,8 @@ def run_sample_analysis(req: SampleRequest = Body(...)):
                 mucus_min_hu=req.mucus_min_hu,
                 mucus_max_hu=req.mucus_max_hu,
                 ham_threshold_hu=req.ham_threshold_hu,
-                bar_cutoff=req.bar_cutoff
+                bar_cutoff=req.bar_cutoff,
+                file_path=f_path
             )
 
     sample_id = req.sample_id or "spleen_test"
