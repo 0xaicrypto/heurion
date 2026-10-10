@@ -211,6 +211,7 @@ export class CohortService {
 
     return {
       ...res,
+      study_id: studyId,
       dataset: datasetView,
     }
   }

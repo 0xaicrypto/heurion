@@ -1177,7 +1177,7 @@ export function registerImagingTools(server: McpServer, deps: ImagingToolsDeps):
     },
   }, async ({ study_id, patient_ids, model_id, save_as_dataset, dataset_name }) => {
     try {
-      const a = { userId: claims.u, via: 'mcp' as const }
+      const a = { userId: claims.u, via: 'ai' as const, space: 'work' as const }
       if (deps.cohort) {
         const res = await deps.cohort.imagingBatchAnalyze(a, study_id, {
           patient_ids,

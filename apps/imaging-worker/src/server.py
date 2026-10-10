@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Body
@@ -722,6 +723,8 @@ def list_samples():
 @app.get("/api/v1/samples/{sample_id}/file")
 def get_sample_file(sample_id: str):
     """Streams the raw 3D volume sample file (.nii.gz)."""
+    if not re.match(r"^[a-zA-Z0-9_\-]+$", sample_id):
+        raise HTTPException(status_code=400, detail="Invalid sample_id format")
     for ext in (".nii.gz", ".nii", ".zip", ".gz"):
         sample_file = DATA_DIR / f"{sample_id}{ext}"
         if sample_file.exists():
@@ -1041,7 +1044,7 @@ def run_radiomics_analysis(req: RadiomicsRequest = Body(...)):
 def run_interactive_segmentation_endpoint(req: InteractiveSegmentRequest = Body(...)):
     """Executes MONAI VISTA-3D style interactive click-prompt segmentation."""
     target = req.file_path or req.sample_id
-    points_dict = [p.dict() if hasattr(p, "dict") else p.model_dump() for p in (req.points or [])]
+    points_dict = [p.model_dump() if hasattr(p, "model_dump") else p.dict() for p in (req.points or [])]
     try:
         return engine.run_interactive_segmentation(
             sample_id_or_path=target,

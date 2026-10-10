@@ -322,22 +322,31 @@ beforeAll(async () => {
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
         if (u.pathname.includes('/cohort/batch-analyze')) {
-          const csvContent = [
+          const reqBody = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
+          const cases = (Array.isArray(reqBody.cases) && reqBody.cases.length > 0)
+            ? reqBody.cases
+            : [{ subject_id: 'S001' }, { subject_id: 'S002' }]
+          const dataframe_rows = cases.map((c: any, i: number) => ({
+            subject_id: c.subject_id || `S00${i + 1}`,
+            status: 'success',
+            longest_diameter_mm: i === 0 ? 18.5 : 14.2,
+            short_axis_mm: i === 0 ? 12.0 : 9.8,
+            total_volume_cm3: i === 0 ? 2.84 : 1.65,
+            lung_rads: i === 0 ? '4B' : '3',
+          }))
+          const csvLines = [
             'subject_id,status,longest_diameter_mm,short_axis_mm,total_volume_cm3,lung_rads',
-            'SUBJ_001,success,18.5,12.0,2.84,4B',
-            'SUBJ_002,success,14.2,9.8,1.65,3',
-          ].join('\n') + '\n'
+            ...dataframe_rows.map((r: any) => `${r.subject_id},${r.status},${r.longest_diameter_mm},${r.short_axis_mm},${r.total_volume_cm3},${r.lung_rads}`),
+          ]
+          const csvContent = csvLines.join('\n') + '\n'
           return new Response(JSON.stringify({
             status: 'success',
-            study_id: 'study_1',
-            total_cases: 2,
-            successful_cases: 2,
+            study_id: reqBody.study_id || 'study_1',
+            total_cases: cases.length,
+            successful_cases: cases.length,
             failed_cases: 0,
             columns: ['subject_id', 'status', 'longest_diameter_mm', 'short_axis_mm', 'total_volume_cm3', 'lung_rads'],
-            dataframe_rows: [
-              { subject_id: 'SUBJ_001', status: 'success', longest_diameter_mm: 18.5, short_axis_mm: 12.0, total_volume_cm3: 2.84, lung_rads: '4B' },
-              { subject_id: 'SUBJ_002', status: 'success', longest_diameter_mm: 14.2, short_axis_mm: 9.8, total_volume_cm3: 1.65, lung_rads: '3' },
-            ],
+            dataframe_rows,
             csv_content: csvContent,
             summary_markdown: '### 临床研究队列影像特征批量流水线完成',
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })

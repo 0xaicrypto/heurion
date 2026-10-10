@@ -3,12 +3,12 @@ import { defineConfig } from 'vite'
 
 // 页面开发服务器：/api、/collab 代理到平台 server（8787）
 export default defineConfig({
-  root: __dirname,
+  root: import.meta.dirname,
   build: {
     outDir: '../dist-web',
     emptyOutDir: true,
     // 多页：主应用（index.html）与知家移动外壳（phr.html，docs/design/PATIENT.md）
-    rollupOptions: { input: { index: resolve(__dirname, 'index.html'), phr: resolve(__dirname, 'phr.html') } },
+    rollupOptions: { input: { index: resolve(import.meta.dirname, 'index.html'), phr: resolve(import.meta.dirname, 'phr.html') } },
   },
   server: {
     port: 5173,

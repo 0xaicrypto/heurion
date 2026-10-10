@@ -2,13 +2,13 @@ import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  root: __dirname,
+  root: import.meta.dirname,
   build: {
     outDir: '../dist-web',
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        index: resolve(__dirname, 'index.html'),
+        index: resolve(import.meta.dirname, 'index.html'),
       },
     },
   },

@@ -85,6 +85,9 @@ function connect(ws: WebSocket, ydoc: Y.Doc, writable = true, onClose?: () => vo
       ws.close(1003, 'bad message')
     }
   })
+  ws.on('error', err => {
+    console.warn('[collab] ws error', err)
+  })
   ws.on('close', () => {
     ydoc.off('update', onUpdate)
     onClose?.()
